@@ -1,0 +1,17 @@
+.DS_Store
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules/
+**/.next/
+**/out/
+**/coverage/
+**/*.tsbuildinfo
+backend/bin/
+.runtime/
+.docmonitor/
+artifacts/
+FlClash/
+FlClClash/
+frontend/playwright-report/
+frontend/test-results/
