@@ -11,7 +11,8 @@ backend/bin/
 .runtime/
 .docmonitor/
 artifacts/
-FlClash/
+docs/
+scripts/
 FlClClash/
 frontend/playwright-report/
 frontend/test-results/
