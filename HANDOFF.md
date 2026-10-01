@@ -1281,3 +1281,39 @@ python3 -m json.tool FlClash/test/fixtures/core_protocol.json
 ### 22.3 P6 与 P7 判断
 
 本轮进一步完成了可云验证的 Android 观察者异常清理和跨平台 DNS 外部所有权保护，但 P6 总验收仍不能勾选：Android 真机/模拟器、VPN/TUN、Always-on、Doze、通知/Quick Settings、真实 UDP 尾账，以及 Windows/Linux/macOS 实际代理/DNS、睡眠唤醒和恢复矩阵仍没有物理证据。P7 仍不建议开始；先在受控设备和完整工具链上执行第 20.7 复跑入口及物理矩阵，再重新评估。
+
+## 23. 第十一轮云环境 P6/P7 可复核收尾（2026-10-01）
+
+### 23.1 环境、边界与本轮实现
+
+本轮继续在 `/workspace/vpn` 云 checkout 工作，HEAD 为 `d22eb16`（本地 `work` 分支，未提交、未推送）。按授权只使用临时工具和隔离数据：安装到 `/tmp/p6-go` 的 Go `1.25.14`（SHA-256 `a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712`），初始化并 checkout 现有 Mihomo pin `70f0570405c3c2c47bb113b88db95006d239b346`，并在 `/tmp/p6-pg` 启动临时 PostgreSQL 17 Unix-socket 实例执行后端测试；测试结束后已执行 `pg_ctl ... stop`，确认 `no server running`。没有读取或创建 `.env`、真实凭据、生产数据库、支付数据或外部服务，也没有部署、发布、提交或推送。
+
+本轮修正 `FlClash/core/managed_runtime.go` 的 UDP 停止语义：底层消费者仍拥有 packet buffer 时，`stop()` 不再提前调用 `Drop` 破坏其所有权；已停止实例立即拒绝迟到的 `WriteBack`，消费者最终释放时由 wrapper 的 `sync.Once` 只扣减一次 Drain 计数。新增 `FlClash/core/managed_dataplane_test.go`，用可回收 fake packet 验证停止期间 buffer 保持、迟到回写拒绝、Drain 在未释放时超时、并发重复 Drop 只回收一次、释放后 Drain 完成以及停止后新 packet 立即丢弃。这是针对实际 Mihomo `UDPPacket` 所有权的确定性回归，不把“强制 Drop”冒充跨平台物理验收。
+
+### 23.2 云端自动化结果
+
+以下命令均在本轮实际执行并通过（使用临时 Go 及 `GOCACHE=/tmp/p6-go/cache`、`GOPATH=/tmp/p6-go/gopath`、`GOTOOLCHAIN=local`；已有模块缓存时 `GOPROXY=off`）：
+
+```text
+CGO_ENABLED=0 go test -count=1 -json . ./managed
+  exit 0；JSON 事件为 run=255、pass=256、skip=1、fail=0（一个预期 skip），core 与 managed 均通过
+CGO_ENABLED=1 go test -race -count=1 . ./managed
+  exit 0；core 与 managed 均通过
+go test -race -count=3 ./managed
+  exit 0；managed 重复 race 回归通过
+CGO_ENABLED=0 go vet . ./managed
+  exit 0
+git diff --check
+/tmp/p6-go/go/bin/gofmt -d FlClash/core/managed_runtime.go FlClash/core/managed_dataplane_test.go
+  均无输出/通过
+```
+
+后端也完成了云端孤立数据库验证：普通 `go test ./...`、无数据库 `go test -race ./...` 和设置 `NATIVE_TEST_DSN='host=/tmp/p6-pg/socket port=55432 user=agent dbname=postgres sslmode=disable'` 的 `go test -race -count=1 ./...` 均通过。最后一项实际执行 API 私有 schema/账户、VIP、traffic/report 等集成路径，结果为 `internal/api` 21.842s、`internal/billing` 1.012s、`internal/config` 1.018s，`cmd/api`、`model`、`store` 无测试文件；没有连接生产数据库。当前 checkout 没有 `scripts/test-native.py`，因此没有虚报该脚本已执行。
+
+### 23.3 仍然阻塞的工具链和平台证据
+
+Flutter/Dart、系统 Gradle、Android Gradle wrapper、Kotlin 编译器、Android SDK/NDK 均不可用；官方 Flutter release 访问返回 tunnel `403`，Kotlin Maven 下载返回 `429`，按“合理时间后停止安装”要求未继续反复下载。因而没有宣称 Dart/Flutter analyze 或 widget/integration test、Android JVM/Gradle、Android arm64/NDK build 通过。Java runtime 存在不能替代这些工具链。云环境也没有 Android 真机/模拟器，不能验证 APK/JNI、VpnService、TUN/UDP、权限撤销、Always-on、Doze、通知/Quick Settings、后台网络或真实尾账；没有 Windows/Linux/macOS 实机，不能验证系统代理/DNS、睡眠唤醒和跨进程恢复。未操作此前的 Mac mini，也没有把第 20 节历史 macOS 结果当成本轮证据。
+
+### 23.4 P6/P7 判断与下一步
+
+本轮完成了当前云环境可完成的 Core UDP 生命周期修正、确定性停流/尾账回归，以及后端隔离 PostgreSQL race 集成；这些结果足以把“云端后端 P7 片段”标为可复核通过。P6 阶段总勾选仍不能完成，P7 全量仍不建议开始：缺少 Flutter/Dart 与 Android 构建链、受控设备/模拟器和 Windows/Linux/macOS 实际系统矩阵。下一步应在具备这些条件后重跑第 20.7 入口及物理矩阵，并单独完成线上 TLS、真实节点/YAML、签名发布和可信收费审计；本轮没有触碰这些生产范围。
