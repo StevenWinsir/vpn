@@ -28,11 +28,12 @@ type managedTrafficTunnel struct {
 	mu      sync.Mutex
 	running bool
 	tcp     map[net.Conn]struct{}
+	udp     map[*managedUDPPacket]struct{}
 	packets int
 }
 
 func newManagedTrafficTunnel(base C.Tunnel) *managedTrafficTunnel {
-	t := &managedTrafficTunnel{Tunnel: base, running: true, tcp: map[net.Conn]struct{}{}}
+	t := &managedTrafficTunnel{Tunnel: base, running: true, tcp: map[net.Conn]struct{}{}, udp: map[*managedUDPPacket]struct{}{}}
 	managedPlanes.Lock()
 	managedPlanes.items[t] = struct{}{}
 	managedPlanes.Unlock()
@@ -53,6 +54,7 @@ func (t *managedTrafficTunnel) HandleTCPConn(conn net.Conn, metadata *C.Metadata
 }
 
 func (t *managedTrafficTunnel) HandleUDPPacket(packet C.UDPPacket, metadata *C.Metadata) {
+	wrapped := &managedUDPPacket{UDPPacket: packet, owner: t}
 	t.mu.Lock()
 	if !t.running {
 		t.mu.Unlock()
@@ -60,8 +62,9 @@ func (t *managedTrafficTunnel) HandleUDPPacket(packet C.UDPPacket, metadata *C.M
 		return
 	}
 	t.packets++
+	t.udp[wrapped] = struct{}{}
 	t.mu.Unlock()
-	t.Tunnel.HandleUDPPacket(&managedUDPPacket{UDPPacket: packet, owner: t}, metadata)
+	t.Tunnel.HandleUDPPacket(wrapped, metadata)
 }
 
 type managedUDPPacket struct {
@@ -74,7 +77,10 @@ func (p *managedUDPPacket) Drop() {
 	p.once.Do(func() {
 		p.UDPPacket.Drop()
 		p.owner.mu.Lock()
-		p.owner.packets--
+		delete(p.owner.udp, p)
+		if p.owner.packets > 0 {
+			p.owner.packets--
+		}
 		p.owner.mu.Unlock()
 	})
 }
@@ -103,9 +109,16 @@ func (t *managedTrafficTunnel) stop() {
 	for conn := range t.tcp {
 		connections = append(connections, conn)
 	}
+	packets := make([]*managedUDPPacket, 0, len(t.udp))
+	for packet := range t.udp {
+		packets = append(packets, packet)
+	}
 	t.mu.Unlock()
 	for _, conn := range connections {
 		_ = conn.Close()
+	}
+	for _, packet := range packets {
+		packet.Drop()
 	}
 }
 

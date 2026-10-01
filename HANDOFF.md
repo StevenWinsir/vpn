@@ -1234,3 +1234,50 @@ bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=lib/ma
 正常 App 为 `/Users/stevenlee/Desktop/vpn/FlClash/build/macos/Build/Products/Debug/FlClash.app`。本轮正常包中 `Contents/MacOS/FlClashCore` 的 SHA-256 为 `57c13a6d6fbf36319931d0b92265d9c11e8ff7d34b09955e96a7d4feb7252569`；`go version -m` 验证仅 `-tags=with_gvisor`、`CGO_ENABLED=0`，二进制不含 `ASTERLINK_ACCEPTANCE_BASE` 测试入口。不同重建的哈希可能变化，应重新核对 build info，不要求复现字节级签名。
 
 汇总入口为 `verified-counts.json`、`core-validation-final.json`、`flutter-final-verification.json`、`native-validation.json`、`production-build-check.json`、`macos-e2e/summary.json`。后端测试夹具仅改 `backend/internal/api/desktop_acceptance_test.go`，实际 App 验收在 `FlClash/integration_test/managed_account_test.dart` 和 `scripts/test-macos-managed.py`。截图已采集留作证据，本轮未额外宣称逐张视觉验收。所有源码保持本地未提交状态，未进行 commit/push/deploy。
+
+## 21. 第九轮云环境 P6 补强记录（2026-10-01）
+
+### 21.1 当前 checkout 与本轮范围
+
+本轮在云 coding checkout `/workspace/vpn` 重新阅读本 HANDOFF、`FlClash/AGENTS.md`、`.agents/project.md`、`.agents/commands.md`、`.agents/rules.md`、`.agents/architecture.md`、`.agents/skills.md` 及 `core-platform`、`provider-tests`、`ui-work`、`localization` 技能要求，并以当前源码复核第 20 节记录。当前 checkout 的 Git HEAD 为 `661a248`；第 20 节中 `/Users/stevenlee/Desktop/vpn` 的本机历史产物和实际 macOS 结果没有在此环境重新冒充为通过。本轮没有读取或创建 `.env`、真实凭据、生产数据库，没有调用外部服务，没有部署、发布、提交或推送。
+
+### 21.2 完成的代码与测试补强
+
+1. `FlClash/core/managed/meter.go`：报告 ACK 成功后清除过期 `lastFailure`；`Close` 在取消 loop 后等待 meter worker 与 reporter WaitGroup，仍受调用方 context 截止时间约束，超时返回 `traffic_unconfirmed`。
+2. `FlClash/core/managed_runtime.go`：受管数据隧道登记活动 UDP packet，停止时主动 `Drop`，并以 once/计数保护避免重复扣减；因此 Drain 不再仅等待远端自然丢弃 UDP。
+3. `FlClash/android/app/src/main/kotlin/com/follow/clash/ServiceController.kt`：准备被拒、绑定失败、服务启动失败和正常 stop 都停止 `AccountNetworkObserver`，避免失败路径和退出路径遗留回调/DNS 观察者。
+4. `FlClash/core/managed/meter_test.go`、`FlClash/core/managed/runtime_p6_test.go`：增加成功重试清除 stale failure、关闭后 meter worker 必须退出的回归断言。
+
+本轮可执行检查结果：`git diff --check` 通过；两个 JSON contract fixture 的 `python3 -m json.tool` 校验通过。当前环境没有可用 Go 编译器（`go test ./...` 实际返回 `/usr/bin/go: Go: Unknown option: test`，`gofmt` 也不存在），没有 Flutter/Dart（`flutter analyze`、`flutter test`、`dart --version` 均为 command not found），没有 Gradle wrapper 或系统 Gradle（`android/gradlew`、`gradle` 均不存在）；因此本轮未宣称 Go、Flutter、Android JVM/Gradle 自动化通过。Java 运行时存在，但不足以替代缺失的编译/构建工具链。
+
+### 21.3 P6/P7 结论
+
+上述改动补强了 P6 的跨平台生命周期、尾账等待、UDP 停流和 Android 观察者清理，但 P6 阶段总勾选仍保持未完成：本轮没有 Android 真机/模拟器安装和 VpnService、Always-on、Doze、通知/Quick Settings、TUN/UDP 矩阵证据，也没有 Windows/Linux/macOS 实际系统设置、睡眠/唤醒和代理恢复验收。第 20 节的历史本机结果仍是历史证据，不能由本云环境替代。P7 当前不建议开始；应先取得受控设备及实际 OS 工具链，重跑第 20.7 的自动化和物理平台矩阵，再根据可复核产物决定 P7。
+
+## 22. 第十轮云环境 P6 收尾补强（2026-10-01）
+
+### 22.1 本轮新增实现
+
+本轮先复查当前 diff 与第 21 节，再补两处仍可在云端通过代码审查和自动化覆盖的生命周期/恢复缺口：
+
+1. `FlClash/android/app/src/main/kotlin/com/follow/clash/ServiceController.kt`：`prepareManaged` 使用 `try/finally`，即使 Core gate 抛出异常也会在没有原生 runtime 时停止 `AccountNetworkObserver`；`stop` 也在 `managedDisconnect` 抛出或超时后保证停止观察者，避免 DNS/network callback 泄漏。
+2. `FlClash/lib/common/system_dns.dart`：系统 DNS 写入和恢复增加写后读回验证；恢复前比较本进程预期写入值，若外部程序已改写（包括仍保留 fallback DNS 的情况）则放弃所有权并清理备份，不覆盖外部值；保留“fallback 被外部清除后，resync 重新记录当前服务器并追加 fallback”的既有行为。
+3. `FlClash/test/common/system_dns_test.dart`：fake DNS port 增加按 service 的状态，新增“外部保留 fallback 的改写不会被恢复覆盖”回归测试；既有服务切换、恢复失败重试和 fallback 重装测试保持原断言。
+
+本轮累计修改文件：`FlClash/core/managed/meter.go`、`FlClash/core/managed/meter_test.go`、`FlClash/core/managed/runtime_p6_test.go`、`FlClash/core/managed_runtime.go`、`FlClash/android/app/src/main/kotlin/com/follow/clash/ServiceController.kt`、`FlClash/lib/common/system_dns.dart`、`FlClash/test/common/system_dns_test.dart`、`HANDOFF.md`。没有读取/写入 `.env`、真实凭据或生产数据库，没有外部服务、部署、提交或推送。
+
+### 22.2 本轮检查与阻塞
+
+通过：
+
+```text
+git diff --check
+python3 -m json.tool FlClash/test/fixtures/native_client_contract.json
+python3 -m json.tool FlClash/test/fixtures/core_protocol.json
+```
+
+未能执行的自动化及原始原因：`dart test test/common/system_dns_test.dart`、`dart format --output=none ...`、`flutter analyze` 均因 `dart/flutter: command not found`；`go test ./managed` 返回 `/usr/bin/go: Go: Unknown option: test`；Android Gradle wrapper `./gradlew` 不存在。因而本轮不能宣称 Dart、Flutter、Go 或 Android JVM/Gradle 测试通过；Java runtime 存在也不能替代这些工具链。`git diff --check` 仍通过，工作区只保留上述八个源码/文档文件的未提交修改。
+
+### 22.3 P6 与 P7 判断
+
+本轮进一步完成了可云验证的 Android 观察者异常清理和跨平台 DNS 外部所有权保护，但 P6 总验收仍不能勾选：Android 真机/模拟器、VPN/TUN、Always-on、Doze、通知/Quick Settings、真实 UDP 尾账，以及 Windows/Linux/macOS 实际代理/DNS、睡眠唤醒和恢复矩阵仍没有物理证据。P7 仍不建议开始；先在受控设备和完整工具链上执行第 20.7 复跑入口及物理矩阵，再重新评估。

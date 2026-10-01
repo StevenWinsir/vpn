@@ -2,10 +2,13 @@ import 'package:fl_clash/common/system_dns.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakePort implements SystemDnsPort {
-  _FakePort({List<String>? servers}) : servers = servers ?? ['1.1.1.1'];
+  _FakePort({List<String>? servers}) : servers = servers ?? ['1.1.1.1'] {
+    _serviceServers['Wi-Fi'] = List.of(this.servers);
+  }
 
   String? service = 'Wi-Fi';
   List<String> servers;
+  final Map<String, List<String>> _serviceServers = {};
   bool writeSucceeds = true;
   Duration delay = Duration.zero;
 
@@ -21,7 +24,8 @@ class _FakePort implements SystemDnsPort {
   @override
   Future<List<String>?> readDnsServers(String service) => _guard(() async {
     reads++;
-    return List.of(servers);
+    if (service == this.service) return List.of(servers);
+    return List.of(_serviceServers[service] ?? servers);
   });
 
   @override
@@ -32,6 +36,7 @@ class _FakePort implements SystemDnsPort {
         }
         writtenServices.add(service);
         writes.add(List.of(servers));
+        _serviceServers[service] = List.of(servers);
         if (service == this.service) {
           this.servers = List.of(servers);
         }
@@ -162,6 +167,26 @@ void main() {
 
       expect(port.writes.last, ['8.8.8.8']);
       expect(store.record, isNull);
+    },
+  );
+
+  test(
+    'does not restore over an external change that retains the fallback',
+    () async {
+      final port = _FakePort(servers: ['1.1.1.1']);
+      final store = _FakeStore();
+      final coordinator = _coordinator(port, store);
+
+      await coordinator.sync(true);
+      port.servers = ['8.8.8.8', '223.5.5.5'];
+      await coordinator.sync(false);
+
+      expect(port.writes, [
+        ['1.1.1.1', '223.5.5.5'],
+      ]);
+      expect(port.servers, ['8.8.8.8', '223.5.5.5']);
+      expect(store.record, isNull);
+      expect(coordinator.appliedRecord, isNull);
     },
   );
 

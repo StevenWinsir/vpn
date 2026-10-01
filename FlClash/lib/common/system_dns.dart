@@ -181,9 +181,15 @@ final class SystemDnsCoordinator {
     }
     final record = SystemDnsRecord(service: service, servers: current);
     await store.write(record);
-    if (!current.contains(fallbackDns)) {
-      final ok = await port.writeDnsServers(service, [...current, fallbackDns]);
+    final expected = _expectedServers(record);
+    if (!_sameServers(current, expected)) {
+      final ok = await port.writeDnsServers(service, expected);
       if (!ok) {
+        await store.clear();
+        return;
+      }
+      final written = await port.readDnsServers(service);
+      if (written == null || !_sameServers(written, expected)) {
         await store.clear();
         return;
       }
@@ -200,12 +206,27 @@ final class SystemDnsCoordinator {
       );
       return;
     }
+    final expected = _expectedServers(_applied!);
+    if (_sameServers(current, expected)) {
+      return;
+    }
+    // A different process changed the setting while retaining our fallback.
+    // Drop ownership instead of overwriting that process on the next release.
     if (current.contains(fallbackDns)) {
+      _applied = null;
+      await store.clear();
       return;
     }
     final record = SystemDnsRecord(service: service, servers: current);
     await store.write(record);
-    if (!await port.writeDnsServers(service, [...current, fallbackDns])) {
+    final next = _expectedServers(record);
+    if (!await port.writeDnsServers(service, next)) {
+      _applied = null;
+      await store.clear();
+      return;
+    }
+    final written = await port.readDnsServers(service);
+    if (written == null || !_sameServers(written, next)) {
       _applied = null;
       await store.clear();
       return;
@@ -218,6 +239,21 @@ final class SystemDnsCoordinator {
     if (applied == null) {
       return;
     }
+    final current = await port.readDnsServers(applied.service);
+    if (current == null) {
+      commonPrint.log(
+        'Failed to read the current system DNS of ${applied.service}',
+        logLevel: LogLevel.warning,
+      );
+      return;
+    }
+    if (!_sameServers(current, _expectedServers(applied))) {
+      // The value is no longer ours. Preserve the external owner and forget
+      // the backup so a later shutdown cannot restore over it.
+      _applied = null;
+      await store.clear();
+      return;
+    }
     if (!await port.writeDnsServers(applied.service, applied.servers)) {
       commonPrint.log(
         'Failed to restore the system DNS of ${applied.service}',
@@ -225,8 +261,31 @@ final class SystemDnsCoordinator {
       );
       return;
     }
+    final restored = await port.readDnsServers(applied.service);
+    if (restored == null || !_sameServers(restored, applied.servers)) {
+      commonPrint.log(
+        'Failed to verify the restored system DNS of ${applied.service}',
+        logLevel: LogLevel.warning,
+      );
+      return;
+    }
     _applied = null;
     await store.clear();
+  }
+
+  List<String> _expectedServers(SystemDnsRecord record) {
+    if (record.servers.contains(fallbackDns)) {
+      return List.of(record.servers);
+    }
+    return [...record.servers, fallbackDns];
+  }
+
+  bool _sameServers(List<String> left, List<String> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
   }
 }
 

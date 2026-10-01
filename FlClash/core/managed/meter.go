@@ -218,6 +218,7 @@ func (m *Meter) flushLocked(work context.Context, final bool) error {
 	m.confirmedStarted = started
 	m.deadline = authorizationDeadline(status, started)
 	m.pending = nil
+	m.lastFailure = ""
 	allowed := m.snapshotLocked().CanConnect
 	m.mu.Unlock()
 	if !allowed {
@@ -329,12 +330,30 @@ func (m *Meter) Close(ctx context.Context, logout bool) error {
 	m.cancel()
 	defer m.client.Close()
 	m.closeErr = m.settle(ctx, true)
+	if err := m.waitForWorkers(ctx); m.closeErr == nil && err != nil {
+		m.closeErr = err
+	}
 	if logout && m.closeErr == nil {
 		if m.client.Logout(ctx) != nil {
 			m.closeErr = &APIError{"logout_unconfirmed"}
 		}
 	}
 	return m.closeErr
+}
+
+func (m *Meter) waitForWorkers(ctx context.Context) error {
+	workersDone := make(chan struct{})
+	go func() {
+		<-m.done
+		m.reporters.Wait()
+		close(workersDone)
+	}()
+	select {
+	case <-workersDone:
+		return nil
+	case <-ctx.Done():
+		return &APIError{"traffic_unconfirmed"}
+	}
 }
 
 func (m *Meter) Settle(ctx context.Context) error { return m.settle(ctx, false) }

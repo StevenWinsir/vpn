@@ -62,7 +62,13 @@ object ServiceController {
     suspend fun prepareManaged(options: VpnOptions, isCurrent: () -> Boolean): Boolean {
         accountNetwork.start()
         ensureAuthorizationWatch()
-        return managedGate.prepare(options.port, isCurrent)
+        var prepared = false
+        try {
+            prepared = managedGate.prepare(options.port, isCurrent)
+            return prepared
+        } finally {
+            if (!prepared && runTimeMillis == 0L) accountNetwork.stop()
+        }
     }
 
     fun stopCoreNow() = managedGate.stopNow()
@@ -105,6 +111,7 @@ object ServiceController {
         if (!managedGate.allowed()) {
             tearDownServices()
             runTimeMillis = 0L
+            accountNetwork.stop()
             return@withLock 0L
         }
         ServiceConfig.updateVpnOptions(options)
@@ -127,6 +134,7 @@ object ServiceController {
                 GlobalState.log("Unable to bind background service: $error")
                 clearBinding()
                 runTimeMillis = 0L
+                accountNetwork.stop()
                 return@withLock runTimeMillis
             }
         }
@@ -141,6 +149,7 @@ object ServiceController {
                 }
             clearBinding()
             runTimeMillis = 0L
+            accountNetwork.stop()
             return@withLock runTimeMillis
         }
 
@@ -154,7 +163,11 @@ object ServiceController {
         stopCoreNow()
         tearDownServices()
         runTimeMillis = 0L
-        if (!managedGate.disconnect()) GlobalState.log("Managed traffic settlement is unconfirmed")
+        try {
+            if (!managedGate.disconnect()) GlobalState.log("Managed traffic settlement is unconfirmed")
+        } finally {
+            accountNetwork.stop()
+        }
     }
 
     private suspend fun tearDownServices() {

@@ -62,6 +62,11 @@ func TestCloseCancelsActiveReportAndHonorsCallerDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("old report did not cancel")
 	}
+	select {
+	case <-f.meter.done:
+	case <-time.After(time.Second):
+		t.Fatal("meter worker did not stop")
+	}
 	if f.meter.Status().CanConnect {
 		t.Fatal("closed meter remained authorized")
 	}

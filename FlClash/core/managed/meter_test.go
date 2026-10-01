@@ -168,6 +168,9 @@ func TestMeterRetriesAnUncertainCommitWithoutDoubleCounting(t *testing.T) {
 	if err := f.meter.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, _, failure := f.meter.View(); failure != "" {
+		t.Fatalf("successful retry retained stale failure: %s", failure)
+	}
 	f.mu.Lock()
 	last := len(f.reports) - 1
 	if f.reports[last] != f.reports[last-1] {
