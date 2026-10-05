@@ -38,7 +38,7 @@ func TestDesktopAcceptanceFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	emails := map[string]string{}
-	for _, kind := range []string{"free", "vip", "vip2", "expired", "quota"} {
+	for _, kind := range []string{"free", "vip", "vip2", "fault", "expired", "quota"} {
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString() + "@example.invalid", Name: "Acceptance", PasswordHash: string(hash), Role: "user", Status: "active"}
 		if err = db.Create(&u).Error; err != nil {
 			t.Fatal(err)
@@ -108,6 +108,8 @@ func TestDesktopAcceptanceFixture(t *testing.T) {
 	router := New(db, cfg)
 	var delayNext atomic.Bool
 	var delayConfig atomic.Bool
+	var loseTrafficResponse, unavailable atomic.Bool
+	var droppedResponses atomic.Int64
 	var mu sync.Mutex
 	counts := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +119,34 @@ func TestDesktopAcceptanceFixture(t *testing.T) {
 				return
 			}
 			switch r.URL.Path {
+			case "/fixture/lose-traffic-response":
+				loseTrafficResponse.Store(true)
+				w.WriteHeader(204)
+			case "/fixture/unavailable", "/fixture/available":
+				unavailable.Store(r.URL.Path == "/fixture/unavailable")
+				w.WriteHeader(204)
+			case "/fixture/quota-empty", "/fixture/quota-renew", "/fixture/subscription-expire", "/fixture/subscription-renew":
+				var user model.User
+				if e := db.Where("email = ?", emails["fault"]).First(&user).Error; e != nil {
+					w.WriteHeader(500)
+					return
+				}
+				updates := map[string]any{}
+				switch r.URL.Path {
+				case "/fixture/quota-empty":
+					updates["used_units"] = int64(1048576 * 1000)
+				case "/fixture/quota-renew":
+					updates["traffic_limit_bytes"] = int64(2 * 1048576)
+				case "/fixture/subscription-expire":
+					updates["expires_at"] = time.Now().Add(-time.Second)
+				case "/fixture/subscription-renew":
+					updates["expires_at"] = time.Now().Add(time.Hour)
+				}
+				if e := db.Model(&model.Subscription{}).Where("user_id = ?", user.ID).Updates(updates).Error; e != nil {
+					w.WriteHeader(500)
+					return
+				}
+				w.WriteHeader(204)
 			case "/fixture/delay":
 				delayNext.Store(true)
 				w.WriteHeader(204)
@@ -165,7 +195,7 @@ func TestDesktopAcceptanceFixture(t *testing.T) {
 				db.Model(&model.NativeSession{}).Where("revoked_at IS NULL AND expires_at > ?", time.Now()).Count(&active)
 				mu.Lock()
 				defer mu.Unlock()
-				_ = json.NewEncoder(w).Encode(map[string]any{"requests": counts, "reports": reports, "active_sessions": active, "upload_bytes": ledger.Upload, "download_bytes": ledger.Download, "charged_units": ledger.Charged})
+				_ = json.NewEncoder(w).Encode(map[string]any{"requests": counts, "reports": reports, "active_sessions": active, "upload_bytes": ledger.Upload, "download_bytes": ledger.Download, "charged_units": ledger.Charged, "dropped_responses": droppedResponses.Load()})
 			default:
 				w.WriteHeader(404)
 			}
@@ -174,6 +204,25 @@ func TestDesktopAcceptanceFixture(t *testing.T) {
 		mu.Lock()
 		counts[r.URL.Path]++
 		mu.Unlock()
+		if unavailable.Load() && strings.HasPrefix(r.URL.Path, "/api/v1/client/") {
+			conn, _, e := w.(http.Hijacker).Hijack()
+			if e == nil {
+				_ = conn.Close()
+			}
+			return
+		}
+		if r.URL.Path == "/api/v1/client/traffic" && loseTrafficResponse.Swap(false) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, r)
+			if recorder.Code == http.StatusOK {
+				droppedResponses.Add(1)
+			}
+			conn, _, e := w.(http.Hijacker).Hijack()
+			if e == nil {
+				_ = conn.Close()
+			}
+			return
+		}
 		if r.URL.Path == "/api/v1/client/login" && delayNext.Swap(false) {
 			select {
 			case <-time.After(3 * time.Second):

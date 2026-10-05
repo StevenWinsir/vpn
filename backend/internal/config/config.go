@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"vpn/backend/internal/nodes"
 )
 
 type Config struct {
+	ClientNodeCatalog                                                             bool
+	NodeEncryptionKey                                                             string
 	ClientProfileDir                                                              string
 	ClientAllowTestEntitlements                                                   bool
 	RequestTimeout, MigrationTimeout                                              time.Duration
@@ -28,6 +31,12 @@ func Load() (Config, error) {
 	_ = godotenv.Load()
 	c := Config{Env: env("APP_ENV", "development"), Addr: env("HTTP_ADDR", "127.0.0.1:8080"), Host: os.Getenv("DATABASE_HOST"), Port: env("DATABASE_PORT", "5432"), Database: os.Getenv("DATABASE_NAME"), User: os.Getenv("DATABASE_USER"), Password: os.Getenv("DATABASE_PASSWORD"), Schema: env("DATABASE_SCHEMA", "vpn_app"), SSLMode: env("DATABASE_SSLMODE", "verify-full"), SSLRootCert: os.Getenv("DATABASE_SSLROOTCERT"), JWTSecret: os.Getenv("JWT_SECRET"), Issuer: env("JWT_ISSUER", "asterlink-api"), Audience: env("JWT_AUDIENCE", "asterlink-clients")}
 	c.ClientProfileDir = strings.TrimSpace(os.Getenv("CLIENT_PROFILE_DIR"))
+	c.NodeEncryptionKey = strings.TrimSpace(os.Getenv("NODE_ENCRYPTION_KEY"))
+	var catalogErr error
+	c.ClientNodeCatalog, catalogErr = strconv.ParseBool(env("CLIENT_NODE_CATALOG_ENABLED", "false"))
+	if catalogErr != nil || c.ClientNodeCatalog && !nodes.ValidateKey(c.NodeEncryptionKey) {
+		return c, fmt.Errorf("node catalog requires CLIENT_NODE_CATALOG_ENABLED boolean and a base64-encoded 32-byte NODE_ENCRYPTION_KEY")
+	}
 	for key, dest := range map[string]*bool{"COOKIE_SECURE": &c.CookieSecure, "TEST_PURCHASE_ENABLED": &c.TestPurchase, "AUTO_MIGRATE": &c.AutoMigrate, "CLIENT_ALLOW_TEST_ENTITLEMENTS": &c.ClientAllowTestEntitlements} {
 		value, err := strconv.ParseBool(env(key, "false"))
 		if err != nil {
@@ -88,6 +97,9 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("invalid APP_ENV")
 	}
 	if c.Env == "production" {
+		if c.ClientNodeCatalog || c.ClientProfileDir != "" {
+			return c, fmt.Errorf("production proxy delivery requires node-side metering and credential revocation; client-reported proxy mode is development-only")
+		}
 		if c.ClientAllowTestEntitlements {
 			return c, fmt.Errorf("production forbids CLIENT_ALLOW_TEST_ENTITLEMENTS")
 		}

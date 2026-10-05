@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,12 +14,18 @@ import (
 
 	"vpn/backend/internal/api"
 	"vpn/backend/internal/config"
+	"vpn/backend/internal/operations"
 	"vpn/backend/internal/store"
 )
 
 func main() {
 	migrate := flag.Bool("migrate", false, "run additive database migration and exit")
+	adminEmail := flag.String("grant-admin", "", "explicitly grant admin to one existing active account and exit")
+	createAdmin := flag.String("create-admin", "", "create a separate administrator; password JSON is read from stdin, never arguments")
 	flag.Parse()
+	if (*migrate && (*adminEmail != "" || *createAdmin != "")) || (*adminEmail != "" && *createAdmin != "") {
+		log.Fatal("choose exactly one console operation")
+	}
 	c, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
@@ -37,11 +45,33 @@ func main() {
 		log.Print("database migration completed")
 		return
 	}
+	if *adminEmail != "" || *createAdmin != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), c.RequestTimeout)
+		defer cancel()
+		if *createAdmin != "" {
+			var input struct {
+				Password string `json:"password"`
+			}
+			decoder := json.NewDecoder(io.LimitReader(os.Stdin, 1024))
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF {
+				log.Fatal("expected one password JSON object on stdin")
+			}
+			err = operations.CreateAdmin(ctx, db, *createAdmin, input.Password, c.BcryptCost)
+		} else {
+			err = operations.GrantAdmin(ctx, db, *adminEmail)
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Print("administrator operation completed and audited; existing passwords unchanged")
+		return
+	}
 	if c.SSLMode == "disable" {
 		log.Print("WARNING: development database connection is not encrypted; configure verified TLS before production")
 	}
 	if c.TestPurchase {
-		log.Print("WARNING: TEST PURCHASE ENABLED; no real payment or proxy service is provided")
+		log.Print("WARNING: TEST PURCHASE ENABLED; no real payment is processed; any enabled proxy access is development-only and client-reported")
 	}
 	handler := api.New(db, c)
 	srv := &http.Server{Addr: c.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: c.RequestTimeout + 5*time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}

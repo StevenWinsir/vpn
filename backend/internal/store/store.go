@@ -46,7 +46,7 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err := tx.Exec(`CREATE SCHEMA IF NOT EXISTS "` + c.Schema + `"`).Error; err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}); err != nil {
+		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}); err != nil {
 			return err
 		}
 		const gib = int64(1024 * 1024 * 1024)

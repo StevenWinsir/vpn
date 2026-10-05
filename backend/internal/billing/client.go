@@ -19,11 +19,15 @@ func (c ClientCounters) Valid() bool {
 }
 
 func ClientDelta(previous, next ClientCounters, usedUnits, upload, download int64) (up, down, units int64, err error) {
+	return ClientDeltaAtRate(previous, next, usedUnits, upload, download, ClientRatePermille)
+}
+
+func ClientDeltaAtRate(previous, next ClientCounters, usedUnits, upload, download, rate int64) (up, down, units int64, err error) {
 	if !next.Valid() || next.Sequence != previous.Sequence+1 || next.UploadBytes < previous.UploadBytes || next.DownloadBytes < previous.DownloadBytes {
 		return 0, 0, 0, errors.New("invalid or non-monotonic client counters")
 	}
 	up, down = next.UploadBytes-previous.UploadBytes, next.DownloadBytes-previous.DownloadBytes
-	units, err = ChargeUnits(up+down, ClientRatePermille)
+	units, err = ChargeUnits(up+down, rate)
 	if err != nil || usedUnits < 0 || upload < 0 || download < 0 || usedUnits > math.MaxInt64-units || upload > math.MaxInt64-up || download > math.MaxInt64-down {
 		return 0, 0, 0, errors.New("client accounting overflow")
 	}
