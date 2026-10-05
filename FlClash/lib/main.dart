@@ -30,6 +30,7 @@ void main(List<String> args) {
       try {
         await RustLib.init();
         final version = await system.init();
+        await recoverSystemProxy();
         final container = await bootstrap.init(version);
         HttpOverrides.global = FlClashHttpOverrides(container);
         request.attach(container.read);

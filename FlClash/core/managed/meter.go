@@ -102,7 +102,8 @@ func StartWithSampler(ctx context.Context, client *Client, read SampleTotals, st
 func (m *Meter) snapshotLocked() Status {
 	status := m.status
 	unreported := m.upload - status.UploadBytes + m.download - status.DownloadBytes
-	status.RemainingBytes = max(0, status.RemainingBytes-unreported)
+	charge := unreported/1000*status.RatePermille + (unreported%1000*status.RatePermille+999)/1000
+	status.RemainingBytes = max(0, status.RemainingBytes-charge)
 	if m.closed {
 		status.CanConnect = false
 		status.Reason = "logged_out"

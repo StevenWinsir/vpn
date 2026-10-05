@@ -1,3 +1,35 @@
+class OwnedProxyRecord {
+  const OwnedProxyRecord(this.key, this.original, this.expected);
+  final String key, original;
+  final List<String> expected;
+
+  factory OwnedProxyRecord.fromJson(Object? value) {
+    if (value is! Map || value.length != 3) {
+      throw const FormatException('Invalid proxy recovery entry');
+    }
+    final key = value['key'], original = value['original'];
+    final expected = value['expected'];
+    if (key is! String ||
+        key.isEmpty ||
+        key.length > 2048 ||
+        original is! String ||
+        original.length > 65536 ||
+        expected is! List ||
+        expected.isEmpty ||
+        expected.length > 32 ||
+        expected.any((item) => item is! String || item.length > 65536)) {
+      throw const FormatException('Invalid proxy recovery entry');
+    }
+    return OwnedProxyRecord(key, original, expected.cast<String>());
+  }
+
+  Map<String, Object> toJson() => {
+    'key': key,
+    'original': original,
+    'expected': expected,
+  };
+}
+
 class ProxySetting {
   const ProxySetting({
     required this.key,
@@ -27,6 +59,9 @@ class _OwnedSetting {
 
 /// Serializes setting changes and restores only values still written by this owner.
 class OwnedProxySettings {
+  OwnedProxySettings({this.checkpoint});
+
+  final Future<void> Function(List<OwnedProxyRecord>)? checkpoint;
   final _owned = <String, _OwnedSetting>{};
   Future<void> _pending = Future.value();
   Future<bool> _serial(Future<bool> Function() action) {
@@ -34,6 +69,39 @@ class OwnedProxySettings {
     _pending = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return result;
   }
+
+  Future<void> _persist() async {
+    await checkpoint?.call([
+      for (final entry in _owned.values)
+        OwnedProxyRecord(entry.setting.key, entry.original, entry.expected),
+    ]);
+  }
+
+  Future<bool> recover(
+    List<OwnedProxyRecord> records,
+    ProxySetting? Function(String) resolve,
+  ) => _serial(() async {
+    if (_owned.isNotEmpty) return false;
+    final recovered = <String, _OwnedSetting>{};
+    for (final record in records) {
+      final setting = resolve(record.key);
+      if (setting == null ||
+          recovered.containsKey(record.key) ||
+          !(setting.acceptOriginal?.call(record.original) ?? true) ||
+          record.expected.any(
+            (value) => !(setting.acceptOriginal?.call(value) ?? true),
+          )) {
+        return false;
+      }
+      recovered[record.key] = _OwnedSetting(
+        setting,
+        record.original,
+        List.of(record.expected),
+      );
+    }
+    _owned.addAll(recovered);
+    return true;
+  });
 
   Future<bool> apply(List<ProxySetting> settings) => _serial(() async {
     if (settings.isEmpty) return false;
@@ -56,6 +124,7 @@ class OwnedProxySettings {
           ...?existing?.expected,
         ]);
         _owned[setting.key] = entry;
+        await _persist();
         if (!await setting.write(setting.target)) {
           await _restore();
           return false;
@@ -66,6 +135,7 @@ class OwnedProxySettings {
           return false;
         }
         entry.expected = [setting.target];
+        await _persist();
       }
       return true;
     } catch (_) {
@@ -90,6 +160,12 @@ class OwnedProxySettings {
           _owned.remove(entry.setting.key);
           continue;
         }
+        entry.expected = {
+          ...entry.expected,
+          entry.original,
+          ...?entry.setting.intermediate?.call(current, entry.original),
+        }.toList();
+        await _persist();
         if (!await entry.setting.write(entry.original)) {
           success = false;
           continue;
@@ -103,6 +179,11 @@ class OwnedProxySettings {
       } catch (_) {
         success = false;
       }
+    }
+    try {
+      await _persist();
+    } catch (_) {
+      success = false;
     }
     return success;
   }
