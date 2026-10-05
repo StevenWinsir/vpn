@@ -51,7 +51,8 @@ class BuildConfig {
       tags: yaml?['tags'] as String? ?? _defaults.tags,
       goLdflags: managedAPIFlags(
         yaml?['go_ldflags'] as String? ?? _defaults.goLdflags,
-        (environment ?? Platform.environment)['CLIENT_API_BASE'],
+        (environment ?? Platform.environment)['CLIENT_API_BASE'] ??
+            managedAPIDotEnv(rootDir),
       ),
       coreDir: yaml?['core_dir'] as String? ?? _defaults.coreDir,
       coreName: yaml?['core_name'] as String? ?? _defaults.coreName,
@@ -72,6 +73,38 @@ class BuildConfig {
     'helper_dir': helperDir,
     'helper_name': helperName,
   };
+}
+
+// Native build hooks may receive a filtered process environment. A private
+// local file is an explicit, fingerprinted input rather than an implicit env
+// dependency that could silently reuse an artifact built for another server.
+String? managedAPIDotEnv(String rootDir) {
+  final file = File(p.join(rootDir, '.env'));
+  final type = FileSystemEntity.typeSync(file.path, followLinks: false);
+  if (type == FileSystemEntityType.notFound) return null;
+  if (type != FileSystemEntityType.file || file.lengthSync() > 16 * 1024) {
+    throw ArgumentError('Client .env must be a regular bounded file');
+  }
+  String? endpoint;
+  for (var line in file.readAsLinesSync()) {
+    line = line.trim();
+    if (line.isEmpty || line.startsWith('#')) continue;
+    final match = RegExp(
+      r'^(?:export )?CLIENT_API_BASE=(.*)$',
+    ).firstMatch(line);
+    if (match == null || endpoint != null) {
+      throw ArgumentError('Client .env supports one literal CLIENT_API_BASE');
+    }
+    var value = match.group(1)!.trim();
+    if (value.length >= 2 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.substring(1, value.length - 1);
+    }
+    if (value.isEmpty) throw ArgumentError('CLIENT_API_BASE cannot be empty');
+    endpoint = value;
+  }
+  return endpoint;
 }
 
 String managedAPIFlags(String flags, String? endpoint) {

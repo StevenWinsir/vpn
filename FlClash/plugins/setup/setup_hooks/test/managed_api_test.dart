@@ -23,6 +23,65 @@ void main() {
     );
   });
 
+  test('filtered hook environment loads the explicit local client .env', () {
+    final root = Directory.systemTemp.createTempSync('managed_api_dotenv_');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final file = File('${root.path}/.env');
+    file.writeAsStringSync(
+      '# Local build only\nCLIENT_API_BASE="http://127.0.0.1:8080/api/v1/client"\n',
+    );
+    final local = BuildConfig.load(rootDir: root.path, environment: {});
+    expect(
+      local.goLdflags,
+      contains('-X core/managed.APIBase=http://127.0.0.1:8080/api/v1/client'),
+    );
+    file.writeAsStringSync(
+      'CLIENT_API_BASE=https://other.example.invalid/api/v1/client\n',
+    );
+    expect(
+      BuildConfig.load(rootDir: root.path, environment: {}).toFingerprintMap(),
+      isNot(local.toFingerprintMap()),
+    );
+    final explicit = BuildConfig.load(
+      rootDir: root.path,
+      environment: {
+        'CLIENT_API_BASE': 'https://ci.example.invalid/api/v1/client',
+      },
+    );
+    expect(explicit.goLdflags, contains('https://ci.example.invalid'));
+  });
+
+  test('client .env rejects duplicate, empty, unknown or insecure settings', () {
+    final root = Directory.systemTemp.createTempSync(
+      'managed_api_dotenv_invalid_',
+    );
+    addTearDown(() => root.deleteSync(recursive: true));
+    final file = File('${root.path}/.env');
+    for (final value in [
+      'CLIENT_API_BASE=\n',
+      'OTHER_SETTING=secret\n',
+      'CLIENT_API_BASE=http://remote.example.invalid/api/v1/client\n',
+      'CLIENT_API_BASE=https://example.invalid/api/v1/client\nCLIENT_API_BASE=https://other.example.invalid/api/v1/client\n',
+      'CLIENT_API_BASE=https://example.invalid/api/v1/client -X injected=bad\n',
+    ]) {
+      file.writeAsStringSync(value);
+      expect(
+        () => BuildConfig.load(rootDir: root.path, environment: {}),
+        throwsArgumentError,
+      );
+    }
+    file.deleteSync();
+    final target = File('${root.path}/redirect')
+      ..writeAsStringSync(
+        'CLIENT_API_BASE=https://example.invalid/api/v1/client',
+      );
+    Link(file.path).createSync(target.path);
+    expect(
+      () => BuildConfig.load(rootDir: root.path, environment: {}),
+      throwsArgumentError,
+    );
+  });
+
   test(
     'managed endpoint cannot downgrade remote TLS or inject build flags',
     () {
