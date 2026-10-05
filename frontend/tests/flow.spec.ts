@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+
+const artifacts = process.env.E2E_ARTIFACTS_DIR || '../artifacts/qa';
 
 test('registration, test purchase, persistence, order history and logout', async ({
   page,
@@ -31,9 +34,23 @@ test('registration, test purchase, persistence, order history and logout', async
   await expect(page.getByRole('heading', { name: '进阶计划', exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: '进阶计划', exact: true })).toBeVisible();
-  await mkdir('../artifacts/qa', { recursive: true });
+  const refreshBefore = (await context.cookies()).find((cookie) => cookie.name === 'vpn_refresh')?.value;
+  expect(refreshBefore).toBeTruthy();
+  await context.clearCookies({ name: 'vpn_access' });
+  const refreshed = page.waitForResponse((response) =>
+    response.url().endsWith('/api/v1/auth/refresh') && response.status() === 200,
+  );
+  await page.reload();
+  await refreshed;
+  await expect(page.getByRole('heading', { name: '进阶计划', exact: true })).toBeVisible();
+  const refreshedCookies = (await context.cookies()).filter((cookie) => cookie.name.startsWith('vpn_'));
+  expect(refreshedCookies).toHaveLength(2);
+  expect(refreshedCookies.every((cookie) => cookie.httpOnly)).toBe(true);
+  expect(refreshedCookies.find((cookie) => cookie.name === 'vpn_refresh')?.value).not.toBe(refreshBefore);
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
+  await mkdir(artifacts, { recursive: true });
   await page.screenshot({
-    path: '../artifacts/qa/dashboard-desktop.png',
+    path: path.join(artifacts, 'dashboard-desktop.png'),
     fullPage: true,
     animations: 'disabled',
   });
@@ -43,6 +60,7 @@ test('registration, test purchase, persistence, order history and logout', async
   await page.getByRole('button', { name: '账户菜单' }).click();
   await page.getByRole('menuitem', { name: '退出登录', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
+  expect((await context.cookies()).filter((cookie) => cookie.name.startsWith('vpn_'))).toHaveLength(0);
   await page.getByLabel('邮箱地址').fill(email);
   await page.locator('input[type="password"]').fill('not-the-right-password');
   await page.getByRole('button', { name: '登录', exact: true }).click();
@@ -57,7 +75,7 @@ test('registration, test purchase, persistence, order history and logout', async
     .poll(async () => (await page.locator('.subscription-banner').boundingBox())?.width || 0)
     .toBeGreaterThan(330);
   await page.screenshot({
-    path: '../artifacts/qa/dashboard-mobile.png',
+    path: path.join(artifacts, 'dashboard-mobile.png'),
     fullPage: true,
     animations: 'disabled',
   });
@@ -73,12 +91,11 @@ test('registration, test purchase, persistence, order history and logout', async
     true,
   );
   await page.screenshot({
-    path: '../artifacts/qa/plans-mobile.png',
+    path: path.join(artifacts, 'plans-mobile.png'),
     fullPage: true,
     animations: 'disabled',
   });
   expect(errors).toEqual([]);
-  // This visible QA account/order is intentionally retained; no blanket deletion of database rows.
 });
 
 test('public pages fit mobile and protected routes redirect', async ({ page }) => {
