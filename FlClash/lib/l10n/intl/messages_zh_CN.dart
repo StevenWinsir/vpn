@@ -493,6 +493,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedCounterError": MessageLookupByLibrary.simpleMessage(
       "内核流量计数异常，代理已停止。请重启内核后重新登录。",
     ),
+    "managedCredentialStoreError": MessageLookupByLibrary.simpleMessage(
+      "macOS 钥匙串不可用，请手动输入密码；不会降级为明文保存。如清除失败，请在“钥匙串访问”中删除本应用的 managed-login 项目。",
+    ),
     "managedCredentialsError": MessageLookupByLibrary.simpleMessage(
       "邮箱或密码不正确。",
     ),
@@ -535,6 +538,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "授权或运行环境已变化，代理已停止。请重新连接以再次确认权限。",
     ),
     "managedReload": MessageLookupByLibrary.simpleMessage("重新加载服务端配置"),
+    "managedRememberPassword": MessageLookupByLibrary.simpleMessage(
+      "在 macOS 钥匙串中记住密码",
+    ),
     "managedRequestFailed": MessageLookupByLibrary.simpleMessage("操作未完成，请重试。"),
     "managedRetryCore": MessageLookupByLibrary.simpleMessage("重新连接 Core"),
     "managedSelectHint": MessageLookupByLibrary.simpleMessage(

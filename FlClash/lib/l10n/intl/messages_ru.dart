@@ -703,6 +703,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedCounterError": MessageLookupByLibrary.simpleMessage(
       "Счётчики ядра недействительны. Перезапустите ядро и войдите снова.",
     ),
+    "managedCredentialStoreError": MessageLookupByLibrary.simpleMessage(
+      "Связка ключей недоступна. Введите пароль вручную: открытый текст не сохраняется. Если удаление не удалось, удалите запись managed-login этого приложения в Связке ключей.",
+    ),
     "managedCredentialsError": MessageLookupByLibrary.simpleMessage(
       "Неверный адрес электронной почты или пароль.",
     ),
@@ -754,6 +757,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "managedReload": MessageLookupByLibrary.simpleMessage(
       "Перезагрузить конфигурацию сервера",
+    ),
+    "managedRememberPassword": MessageLookupByLibrary.simpleMessage(
+      "Сохранить пароль в Связке ключей macOS",
     ),
     "managedRequestFailed": MessageLookupByLibrary.simpleMessage(
       "Операция не выполнена. Повторите попытку.",

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:fl_clash/common/managed_credentials.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -14,6 +15,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 part 'generated/managed_account.g.dart';
 
+final managedCredentialStoreProvider = Provider<ManagedCredentialStore>(
+  (ref) => createManagedCredentialStore(),
+);
 final managedAppVersionProvider = Provider<String>(
   (ref) => globalState.packageInfo.version,
 );
@@ -137,8 +141,14 @@ class ManagedAccount extends _$ManagedAccount {
     }
   }
 
-  Future<void> login(String email, String password) async {
+  Future<void> login(
+    String email,
+    String password, {
+    bool remember = false,
+  }) async {
     if (!state.ready || state.busy) return;
+    final scope = state.account.apiBase;
+    final operationEpoch = _epoch + 1;
     await _perform((epoch) async {
       final deviceId = await ref.read(managedInstallationIdProvider.future);
       if (!_current(epoch)) {
@@ -157,6 +167,41 @@ class ManagedAccount extends _$ManagedAccount {
         ),
       );
     }, loadProfile: true);
+    if (!_current(operationEpoch) ||
+        state.account.user?.email != email.trim().toLowerCase()) {
+      return;
+    }
+    final store = ref.read(managedCredentialStoreProvider);
+    if (!store.supported || !isManagedCredentialScope(scope)) return;
+    try {
+      if (remember) {
+        await store.save(
+          scope,
+          RememberedManagedLogin(email.trim().toLowerCase(), password),
+        );
+      } else {
+        await store.delete(scope);
+      }
+    } catch (_) {
+      if (_current(operationEpoch)) {
+        state = ManagedAccountState(
+          account: state.account,
+          ready: state.ready,
+          error: 'credential_store_unavailable',
+        );
+      }
+    }
+  }
+
+  Future<bool> _forgetSavedLogin(String scope) async {
+    final store = ref.read(managedCredentialStoreProvider);
+    if (!store.supported || !isManagedCredentialScope(scope)) return true;
+    try {
+      await store.delete(scope);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> refresh() async {
@@ -202,6 +247,7 @@ class ManagedAccount extends _$ManagedAccount {
     state = ManagedAccountState(
       ready: true,
       account: ManagedAccountSnapshot(
+        apiBase: account.apiBase,
         generation: account.generation,
         phase: ManagedPhase.loadingConfiguration,
         user: account.user,
@@ -289,10 +335,13 @@ class ManagedAccount extends _$ManagedAccount {
     }
   }
 
-  Future<void> logout() async {
+  Future<void> logout({bool forgetSavedLogin = true}) async {
     _isolateLegacyState();
     final account = state.account;
     final epoch = ++_epoch;
+    final forgetting = forgetSavedLogin
+        ? _forgetSavedLogin(account.apiBase)
+        : Future<bool>.value(true);
     state = const ManagedAccountState(working: true);
     ref.read(runTimeProvider.notifier).value = null;
     try {
@@ -301,10 +350,16 @@ class ManagedAccount extends _$ManagedAccount {
           : await _core.managedLogout(account.generation);
       if (!_current(epoch)) return;
       await _core.stopListener();
+      final forgotten = await forgetting;
       if (_current(epoch)) {
-        state = ManagedAccountState(account: result, ready: true);
+        state = ManagedAccountState(
+          account: result,
+          ready: true,
+          error: forgotten ? '' : 'credential_store_unavailable',
+        );
       }
     } catch (_) {
+      await forgetting;
       if (_current(epoch)) {
         state = const ManagedAccountState(error: 'logout_unconfirmed');
       }

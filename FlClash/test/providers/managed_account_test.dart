@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/method.dart';
@@ -63,7 +64,7 @@ void main() {
         (call) => call.method == CoreMethod.managedLogin,
       );
       expect((login.arguments as Map)['email'], 'fixture@example.invalid');
-      expect((login.arguments as Map)['platform'], 'macos');
+      expect((login.arguments as Map)['platform'], Platform.operatingSystem);
       expect(
         core.calls.where((call) => call.method == CoreMethod.managedLoadConfig),
         hasLength(1),

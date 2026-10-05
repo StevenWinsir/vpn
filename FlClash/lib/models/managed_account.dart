@@ -1,5 +1,21 @@
 import 'managed_configuration.dart';
 
+bool isManagedCredentialScope(String value) {
+  final uri = Uri.tryParse(value);
+  return value.length <= 2048 &&
+      value == value.trim() &&
+      uri != null &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty &&
+      !uri.hasQuery &&
+      !uri.hasFragment &&
+      uri.path == '/api/v1/client' &&
+      (!uri.hasPort || uri.port > 0 && uri.port <= 65535) &&
+      (uri.scheme == 'https' ||
+          uri.scheme == 'http' &&
+              const {'127.0.0.1', '::1'}.contains(uri.host));
+}
+
 enum ManagedPhase {
   signedOut('signed_out'),
   authenticating('authenticating'),
@@ -69,6 +85,7 @@ class ManagedSession {
     required this.totalBytes,
     required this.reason,
     required this.subscriptionExpiresAt,
+    this.ratePermille = 1000,
   });
 
   final String id;
@@ -78,6 +95,7 @@ class ManagedSession {
   final int totalBytes;
   final String reason;
   final DateTime? subscriptionExpiresAt;
+  final int ratePermille;
 
   factory ManagedSession.fromJson(Map<String, dynamic> value) {
     final remaining = value['remaining_bytes'] as int;
@@ -89,7 +107,9 @@ class ManagedSession {
         value['report_interval_seconds'] != 60 ||
         value['lease_seconds'] != 90 ||
         value['metering_source'] != 'client_reported' ||
-        value['rate_permille'] != 1000) {
+        value['rate_permille'] is! int ||
+        (value['rate_permille'] as int) < 1 ||
+        (value['rate_permille'] as int) > 10000) {
       throw const FormatException('Invalid managed session');
     }
     return ManagedSession(
@@ -99,6 +119,7 @@ class ManagedSession {
       remainingBytes: remaining,
       totalBytes: total,
       reason: value['reason'] as String,
+      ratePermille: value['rate_permille'] as int,
       subscriptionExpiresAt: value['subscription_expires_at'] == null
           ? null
           : DateTime.parse(value['subscription_expires_at'] as String),
@@ -158,6 +179,7 @@ class ManagedMetering {
 
 class ManagedAccountSnapshot {
   const ManagedAccountSnapshot({
+    this.apiBase = '',
     this.generation = 0,
     this.runtimeRevision = 0,
     this.phase = ManagedPhase.signedOut,
@@ -171,6 +193,7 @@ class ManagedAccountSnapshot {
     this.metering,
   });
 
+  final String apiBase;
   final int generation;
   final int runtimeRevision;
   final ManagedPhase phase;
@@ -189,6 +212,10 @@ class ManagedAccountSnapshot {
         value.containsKey('password') ||
         value['can_connect'] is! bool) {
       throw const FormatException('Unsupported managed authorization');
+    }
+    final apiBase = value['api_base'] as String? ?? '';
+    if (apiBase.isNotEmpty && !isManagedCredentialScope(apiBase)) {
+      throw const FormatException('Invalid managed API scope');
     }
     final generation = value['generation'] as int;
     final runtimeRevision = value['runtime_revision'] as int? ?? 0;
@@ -242,6 +269,7 @@ class ManagedAccountSnapshot {
       throw const FormatException('Unconfirmed managed connection');
     }
     return ManagedAccountSnapshot(
+      apiBase: apiBase,
       generation: generation,
       runtimeRevision: runtimeRevision,
       phase: phase,

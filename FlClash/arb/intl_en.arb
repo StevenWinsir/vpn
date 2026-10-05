@@ -662,6 +662,8 @@
   "nextMatch": "Next match",
   "clearSearch": "Clear search",
   "addWidget": "Add widget",
+  "managedRememberPassword": "Remember password in macOS Keychain",
+  "managedCredentialStoreError": "macOS Keychain is unavailable. Enter your password manually; no plaintext fallback is used. If removing saved credentials failed, remove this app's managed-login item in Keychain Access.",
   "showPassword": "Show password",
   "hidePassword": "Hide password",
   "authorize": "Authorize",

@@ -54,7 +54,7 @@ class SystemAction extends _$SystemAction {
       ?saveOperation,
       ref
           .read(managedAccountProvider.notifier)
-          .logout()
+          .logout(forgetSavedLogin: false)
           .timeout(const Duration(milliseconds: 2400), onTimeout: () {}),
       bootGuard.markClosed(),
       if (systemDnsCoordinator != null) systemDnsCoordinator!.shutdown(),

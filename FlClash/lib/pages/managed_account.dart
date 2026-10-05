@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/managed_credentials.dart';
 import 'package:fl_clash/models/managed_account.dart';
 import 'package:fl_clash/pages/home.dart';
 import 'package:fl_clash/providers/managed_account.dart';
@@ -38,6 +39,9 @@ class ManagedAccountPanel extends ConsumerWidget {
         await ref.read(setupActionProvider.notifier).setRunning(false);
       },
       onLogin: action.login,
+      onLoginRemembered: (email, password, remember) =>
+          action.login(email, password, remember: remember),
+      credentialStore: ref.read(managedCredentialStoreProvider),
       onRefresh: action.refresh,
       onReloadConfiguration: action.reloadConfiguration,
       onLogout: action.logout,
@@ -63,6 +67,8 @@ class ManagedAccountView extends StatefulWidget {
     this.onConnect,
     this.onDisconnect,
     required this.onLogin,
+    this.onLoginRemembered,
+    this.credentialStore,
     required this.onRefresh,
     this.onReloadConfiguration,
     required this.onLogout,
@@ -76,6 +82,9 @@ class ManagedAccountView extends StatefulWidget {
   final Future<void> Function()? onConnect;
   final Future<void> Function()? onDisconnect;
   final Future<void> Function(String email, String password) onLogin;
+  final Future<void> Function(String email, String password, bool remember)?
+  onLoginRemembered;
+  final ManagedCredentialStore? credentialStore;
   final Future<void> Function() onRefresh;
   final Future<void> Function()? onReloadConfiguration;
   final Future<void> Function() onLogout;
@@ -93,11 +102,83 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
   final _password = TextEditingController();
   bool _submitting = false;
   bool _actionFailed = false;
+  bool _remember = false;
+  bool _credentialsError = false;
+  bool _credentialsTouched = false;
+  int _credentialRevision = 0;
+
+  bool get _canRemember =>
+      widget.credentialStore?.supported == true &&
+      widget.onLoginRemembered != null &&
+      isManagedCredentialScope(widget.state.account.apiBase);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedLogin();
+  }
+
+  Future<void> _loadSavedLogin() async {
+    final revision = ++_credentialRevision;
+    if (!_canRemember || widget.state.account.user != null) return;
+    try {
+      final saved = await widget.credentialStore!.read(
+        widget.state.account.apiBase,
+      );
+      if (!mounted ||
+          revision != _credentialRevision ||
+          _credentialsTouched ||
+          _submitting ||
+          widget.state.account.user != null ||
+          _email.text.isNotEmpty ||
+          _password.text.isNotEmpty) {
+        return;
+      }
+      if (saved != null) {
+        setState(() {
+          _email.text = saved.email;
+          _password.text = saved.password;
+          _remember = true;
+        });
+      }
+    } catch (_) {
+      if (mounted && revision == _credentialRevision) {
+        setState(() => _credentialsError = true);
+      }
+    }
+  }
+
+  Future<void> _setRemember(bool remember) async {
+    setState(() {
+      _remember = remember;
+      _credentialsTouched = true;
+      _credentialRevision++;
+    });
+    if (remember || !_canRemember) return;
+    final revision = _credentialRevision;
+    try {
+      await widget.credentialStore!.delete(widget.state.account.apiBase);
+    } catch (_) {
+      if (mounted && revision == _credentialRevision) {
+        setState(() => _credentialsError = true);
+      }
+    }
+  }
 
   @override
   void didUpdateWidget(covariant ManagedAccountView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.state.account.apiBase != widget.state.account.apiBase ||
+        oldWidget.credentialStore != widget.credentialStore) {
+      _email.clear();
+      _password.clear();
+      _remember = false;
+      _credentialsTouched = false;
+      _credentialsError = false;
+      _loadSavedLogin();
+    }
     if (oldWidget.state.account.user?.id != widget.state.account.user?.id) {
+      _credentialRevision++;
       _email.clear();
       _password.clear();
     }
@@ -126,7 +207,11 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
       _actionFailed = false;
     });
     try {
-      await widget.onLogin(email, password);
+      if (_canRemember) {
+        await widget.onLoginRemembered!(email, password, _remember);
+      } else {
+        await widget.onLogin(email, password);
+      }
     } catch (_) {
       if (mounted) setState(() => _actionFailed = true);
     } finally {
@@ -147,6 +232,7 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
     final strings = context.appLocalizations;
     return switch (code) {
       'invalid_credentials' => strings.managedCredentialsError,
+      'credential_store_unavailable' => strings.managedCredentialStoreError,
       'native_session_required' ||
       'native_session_expired' ||
       'subscription_changed' => strings.managedSessionExpired,
@@ -252,6 +338,7 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
                             TextFormField(
                               key: const Key('managed-email'),
                               controller: _email,
+                              onChanged: (_) => _credentialsTouched = true,
                               enabled: !busy,
                               decoration: InputDecoration(
                                 labelText: strings.managedEmail,
@@ -273,6 +360,7 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
                             TextFormField(
                               key: const Key('managed-password'),
                               controller: _password,
+                              onChanged: (_) => _credentialsTouched = true,
                               enabled: !busy,
                               decoration: InputDecoration(
                                 labelText: strings.managedPassword,
@@ -290,6 +378,22 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
                                   ? null
                                   : strings.managedInvalidPassword,
                             ),
+                            if (_canRemember) ...[
+                              CheckboxListTile(
+                                key: const Key('managed-remember'),
+                                contentPadding: EdgeInsets.zero,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                value: _remember,
+                                title: Text(strings.managedRememberPassword),
+                                subtitle: Text(Uri.parse(account.apiBase).host),
+                                onChanged: busy
+                                    ? null
+                                    : (value) => _setRemember(value ?? false),
+                              ),
+                              if (_credentialsError)
+                                Text(strings.managedCredentialStoreError),
+                            ],
                             const SizedBox(height: 24),
                             FilledButton(
                               key: const Key('managed-login'),
