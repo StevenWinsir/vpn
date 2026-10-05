@@ -11,8 +11,13 @@ backend/bin/
 .runtime/
 .docmonitor/
 artifacts/
-docs/
-scripts/
+docs/*
+!docs/*.md
+scripts/*
+!scripts/*.sh
+!scripts/*.py
+!scripts/*.json
+**/__pycache__/
 FlClClash/
 frontend/playwright-report/
 frontend/test-results/
