@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -78,7 +79,7 @@ func (s *Server) adminNodeDetail(c *gin.Context) {
 			return e
 		}
 		return tx.First(&secret, "node_id = ?", node.ID).Error
-	})
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if s.adminFailure(c, err) {
 		return
 	}

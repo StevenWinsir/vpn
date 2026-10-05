@@ -51,6 +51,45 @@ test('administrator YAML catalog persists and ordinary users cannot access it', 
   await page.getByRole('button', { name: '保存节点', exact: true }).click();
   await expect(page.getByRole('cell', { name: '1×', exact: true })).toBeVisible();
 
+  let releaseDetail!: () => void;
+  let detailStarted!: () => void;
+  let detailFinished!: () => void;
+  const detailGate = new Promise<void>((resolve) => {
+    releaseDetail = resolve;
+  });
+  const detailReady = new Promise<void>((resolve) => {
+    detailStarted = resolve;
+  });
+  const detailDone = new Promise<void>((resolve) => {
+    detailFinished = resolve;
+  });
+  const detailRoute = '**/api/v1/admin/nodes/*';
+  await page.route(detailRoute, async (route) => {
+    try {
+      const response = await route.fetch();
+      detailStarted();
+      await detailGate;
+      await route.fulfill({ response });
+    } finally {
+      detailFinished();
+    }
+  });
+  try {
+    await page.getByRole('button', { name: '编辑 Catalog-Half', exact: true }).click();
+    await detailReady;
+    await page.getByRole('button', { name: '导入节点 YAML' }).click();
+    const draft = fixture.node_yaml.replace('Catalog-Half', 'Unsubmitted-Draft');
+    await page.getByLabel('节点 YAML').fill(draft);
+    releaseDetail();
+    await detailDone;
+    await expect(page.getByRole('dialog')).toHaveAccessibleName('批量导入节点');
+    await expect(page.getByLabel('节点 YAML')).toHaveValue(draft);
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+  } finally {
+    releaseDetail();
+    await page.unroute(detailRoute);
+  }
+
   await page.getByRole('button', { name: '编辑 Catalog-Half', exact: true }).click();
   await expect(page.getByLabel('节点 YAML')).toHaveValue(/Catalog-Half/);
   await page

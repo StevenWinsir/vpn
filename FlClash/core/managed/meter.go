@@ -214,6 +214,11 @@ func (m *Meter) flushLocked(work context.Context, final bool) error {
 		m.deny("session_mismatch")
 		return &APIError{"session_mismatch"}
 	}
+	if status.RatePermille != m.confirmed.RatePermille || status.ProfileVersion != m.confirmed.ProfileVersion {
+		m.mu.Unlock()
+		m.deny("invalid_server_response")
+		return &APIError{"invalid_server_response"}
+	}
 	m.status = status
 	m.confirmed = status
 	m.confirmedStarted = started

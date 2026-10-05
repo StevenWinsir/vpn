@@ -90,6 +90,8 @@ function NodeManager() {
   const [editing, setEditing] = useState('');
   const [form, setForm] = useState<NodeForm>(emptyForm);
   const lifetime = useRef<AbortController | null>(null);
+  const editRequest = useRef<AbortController | null>(null);
+  const savePending = useRef(false);
 
   const load = useCallback((signal?: AbortSignal) => {
     return Promise.all([
@@ -114,28 +116,49 @@ function NodeManager() {
     const controller = new AbortController();
     lifetime.current = controller;
     void load(controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      editRequest.current?.abort();
+    };
   }, [load]);
 
   const edit = async (node: AdminNode) => {
+    if (savePending.current) return;
+    editRequest.current?.abort();
+    const controller = new AbortController();
+    editRequest.current = controller;
     setEditing(node.id);
+    const isCurrent = () =>
+      editRequest.current === controller &&
+      !controller.signal.aborted &&
+      !lifetime.current?.signal.aborted;
     try {
       const detail = await api<AdminNode>(`/admin/nodes/${node.id}`, {
-        signal: lifetime.current?.signal,
+        signal: controller.signal,
       });
-      if (lifetime.current?.signal.aborted) return;
+      if (!isCurrent()) return;
       setForm({ ...detail, yaml: detail.yaml || '', rate: detail.rate_permille / 1000 });
       setFormError('');
       setOpened(true);
     } catch (failure) {
-      if (!lifetime.current?.signal.aborted) setError(message(failure));
+      if (isCurrent()) setError(message(failure));
     } finally {
-      if (!lifetime.current?.signal.aborted) setEditing('');
+      if (isCurrent()) {
+        editRequest.current = null;
+        setEditing('');
+      }
     }
   };
 
+  const cancelEdit = () => {
+    editRequest.current?.abort();
+    editRequest.current = null;
+    setEditing('');
+  };
+
   const close = () => {
-    if (saving) return;
+    if (savePending.current) return;
+    cancelEdit();
     setOpened(false);
     setForm(emptyForm());
     setFormError('');
@@ -143,11 +166,13 @@ function NodeManager() {
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (savePending.current) return;
     const rate = Number(form.rate);
     if (!Number.isFinite(rate) || rate < 0.001 || rate > 10 || !form.yaml.trim()) {
       setFormError('请填写 YAML，并输入 0.001–10 之间的流量倍率。');
       return;
     }
+    savePending.current = true;
     setSaving(true);
     setFormError('');
     try {
@@ -177,6 +202,7 @@ function NodeManager() {
     } catch (failure) {
       if (!lifetime.current?.signal.aborted) setFormError(message(failure));
     } finally {
+      savePending.current = false;
       if (!lifetime.current?.signal.aborted) setSaving(false);
     }
   };
@@ -202,7 +228,10 @@ function NodeManager() {
             刷新目录
           </Button>
           <Button
+            disabled={saving}
             onClick={() => {
+              if (savePending.current) return;
+              cancelEdit();
               setForm(emptyForm());
               setFormError('');
               setOpened(true);
@@ -213,7 +242,7 @@ function NodeManager() {
         </Group>
       </Group>
       <Alert color="yellow" title="开发联调计费，不是服务端强制配额">
-        当前流量由官方客户端上报，后端按节点倍率记账。共享代理密码仍可能被提取；正式售卖前必须接入每用户凭据、节点侧计量与撤销。普通线路不是本地
+        当前流量仅由官方客户端上报，后端按节点倍率记账。共享代理密码仍可能被提取；即使保留客户端计费，服务节点也需要每用户鉴权与到期撤销。客户端被篡改后的少报无法仅靠请求签名杜绝。普通线路不是本地
         DIRECT 绕过。
       </Alert>
       {error && (

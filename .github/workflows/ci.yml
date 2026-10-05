@@ -191,3 +191,12 @@ jobs:
           fi
           grep -Fq -- '-X core/managed.APIBase=https://ci.example.invalid/api/v1/client' /tmp/vpn-core-build.txt
           codesign --verify --deep --strict "$bundle"
+      - name: Verify signatures after an incremental Dart entrypoint change
+        run: |
+          bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=integration_test/managed_account_test.dart
+          codesign --verify --deep --strict FlClash/build/macos/Build/Products/Debug/FlClash.app
+      - name: Restore and verify the normal application entrypoint
+        if: always()
+        run: |
+          bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=lib/main.dart
+          codesign --verify --deep --strict FlClash/build/macos/Build/Products/Debug/FlClash.app
