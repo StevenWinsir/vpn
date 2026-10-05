@@ -21,6 +21,16 @@ gh api repos/StevenWinsir/vpn/check-runs/111610613099/annotations \
 
 ## 不依赖 GitHub 托管 Runner 的回归
 
+### Runner 已启动但 macOS 编译失败
+
+修复提交 `0185eeef6d383c25783dd282463e2246cc5825f0` 的 [run 37302973875](https://github.com/StevenWinsir/vpn/actions/runs/37302973875) 已实际获得四个托管 Runner，不再是上述账户级启动失败。本轮未修改账户付款设置，因此不把恢复运行归因于代码修复或预算调整。
+
+该次 macOS 作业在 Xcode 16.4 / macOS 15.5 SDK 下编译锁定的 `connectivity_plus 7.2.0` 时失败：`value of type 'NWPath' has no member 'isUltraConstrained'`。`#available(macOS 26.0, *)` 是运行期保护，不能让旧 SDK 识别不存在的编译期声明。
+
+工作流在 `macos-15` 上显式选择 `/Applications/Xcode_26.3.app/Contents/Developer`，并在构建前输出 Xcode/SDK 版本、编译一个最小 Network API 探针；工具链缺失或不兼容会立即失败，不静默回退到默认 Xcode。该版本由 [官方 macOS 15 ARM64 镜像清单](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md#xcode) 列出。未降级插件、删除 API 使用或放宽验签。编译使用新 SDK 不等于将应用最低运行系统版本改成 macOS 26。
+
+### 本机辅助回归
+
 从仓库根目录执行，Go/PostgreSQL、已锁定的前端依赖和浏览器须预先安装；脚本不会为此读取或改写真实用户套餐。输出目录应使用新的名字。
 
 ```sh

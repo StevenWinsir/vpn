@@ -156,10 +156,18 @@ jobs:
     name: macOS native build
     runs-on: macos-15
     timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Verify pinned Xcode and required Network SDK
+        run: |
+          test -x "$DEVELOPER_DIR/usr/bin/xcodebuild"
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          printf '%s\n' 'import Network' '@available(macOS 26.0, *)' 'func verifyNetworkSDK(_ path: NWPath) { _ = path.isUltraConstrained }' | xcrun swiftc -typecheck -
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
