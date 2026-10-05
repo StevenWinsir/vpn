@@ -88,6 +88,8 @@ final class CoreBuilder implements Builder {
       );
     }
     output.dependencies.addAll([
+      // Watch child names too: creating or deleting .env must rerun the hook.
+      Uri.directory(repositoryRoot(input)),
       for (final path in report.inputs) Uri.file(path),
       for (final path in report.outputDirectories) Uri.directory(path),
     ]);

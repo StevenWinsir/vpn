@@ -94,8 +94,9 @@ void main() {
           runInShell = false,
         }) async {
           if (args.first == '-listallnetworkservices') return discovered.future;
-          if (args.first == '-getautoproxyurl')
+          if (args.first == '-getautoproxyurl') {
             return ProcessResult(1, 0, 'URL: (null)\nEnabled: No\n', '');
+          }
           fail('a stale discovery must not write system settings');
         }),
       );

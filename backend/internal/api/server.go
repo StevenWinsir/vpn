@@ -52,7 +52,11 @@ func New(db *gorm.DB, cfg config.Config) *gin.Engine {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), cfg.RequestTimeout)
 		defer cancel()
 		c.Request = c.Request.WithContext(ctx)
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
+		bodyLimit := int64(8192)
+		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/admin/nodes") {
+			bodyLimit = 128 << 10
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, bodyLimit)
 		c.Next()
 	})
 	r.Use(s.corsAndCSRF())
@@ -90,6 +94,12 @@ func New(db *gorm.DB, cfg config.Config) *gin.Engine {
 	secured.GET("/orders", s.orders)
 	secured.POST("/orders/test-purchase", s.testPurchase)
 	secured.GET("/client/bootstrap", s.bootstrap)
+	admin := secured.Group("/admin")
+	admin.Use(s.requireAdmin())
+	admin.GET("/nodes", s.adminNodeList)
+	admin.GET("/nodes/:id", s.adminNodeDetail)
+	admin.POST("/nodes", s.adminNodeSave)
+	admin.POST("/nodes/:id", s.adminNodeSave)
 	nativeLogin := v.Group("/client")
 	nativeLogin.Use(rateLimit(cfg.AuthRate))
 	nativeLogin.POST("/login", s.nativeLogin)

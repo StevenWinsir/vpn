@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/managed_credentials.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/desktop/launcher.dart';
 import 'package:fl_clash/core/desktop/lifecycle.dart';
@@ -26,6 +27,21 @@ import 'package:integration_test/integration_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:proxy/proxy.dart' as system_proxy;
 import 'package:shared_preferences/shared_preferences.dart';
+
+class _IsolatedKeychain implements ManagedCredentialStore {
+  _IsolatedKeychain(this.scope);
+  final String scope;
+  final _native = MacOSManagedCredentials();
+  @override
+  bool get supported => true;
+  @override
+  Future<RememberedManagedLogin?> read(String _) => _native.read(scope);
+  @override
+  Future<void> save(String _, RememberedManagedLogin login) =>
+      _native.save(scope, login);
+  @override
+  Future<void> delete(String _) => _native.delete(scope);
+}
 
 class _DirectResolver implements DesktopCoreLauncherResolver {
   const _DirectResolver(this.launcher);
@@ -60,6 +76,13 @@ void main() {
         jsonDecode(await File('$root/fixture.json').readAsString())
             as Map<String, dynamic>;
     final phase = (await File('$root/phase').readAsString()).trim();
+    final keychain = _IsolatedKeychain('${fixture['api']}/api/v1/client');
+    setManagedCredentialStoreForTesting(keychain);
+    var preserveLoginForReopen = false;
+    addTearDown(() async {
+      if (!preserveLoginForReopen) await keychain.delete('');
+      setManagedCredentialStoreForTesting(null);
+    });
     await File('$root/app-pid.txt').writeAsString('$pid');
     final emails = Map<String, dynamic>.from(fixture['emails'] as Map);
     final password = fixture['password'] as String;
@@ -628,6 +651,188 @@ void main() {
       final oldSession = await lifecycle!.waitUntilRunning(
         const Duration(seconds: 5),
       );
+      Future<void> reconnect() async {
+        await tester.ensureVisible(find.byKey(const Key('managed-connect')));
+        await tester.tap(find.byKey(const Key('managed-connect')));
+        await pumpUntil(
+          () =>
+              !state().busy &&
+              state().account.canConnect &&
+              container.read(isStartProvider),
+          'explicit reconnect with fresh server authorization',
+        );
+      }
+
+      Future<void> stopped(String reason) async {
+        await pumpUntil(
+          () =>
+              !state().busy &&
+              !state().account.canConnect &&
+              !container.read(isStartProvider),
+          reason,
+        );
+        await expectLater(
+          Socket.connect(
+            InternetAddress.loopbackIPv4,
+            mixedPort,
+            timeout: const Duration(seconds: 1),
+          ).then((socket) {
+            socket.destroy();
+            return socket;
+          }),
+          throwsA(isA<SocketException>()),
+        );
+        final disconnect = find.byKey(const Key('managed-disconnect'));
+        if (disconnect.evaluate().isNotEmpty) {
+          expect(tester.widget<OutlinedButton>(disconnect).onPressed, isNull);
+        }
+      }
+
+      await reconnect();
+      await transfer();
+      await control('lose-traffic-response');
+      await expectLater(
+        core.managedFlush(state().account.generation),
+        throwsA(isA<CoreMethodException>()),
+      );
+      await stopped('lost report response closes real listener and UI');
+      final committed = await control('state');
+      expect(committed['dropped_responses'], 1);
+      await core.managedFlush(state().account.generation);
+      await pumpUntil(
+        () => state().account.metering?.pending == false,
+        'lost response retry acknowledged',
+      );
+      final replayed = await control('state');
+      expect(replayed['charged_units'], committed['charged_units']);
+      expect(replayed['upload_bytes'], committed['upload_bytes']);
+      expect(replayed['download_bytes'], committed['download_bytes']);
+      await stopped('acknowledged replay must not reconnect automatically');
+      checks.add(
+        'committed report with lost TCP response closes App listener; retry acknowledges without double billing or automatic reconnect',
+      );
+
+      await reconnect();
+      await transfer();
+      final beforeOutage = await control('state');
+      await control('unavailable');
+      await expectLater(
+        core.managedFlush(state().account.generation),
+        throwsA(isA<CoreMethodException>()),
+      );
+      await stopped('backend connection loss fails closed');
+      expect(
+        (await control('state'))['charged_units'],
+        beforeOutage['charged_units'],
+      );
+      await control('available');
+      await core.managedFlush(state().account.generation);
+      await pumpUntil(
+        () => state().account.metering?.pending == false,
+        'outage tail acknowledged',
+      );
+      expect(
+        (await control('state'))['charged_units'] as int,
+        greaterThan(beforeOutage['charged_units'] as int),
+      );
+      await stopped('backend recovery still requires explicit user connection');
+      checks.add(
+        'backend TCP outage stops actual listener and UI; pending cumulative traffic settles after recovery without implicit connection',
+      );
+
+      await reconnect();
+      await transfer();
+      await control('config-changed');
+      await core.managedFlush(state().account.generation);
+      await stopped('running configuration replacement closes connection');
+      await accountAction.reloadConfiguration();
+      await pumpUntil(
+        () => !state().busy && state().account.configuration != null,
+        'replacement configuration loaded',
+      );
+      expect(
+        state().account.configuration!.groups.single.proxies,
+        contains('Acceptance-Rotated'),
+      );
+      expect(container.read(isStartProvider), isFalse);
+      await reconnect();
+      await tester.tap(find.byKey(const Key('managed-disconnect')));
+      await stopped('replacement configuration explicit disconnect');
+      await control('config-valid');
+      checks.add(
+        'configuration change while carrying real traffic stops connection, exposes replacement nodes, and requires explicit reconnect',
+      );
+
+      for (final scenario in ['quota', 'subscription']) {
+        if (state().account.user != null) await logout();
+        await submit(emails['fault'] as String, password);
+        await pumpUntil(
+          () => !state().busy && state().account.configuration != null,
+          'fault account configuration',
+        );
+        await reconnect();
+        await transfer();
+        await control(
+          scenario == 'quota' ? 'quota-empty' : 'subscription-expire',
+        );
+        await core.managedFlush(state().account.generation);
+        await stopped('running $scenario denial');
+        final deniedLedger = await control('state');
+        expect(
+          deniedLedger['charged_units'],
+          ((deniedLedger['upload_bytes'] as int) +
+                  (deniedLedger['download_bytes'] as int)) *
+              1000,
+        );
+        await screenshot('denied-$scenario');
+        await control(
+          scenario == 'quota' ? 'quota-renew' : 'subscription-renew',
+        );
+        await accountAction.refresh();
+        await pumpUntil(() => !state().busy, 'renewed $scenario status');
+        expect(container.read(isStartProvider), isFalse);
+        checks.add(
+          'running $scenario denial closes listener/UI and settles exact traffic; entitlement renewal alone never reconnects',
+        );
+      }
+
+      if (state().account.user != null) await logout();
+      await submit(emails['vip'] as String, password);
+      await pumpUntil(
+        () => !state().busy && state().account.configuration != null,
+        'VIP before server refusal',
+      );
+      await reconnect();
+      await transfer();
+      await core.managedFlush(state().account.generation);
+      await control('expire');
+      await expectLater(
+        core.managedFlush(state().account.generation),
+        throwsA(isA<CoreMethodException>()),
+      );
+      await stopped('server rejects active session');
+      checks.add(
+        'actual server session refusal stops App listener and connected UI',
+      );
+
+      if (state().account.user != null) await logout();
+      await submit(emails['vip'] as String, password);
+      await pumpUntil(
+        () => !state().busy && state().account.configuration != null,
+        'VIP before abnormal Core exit',
+      );
+      await reconnect();
+      await transfer();
+      await core.managedFlush(state().account.generation);
+      expect(Process.killPid(oldSession.pid, ProcessSignal.sigkill), isTrue);
+      await pumpUntil(
+        () => state().account.user == null && !container.read(isStartProvider),
+        'actual Core SIGKILL clears connected state',
+      );
+      await control('expire');
+      checks.add(
+        'owned Core SIGKILL clears App account/connection; fixture expires orphan server session before controlled restart',
+      );
       await globalState.container
           .read(coreActionProvider.notifier)
           .restartCore();
@@ -641,10 +846,20 @@ void main() {
       expect(newSession.pid, isNot(oldSession.pid));
       await closedGate('actual Core restart clears account');
       await managedStorage(false);
+      await tester.ensureVisible(find.byKey(const Key('managed-remember')));
+      await tester.tap(find.byKey(const Key('managed-remember')));
+      await tester.pump();
       await submit(emails['free'] as String, password);
       await pumpUntil(
         () => !state().busy && state().account.user != null,
         'login before normal application exit',
+      );
+      await pumpUntil(
+        () async => (await keychain.read(''))?.email == emails['free'],
+        'native Keychain remember after successful authentication',
+      );
+      checks.add(
+        'explicit remember stores credentials in the isolated macOS Keychain scope',
       );
     } else {
       expect(
@@ -652,6 +867,27 @@ void main() {
         await File('$root/installation-id.txt').readAsString(),
       );
       checks.add('new App process preserves installation UUID but not account');
+      await pumpUntil(
+        () =>
+            tester
+                .widget<TextFormField>(find.byKey(const Key('managed-email')))
+                .controller!
+                .text ==
+            emails['free'],
+        'Keychain prefill after a new application process',
+      );
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('managed-password')))
+            .controller!
+            .text,
+        password,
+      );
+      expect(state().account.user, isNull);
+      expect(state().account.canConnect, isFalse);
+      checks.add(
+        'Keychain survives App reopen but cached credentials never authorize or auto-connect',
+      );
       await submit(emails['vip'] as String, password);
       await pumpUntil(
         () =>
@@ -662,6 +898,8 @@ void main() {
       await closedGate('reopened App requires successful new login');
       await logout();
       await closedGate('logout clears account and stays closed');
+      expect(await keychain.read(''), isNull);
+      checks.add('explicit logout removes the scoped Keychain entry');
       await managedStorage(false);
     }
     await stored.reload();
@@ -691,7 +929,7 @@ void main() {
       isTrue,
     );
     checks.add(
-      'no persisted credentials or real system proxy mutation; only actual transfers are billed',
+      'no plaintext credentials in preferences or real system proxy mutation; only actual transfers are billed',
     );
     expect(tester.takeException(), isNull);
     await File('$root/result-$phase.json').writeAsString(
@@ -712,6 +950,7 @@ void main() {
           .onPressed,
       isNotNull,
     );
+    preserveLoginForReopen = phase == 'first';
     final exit = globalState.container.read(systemActionProvider.notifier);
     exitAction = () => unawaited(exit.handleExit());
   });

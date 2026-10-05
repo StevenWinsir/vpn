@@ -102,7 +102,8 @@ func StartWithSampler(ctx context.Context, client *Client, read SampleTotals, st
 func (m *Meter) snapshotLocked() Status {
 	status := m.status
 	unreported := m.upload - status.UploadBytes + m.download - status.DownloadBytes
-	status.RemainingBytes = max(0, status.RemainingBytes-unreported)
+	charge := unreported/1000*status.RatePermille + (unreported%1000*status.RatePermille+999)/1000
+	status.RemainingBytes = max(0, status.RemainingBytes-charge)
 	if m.closed {
 		status.CanConnect = false
 		status.Reason = "logged_out"
@@ -212,6 +213,11 @@ func (m *Meter) flushLocked(work context.Context, final bool) error {
 		m.mu.Unlock()
 		m.deny("session_mismatch")
 		return &APIError{"session_mismatch"}
+	}
+	if status.RatePermille != m.confirmed.RatePermille || status.ProfileVersion != m.confirmed.ProfileVersion {
+		m.mu.Unlock()
+		m.deny("invalid_server_response")
+		return &APIError{"invalid_server_response"}
 	}
 	m.status = status
 	m.confirmed = status

@@ -662,6 +662,8 @@
   "nextMatch": "次の一致",
   "clearSearch": "検索をクリア",
   "addWidget": "ウィジェットを追加",
+  "managedRememberPassword": "macOS キーチェーンにパスワードを保存",
+  "managedCredentialStoreError": "キーチェーンを利用できません。パスワードを手入力してください。平文では保存しません。削除に失敗した場合は、キーチェーンアクセスで本アプリの managed-login 項目を削除してください。",
   "showPassword": "パスワードを表示",
   "hidePassword": "パスワードを隠す",
   "authorize": "許可",

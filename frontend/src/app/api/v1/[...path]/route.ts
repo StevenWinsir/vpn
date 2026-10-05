@@ -4,7 +4,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type Context = { params: Promise<{ path: string[] }> };
-const maxBodyBytes = 8192; // Matches the Go API's JSON request limit.
+const defaultMaxBodyBytes = 8192;
 const requestHeaders = [
   'accept',
   'authorization',
@@ -26,10 +26,17 @@ const responseHeaders = [
   'access-control-allow-headers',
 ];
 
-async function readBody(request: Request, signal: AbortSignal): Promise<ArrayBuffer | undefined> {
+async function readBody(
+  request: Request | Response,
+  signal: AbortSignal,
+  maxBodyBytes: number,
+  tooLarge = new APIProxyError(413, 'request_too_large', '请求内容超过允许大小。'),
+): Promise<ArrayBuffer | undefined> {
   if (!request.body) return undefined;
-  if (Number(request.headers.get('content-length')) > maxBodyBytes)
-    throw new APIProxyError(413, 'request_too_large', '请求内容超过允许大小。');
+  if (Number(request.headers.get('content-length')) > maxBodyBytes) {
+    void request.body.cancel().catch(() => undefined);
+    throw tooLarge;
+  }
   const reader = request.body.getReader();
   const buffer = new Uint8Array(maxBodyBytes);
   let size = 0;
@@ -46,7 +53,7 @@ async function readBody(request: Request, signal: AbortSignal): Promise<ArrayBuf
       size += value.byteLength;
       if (size > maxBodyBytes) {
         await reader.cancel();
-        throw new APIProxyError(413, 'request_too_large', '请求内容超过允许大小。');
+        throw tooLarge;
       }
       buffer.set(value, size - value.byteLength);
     }
@@ -81,7 +88,11 @@ async function proxy(request: Request, context: Context) {
     const signal = AbortSignal.any([request.signal, timeout]);
     const body = ['GET', 'HEAD'].includes(request.method)
       ? undefined
-      : await readBody(request, signal);
+      : await readBody(
+          request,
+          signal,
+          path[0] === 'admin' && path[1] === 'nodes' ? 128 << 10 : defaultMaxBodyBytes,
+        );
     const upstream = await fetch(internalURL, {
       method: request.method,
       headers,
@@ -106,7 +117,12 @@ async function proxy(request: Request, context: Context) {
     }
     // Each Set-Cookie is separate, especially when Expires contains a comma.
     for (const cookie of upstream.headers.getSetCookie()) outgoing.append('Set-Cookie', cookie);
-    const payload = await upstream.arrayBuffer();
+    const payload = await readBody(
+      upstream,
+      signal,
+      path[0] === 'client' && path[1] === 'config' ? 8 << 20 : 512 << 10,
+      new APIProxyError(502, 'upstream_response_too_large', '后端响应超过允许大小。'),
+    );
     return new Response(
       request.method === 'HEAD' || [204, 205, 304].includes(upstream.status) ? null : payload,
       { status: upstream.status, headers: outgoing },

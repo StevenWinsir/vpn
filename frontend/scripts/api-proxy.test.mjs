@@ -157,6 +157,19 @@ function mockBackend(label, origins) {
     if (pathname === '/api/v1/plans') return json(200, { plans: [] });
     if (pathname === '/api/v1/meta')
       return json(200, { upstream: label, test_purchase_enabled: false });
+    if (pathname === '/api/v1/oversized-known') {
+      response.writeHead(200, { 'Content-Length': (512 << 10) + 1 });
+      return response.end(Buffer.alloc((512 << 10) + 1));
+    }
+    if (pathname === '/api/v1/oversized-chunked') {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.flushHeaders();
+      response.write(Buffer.alloc(512 << 10));
+      return response.end('x');
+    }
+    if (pathname === '/api/v1/client/config') {
+      return json(200, { yaml: 'x'.repeat(600 << 10) });
+    }
     if (pathname === '/api/v1/slow') {
       await delay(1500);
       return json(200, { delayed: true });
@@ -501,6 +514,23 @@ test(
           assert.ok(!first.received.some((record) => record.url === '/api/v1/redirect-target'));
         },
       );
+
+      await t.test('upstream response limits include chunked bodies and preserve large client profiles', async () => {
+        for (const route of ['/oversized-known', '/oversized-chunked']) {
+          const response = await api(route);
+          assert.equal(response.status, 502);
+          assert.equal((await response.json()).error.code, 'upstream_response_too_large');
+        }
+        const profile = await api('/client/config');
+        assert.equal(profile.status, 200);
+        assert.equal((await profile.json()).yaml.length, 600 << 10);
+        const imported = await api('/admin/nodes', {
+          method: 'POST',
+          headers: { Origin: browserURL, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ yaml: 'x'.repeat(64 << 10) }),
+        });
+        assert.equal(imported.status, 200);
+      });
 
       await t.test('upstream timeouts return a controlled 504', async () => {
         const response = await api('/slow');

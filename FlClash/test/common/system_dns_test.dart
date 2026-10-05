@@ -10,6 +10,8 @@ class _FakePort implements SystemDnsPort {
   List<String> servers;
   final Map<String, List<String>> _serviceServers = {};
   bool writeSucceeds = true;
+  bool readable = true;
+  bool loseReadback = false;
   Duration delay = Duration.zero;
 
   int reads = 0;
@@ -24,6 +26,7 @@ class _FakePort implements SystemDnsPort {
   @override
   Future<List<String>?> readDnsServers(String service) => _guard(() async {
     reads++;
+    if (!readable) return null;
     if (service == this.service) return List.of(servers);
     return List.of(_serviceServers[service] ?? servers);
   });
@@ -40,6 +43,7 @@ class _FakePort implements SystemDnsPort {
         if (service == this.service) {
           this.servers = List.of(servers);
         }
+        if (loseReadback) readable = false;
         return true;
       });
 
@@ -84,6 +88,59 @@ SystemDnsCoordinator _coordinator(_FakePort port, _FakeStore store) =>
     SystemDnsCoordinator(port: port, store: store, fallbackDns: '223.5.5.5');
 
 void main() {
+  test(
+    'failed readback retains recovery data until settings can be verified',
+    () async {
+      final port = _FakePort()..loseReadback = true;
+      final store = _FakeStore();
+      final coordinator = _coordinator(port, store);
+      await coordinator.sync(true);
+      expect(store.record?.servers, ['1.1.1.1']);
+      expect(coordinator.appliedRecord, isNotNull);
+      await coordinator.sync(false);
+      expect(store.record, isNotNull);
+      port
+        ..loseReadback = false
+        ..readable = true;
+      await coordinator.resync();
+      expect(port.servers, ['1.1.1.1']);
+      expect(store.record, isNull);
+    },
+  );
+
+  test('restart restores DNS after an unverified successful write', () async {
+    final port = _FakePort()..loseReadback = true;
+    final store = _FakeStore();
+    await _coordinator(port, store).sync(true);
+    port
+      ..loseReadback = false
+      ..readable = true;
+    await _coordinator(port, store).sync(false);
+    expect(port.servers, ['1.1.1.1']);
+    expect(store.record, isNull);
+  });
+
+  test(
+    'resync readback failure preserves the updated restoration baseline',
+    () async {
+      final port = _FakePort();
+      final store = _FakeStore();
+      final coordinator = _coordinator(port, store);
+      await coordinator.sync(true);
+      port
+        ..servers = ['8.8.8.8']
+        ..loseReadback = true;
+      await coordinator.resync();
+      expect(store.record?.servers, ['8.8.8.8']);
+      port
+        ..loseReadback = false
+        ..readable = true;
+      await coordinator.sync(false);
+      expect(port.servers, ['8.8.8.8']);
+      expect(store.record, isNull);
+    },
+  );
+
   test(
     'appends the fallback resolver and records the untouched servers',
     () async {

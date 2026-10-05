@@ -186,6 +186,23 @@ func (e *managedProfileEngine) Prepare(ctx context.Context, profile managed.Prof
 	if err != nil {
 		return nil, err
 	}
+	if !profile.ValidCatalog() {
+		return nil, managedConfigError("invalid_client_config")
+	}
+	if len(profile.Nodes) != 0 {
+		selected := ""
+		names := make([]string, 0, len(profile.Nodes))
+		for _, node := range profile.Nodes {
+			names = append(names, node.Name)
+			if node.ID == profile.NodeID {
+				selected = node.Name
+			}
+		}
+		if len(raw.Proxy) != 1 || raw.Proxy[0]["name"] != selected || len(groups) != 1 || groups[0].Name != "VPN" || len(groups[0].Proxies) != 1 || groups[0].Selected != selected || len(raw.Rule) != 1 || raw.Rule[0] != "MATCH,VPN" {
+			return nil, managedConfigError("invalid_client_config")
+		}
+		groups[0].Proxies = names
+	}
 	configMu.Lock()
 	defer configMu.Unlock()
 	if e.home == "" || !isInit.Load() {

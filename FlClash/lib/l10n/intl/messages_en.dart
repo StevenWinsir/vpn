@@ -687,6 +687,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedCounterError": MessageLookupByLibrary.simpleMessage(
       "Core traffic counters are invalid. The proxy has stopped; sign in again after restarting the Core.",
     ),
+    "managedCredentialStoreError": MessageLookupByLibrary.simpleMessage(
+      "macOS Keychain is unavailable. Enter your password manually; no plaintext fallback is used. If removing saved credentials failed, remove this app\'s managed-login item in Keychain Access.",
+    ),
     "managedCredentialsError": MessageLookupByLibrary.simpleMessage(
       "The email or password is incorrect.",
     ),
@@ -736,6 +739,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "managedReload": MessageLookupByLibrary.simpleMessage(
       "Reload server configuration",
+    ),
+    "managedRememberPassword": MessageLookupByLibrary.simpleMessage(
+      "Remember password in macOS Keychain",
     ),
     "managedRequestFailed": MessageLookupByLibrary.simpleMessage(
       "The operation failed. Please retry.",

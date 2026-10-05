@@ -66,6 +66,7 @@ docs/
 /android/app/src/main/jniLibs/
 /services/helper/target
 /macos/**/Package.resolved
+!/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 /macos/build/
 /env.json
 /core_sha256.json

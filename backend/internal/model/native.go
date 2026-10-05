@@ -4,6 +4,8 @@ import "time"
 
 // Native tokens are opaque, memory-only on the client, and stored only as hashes here.
 type NativeSession struct {
+	NodeID                 string  `gorm:"size:36;not null;default:''"`
+	RatePermille           int64   `gorm:"not null;default:1000"`
 	ID                     string  `gorm:"type:uuid;primaryKey"`
 	UserID                 string  `gorm:"type:uuid;not null;index"`
 	User                   User    `gorm:"constraint:OnDelete:CASCADE"`
@@ -27,6 +29,7 @@ type NativeSession struct {
 
 // The ledger records client-reported usage, not independently verified node usage.
 type ClientTrafficReport struct {
+	NodeID         string        `gorm:"size:36;not null;default:''"`
 	ID             string        `gorm:"type:uuid;primaryKey"`
 	SessionID      string        `gorm:"type:uuid;not null;uniqueIndex:idx_client_report_sequence"`
 	Session        NativeSession `gorm:"foreignKey:SessionID;constraint:OnDelete:RESTRICT"`

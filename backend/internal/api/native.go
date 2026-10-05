@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -106,7 +107,7 @@ func (s *Server) nativeLogin(c *gin.Context) {
 		if e != nil {
 			return e
 		}
-		status = s.nativeSnapshot(sess, sub, now)
+		status = s.nativeSnapshot(sess, sub, now, tx)
 		return nil
 	})
 	if s.nativeFailure(c, err) {
@@ -212,8 +213,8 @@ func nativeAuthorizationBound(sess model.NativeSession, sub *model.Subscription)
 	return nativeBound(sess, sub) && sess.EntitlementFingerprint == nativeEntitlementFingerprint(sub)
 }
 
-func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time) nativeState {
-	out := nativeState{ServerTime: now, SessionIdleTimeout: int(nativeIdleTTL / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: 60, LeaseSeconds: nativeLeaseSeconds, MeteringSource: "client_reported", RatePermille: billing.ClientRatePermille}
+func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time, transactions ...*gorm.DB) nativeState {
+	out := nativeState{ServerTime: now, SessionIdleTimeout: int(nativeIdleTTL / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: 60, LeaseSeconds: nativeLeaseSeconds, MeteringSource: "client_reported", RatePermille: sessionRate(sess)}
 	if sub != nil {
 		out.SubscriptionExpiresAt = &sub.ExpiresAt
 		out.TotalBytes, out.UsedUnits, out.PlanName = sub.TrafficLimitBytes, sub.UsedUnits, sub.PlanName
@@ -223,12 +224,24 @@ func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscriptio
 	}
 	if out.Reason == "" {
 		switch {
-		case sess.SubscriptionID == nil:
+		case sess.SubscriptionID == nil || s.cfg.ClientNodeCatalog && sess.NodeID == "":
 			out.Reason = "profile_required"
 		case !nativeAuthorizationBound(sess, sub):
 			out.Reason = "subscription_changed"
 		default:
-			data, err := s.readNativeProfile(sub.PlanID)
+			var data []byte
+			var err error
+			if s.cfg.ClientNodeCatalog {
+				db := s.db
+				if len(transactions) == 1 {
+					db = transactions[0]
+				}
+				var profile catalogProfile
+				profile, err = s.catalogProfile(db, sub, sess.NodeID)
+				data = profile.Data
+			} else {
+				data, err = s.readNativeProfile(sub.PlanID)
+			}
 			if err != nil {
 				out.Reason = "client_config_unavailable"
 			} else if sess.ProfileVersion != nativeProfileVersion(data) {
@@ -255,8 +268,8 @@ func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscriptio
 
 func (s *Server) nativeStatus(c *gin.Context) {
 	var status nativeState
-	err := s.nativeTransaction(c, func(_ *gorm.DB, sess *model.NativeSession, sub *model.Subscription, now time.Time) error {
-		status = s.nativeSnapshot(*sess, sub, now)
+	err := s.nativeTransaction(c, func(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, now time.Time) error {
+		status = s.nativeSnapshot(*sess, sub, now, tx)
 		return nil
 	})
 	if s.nativeFailure(c, err) {
@@ -294,6 +307,16 @@ func (s *Server) readNativeProfile(planID string) ([]byte, error) {
 func (s *Server) nativeConfig(c *gin.Context) {
 	var data []byte
 	var status nativeState
+	var catalog *catalogProfile
+	nodeID := c.Query("node_id")
+	if nodeID != "" {
+		id, err := uuid.Parse(nodeID)
+		if err != nil || id == uuid.Nil || !s.cfg.ClientNodeCatalog {
+			fail(c, 400, "invalid_managed_selection", "节点选择无效")
+			return
+		}
+		nodeID = id.String()
+	}
 	err := s.nativeTransaction(c, func(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, now time.Time) error {
 		if reason := s.nativeEntitlement(sub, now); reason != "" {
 			return &apiError{403, reason, "请先升级有效的付费 VIP 套餐并确认剩余流量"}
@@ -302,9 +325,31 @@ func (s *Server) nativeConfig(c *gin.Context) {
 			return &apiError{409, "subscription_changed", "套餐周期已变更，请重新登录"}
 		}
 		var e error
-		data, e = s.readNativeProfile(sub.PlanID)
-		if e != nil {
-			return e
+		if s.cfg.ClientNodeCatalog {
+			if sess.SubscriptionID != nil {
+				sequence, parseErr := strconv.ParseInt(c.Query("last_sequence"), 10, 64)
+				if parseErr != nil || sequence != sess.LastSequence {
+					return &apiError{409, "traffic_sequence", "切换节点前必须确认当前流量批次"}
+				}
+			}
+			selected := nodeID
+			if selected == "" {
+				selected = sess.NodeID
+			}
+			profile, profileErr := s.catalogProfile(tx, sub, selected)
+			if profileErr != nil && nodeID == "" && selected != "" {
+				profile, profileErr = s.catalogProfile(tx, sub, "")
+			}
+			if profileErr != nil {
+				return profileErr
+			}
+			catalog = &profile
+			data, sess.NodeID, sess.RatePermille = profile.Data, profile.Node.ID, profile.Node.RatePermille
+		} else {
+			data, e = s.readNativeProfile(sub.PlanID)
+			if e != nil {
+				return e
+			}
 		}
 		var active int64
 		fingerprint := nativeEntitlementFingerprint(sub)
@@ -316,16 +361,20 @@ func (s *Server) nativeConfig(c *gin.Context) {
 		}
 		sess.SubscriptionID, sess.SubscriptionStartsAt = &sub.ID, &sub.StartsAt
 		sess.EntitlementFingerprint, sess.ProfileVersion = fingerprint, nativeProfileVersion(data)
-		if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion}).Error; e != nil {
+		if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion, "node_id": sess.NodeID, "rate_permille": sessionRate(*sess)}).Error; e != nil {
 			return e
 		}
-		status = s.nativeSnapshot(*sess, sub, now)
+		status = s.nativeSnapshot(*sess, sub, now, tx)
 		return nil
 	})
 	if s.nativeFailure(c, err) {
 		return
 	}
-	c.JSON(200, gin.H{"yaml": string(data), "version": nativeProfileVersion(data), "session": status})
+	response := gin.H{"yaml": string(data), "version": nativeProfileVersion(data), "session": status}
+	if catalog != nil {
+		response["nodes"], response["node_id"] = catalog.Nodes, catalog.Node.ID
+	}
+	c.JSON(200, response)
 }
 
 func (s *Server) nativeTraffic(c *gin.Context) {
@@ -354,11 +403,11 @@ func (s *Server) nativeTraffic(c *gin.Context) {
 			replayed = true
 		} else {
 			previous := billing.ClientCounters{Sequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes}
-			up, down, units, e := billing.ClientDelta(previous, in, sub.UsedUnits, sub.UploadBytes, sub.DownloadBytes)
+			up, down, units, e := billing.ClientDeltaAtRate(previous, in, sub.UsedUnits, sub.UploadBytes, sub.DownloadBytes, sessionRate(*sess))
 			if e != nil {
 				return &apiError{409, "traffic_sequence", "流量序号或累计计数不连续，请重新登录"}
 			}
-			report := model.ClientTrafficReport{ID: uuid.NewString(), SessionID: sess.ID, Sequence: in.Sequence, UserID: sess.UserID, SubscriptionID: sub.ID, UploadBytes: in.UploadBytes, DownloadBytes: in.DownloadBytes, UploadDelta: up, DownloadDelta: down, ChargedUnits: units, RatePermille: billing.ClientRatePermille, Source: "client_reported"}
+			report := model.ClientTrafficReport{ID: uuid.NewString(), SessionID: sess.ID, Sequence: in.Sequence, UserID: sess.UserID, SubscriptionID: sub.ID, UploadBytes: in.UploadBytes, DownloadBytes: in.DownloadBytes, UploadDelta: up, DownloadDelta: down, ChargedUnits: units, RatePermille: sessionRate(*sess), NodeID: sess.NodeID, Source: "client_reported"}
 			if e = tx.Omit("Session").Create(&report).Error; e != nil {
 				return e
 			}
@@ -373,7 +422,7 @@ func (s *Server) nativeTraffic(c *gin.Context) {
 				return e
 			}
 		}
-		status = s.nativeSnapshot(*sess, sub, now)
+		status = s.nativeSnapshot(*sess, sub, now, tx)
 		return nil
 	})
 	if s.nativeFailure(c, err) {

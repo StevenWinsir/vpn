@@ -4,8 +4,10 @@ import 'proxy_platform_interface.dart';
 import 'src/linux_proxy.dart';
 import 'src/macos_proxy.dart';
 import 'src/proxy_command.dart';
+import 'src/proxy_journal.dart';
 
 export 'src/proxy_command.dart' show ProxyExecutableChecker, ProxyProcessRunner;
+export 'src/proxy_journal.dart' show ProxyJournal, FileProxyJournal;
 
 class Proxy {
   static const int _minPort = 1;
@@ -17,13 +19,17 @@ class Proxy {
   Proxy({
     ProxyProcessRunner? processRunner,
     ProxyExecutableChecker? executableChecker,
+    ProxyJournal? macosJournal,
   }) {
     final commandRunner = ProxyCommandRunner(processRunner ?? Process.run);
     _linuxProxy = LinuxProxy(
       commandRunner: commandRunner,
       executableChecker: executableChecker,
     );
-    _macosProxy = MacosProxy(commandRunner: commandRunner);
+    _macosProxy = MacosProxy(
+      commandRunner: commandRunner,
+      journal: macosJournal,
+    );
   }
 
   Future<bool> startProxy(

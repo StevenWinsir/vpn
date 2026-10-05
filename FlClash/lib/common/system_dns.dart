@@ -181,16 +181,17 @@ final class SystemDnsCoordinator {
     }
     final record = SystemDnsRecord(service: service, servers: current);
     await store.write(record);
+    _applied = record;
     final expected = _expectedServers(record);
     if (!_sameServers(current, expected)) {
       final ok = await port.writeDnsServers(service, expected);
       if (!ok) {
-        await store.clear();
+        await _release();
         return;
       }
       final written = await port.readDnsServers(service);
       if (written == null || !_sameServers(written, expected)) {
-        await store.clear();
+        await _release();
         return;
       }
     }
@@ -219,16 +220,15 @@ final class SystemDnsCoordinator {
     }
     final record = SystemDnsRecord(service: service, servers: current);
     await store.write(record);
+    _applied = record;
     final next = _expectedServers(record);
     if (!await port.writeDnsServers(service, next)) {
-      _applied = null;
-      await store.clear();
+      await _release();
       return;
     }
     final written = await port.readDnsServers(service);
     if (written == null || !_sameServers(written, next)) {
-      _applied = null;
-      await store.clear();
+      await _release();
       return;
     }
     _applied = record;

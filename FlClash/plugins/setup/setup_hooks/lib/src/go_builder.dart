@@ -181,6 +181,10 @@ class GoBuilder {
       if (File(goWorkSum).existsSync()) inputs.add(goWorkSum);
     }
     inputs.addAll(harnessInputs);
+    for (final name in ['build_config.yaml', '.env']) {
+      final file = File(p.join(rootDir, name));
+      if (file.existsSync()) inputs.add(file.path);
+    }
 
     if (target.isLib) {
       final compilerVersion = runCommand(env['CC']!, ['--version']);

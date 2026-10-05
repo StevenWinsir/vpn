@@ -63,6 +63,10 @@ func (c *Coordinator) discardConfigurationLocked() error {
 
 func (c *Coordinator) SelectProxy(ctx context.Context, generation uint64, configurationID, group, proxy string) (AccountSnapshot, error) {
 	c.mu.Lock()
+	if c.profile != nil && len(c.profile.Nodes) != 0 {
+		c.mu.Unlock()
+		return c.request(ctx, generation, true, &nodeSelection{configurationID, group, proxy})
+	}
 	defer c.mu.Unlock()
 	c.snapshotLocked()
 	if c.snapshot.Generation != generation {
@@ -78,4 +82,10 @@ func (c *Coordinator) SelectProxy(ctx context.Context, generation uint64, config
 	}
 	view.Groups = groups
 	return c.snapshotLocked(), nil
+}
+
+type nodeSelection struct {
+	configurationID string
+	group           string
+	proxy           string
 }

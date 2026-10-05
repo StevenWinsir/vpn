@@ -5545,6 +5545,26 @@ class AppLocalizations {
     return Intl.message('Add widget', name: 'addWidget', desc: '', args: []);
   }
 
+  /// `Remember password in macOS Keychain`
+  String get managedRememberPassword {
+    return Intl.message(
+      'Remember password in macOS Keychain',
+      name: 'managedRememberPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `macOS Keychain is unavailable. Enter your password manually; no plaintext fallback is used. If removing saved credentials failed, remove this app's managed-login item in Keychain Access.`
+  String get managedCredentialStoreError {
+    return Intl.message(
+      'macOS Keychain is unavailable. Enter your password manually; no plaintext fallback is used. If removing saved credentials failed, remove this app\'s managed-login item in Keychain Access.',
+      name: 'managedCredentialStoreError',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Show password`
   String get showPassword {
     return Intl.message(

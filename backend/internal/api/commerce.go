@@ -168,6 +168,15 @@ func (s *Server) bootstrap(c *gin.Context) {
 		return
 	}
 	nodes := []model.Node{}
+	if s.cfg.ClientNodeCatalog {
+		nodes, err = s.catalogMetadata(s.database(c), sub)
+		if err != nil {
+			fail(c, 503, "database_unavailable", "节点信息暂时不可用")
+			return
+		}
+		c.JSON(200, gin.H{"entitlement_active": true, "expires_at": sub.ExpiresAt, "is_test": sub.IsTest, "nodes": nodes, "proxy_service_ready": false, "metering_connected": true, "metering_source": "client_reported", "message": "节点目录已接入；客户端需单独登录授权，尚无节点侧强制配额"})
+		return
+	}
 	query := s.database(c).Where("enabled = ?", true)
 	if !sub.AllowDedicated {
 		query = query.Where("line_type = ?", "direct")

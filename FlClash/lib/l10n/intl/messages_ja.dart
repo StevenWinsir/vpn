@@ -563,6 +563,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedCounterError": MessageLookupByLibrary.simpleMessage(
       "コアの通信量カウンターに異常があります。コアを再起動してログインし直してください。",
     ),
+    "managedCredentialStoreError": MessageLookupByLibrary.simpleMessage(
+      "キーチェーンを利用できません。パスワードを手入力してください。平文では保存しません。削除に失敗した場合は、キーチェーンアクセスで本アプリの managed-login 項目を削除してください。",
+    ),
     "managedCredentialsError": MessageLookupByLibrary.simpleMessage(
       "メールアドレスまたはパスワードが正しくありません。",
     ),
@@ -609,6 +612,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "認可または実行状態が変わったため停止しました。再接続して権限を確認してください。",
     ),
     "managedReload": MessageLookupByLibrary.simpleMessage("サーバー設定を再読み込み"),
+    "managedRememberPassword": MessageLookupByLibrary.simpleMessage(
+      "macOS キーチェーンにパスワードを保存",
+    ),
     "managedRequestFailed": MessageLookupByLibrary.simpleMessage(
       "操作に失敗しました。再試行してください。",
     ),

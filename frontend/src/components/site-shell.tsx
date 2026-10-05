@@ -53,7 +53,12 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const [opened, { toggle, close }] = useDisclosure();
   const [leaving, setLeaving] = useState(false);
   const authPage = path === '/login' || path === '/register';
-  const workspace = ['/dashboard', '/plans', '/orders'].includes(path);
+  const workspace =
+    ['/dashboard', '/plans', '/orders'].includes(path) || path.startsWith('/admin/');
+  const navigation =
+    user?.role === 'admin'
+      ? [...links, { href: '/admin/nodes', label: '节点管理', icon: IconShieldLock }]
+      : links;
   const signout = async () => {
     setLeaving(true);
     try {
@@ -142,7 +147,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
             <Text c="dimmed" size="xs" fw={600} px="sm" mb="sm">
               个人工作台
             </Text>
-            {links.map(({ href, label, icon: Icon }) => (
+            {navigation.map(({ href, label, icon: Icon }) => (
               <Link
                 onClick={close}
                 key={href}
@@ -159,7 +164,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               开发联调版
             </Badge>
             <Text size="xs" c="dimmed" lh={1.8}>
-              账户和订单已连接后端。真实支付、节点代理与客户端尚未接入。
+              节点与客户端流量正在联调。真实支付和节点侧强制配额尚未接入。
             </Text>
             <Link href="/" className="sidebar-home">
               返回首页 <IconArrowUpRight size={14} />

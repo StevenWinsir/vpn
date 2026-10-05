@@ -8,6 +8,7 @@ import (
 )
 
 type AccountSnapshot struct {
+	APIBase         string             `json:"api_base"`
 	Generation      uint64             `json:"generation"`
 	RuntimeRevision uint64             `json:"runtime_revision"`
 	Phase           string             `json:"phase"`
@@ -124,6 +125,7 @@ func (c *Coordinator) snapshotLocked() AccountSnapshot {
 	c.snapshot.CanConnect = c.meter != nil && c.snapshot.Configuration != nil && c.meter.Status().CanConnect && c.runtime.Running()
 	c.snapshot.RuntimeRevision = c.runRevision
 	result := c.snapshot
+	result.APIBase = c.base
 	if result.Metering != nil {
 		view := *result.Metering
 		result.Metering = &view
@@ -322,7 +324,7 @@ func (c *Coordinator) Login(ctx context.Context, params LoginParams) (AccountSna
 	return result, nil
 }
 
-func (c *Coordinator) request(ctx context.Context, generation uint64, load bool) (AccountSnapshot, error) {
+func (c *Coordinator) request(ctx context.Context, generation uint64, load bool, selections ...*nodeSelection) (AccountSnapshot, error) {
 	if err := c.lock(ctx); err != nil {
 		return c.Snapshot(), err
 	}
@@ -339,6 +341,23 @@ func (c *Coordinator) request(ctx context.Context, generation uint64, load bool)
 	if client == nil {
 		c.mu.Unlock()
 		return c.Snapshot(), &APIError{"native_session_required"}
+	}
+	nodeID := ""
+	if len(selections) != 0 {
+		selection := selections[0]
+		if len(selections) != 1 || !load || c.snapshot.Configuration == nil || c.profile == nil || c.snapshot.Configuration.ID != selection.configurationID || selection.group != "VPN" {
+			c.mu.Unlock()
+			return c.Snapshot(), &APIError{"invalid_managed_selection"}
+		}
+		for _, node := range c.profile.Nodes {
+			if node.Name == selection.proxy {
+				nodeID = node.ID
+			}
+		}
+		if nodeID == "" {
+			c.mu.Unlock()
+			return c.Snapshot(), &APIError{"invalid_managed_selection"}
+		}
 	}
 	c.requestCancel = cancel
 	c.snapshot.Busy = true
@@ -370,10 +389,11 @@ func (c *Coordinator) request(ctx context.Context, generation uint64, load bool)
 	if err != nil {
 		err = &APIError{"traffic_unconfirmed"}
 	} else if load {
+		loader := func(ctx context.Context) (Profile, error) { return client.ConfigForNode(ctx, nodeID) }
 		if meter == nil {
-			profile, err = client.Config(work)
+			profile, err = loader(work)
 		} else {
-			profile, err = meter.loadConfiguration(work, client.Config)
+			profile, err = meter.loadConfiguration(work, loader)
 		}
 		status = profile.Session
 	} else if meter != nil {

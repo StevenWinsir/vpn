@@ -12,12 +12,16 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
-const APIBase = "https://demo.hyshentou.cn/api/v1/client"
+var APIBase = "https://demo.hyshentou.cn/api/v1/client"
+
 const MaxCounter int64 = 1 << 50
 
 type Status struct {
@@ -54,9 +58,10 @@ type APIError struct{ Code string }
 func (e *APIError) Error() string { return e.Code }
 
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	sequence atomic.Int64
+	base     string
+	token    string
+	http     *http.Client
 }
 
 func NewClient(base, token string, transport http.RoundTripper) (*Client, error) {
@@ -104,7 +109,7 @@ func (c *Client) do(ctx context.Context, method, path string, input, output any)
 	}
 	defer response.Body.Close()
 	limit := int64(64 << 10)
-	if path == "/config" {
+	if path == "/config" || strings.HasPrefix(path, "/config?") {
 		limit = 8 << 20
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
@@ -129,7 +134,7 @@ func (c *Client) do(ctx context.Context, method, path string, input, output any)
 }
 
 func validStatus(status Status) bool {
-	if status.SessionID == "" || status.ReportInterval != 60 || status.LeaseSeconds != 90 || status.SessionIdleTimeout != 180 || status.RatePermille != 1000 || status.MeteringSource != "client_reported" || status.ServerTime.IsZero() || status.ExpiresAt.IsZero() || status.RemainingBytes < 0 || status.RemainingBytes > MaxCounter || status.TotalBytes < 0 || status.TotalBytes > MaxCounter || status.RemainingBytes > status.TotalBytes || status.UsedUnits < 0 || status.UploadBytes < 0 || status.UploadBytes > MaxCounter || status.DownloadBytes < 0 || status.DownloadBytes > MaxCounter || status.LastSequence < 0 || status.LastSequence > 1<<40 {
+	if status.SessionID == "" || status.ReportInterval != 60 || status.LeaseSeconds != 90 || status.SessionIdleTimeout != 180 || status.RatePermille < 1 || status.RatePermille > 10000 || status.MeteringSource != "client_reported" || status.ServerTime.IsZero() || status.ExpiresAt.IsZero() || status.RemainingBytes < 0 || status.RemainingBytes > MaxCounter || status.TotalBytes < 0 || status.TotalBytes > MaxCounter || status.RemainingBytes > status.TotalBytes || status.UsedUnits < 0 || status.UploadBytes < 0 || status.UploadBytes > MaxCounter || status.DownloadBytes < 0 || status.DownloadBytes > MaxCounter || status.LastSequence < 0 || status.LastSequence > 1<<40 {
 		return false
 	}
 	if !status.CanConnect {
@@ -158,6 +163,9 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	if err == nil && !validStatus(status) {
 		err = &APIError{"invalid_server_response"}
 	}
+	if err == nil {
+		c.observeSequence(status.LastSequence)
+	}
 	return status, err
 }
 
@@ -168,6 +176,9 @@ func (c *Client) Report(ctx context.Context, counters Counters) (Status, error) 
 	err := c.do(ctx, "POST", "/traffic", counters, &response)
 	if err == nil && (!validStatus(response.Session) || response.Session.LastSequence != counters.Sequence || response.Session.UploadBytes != counters.UploadBytes || response.Session.DownloadBytes != counters.DownloadBytes) {
 		err = &APIError{"invalid_server_response"}
+	}
+	if err == nil {
+		c.observeSequence(response.Session.LastSequence)
 	}
 	return response.Session, err
 }
@@ -208,9 +219,11 @@ type User struct {
 }
 
 type Profile struct {
-	YAML    string `json:"yaml"`
-	Version string `json:"version"`
-	Session Status `json:"session"`
+	Nodes   []NodeChoice `json:"nodes,omitempty"`
+	NodeID  string       `json:"node_id,omitempty"`
+	YAML    string       `json:"yaml"`
+	Version string       `json:"version"`
+	Session Status       `json:"session"`
 }
 
 func (p LoginParams) Valid() bool {
@@ -245,18 +258,67 @@ func Login(ctx context.Context, base string, transport http.RoundTripper, params
 		return nil, User{}, Status{}, err
 	}
 	client.token = result.Token
+	client.observeSequence(result.Session.LastSequence)
 	return client, result.User, result.Session, nil
 }
 
 func (c *Client) Config(ctx context.Context) (Profile, error) {
+	return c.ConfigForNode(ctx, "")
+}
+
+func (c *Client) observeSequence(sequence int64) {
+	for previous := c.sequence.Load(); sequence > previous; previous = c.sequence.Load() {
+		if c.sequence.CompareAndSwap(previous, sequence) {
+			return
+		}
+	}
+}
+
+type NodeChoice struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Region       string `json:"region"`
+	LineType     string `json:"line_type"`
+	RatePermille int64  `json:"rate_permille"`
+	Version      int64  `json:"version"`
+}
+
+func (p Profile) ValidCatalog() bool {
+	if p.NodeID == "" {
+		return len(p.Nodes) == 0
+	}
+	if len(p.Nodes) == 0 || len(p.Nodes) > 128 {
+		return false
+	}
+	ids, names := map[string]bool{}, map[string]bool{}
+	found := false
+	for _, node := range p.Nodes {
+		id, err := hex.DecodeString(strings.ReplaceAll(node.ID, "-", ""))
+		if err != nil || len(id) != 16 || len(node.ID) != 36 || ids[node.ID] || node.Name == "" || len(node.Name) > 256 || strings.ContainsFunc(node.Name, unicode.IsControl) || names[node.Name] || node.RatePermille < 1 || node.RatePermille > 10000 || node.Version < 1 || node.LineType != "direct" && node.LineType != "dedicated" {
+			return false
+		}
+		ids[node.ID], names[node.Name] = true, true
+		if node.ID == p.NodeID {
+			found = node.RatePermille == p.Session.RatePermille
+		}
+	}
+	return found
+}
+
+func (c *Client) ConfigForNode(ctx context.Context, nodeID string) (Profile, error) {
 	var profile Profile
-	if err := c.do(ctx, "GET", "/config", nil, &profile); err != nil {
+	query := url.Values{"last_sequence": []string{strconv.FormatInt(c.sequence.Load(), 10)}}
+	if nodeID != "" {
+		query.Set("node_id", nodeID)
+	}
+	if err := c.do(ctx, "GET", "/config?"+query.Encode(), nil, &profile); err != nil {
 		return Profile{}, err
 	}
 	digest := sha256.Sum256([]byte(profile.YAML))
-	if len(profile.YAML) == 0 || len(profile.YAML) > 1<<20 || !utf8.ValidString(profile.YAML) || strings.ContainsRune(profile.YAML, 0) || hex.EncodeToString(digest[:]) != profile.Version || profile.Version != profile.Session.ProfileVersion || !validStatus(profile.Session) || !profile.Session.CanConnect {
+	if len(profile.YAML) == 0 || len(profile.YAML) > 1<<20 || !utf8.ValidString(profile.YAML) || strings.ContainsRune(profile.YAML, 0) || hex.EncodeToString(digest[:]) != profile.Version || profile.Version != profile.Session.ProfileVersion || !validStatus(profile.Session) || !profile.Session.CanConnect || !profile.ValidCatalog() || nodeID != "" && profile.NodeID != nodeID {
 		return Profile{}, &APIError{"invalid_server_response"}
 	}
+	c.observeSequence(profile.Session.LastSequence)
 	return profile, nil
 }
 
