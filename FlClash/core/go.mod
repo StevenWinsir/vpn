@@ -4,9 +4,12 @@ go 1.25
 
 replace github.com/metacubex/mihomo => ./Clash.Meta
 
+replace vpn/nodepolicy => ./nodepolicy
+
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/metacubex/mihomo v0.0.0-00010101000000-000000000000
+	vpn/nodepolicy v0.0.0
 )
 
 require (

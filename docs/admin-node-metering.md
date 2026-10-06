@@ -3,7 +3,7 @@
 ## Development acceptance path
 
 1. Use the website administrator account, not a customer role. Open `/admin/nodes` after `/login`.
-2. Import a `proxies:` list. Set direct/dedicated, region, enabled state, plan allowlist and rate. Updates require the version displayed by the editor.
+2. Import a `proxies:` list using the [managed protocol matrix](managed-protocols.md). Set direct/dedicated, region, enabled state, plan allowlist and rate. Updates require the version displayed by the editor.
 3. Sign in on the normal macOS managed app using a current eligible customer account. Test orders only qualify with both development test flags enabled. Starter does not allow dedicated nodes.
 4. Refresh server configuration, select an allowed node and explicitly connect. The UI never needs an editable YAML or subscription export URL.
 5. Compare Core cumulative upload/download, server `client_traffic_reports` deltas, and subscription `used_units`. Do not treat UI display-reset counters as billing counters.
@@ -29,7 +29,7 @@ Admin changes are committed immediately. Synchronization/version checks are boun
 
 ## Why production proxy delivery is blocked
 
-Current shared SS/HTTP/SOCKS5 credentials do not identify each customer at the node. Native login, hidden YAML, JWTs and client heartbeats cannot revoke a credential already extracted and used by a different program. Forged or suppressed client traffic reports cannot be trusted as the sole commercial ledger. Therefore production config rejects both node-catalog and private-file proxy delivery until a deployed node-side authority exists.
+Current shared proxy credentials (including VLESS UUIDs or WireGuard keys) do not identify each customer at the node. Native login, hidden YAML, JWTs and client heartbeats cannot revoke a credential already extracted and used by a different program. Forged or suppressed client traffic reports cannot be trusted as the sole commercial ledger. Therefore production config rejects both node-catalog and private-file proxy delivery until a deployed node-side authority exists.
 
 A production access-control replacement needs customer-bound credentials or short-lived authorizations understood by the actual node, bounded stale authorization and outage rules, and expiry/revocation enforcement at ingress. These controls are separate from the chosen client-only billing source: this project continues to charge only client reports. Preventing dishonest under-reporting would additionally require independent trustworthy usage evidence; request signatures alone cannot provide it. Keeping client-only billing therefore retains that explicit fraud risk. Merely adding an agent API without deploying access enforcement on the real proxy nodes does not revoke extracted shared passwords. The current production guard remains in place.
 

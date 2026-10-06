@@ -1,0 +1,59 @@
+name: Managed node protocols
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-protocols-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Shared policy / negative tests / fuzz
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: backend/go.sum
+      - name: Shared pure-Go policy
+        working-directory: FlClash/core/nodepolicy
+        run: |
+          go test -race -count=1 ./...
+          go vet ./...
+      - name: API parser and bounded fuzzing
+        working-directory: backend
+        run: |
+          go test -count=1 ./internal/nodes
+          go test -run='^$' -fuzz=FuzzParseNodeYAML -fuzztime=20s -parallel=2 ./internal/nodes
+  core:
+    name: Pinned Core compatibility (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: FlClash/core/go.sum
+      - name: Real Core managed protocol regressions
+        working-directory: FlClash/core
+        env:
+          CGO_ENABLED: '0'
+        run: go test -count=1 -v -run='TestManagedProtocol|TestManagedConfiguration|TestManagedClearCloses' .

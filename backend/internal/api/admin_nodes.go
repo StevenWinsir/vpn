@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"gorm.io/gorm/clause"
 	"vpn/backend/internal/model"
 	"vpn/backend/internal/nodes"
+	"vpn/nodepolicy"
 )
 
 type nodeInput struct {
@@ -63,7 +65,7 @@ func (s *Server) adminNodeList(c *gin.Context) {
 		}
 		result = append(result, adminNode{Node: row.Node, Enabled: row.Enabled, PlanIDs: plans})
 	}
-	c.JSON(200, gin.H{"nodes": result, "metering_source": "client_reported", "production_ready": false})
+	c.JSON(200, gin.H{"nodes": result, "supported_protocols": nodepolicy.Supported(), "core_revision": nodepolicy.CoreRevision, "metering_source": "client_reported", "production_ready": false})
 }
 
 func (s *Server) adminNodeDetail(c *gin.Context) {
@@ -112,8 +114,12 @@ func (s *Server) adminNodeSave(c *gin.Context) {
 		return
 	}
 	proxies, err := nodes.Parse(in.YAML)
-	if err != nil || !validateNodeInput(in) {
-		fail(c, 400, "invalid_node_config", "节点参数无效：仅接受 proxies 列表、SS AEAD / HTTP / SOCKS5 内联节点，倍率为 1–10000‰")
+	if err != nil {
+		fail(c, 400, "invalid_node_config", fmt.Sprintf("节点 YAML 无效（%s）。请检查协议必填项与嵌套参数；禁止外部配置、文件路径及不受支持的选项。", err))
+		return
+	}
+	if !validateNodeInput(in) {
+		fail(c, 400, "invalid_node_config", "节点属性无效：请检查地区、线路和套餐，倍率为 1–10000‰")
 		return
 	}
 	id := c.Param("id")

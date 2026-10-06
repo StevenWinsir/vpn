@@ -160,7 +160,7 @@ func TestManagedConfigurationRejectsSecondarySourcesAndBackgroundDialers(t *test
 			}
 		})
 	}
-	for _, data := range []string{strings.ReplaceAll(managedFixtureYAML, "type: select", "type: url-test"), strings.ReplaceAll(managedFixtureYAML, "type: socks5", "type: wireguard"), strings.ReplaceAll(managedFixtureYAML, "MATCH,VIP", "GEOIP,CN,VIP"), managedFixtureYAML + "dns: {enable: true, fallback-filter: {geoip: true}}\n"} {
+	for _, data := range []string{strings.ReplaceAll(managedFixtureYAML, "type: select", "type: url-test"), strings.ReplaceAll(managedFixtureYAML, "type: socks5", "type: direct"), strings.ReplaceAll(managedFixtureYAML, "MATCH,VIP", "GEOIP,CN,VIP"), managedFixtureYAML + "dns: {enable: true, fallback-filter: {geoip: true}}\n"} {
 		engine := newManagedTestEngine(t)
 		if _, err := engine.Prepare(context.Background(), managedProfileFixture(data)); managed.PublicError(err) != "unsupported_managed_configuration" {
 			t.Fatal("unmetered background source accepted")
