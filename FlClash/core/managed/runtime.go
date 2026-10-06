@@ -203,6 +203,8 @@ func (c *Coordinator) Connect(ctx context.Context, generation uint64, port int, 
 	if err != nil {
 		lease.Stop()
 		c.snapshot.ErrorCode = PublicError(err)
+	} else {
+		c.snapshot.ErrorCode = ""
 	}
 	result := c.snapshotLocked()
 	c.mu.Unlock()

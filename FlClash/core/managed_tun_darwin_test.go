@@ -16,16 +16,21 @@ import (
 	"github.com/metacubex/mihomo/tunnel"
 )
 
+type managedTunProbeResult struct {
+	metadata C.Metadata
+	err      error
+}
+
 type managedTunProbe struct {
 	C.Tunnel
 	managedProviderAccess
-	received chan C.Metadata
+	received chan managedTunProbeResult
 }
 
 func (p *managedTunProbe) HandleUDPPacket(packet C.UDPPacket, metadata *C.Metadata) {
 	defer packet.Drop()
-	p.received <- *metadata
-	_, _ = packet.WriteBack(packet.Data(), nil)
+	_, err := packet.WriteBack(packet.Data(), &net.UDPAddr{IP: metadata.DstIP.AsSlice(), Port: int(metadata.DstPort)})
+	p.received <- managedTunProbeResult{metadata: *metadata, err: err}
 }
 
 func TestManagedMacOSRealTUNUDPBothFamilies(t *testing.T) {
@@ -36,7 +41,7 @@ func TestManagedMacOSRealTUNUDPBothFamilies(t *testing.T) {
 		t.Fatal("explicit real-TUN test requires root")
 	}
 	_ = newManagedTestEngine(t)
-	probe := &managedTunProbe{Tunnel: tunnel.Tunnel, managedProviderAccess: tunnel.Tunnel, received: make(chan C.Metadata, 8)}
+	probe := &managedTunProbe{Tunnel: tunnel.Tunnel, managedProviderAccess: tunnel.Tunnel, received: make(chan managedTunProbeResult, 8)}
 	plane := newManagedTrafficTunnel(probe)
 	plane.managedProviderAccess = probe
 	defer plane.stop()
@@ -66,18 +71,22 @@ func TestManagedMacOSRealTUNUDPBothFamilies(t *testing.T) {
 			if _, err := conn.Write(payload); err != nil {
 				t.Fatal(err)
 			}
-			buffer := make([]byte, 256)
-			n, err := conn.Read(buffer)
-			if err != nil || !bytes.Equal(buffer[:n], payload) {
-				t.Fatalf("UDP did not roundtrip through real TUN: %v", err)
-			}
 			select {
-			case metadata := <-probe.received:
+			case result := <-probe.received:
+				if result.err != nil {
+					t.Fatalf("TUN fixture could not send a UDP reply: %v", result.err)
+				}
+				metadata := result.metadata
 				if metadata.NetWork != C.UDP || metadata.Type != C.TUN || metadata.DstPort != 3478 {
 					t.Fatalf("unexpected tunnel metadata: %+v", metadata)
 				}
 			case <-ctx.Done():
 				t.Fatal("packet bypassed managed data plane")
+			}
+			buffer := make([]byte, 256)
+			n, err := conn.Read(buffer)
+			if err != nil || !bytes.Equal(buffer[:n], payload) {
+				t.Fatalf("UDP did not roundtrip through real TUN: %v", err)
 			}
 		})
 	}

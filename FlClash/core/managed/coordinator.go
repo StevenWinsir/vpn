@@ -191,6 +191,7 @@ func releaseClient(client *Client, revoke bool) bool {
 }
 
 func (c *Coordinator) setStatusLocked(status Status, started time.Time) {
+	runtimeFailure := c.snapshot.ErrorCode
 	c.deadline = started.Add(time.Duration(status.SessionIdleTimeout) * time.Second)
 	for _, limit := range []time.Time{started.Add(status.ExpiresAt.Sub(status.ServerTime)), status.ExpiresAt} {
 		if limit.Before(c.deadline) {
@@ -220,6 +221,13 @@ func (c *Coordinator) setStatusLocked(status Status, started time.Time) {
 		c.snapshot.Phase = "restricted"
 		c.snapshot.ErrorCode = PublicError(&APIError{status.Reason})
 		c.profile = nil
+	}
+	// Server authorization cannot prove that the local TUN started successfully.
+	if status.CanConnect && c.snapshot.Configuration != nil && !c.runtime.Running() {
+		switch runtimeFailure {
+		case "managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed":
+			c.snapshot.ErrorCode = runtimeFailure
+		}
 	}
 	// Only an explicit runtime transition after Meter acknowledgement opens this gate.
 	c.snapshot.CanConnect = false
