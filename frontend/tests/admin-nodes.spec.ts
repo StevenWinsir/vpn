@@ -132,3 +132,47 @@ test('administrator YAML catalog persists and ordinary users cannot access it', 
   }
   expect(errors).toEqual([]);
 });
+
+test('administrator imports and reopens VLESS Reality and WireGuard without losing nested options', async ({
+  page,
+}) => {
+  const fixturePath = process.env.CATALOG_FIXTURE;
+  test.skip(!fixturePath, 'Requires the private catalog acceptance runner');
+  if (!fixturePath?.startsWith('/tmp/vpn-catalog-')) throw new Error('Private fixture required');
+  const fixture = JSON.parse(await readFile(fixturePath, 'utf8')) as {
+    emails: { admin: string };
+    password: string;
+  };
+  await page.goto('/login');
+  await page.getByLabel('邮箱地址').fill(fixture.emails.admin);
+  await page.locator('input[type="password"]').fill(fixture.password);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.goto('/admin/nodes');
+  const fixtures = [
+    {
+      name: 'VLESS-Reality-UI',
+      yaml: "proxies: [{name: VLESS-Reality-UI, type: vless, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, tls: true, network: tcp, flow: xtls-rprx-vision, servername: example.invalid, client-fingerprint: chrome, reality-opts: {public-key: ERERERERERERERERERERERERERERERERERERERERERE, short-id: '0123456789abcdef'}}]",
+      preserved: 'reality-opts:',
+    },
+    {
+      name: 'WireGuard-UI',
+      yaml: 'proxies: [{name: WireGuard-UI, type: wireguard, server: 127.0.0.1, port: 9, ip: 10.0.0.2, private-key: IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=, public-key: ERERERERERERERERERERERERERERERERERERERERERE=, reserved: [0, 1, 255], udp: true}]',
+      preserved: 'reserved:',
+    },
+  ];
+  for (const fixture of fixtures) {
+    await page.getByRole('button', { name: '导入节点 YAML' }).click();
+    await expect(page.getByText(/支持：.*vless.*wireguard/)).toBeVisible();
+    await page.getByLabel('节点 YAML').fill(fixture.yaml);
+    // Parse-only fixtures must not enter the existing live traffic catalog.
+    await page.getByLabel('启用节点', { exact: true }).uncheck();
+    await page.getByRole('button', { name: '保存节点', exact: true }).click();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await page.reload();
+    await page.getByRole('button', { name: `编辑 ${fixture.name}`, exact: true }).click();
+    await expect(page.getByLabel('节点 YAML')).toHaveValue(new RegExp(fixture.preserved));
+    await expect(page.getByLabel('启用节点', { exact: true })).not.toBeChecked();
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+  }
+});

@@ -1,0 +1,37 @@
+# Synthetic parse-only endpoints/keys; never connect to these addresses.
+proxies:
+  - {name: ss, type: ss, server: 127.0.0.1, port: 9, cipher: aes-256-gcm, password: fixture-secret, udp: true}
+  - {name: ss2022-128, type: ss, server: 127.0.0.1, port: 9, cipher: 2022-blake3-aes-128-gcm, password: EREREREREREREREREREREQ==, udp: true}
+  - {name: ss2022-256, type: ss, server: 127.0.0.1, port: 9, cipher: 2022-blake3-aes-256-gcm, password: ERERERERERERERERERERERERERERERERERERERERERE=}
+  - {name: ss2022-chacha, type: ss, server: 127.0.0.1, port: 9, cipher: 2022-blake3-chacha20-poly1305, password: ERERERERERERERERERERERERERERERERERERERERERE=}
+  - {name: ss-obfs, type: ss, server: 127.0.0.1, port: 9, cipher: aes-128-gcm, password: fixture-secret, plugin: obfs, plugin-opts: {mode: tls, host: example.invalid}}
+  - {name: ss-websocket, type: ss, server: 127.0.0.1, port: 9, cipher: aes-128-gcm, password: fixture-secret, plugin: v2ray-plugin, plugin-opts: {mode: websocket, host: example.invalid, path: /ws, tls: true}}
+  - {name: ss-shadowtls, type: ss, server: 127.0.0.1, port: 9, cipher: aes-128-gcm, password: fixture-secret, plugin: shadow-tls, plugin-opts: {host: example.invalid, password: fixture-shadowtls, version: 3, fingerprint: chrome}}
+  - {name: ssr, type: ssr, server: 127.0.0.1, port: 9, cipher: aes-128-cfb, password: fixture-secret, protocol: auth_aes128_sha1, obfs: tls1.2_ticket_auth, udp: true}
+  - {name: http, type: http, server: 127.0.0.1, port: 9, tls: true, sni: example.invalid, username: fixture, password: fixture-secret}
+  - {name: socks5, type: socks5, server: 127.0.0.1, port: 9, username: fixture, password: fixture-secret, udp: true}
+  - {name: vmess, type: vmess, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, alterId: 0, cipher: auto, udp: true}
+  - {name: vmess-ws, type: vmess, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, alterId: 0, cipher: auto, network: ws, tls: true, servername: example.invalid, ws-opts: {path: /ws, headers: {Host: example.invalid}}}
+  - {name: vmess-http, type: vmess, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, alterId: 0, cipher: auto, network: http, http-opts: {method: GET, path: [/], headers: {Host: [example.invalid]}}}
+  - {name: vmess-h2, type: vmess, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, alterId: 0, cipher: auto, network: h2, tls: true, servername: example.invalid, h2-opts: {host: [example.invalid], path: /h2}}
+  - {name: vless, type: vless, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, udp: true}
+  - {name: vless-reality, type: vless, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, network: tcp, tls: true, udp: true, flow: xtls-rprx-vision, servername: example.invalid, client-fingerprint: chrome, reality-opts: {public-key: ERERERERERERERERERERERERERERERERERERERERERE, short-id: '051f20c2344a2dfd'}}
+  - {name: vless-grpc, type: vless, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, network: grpc, tls: true, servername: example.invalid, grpc-opts: {grpc-service-name: fixture}}
+  - {name: vless-ws, type: vless, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, network: ws, tls: true, servername: example.invalid, ws-opts: {path: /ws}}
+  - {name: trojan, type: trojan, server: 127.0.0.1, port: 9, password: fixture-secret, sni: example.invalid, udp: true}
+  - {name: trojan-ws, type: trojan, server: 127.0.0.1, port: 9, password: fixture-secret, sni: example.invalid, network: ws, ws-opts: {path: /ws}}
+  - {name: hysteria, type: hysteria, server: 127.0.0.1, port: 9, auth-str: fixture-secret, up: '100 Mbps', down: '100 Mbps', sni: example.invalid}
+  - {name: hysteria2, type: hysteria2, server: 127.0.0.1, port: 9, password: fixture-secret, sni: example.invalid, obfs: salamander, obfs-password: fixture-obfs}
+  - {name: tuic-v5, type: tuic, server: 127.0.0.1, port: 9, uuid: 11111111-2222-4333-8444-555555555555, password: fixture-secret, sni: example.invalid, alpn: [h3], congestion-controller: bbr, udp-relay-mode: native}
+  - {name: tuic-v4, type: tuic, server: 127.0.0.1, port: 9, token: fixture-token, sni: example.invalid, alpn: [h3]}
+  - {name: wireguard, type: wireguard, server: 127.0.0.1, port: 9, ip: 10.0.0.2, ipv6: 'fd00::2', private-key: IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=, public-key: ERERERERERERERERERERERERERERERERERERERERERE=, reserved: [0, 1, 255], udp: true, mtu: 1280}
+  - name: wireguard-peers
+    type: wireguard
+    ip: 10.0.0.2
+    private-key: IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=
+    peers:
+      - {server: 127.0.0.1, port: 9, public-key: ERERERERERERERERERERERERERERERERERERERERERE=, allowed-ips: [0.0.0.0/0, '::/0']}
+  - {name: snell, type: snell, server: 127.0.0.1, port: 9, psk: fixture-secret, version: 3, udp: true}
+  - {name: anytls, type: anytls, server: 127.0.0.1, port: 9, password: fixture-secret, sni: example.invalid, client-fingerprint: chrome, udp: true}
+  - {name: ssh, type: ssh, server: 127.0.0.1, port: 9, username: fixture, password: fixture-secret, host-key: ['ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER']}
+  - {name: mieru, type: mieru, server: 127.0.0.1, port: 9, transport: TCP, username: fixture, password: fixture-secret, multiplexing: MULTIPLEXING_LOW}

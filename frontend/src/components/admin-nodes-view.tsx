@@ -80,6 +80,7 @@ function AdminGate() {
 
 function NodeManager() {
   const [nodes, setNodes] = useState<AdminNode[]>([]);
+  const [protocols, setProtocols] = useState<string[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -95,12 +96,13 @@ function NodeManager() {
 
   const load = useCallback((signal?: AbortSignal) => {
     return Promise.all([
-      api<{ nodes: AdminNode[] }>('/admin/nodes', { signal }),
+      api<{ nodes: AdminNode[]; supported_protocols?: string[] }>('/admin/nodes', { signal }),
       api<{ plans: Plan[] }>('/plans', { signal }),
     ])
       .then(([catalog, available]) => {
         if (signal?.aborted) return;
         setNodes(catalog.nodes);
+        setProtocols(catalog.supported_protocols ?? []);
         setPlans(available.plans);
         setError('');
       })
@@ -341,7 +343,7 @@ function NodeManager() {
             )}
             <Textarea
               label="节点 YAML"
-              description="仅填写 proxies 列表。批量导入时，下方属性应用到全部节点。配置只在管理员页面显示，不写入浏览器存储。"
+              description={`仅填写 proxies 列表。${protocols.length ? `支持：${protocols.join(' / ')}。` : ''}批量导入时，下方属性应用到全部节点。配置不写入浏览器存储；不接受文件路径、外部配置和跳过证书验证。`}
               required
               autosize
               minRows={9}

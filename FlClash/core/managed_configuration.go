@@ -5,6 +5,7 @@ import (
 	"core/managed"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/metacubex/mihomo/hub/route"
 	"github.com/metacubex/mihomo/tunnel"
 	"gopkg.in/yaml.v3"
+	"vpn/nodepolicy"
 )
 
 type managedProfileEngine struct {
@@ -103,15 +105,11 @@ func managedRawConfig(data string) (*config.RawConfig, []managed.ConfigurationGr
 		if !validManagedName(name) {
 			return nil, nil, managedConfigError("invalid_client_config")
 		}
-		switch proxy["type"] {
-		case "ss", "ssr", "socks5", "http", "vmess", "vless", "trojan", "hysteria", "hysteria2", "tuic", "snell":
-		default:
-			return nil, nil, managedConfigError("unsupported_managed_configuration")
-		}
-		for _, key := range []string{"ca", "ca-cert", "certificate", "private-key", "client-cert", "client-key"} {
-			if _, exists := proxy[key]; exists {
+		if err := nodepolicy.Validate(proxy); err != nil {
+			if errors.Is(err, nodepolicy.ErrUnsupported) {
 				return nil, nil, managedConfigError("unsupported_managed_configuration")
 			}
+			return nil, nil, managedConfigError("invalid_client_config")
 		}
 	}
 	groups := make([]managed.ConfigurationGroup, 0, len(raw.ProxyGroup))
@@ -215,6 +213,7 @@ func (e *managedProfileEngine) Prepare(ctx context.Context, profile managed.Prof
 		return nil, managedConfigError("invalid_client_config")
 	}
 	if ctx.Err() != nil {
+		closeManagedAdapters(cfg)
 		return nil, managedConfigError("operation_superseded")
 	}
 	return &preparedManagedConfiguration{e, profile, cfg, groups, append([]string(nil), config.GetProxyNameList()...)}, nil
@@ -228,6 +227,7 @@ func (p *preparedManagedConfiguration) Apply(ctx context.Context, owner managed.
 			err = managedConfigError("configuration_apply_failed")
 		}
 		if err != nil {
+			closeManagedAdapters(p.config)
 			_ = p.engine.clearLocked()
 		}
 	}()
@@ -245,6 +245,9 @@ func (p *preparedManagedConfiguration) Apply(ctx context.Context, owner managed.
 	p.engine.view = managed.CopyConfiguration(&view)
 	isRunning.Store(false)
 	config.SetProxyNameList(p.names)
+	if currentConfig != p.config {
+		closeManagedAdapters(currentConfig)
+	}
 	hub.ApplyConfig(p.config)
 	tunnel.OnSuspend()
 	currentConfig = p.config
@@ -255,9 +258,22 @@ func (p *preparedManagedConfiguration) Apply(ctx context.Context, owner managed.
 	return view, nil
 }
 
+// In particular WireGuard owns a userspace IP stack/device. Do not wait for
+// the Go finalizer to release old adapters after logout or node replacement.
+// The pinned Core's autoCloseProxyAdapter makes Close idempotent.
+func closeManagedAdapters(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	for _, proxy := range cfg.Proxies {
+		_ = proxy.Close()
+	}
+}
+
 func (e *managedProfileEngine) clearLocked() error {
 	if e.view != nil {
 		if currentConfig != nil {
+			closeManagedAdapters(currentConfig)
 			for _, provider := range currentConfig.Providers {
 				if closer, ok := provider.(io.Closer); ok {
 					_ = closer.Close()

@@ -6,14 +6,13 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
-	"net"
-	"regexp"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
+	"vpn/nodepolicy"
 )
 
 const MaxYAMLBytes = 64 << 10
@@ -21,7 +20,6 @@ const MaxNodes = 128
 const GroupName = "VPN"
 
 var ErrInvalid = errors.New("invalid node configuration")
-var hostname = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$`)
 
 func ValidateKey(key string) bool {
 	b, err := base64.StdEncoding.DecodeString(key)
@@ -66,7 +64,7 @@ func Decrypt(key, id, encoded string) ([]byte, error) {
 
 func safeTree(n *yaml.Node, depth int, count *int) bool {
 	*count++
-	if depth > 8 || *count > 10000 || n.Kind == yaml.AliasNode || n.Anchor != "" {
+	if depth > 12 || *count > 10000 || n.Kind == yaml.AliasNode || n.Anchor != "" {
 		return false
 	}
 	if n.Kind == yaml.MappingNode {
@@ -105,41 +103,16 @@ func Parse(text string) ([]map[string]any, error) {
 		return nil, ErrInvalid
 	}
 	seen := map[string]bool{}
-	for _, p := range source.Proxies {
+	for index, p := range source.Proxies {
+		if err := nodepolicy.Validate(p); err != nil {
+			// Only fixed policy errors and the ordinal, never YAML values or keys.
+			return nil, fmt.Errorf("%w: node %d: %v", ErrInvalid, index+1, err)
+		}
 		name, _ := p["name"].(string)
-		host, _ := p["server"].(string)
-		port, portOK := p["port"].(int)
-		kind, _ := p["type"].(string)
-		if strings.TrimSpace(name) != name || name == "" || len(name) > 256 || utf8.RuneCountInString(name) > 120 || strings.ContainsFunc(name, unicode.IsControl) || seen[name] || name == GroupName || name == "DIRECT" || name == "REJECT" || name == "GLOBAL" || (!hostname.MatchString(host) && net.ParseIP(host) == nil) || strings.Contains(host, "..") || !portOK || port < 1 || port > 65535 {
+		if seen[name] {
 			return nil, ErrInvalid
 		}
 		seen[name] = true
-		if kind != "ss" && kind != "http" && kind != "socks5" {
-			return nil, ErrInvalid
-		}
-		for key, value := range p {
-			switch key {
-			case "name", "server", "port", "type":
-			case "udp", "tls":
-				if _, ok := value.(bool); !ok || key == "tls" && kind == "ss" {
-					return nil, ErrInvalid
-				}
-			case "password", "username", "sni":
-				v, ok := value.(string)
-				if !ok || len(v) > 1024 || strings.ContainsAny(v, "\x00\r\n") || kind == "ss" && key != "password" {
-					return nil, ErrInvalid
-				}
-			case "cipher":
-				if kind != "ss" || value != "aes-128-gcm" && value != "aes-256-gcm" && value != "chacha20-ietf-poly1305" {
-					return nil, ErrInvalid
-				}
-			default:
-				return nil, ErrInvalid
-			}
-		}
-		if kind == "ss" && (p["cipher"] == nil || p["password"] == nil || p["password"] == "") {
-			return nil, ErrInvalid
-		}
 	}
 	return source.Proxies, nil
 }

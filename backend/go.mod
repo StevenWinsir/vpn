@@ -2,6 +2,8 @@ module vpn/backend
 
 go 1.24.0
 
+replace vpn/nodepolicy => ../FlClash/core/nodepolicy
+
 require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
@@ -10,6 +12,7 @@ require (
 	golang.org/x/crypto v0.43.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
+	vpn/nodepolicy v0.0.0
 )
 
 require (
