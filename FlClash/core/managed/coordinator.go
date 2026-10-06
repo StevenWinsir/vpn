@@ -321,6 +321,7 @@ func (c *Coordinator) Login(ctx context.Context, params LoginParams) (AccountSna
 	result := c.snapshotLocked()
 	c.mu.Unlock()
 	go c.keepAlive(life, generation)
+	go c.watchCatalog(life, generation)
 	return result, nil
 }
 
@@ -329,6 +330,10 @@ func (c *Coordinator) request(ctx context.Context, generation uint64, load bool,
 		return c.Snapshot(), err
 	}
 	defer c.unlock()
+	return c.requestLocked(ctx, generation, load, selections...)
+}
+
+func (c *Coordinator) requestLocked(ctx context.Context, generation uint64, load bool, selections ...*nodeSelection) (AccountSnapshot, error) {
 	work, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c.mu.Lock()

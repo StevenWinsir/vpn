@@ -798,6 +798,18 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTrafficUnconfirmed": MessageLookupByLibrary.simpleMessage(
       "Прокси остановлен, но итоговый трафик не подтверждён. Сохраните сеанс и повторите попытку перед выходом.",
     ),
+    "managedTunAuthorize": MessageLookupByLibrary.simpleMessage(
+      "Разрешить macOS TUN и перезапустить ядро",
+    ),
+    "managedTunDescription": MessageLookupByLibrary.simpleMessage(
+      "На macOS TUN обрабатывает TCP, UDP и IPv6 вместо использования только системного прокси. Перед первым подключением предоставьте права; после перезапуска ядра войдите снова. Это не общесистемный аварийный выключатель сети.",
+    ),
+    "managedTunFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось безопасно запустить или закрыть TUN. Переход к одному системному прокси запрещён. Перезапустите приложение и проверьте другие VPN и сетевые разрешения.",
+    ),
+    "managedTunPermission": MessageLookupByLibrary.simpleMessage(
+      "Для TUN нужны права администратора. Нажмите кнопку разрешения и войдите снова. Прокси не подключён.",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "Эта серверная конфигурация использует неподдерживаемую функцию управляемого клиента. Обратитесь к администратору сервиса.",
     ),

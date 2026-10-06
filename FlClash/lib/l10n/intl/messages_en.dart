@@ -780,6 +780,18 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTrafficUnconfirmed": MessageLookupByLibrary.simpleMessage(
       "The proxy is stopped, but final traffic could not be confirmed. Keep this session open and retry before signing out.",
     ),
+    "managedTunAuthorize": MessageLookupByLibrary.simpleMessage(
+      "Authorize macOS TUN and restart Core",
+    ),
+    "managedTunDescription": MessageLookupByLibrary.simpleMessage(
+      "macOS connections require TUN to route TCP, UDP and IPv6 instead of relying only on system proxy settings. Authorize before the first connection; the Core restarts and you must sign in again. This is not a system-wide kill switch.",
+    ),
+    "managedTunFailed": MessageLookupByLibrary.simpleMessage(
+      "TUN could not start or clean up safely. No system-proxy-only fallback was enabled. Restart the app and check for conflicting VPNs or network permissions.",
+    ),
+    "managedTunPermission": MessageLookupByLibrary.simpleMessage(
+      "TUN requires administrator authorization. Use the authorization button, then sign in again. The proxy has not connected.",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "This server configuration uses a feature not supported by the managed client. Contact the service administrator.",
     ),

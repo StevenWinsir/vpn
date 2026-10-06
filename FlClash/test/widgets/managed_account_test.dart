@@ -19,6 +19,7 @@ void main() {
     Future<void> Function()? logout,
     Future<void> Function()? website,
     Future<void> Function()? exit,
+    Future<void> Function()? authorizeTun,
   }) => ManagedAccountView(
     state: state,
     onLogin: login ?? (_, _) async {},
@@ -27,6 +28,51 @@ void main() {
     onRetryCore: nothing,
     onExit: exit ?? nothing,
     onWebsite: website ?? nothing,
+    onAuthorizeTun: authorizeTun,
+  );
+
+  testWidgets(
+    'TUN permission stays explicit and duplicate authorization is blocked',
+    (tester) async {
+      final pending = Completer<void>();
+      var calls = 0;
+      final state = ManagedAccountState(
+        ready: true,
+        error: 'managed_tun_permission_required',
+        account: ManagedAccountSnapshot.fromJson(
+          managedSnapshot(phase: 'configuration_staged'),
+        ),
+      );
+      await tester.pumpWidget(
+        TestApp(
+          child: view(
+            state: state,
+            authorizeTun: () {
+              calls++;
+              return pending.future;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final strings = AppLocalizations.of(
+        tester.element(find.byType(ManagedAccountView)),
+      );
+      expect(find.text(strings.managedTunPermission), findsOneWidget);
+      expect(find.text(strings.managedStopped), findsOneWidget);
+      expect(calls, 0);
+      final button = find.byKey(const Key('managed-authorize-tun'));
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pump();
+      expect(calls, 1);
+      pending.completeError(StateError('synthetic authorization refusal'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(tester.widget<OutlinedButton>(button).onPressed, isNotNull);
+    },
   );
 
   testWidgets(

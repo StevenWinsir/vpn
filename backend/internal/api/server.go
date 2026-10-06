@@ -17,9 +17,10 @@ import (
 )
 
 type Server struct {
-	db        *gorm.DB
-	cfg       config.Config
-	dummyHash []byte
+	db             *gorm.DB
+	cfg            config.Config
+	dummyHash      []byte
+	catalogUpdates catalogSignal
 }
 type apiError struct {
 	Status        int
@@ -100,12 +101,14 @@ func New(db *gorm.DB, cfg config.Config) *gin.Engine {
 	admin.GET("/nodes/:id", s.adminNodeDetail)
 	admin.POST("/nodes", s.adminNodeSave)
 	admin.POST("/nodes/:id", s.adminNodeSave)
+	admin.DELETE("/nodes/:id", s.adminNodeDelete)
 	nativeLogin := v.Group("/client")
 	nativeLogin.Use(rateLimit(cfg.AuthRate))
 	nativeLogin.POST("/login", s.nativeLogin)
 	native := v.Group("/client")
 	native.Use(s.requireNativeSession())
 	native.GET("/session", s.nativeStatus)
+	native.GET("/nodes", s.nativeNodes)
 	native.GET("/config", s.nativeConfig)
 	native.POST("/traffic", s.nativeTraffic)
 	native.POST("/logout", s.nativeLogout)
@@ -128,7 +131,7 @@ func (s *Server) corsAndCSRF() gin.HandlerFunc {
 			}
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key")
 		}
 		if c.Request.Method == http.MethodOptions {

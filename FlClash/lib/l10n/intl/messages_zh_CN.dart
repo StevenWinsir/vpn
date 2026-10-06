@@ -570,6 +570,18 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTrafficUnconfirmed": MessageLookupByLibrary.simpleMessage(
       "代理已停止，但最后一笔流量尚未确认。请保留当前会话并重试，确认后再退出登录。",
     ),
+    "managedTunAuthorize": MessageLookupByLibrary.simpleMessage(
+      "授权 macOS TUN 并重启内核",
+    ),
+    "managedTunDescription": MessageLookupByLibrary.simpleMessage(
+      "macOS 连接需要 TUN 接管 TCP、UDP 和 IPv6，而非仅设置系统代理。首次连接前请授权；内核重启后需要重新登录。这不等同于系统级断网保护。",
+    ),
+    "managedTunFailed": MessageLookupByLibrary.simpleMessage(
+      "TUN 未能安全启动或清理，没有降级为仅系统代理。请重启应用，并检查其他 VPN 冲突或网络权限。",
+    ),
+    "managedTunPermission": MessageLookupByLibrary.simpleMessage(
+      "TUN 需要管理员权限。请点击授权按钮，然后重新登录；当前并未连接代理。",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "服务端配置包含受管客户端尚不支持的功能，请联系服务管理员。",
     ),

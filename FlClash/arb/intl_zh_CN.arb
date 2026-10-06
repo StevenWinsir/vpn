@@ -1,4 +1,8 @@
 {
+  "managedTunAuthorize": "授权 macOS TUN 并重启内核",
+  "managedTunDescription": "macOS 连接需要 TUN 接管 TCP、UDP 和 IPv6，而非仅设置系统代理。首次连接前请授权；内核重启后需要重新登录。这不等同于系统级断网保护。",
+  "managedTunPermission": "TUN 需要管理员权限。请点击授权按钮，然后重新登录；当前并未连接代理。",
+  "managedTunFailed": "TUN 未能安全启动或清理，没有降级为仅系统代理。请重启应用，并检查其他 VPN 冲突或网络权限。",
   "managedApplied": "服务端配置已准备好。点击连接后将重新确认计量授权；刷新配置不会自动启动代理。",
   "managedConnect": "连接",
   "managedDisconnect": "断开连接",

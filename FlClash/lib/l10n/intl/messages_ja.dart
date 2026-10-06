@@ -646,6 +646,18 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTrafficUnconfirmed": MessageLookupByLibrary.simpleMessage(
       "プロキシは停止しましたが、最終通信量は未確認です。セッションを維持して再試行し、確認後にログアウトしてください。",
     ),
+    "managedTunAuthorize": MessageLookupByLibrary.simpleMessage(
+      "macOS TUN を認可してコアを再起動",
+    ),
+    "managedTunDescription": MessageLookupByLibrary.simpleMessage(
+      "macOS ではシステムプロキシだけでなく、TUN で TCP・UDP・IPv6 を処理します。初回接続前に認可し、コアの再起動後に再ログインしてください。システム全体のキルスイッチではありません。",
+    ),
+    "managedTunFailed": MessageLookupByLibrary.simpleMessage(
+      "TUN を安全に起動または終了できませんでした。システムプロキシのみへの切り替えは行いません。アプリを再起動し、他の VPN やネットワーク権限を確認してください。",
+    ),
+    "managedTunPermission": MessageLookupByLibrary.simpleMessage(
+      "TUN には管理者権限が必要です。認可ボタンを押して再ログインしてください。プロキシは未接続です。",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "このサーバー設定には、管理対象クライアントが未対応の機能が含まれています。サービス管理者にお問い合わせください。",
     ),

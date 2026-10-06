@@ -100,6 +100,7 @@ jobs:
           path: |
             artifacts/ci-catalog/summary.json
             artifacts/ci-catalog/traffic-evidence.json
+            artifacts/ci-catalog/browser-artifacts/
 
   flutter:
     name: Flutter / account and lifecycle regressions
@@ -182,6 +183,11 @@ jobs:
           workspaces: |
             FlClash/plugins/rust_api/rust
             FlClash/services/helper
+      - name: Real macOS TUN UDP / IPv4 and IPv6 regression
+        working-directory: FlClash/core
+        run: |
+          CGO_ENABLED=0 go test -c -o /tmp/vpn-managed-tun.test .
+          sudo env RUN_MANAGED_TUN_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOSRealTUNUDPBothFamilies$' -test.v -test.timeout=45s
       - name: Native macOS application (no acceptance tags)
         run: |
           printf '%s\n' 'CLIENT_API_BASE=https://ci.example.invalid/api/v1/client' > FlClash/.env
