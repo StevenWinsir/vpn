@@ -63,7 +63,7 @@ func TestAdminMultiProtocolCatalogPostgres(t *testing.T) {
 		cookies = append(cookies, cookie.Name+"="+cookie.Value)
 	}
 	cookie := strings.Join(cookies, "; ")
-	data, err := os.ReadFile("../../../FlClash/core/nodepolicy/testdata/proxies.yaml")
+	data, err := os.ReadFile("../../nodepolicy/testdata/proxies.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,9 @@
 # 同机远程部署：浏览器同源 API + Next.js 服务端代理
 
+## 后端可以单独上传与编译
+
+最新修复将后端的共享协议依赖随 `backend/nodepolicy` 一并交付，`go.mod` 使用 `replace vpn/nodepolicy => ./nodepolicy`。完整复制 `backend/` 后可重命名为 `/www/wwwroot/test.hyshentou.cn_backend` 并独立构建，不需要在服务器部署 FlClash。此前 `replacement directory ../FlClash/core/nodepolicy does not exist` 是旧版跨目录依赖与单独上传不兼容；应更新完整 backend（含 nodepolicy），而不是改数据库、节点配置或删除校验。构建、旧服务替换和 CI 一致性策略见 [后端单目录部署说明](../backend/DEPLOYMENT.md)。
+
 ## 请求链路
 
 ```text
