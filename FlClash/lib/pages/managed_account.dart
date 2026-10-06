@@ -362,6 +362,11 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
                             ? strings.managedCoreStarting
                             : strings.managedCoreUnavailable,
                       ),
+                      if (state.diagnostic.isNotEmpty)
+                        SelectableText(
+                          strings.managedCoreDiagnostic(state.diagnostic),
+                          key: const Key('managed-core-diagnostic'),
+                        ),
                       const SizedBox(height: 12),
                       FilledButton(
                         onPressed: busy

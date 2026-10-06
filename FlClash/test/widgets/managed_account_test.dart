@@ -37,6 +37,64 @@ void main() {
     const Locale('ja'),
     const Locale('ru'),
   ]) {
+    testWidgets('restarting is not a Core failure in $locale', (tester) async {
+      await tester.pumpWidget(
+        TestApp(
+          locale: locale,
+          child: view(
+            state: const ManagedAccountState(working: true),
+            authorizeTun: nothing,
+          ),
+        ),
+      );
+      await tester.pump();
+      final strings = AppLocalizations.of(
+        tester.element(find.byType(ManagedAccountView)),
+      );
+      expect(find.text(strings.managedCoreStarting), findsOneWidget);
+      expect(find.text(strings.managedCoreUnavailable), findsNothing);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const Key('managed-authorize-tun')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, strings.managedRetryCore),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.pumpWidget(const SizedBox());
+    });
+    testWidgets('real Core failure has a copyable diagnostic in $locale', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        TestApp(
+          locale: locale,
+          child: view(
+            state: const ManagedAccountState(
+              error: 'core_unavailable',
+              diagnostic: 'core_initialization_failed',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final strings = AppLocalizations.of(
+        tester.element(find.byType(ManagedAccountView)),
+      );
+      expect(find.byKey(const Key('managed-core-diagnostic')), findsOneWidget);
+      expect(
+        find.text(strings.managedCoreDiagnostic('core_initialization_failed')),
+        findsOneWidget,
+      );
+    });
     for (final code in [
       'managed_tun_route_conflict',
       'managed_tun_route_check_failed',

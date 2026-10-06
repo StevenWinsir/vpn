@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:fl_clash/common/path.dart';
+import 'package:fl_clash/common/managed_credentials.dart';
+import 'package:fl_clash/common/system.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/desktop/launcher.dart';
 import 'package:fl_clash/core/desktop/lifecycle.dart';
@@ -9,6 +11,8 @@ import 'package:fl_clash/core/desktop/rpc_client.dart';
 import 'package:fl_clash/core/desktop/transport.dart';
 import 'package:fl_clash/core/service.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/manager/core_manager.dart';
+import 'package:fl_clash/pages/managed_account.dart';
 import 'package:fl_clash/providers/managed_account.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +21,8 @@ import 'package:integration_test/integration_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:rust_api/rust_api.dart';
 import 'package:window_manager/window_manager.dart';
+
+import '../test/helpers/test_app.dart';
 
 class _DirectResolver implements DesktopCoreLauncherResolver {
   const _DirectResolver(this.launcher);
@@ -52,17 +58,37 @@ void main() {
       ),
     );
     final container = ProviderContainer(
-      overrides: [coreHandlerProvider.overrideWithValue(core)],
+      overrides: [
+        coreHandlerProvider.overrideWithValue(core),
+        managedCredentialStoreProvider.overrideWithValue(
+          MacOSManagedCredentials(platformSupported: false),
+        ),
+      ],
     );
     const authorize = bool.fromEnvironment('RESTART_AUTHORIZE_TEST');
+    const localAuthorize = bool.fromEnvironment('RESTART_LOCAL_AUTHORIZE_TEST');
     var expectedRoot = false;
     addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
       container.dispose();
       await core.close();
       await root.delete(recursive: true);
+      if (localAuthorize && expectedRoot) {
+        await File(appPath.corePath).delete();
+      }
     });
     container.read(managedAccountProvider);
     final action = container.read(coreActionProvider.notifier);
+    final failures = <String>[];
+    container.listen(managedAccountProvider, (_, next) {
+      if (next.errorCode.isNotEmpty) failures.add(next.errorCode);
+    });
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(child: CoreManager(child: ManagedAccountPanel())),
+      ),
+    );
 
     Future<void> assertReady(String phase) async {
       final deadline = DateTime.now().add(const Duration(seconds: 15));
@@ -99,6 +125,11 @@ void main() {
 
     await action.startCore();
     await assertReady('cold start');
+    if (localAuthorize) {
+      expect(authorize, isFalse);
+      expect(await system.authorizeCore(), AuthorizeCode.success);
+      expectedRoot = true;
+    }
     if (authorize) {
       expect(Platform.environment['GITHUB_ACTIONS'], 'true');
       for (final command in [
@@ -111,8 +142,36 @@ void main() {
       expectedRoot = true;
     }
     for (var attempt = 1; attempt <= 4; attempt++) {
-      expect(await action.restartCore(), isTrue);
+      if (expectedRoot) {
+        final previous = (lifecycle.state as DesktopCoreRunning).session.pid;
+        final button = find.byKey(const Key('managed-authorize-tun'));
+        await tester.pump();
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        final deadline = DateTime.now().add(const Duration(seconds: 30));
+        while (DateTime.now().isBefore(deadline)) {
+          if (lifecycle.state case DesktopCoreRunning(:final session)
+              when session.pid != previous &&
+                  container.read(managedAccountProvider).ready) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        expect(
+          (lifecycle.state as DesktopCoreRunning).session.pid,
+          isNot(previous),
+        );
+      } else {
+        final restart = action.restartCore();
+        expect(container.read(managedAccountProvider).busy, isTrue);
+        expect(await restart, isTrue);
+      }
       await assertReady('restart $attempt');
     }
+    expect(
+      failures,
+      isEmpty,
+      reason: 'normal restart must not publish a failure',
+    );
   });
 }

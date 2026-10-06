@@ -55,6 +55,16 @@ class AppLocalizations {
     return Localizations.of<AppLocalizations>(context, AppLocalizations);
   }
 
+  /// `Core diagnostic code: {code}`
+  String managedCoreDiagnostic(Object code) {
+    return Intl.message(
+      'Core diagnostic code: $code',
+      name: 'managedCoreDiagnostic',
+      desc: '',
+      args: [code],
+    );
+  }
+
   /// `Authorize macOS TUN and restart Core`
   String get managedTunAuthorize {
     return Intl.message(

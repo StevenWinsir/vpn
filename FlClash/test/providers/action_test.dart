@@ -17,6 +17,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:riverpod/riverpod.dart';
 
 import '../helpers/test_profiles.dart';
+import '../helpers/managed_fakes.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
@@ -351,6 +352,9 @@ void main() {
     test('surfaces a failed restart to its caller as a rejection', () async {
       final container = ProviderContainer(
         overrides: [
+          coreHandlerProvider.overrideWithValue(
+            CoreController.scoped(ManagedCoreFake()),
+          ),
           managedConnectionAllowedProvider.overrideWithValue(true),
           coreActionProvider.overrideWith(_TestCoreAction.new),
           setupActionProvider.overrideWith(_TestSetupAction.new),

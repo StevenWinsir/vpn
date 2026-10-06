@@ -1,4 +1,5 @@
 {
+  "managedCoreDiagnostic": "内核诊断代码：{code}",
   "managedTunAuthorize": "授权 macOS TUN 并重启内核",
   "managedTunRouteConflict": "其他 VPN 或隧道正在占用所需的系统路由。请先在 Shadowrocket、Clash 或其他 VPN 应用中断开连接（仅关闭窗口无效），再点击连接。无需重复授权；当前未连接，也不会抢占其他 VPN 的路由。",
   "managedTunRouteCheckFailed": "无法安全检查系统路由，因此没有启动代理。请重启应用并检查网络权限后重试。",

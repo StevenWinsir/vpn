@@ -70,44 +70,46 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m19(remaining, total) =>
       "Confirmed allowance: ${remaining} / ${total} MiB";
 
-  static String m20(upload, download) =>
+  static String m20(code) => "Core diagnostic code: ${code}";
+
+  static String m21(upload, download) =>
       "Session cumulative traffic: upload ${upload} MiB / download ${download} MiB";
 
-  static String m21(remaining) =>
+  static String m22(remaining) =>
       "Estimated local allowance: ${remaining} MiB (unconfirmed traffic deducted)";
 
-  static String m22(date) => "Subscription expires: ${date}";
+  static String m23(date) => "Subscription expires: ${date}";
 
-  static String m23(plan) => "Plan: ${plan}";
+  static String m24(plan) => "Plan: ${plan}";
 
-  static String m24(label, max) => "${label} must be at most ${max} characters";
-
-  static String m25(count) =>
-      "${Intl.plural(count, one: '1 minute ago', other: '${count} minutes ago')}";
+  static String m25(label, max) => "${label} must be at most ${max} characters";
 
   static String m26(count) =>
+      "${Intl.plural(count, one: '1 minute ago', other: '${count} minutes ago')}";
+
+  static String m27(count) =>
       "${Intl.plural(count, one: '1 month ago', other: '${count} months ago')}";
 
-  static String m27(label) => "No ${label} yet";
+  static String m28(label) => "No ${label} yet";
 
-  static String m28(label) => "${label} must be a number";
+  static String m29(label) => "${label} must be a number";
 
-  static String m29(label) => "${label} must be between 1024 and 49151";
-
-  static String m30(count) =>
-      "${Intl.plural(count, one: '1 proxy', other: '${count} proxies')}";
+  static String m30(label) => "${label} must be between 1024 and 49151";
 
   static String m31(count) =>
-      "${Intl.plural(count, one: '1 rule', other: '${count} rules')}";
+      "${Intl.plural(count, one: '1 proxy', other: '${count} proxies')}";
 
   static String m32(count) =>
+      "${Intl.plural(count, one: '1 rule', other: '${count} rules')}";
+
+  static String m33(count) =>
       "${Intl.plural(count, one: '1 second', other: '${count} seconds')}";
 
-  static String m33(count) => "${count} selected";
+  static String m34(count) => "${count} selected";
 
-  static String m34(label) => "${label} must be a URL";
+  static String m35(label) => "${label} must be a URL";
 
-  static String m35(count) =>
+  static String m36(count) =>
       "${Intl.plural(count, one: '1 year ago', other: '${count} years ago')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
@@ -678,6 +680,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedConnecting": MessageLookupByLibrary.simpleMessage(
       "Authorization confirmed. Waiting for the platform connection.",
     ),
+    "managedCoreDiagnostic": m20,
     "managedCoreStarting": MessageLookupByLibrary.simpleMessage(
       "Preparing the secure account connection…",
     ),
@@ -693,15 +696,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedCredentialsError": MessageLookupByLibrary.simpleMessage(
       "The email or password is incorrect.",
     ),
-    "managedCumulativeTraffic": m20,
+    "managedCumulativeTraffic": m21,
     "managedDeviceLimit": MessageLookupByLibrary.simpleMessage(
       "The device limit has been reached. Disconnect another device and retry.",
     ),
     "managedDisconnect": MessageLookupByLibrary.simpleMessage("Disconnect"),
     "managedEmail": MessageLookupByLibrary.simpleMessage("Email"),
-    "managedEstimatedBalance": m21,
+    "managedEstimatedBalance": m22,
     "managedExitApp": MessageLookupByLibrary.simpleMessage("Exit application"),
-    "managedExpires": m22,
+    "managedExpires": m23,
     "managedFinalTrafficUnconfirmed": MessageLookupByLibrary.simpleMessage(
       "The proxy and local session are closed, but the server did not confirm final traffic within the exit deadline. Settlement is not guaranteed; do not treat the displayed allowance as a confirmed final balance.",
     ),
@@ -727,7 +730,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "No valid server-managed configuration is available.",
     ),
     "managedPassword": MessageLookupByLibrary.simpleMessage("Password"),
-    "managedPlan": m23,
+    "managedPlan": m24,
     "managedProtocolError": MessageLookupByLibrary.simpleMessage(
       "The server response could not be verified. The proxy remains stopped.",
     ),
@@ -812,7 +815,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "matchTargetTitle": MessageLookupByLibrary.simpleMessage("Match target"),
     "maxFailedTimes": MessageLookupByLibrary.simpleMessage("Max failures"),
-    "maxLengthTip": m24,
+    "maxLengthTip": m25,
     "maximize": MessageLookupByLibrary.simpleMessage("Maximize"),
     "memoryInfo": MessageLookupByLibrary.simpleMessage("Memory info"),
     "messageTest": MessageLookupByLibrary.simpleMessage("Message test"),
@@ -825,11 +828,11 @@ class MessageLookup extends MessageLookupByLibrary {
     "minimizeOnExitDesc": MessageLookupByLibrary.simpleMessage(
       "Override the default system exit behavior",
     ),
-    "minutesAgo": m25,
+    "minutesAgo": m26,
     "mixedPort": MessageLookupByLibrary.simpleMessage("Mixed port"),
     "mode": MessageLookupByLibrary.simpleMessage("Mode"),
     "monochromeScheme": MessageLookupByLibrary.simpleMessage("Monochrome"),
-    "monthsAgo": m26,
+    "monthsAgo": m27,
     "more": MessageLookupByLibrary.simpleMessage("More"),
     "multipleValuesTip": MessageLookupByLibrary.simpleMessage(
       "Separate multiple values with commas",
@@ -879,8 +882,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "nullProfileDesc": MessageLookupByLibrary.simpleMessage(
       "No profiles yet, please add one first",
     ),
-    "nullTip": m27,
-    "numberTip": m28,
+    "nullTip": m28,
+    "numberTip": m29,
     "onDemand": MessageLookupByLibrary.simpleMessage("On demand"),
     "onDemandDesc": MessageLookupByLibrary.simpleMessage(
       "Configure the app\'s running state for specific scenarios",
@@ -928,7 +931,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "portConflictTip": MessageLookupByLibrary.simpleMessage(
       "Please enter a different port",
     ),
-    "portTip": m29,
+    "portTip": m30,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage(
       "Prefer HTTP/3 for DoH",
     ),
@@ -961,7 +964,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "project": MessageLookupByLibrary.simpleMessage("Project"),
     "providers": MessageLookupByLibrary.simpleMessage("External resources"),
     "proxies": MessageLookupByLibrary.simpleMessage("Proxies"),
-    "proxiesCount": m30,
+    "proxiesCount": m31,
     "proxiesEmpty": MessageLookupByLibrary.simpleMessage("Proxies are empty"),
     "proxyChains": MessageLookupByLibrary.simpleMessage("Proxy chain"),
     "proxyDetectedAbnormal": MessageLookupByLibrary.simpleMessage(
@@ -1183,7 +1186,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleSet": MessageLookupByLibrary.simpleMessage("Rule set"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("Rule target"),
     "rules": MessageLookupByLibrary.simpleMessage("Rules"),
-    "rulesCount": m31,
+    "rulesCount": m32,
     "save": MessageLookupByLibrary.simpleMessage("Save"),
     "saveChanges": MessageLookupByLibrary.simpleMessage("Save the changes?"),
     "script": MessageLookupByLibrary.simpleMessage("Script"),
@@ -1195,7 +1198,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "search": MessageLookupByLibrary.simpleMessage("Search"),
     "seconds": MessageLookupByLibrary.simpleMessage("seconds"),
-    "secondsCount": m32,
+    "secondsCount": m33,
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectMatchTarget": MessageLookupByLibrary.simpleMessage(
       "Select MATCH-TARGET",
@@ -1214,7 +1217,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Please select a sub-rule",
     ),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m33,
+    "selectedCountTitle": m34,
     "settings": MessageLookupByLibrary.simpleMessage("Settings"),
     "show": MessageLookupByLibrary.simpleMessage("Show"),
     "showLess": MessageLookupByLibrary.simpleMessage("Collapse"),
@@ -1331,7 +1334,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain a profile from a URL",
     ),
-    "urlTip": m34,
+    "urlTip": m35,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "usedTraffic": MessageLookupByLibrary.simpleMessage("Used traffic"),
@@ -1352,7 +1355,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "WebDAV configuration",
     ),
     "whitelistMode": MessageLookupByLibrary.simpleMessage("Whitelist mode"),
-    "yearsAgo": m35,
+    "yearsAgo": m36,
     "zhCN": MessageLookupByLibrary.simpleMessage("Simplified Chinese"),
   };
 }

@@ -1,4 +1,5 @@
 {
+  "managedCoreDiagnostic": "コア診断コード：{code}",
   "managedTunAuthorize": "macOS TUN を認可してコアを再起動",
   "managedTunRouteConflict": "別の VPN またはトンネルが必要なシステム経路を使用しています。Shadowrocket、Clash などの VPN アプリで接続を切断してから再接続してください。ウィンドウを閉じるだけでは切断されません。再認可は不要です。このプロキシは未接続で、他の VPN の経路を上書きしません。",
   "managedTunRouteCheckFailed": "システム経路を安全に確認できないため、プロキシを起動しませんでした。アプリを再起動し、ネットワーク権限を確認してから再試行してください。",
