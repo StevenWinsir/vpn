@@ -10,7 +10,7 @@ import (
 )
 
 func TestAllManagedProtocolsRoundTrip(t *testing.T) {
-	data, err := os.ReadFile("../../../FlClash/core/nodepolicy/testdata/proxies.yaml")
+	data, err := os.ReadFile("../../nodepolicy/testdata/proxies.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestProtocolBoundaryRejectsUntrustedOptions(t *testing.T) {
 
 func FuzzParseNodeYAML(f *testing.F) {
 	f.Add(example)
-	data, err := os.ReadFile("../../../FlClash/core/nodepolicy/testdata/proxies.yaml")
+	data, err := os.ReadFile("../../nodepolicy/testdata/proxies.yaml")
 	if err != nil {
 		f.Fatal(err)
 	}

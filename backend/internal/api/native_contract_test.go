@@ -22,7 +22,7 @@ type nativeContractCase struct {
 
 func readNativeContract(t *testing.T) map[string]nativeContractCase {
 	t.Helper()
-	data, err := os.ReadFile("../../../FlClash/test/fixtures/native_client_contract.json")
+	data, err := os.ReadFile("testdata/native_client_contract.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,8 @@ module vpn/backend
 
 go 1.24.0
 
-replace vpn/nodepolicy => ../FlClash/core/nodepolicy
+// Bundled snapshot; scripts/sync-backend-shared.py --check enforces Core parity.
+replace vpn/nodepolicy => ./nodepolicy
 
 require (
 	github.com/gin-gonic/gin v1.11.0
