@@ -5,9 +5,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
@@ -29,26 +33,76 @@ type managedTunProbe struct {
 
 func (p *managedTunProbe) HandleUDPPacket(packet C.UDPPacket, metadata *C.Metadata) {
 	defer packet.Drop()
+	if metadata.DstPort != 3478 || (metadata.DstIP != netip.MustParseAddr("198.19.253.2") && metadata.DstIP != netip.MustParseAddr("2001:db8:ffff::2")) {
+		return
+	}
 	_, err := packet.WriteBack(packet.Data(), &net.UDPAddr{IP: metadata.DstIP.AsSlice(), Port: int(metadata.DstPort)})
-	p.received <- managedTunProbeResult{metadata: *metadata, err: err}
+	select {
+	case p.received <- managedTunProbeResult{metadata: *metadata, err: err}:
+	default:
+	}
 }
 
 func TestManagedMacOSRealTUNUDPBothFamilies(t *testing.T) {
 	if os.Getenv("RUN_MANAGED_TUN_TEST") != "1" {
 		t.Skip("requires explicit opt-in on an isolated privileged macOS runner")
 	}
+	runManagedMacOSTUNUDP(t, false)
+}
+
+func TestManagedMacOSProductionTUNRoutes(t *testing.T) {
+	if os.Getenv("RUN_MANAGED_TUN_FULL_ROUTE_TEST") != "1" {
+		t.Skip("requires explicit opt-in: temporarily captures all routed traffic on an isolated macOS runner")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("production-route test requires root")
+	}
+	if err := exec.Command("/sbin/route", "-n", "get", "default").Run(); err != nil {
+		t.Fatalf("regression requires an existing default route: %v", err)
+	}
+	t.Run("legacy default route collision", func(t *testing.T) {
+		legacy := managedMacOSTunConfig()
+		legacy.RouteAddress = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
+		listener, err := sing_tun.New(legacy, tunnel.Tunnel)
+		if listener != nil {
+			if closeErr := listener.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+		}
+		if !errors.Is(err, syscall.EEXIST) {
+			t.Fatalf("expected the legacy default route collision, got: %v", err)
+		}
+		t.Logf("reproduced legacy startup failure: %v", err)
+	})
+	for _, name := range []string{"connect", "reconnect after cleanup"} {
+		t.Run(name, func(t *testing.T) { runManagedMacOSTUNUDP(t, true) })
+	}
+}
+
+func runManagedMacOSTUNUDP(t *testing.T, productionRoutes bool) {
+	t.Helper()
 	if os.Geteuid() != 0 {
 		t.Fatal("explicit real-TUN test requires root")
 	}
-	_ = newManagedTestEngine(t)
+	engine := newManagedTestEngine(t)
+	if productionRoutes {
+		engine.network = macOSManagedNetwork{}
+		_ = applyManagedFixture(t, engine)
+	}
 	probe := &managedTunProbe{Tunnel: tunnel.Tunnel, managedProviderAccess: tunnel.Tunnel, received: make(chan managedTunProbeResult, 8)}
 	plane := newManagedTrafficTunnel(probe)
 	plane.managedProviderAccess = probe
 	defer plane.stop()
-	cfg := managedMacOSTunConfig()
-	cfg.RouteAddress = []netip.Prefix{netip.MustParsePrefix("198.19.253.2/32"), netip.MustParsePrefix("2001:db8:ffff::2/128")}
-	cfg.DNSHijack = nil
-	listener, err := sing_tun.New(cfg, plane)
+	var listener io.Closer
+	var err error
+	if productionRoutes {
+		listener, err = engine.networkPolicy().Open(context.Background(), currentConfig, plane)
+	} else {
+		cfg := managedMacOSTunConfig()
+		cfg.RouteAddress = []netip.Prefix{netip.MustParsePrefix("198.19.253.2/32"), netip.MustParsePrefix("2001:db8:ffff::2/128")}
+		cfg.DNSHijack = nil
+		listener, err = sing_tun.New(cfg, plane)
+	}
 	if err != nil {
 		t.Fatalf("actual macOS TUN startup failed: %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/listener/sing_tun"
+	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 )
 
@@ -54,9 +55,13 @@ func managedMacOSTunConfig() LC.Tun {
 	return LC.Tun{
 		Enable: true, Stack: C.TunGvisor, AutoRoute: true, AutoDetectInterface: true, StrictRoute: true,
 		MTU: 1500, DNSHijack: []string{"any:53", "tcp://any:53"},
-		Inet4Address:          []netip.Prefix{netip.MustParsePrefix("198.18.0.1/30")},
-		Inet6Address:          []netip.Prefix{netip.MustParsePrefix("fc00::1/126")},
-		RouteAddress:          []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")},
+		Inet4Address: []netip.Prefix{netip.MustParsePrefix("198.18.0.1/30")},
+		Inet6Address: []netip.Prefix{netip.MustParsePrefix("fc00::1/126")},
+		// Darwin RTM_ADD rejects an existing /0; paired /1 routes preserve full capture.
+		RouteAddress: []netip.Prefix{
+			netip.MustParsePrefix("0.0.0.0/1"), netip.MustParsePrefix("128.0.0.0/1"),
+			netip.MustParsePrefix("::/1"), netip.MustParsePrefix("8000::/1"),
+		},
 		DisableICMPForwarding: true,
 	}
 }
@@ -71,6 +76,7 @@ func (macOSManagedNetwork) Open(ctx context.Context, cfg *config.Config, plane C
 	tunConfig := managedMacOSTunConfig()
 	listener, err := sing_tun.New(tunConfig, plane)
 	if err != nil {
+		log.Errorln("[Managed TUN] startup failed: %v", err)
 		return nil, managedConfigError("managed_tun_start_failed")
 	}
 	cfg.General.Tun = listener.Config()
@@ -84,7 +90,8 @@ func closeManagedNetworkLocked() error {
 	if managedNetworkCloser == nil {
 		return nil
 	}
-	if managedNetworkCloser.Close() != nil {
+	if err := managedNetworkCloser.Close(); err != nil {
+		log.Errorln("[Managed TUN] cleanup failed: %v", err)
 		return managedConfigError("managed_tun_cleanup_failed")
 	}
 	managedNetworkCloser = nil

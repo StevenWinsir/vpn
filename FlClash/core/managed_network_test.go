@@ -18,6 +18,8 @@ import (
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel"
+	singtun "github.com/metacubex/sing-tun"
+	"go4.org/netipx"
 )
 
 type networkFixture struct {
@@ -57,7 +59,7 @@ func TestManagedMacOSTUNPolicy(t *testing.T) {
 		t.Fatal("macOS managed DNS policy does not cover both address families through proxy rules")
 	}
 	tun := managedMacOSTunConfig()
-	if !tun.Enable || !tun.AutoRoute || !tun.AutoDetectInterface || !tun.StrictRoute || tun.Stack != C.TunGvisor || !tun.DisableICMPForwarding || len(tun.Inet4Address) == 0 || len(tun.Inet6Address) == 0 || len(tun.RouteExcludeAddress) != 0 || !slices.Contains(tun.RouteAddress, netip.MustParsePrefix("0.0.0.0/0")) || !slices.Contains(tun.RouteAddress, netip.MustParsePrefix("::/0")) || !slices.Contains(tun.DNSHijack, "any:53") || !slices.Contains(tun.DNSHijack, "tcp://any:53") {
+	if !tun.Enable || !tun.AutoRoute || !tun.AutoDetectInterface || !tun.StrictRoute || tun.Stack != C.TunGvisor || !tun.DisableICMPForwarding || len(tun.Inet4Address) == 0 || len(tun.Inet6Address) == 0 || len(tun.RouteExcludeAddress) != 0 || !slices.Contains(tun.DNSHijack, "any:53") || !slices.Contains(tun.DNSHijack, "tcp://any:53") {
 		t.Fatal("macOS TUN policy omitted full TCP/UDP/IPv6 capture or allowed direct ICMP")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -68,6 +70,38 @@ func TestManagedMacOSTUNPolicy(t *testing.T) {
 	if os.Geteuid() != 0 {
 		if closer, err := policy.Open(context.Background(), nil, nil); closer != nil || managed.PublicError(err) != "managed_tun_permission_required" {
 			t.Fatal("unprivileged TUN opening was not rejected")
+		}
+	}
+}
+
+func TestManagedMacOSRoutesCoverBothFamiliesWithoutReplacingDefaults(t *testing.T) {
+	cfg := managedMacOSTunConfig()
+	options := singtun.Options{AutoRoute: cfg.AutoRoute, Inet4Address: cfg.Inet4Address, Inet6Address: cfg.Inet6Address}
+	for _, prefix := range cfg.RouteAddress {
+		if prefix.Addr().Is4() {
+			options.Inet4RouteAddress = append(options.Inet4RouteAddress, prefix)
+		} else {
+			options.Inet6RouteAddress = append(options.Inet6RouteAddress, prefix)
+		}
+	}
+	routes, err := options.BuildAutoRouteRanges(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var coverage netipx.IPSetBuilder
+	for _, prefix := range routes {
+		if prefix.Bits() == 0 {
+			t.Fatalf("TUN would add an existing default route instead of more-specific routes: %s", prefix)
+		}
+		coverage.AddPrefix(prefix)
+	}
+	set, err := coverage.IPSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range []string{"0.0.0.0/0", "::/0"} {
+		if !set.ContainsPrefix(netip.MustParsePrefix(family)) {
+			t.Fatalf("TUN routes leave a capture gap in %s: %v", family, routes)
 		}
 	}
 }
