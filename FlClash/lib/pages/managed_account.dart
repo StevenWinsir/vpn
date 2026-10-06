@@ -256,6 +256,8 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
     final strings = context.appLocalizations;
     return switch (code) {
       'managed_tun_permission_required' => strings.managedTunPermission,
+      'managed_tun_route_conflict' => strings.managedTunRouteConflict,
+      'managed_tun_route_check_failed' => strings.managedTunRouteCheckFailed,
       'managed_tun_start_failed' ||
       'managed_tun_cleanup_failed' => strings.managedTunFailed,
       'invalid_credentials' => strings.managedCredentialsError,

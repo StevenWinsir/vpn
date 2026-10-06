@@ -792,6 +792,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTunPermission": MessageLookupByLibrary.simpleMessage(
       "TUN requires administrator authorization. Use the authorization button, then sign in again. The proxy has not connected.",
     ),
+    "managedTunRouteCheckFailed": MessageLookupByLibrary.simpleMessage(
+      "The system routes could not be checked safely, so the proxy was not started. Restart the app and check network permissions before retrying.",
+    ),
+    "managedTunRouteConflict": MessageLookupByLibrary.simpleMessage(
+      "Another VPN or tunnel is using the required system routes. Disconnect it in Shadowrocket, Clash or the other VPN app (closing its window is not enough), then connect again. Reauthorization is not needed. This proxy is disconnected and will not take over the other VPN\'s routes.",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "This server configuration uses a feature not supported by the managed client. Contact the service administrator.",
     ),

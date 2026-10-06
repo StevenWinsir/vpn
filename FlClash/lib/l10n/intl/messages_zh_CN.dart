@@ -582,6 +582,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTunPermission": MessageLookupByLibrary.simpleMessage(
       "TUN 需要管理员权限。请点击授权按钮，然后重新登录；当前并未连接代理。",
     ),
+    "managedTunRouteCheckFailed": MessageLookupByLibrary.simpleMessage(
+      "无法安全检查系统路由，因此没有启动代理。请重启应用并检查网络权限后重试。",
+    ),
+    "managedTunRouteConflict": MessageLookupByLibrary.simpleMessage(
+      "其他 VPN 或隧道正在占用所需的系统路由。请先在 Shadowrocket、Clash 或其他 VPN 应用中断开连接（仅关闭窗口无效），再点击连接。无需重复授权；当前未连接，也不会抢占其他 VPN 的路由。",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "服务端配置包含受管客户端尚不支持的功能，请联系服务管理员。",
     ),

@@ -205,7 +205,14 @@ jobs:
         working-directory: FlClash/core
         run: |
           CGO_ENABLED=0 go test -tags with_gvisor -c -o /tmp/vpn-managed-tun.test .
+          /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOSRoute' -test.v
           sudo env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=60s
+      - name: Installed-app setuid TUN / competing VPN and reconnect regression
+        run: |
+          trap 'sudo chmod 0755 /tmp/vpn-managed-tun.test' EXIT
+          sudo chown root:admin /tmp/vpn-managed-tun.test
+          sudo chmod 6755 /tmp/vpn-managed-tun.test
+          env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 RUN_MANAGED_TUN_SETUID_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=60s
       - name: Verify signatures after an incremental Dart entrypoint change
         run: |
           bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=integration_test/managed_account_test.dart

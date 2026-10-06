@@ -810,6 +810,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTunPermission": MessageLookupByLibrary.simpleMessage(
       "Для TUN нужны права администратора. Нажмите кнопку разрешения и войдите снова. Прокси не подключён.",
     ),
+    "managedTunRouteCheckFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось безопасно проверить системные маршруты, поэтому прокси не запущен. Перезапустите приложение и проверьте сетевые разрешения перед повторной попыткой.",
+    ),
+    "managedTunRouteConflict": MessageLookupByLibrary.simpleMessage(
+      "Другой VPN или туннель использует необходимые системные маршруты. Отключите соединение в Shadowrocket, Clash или другом VPN-приложении и повторите подключение. Закрыть окно недостаточно. Повторная авторизация не нужна. Этот прокси отключён и не будет перехватывать маршруты другого VPN.",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "Эта серверная конфигурация использует неподдерживаемую функцию управляемого клиента. Обратитесь к администратору сервиса.",
     ),

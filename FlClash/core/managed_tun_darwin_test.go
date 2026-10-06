@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"core/managed"
 	"errors"
 	"io"
 	"net"
@@ -57,6 +58,12 @@ func TestManagedMacOSProductionTUNRoutes(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("production-route test requires root")
 	}
+	if os.Getenv("RUN_MANAGED_TUN_SETUID_TEST") == "1" {
+		if os.Getuid() == 0 {
+			t.Fatal("setuid regression must be launched by a non-root user, not sudo")
+		}
+		t.Log("verified installed-app identity: real UID is non-root, effective UID is root")
+	}
 	if err := exec.Command("/sbin/route", "-n", "get", "default").Run(); err != nil {
 		t.Fatalf("regression requires an existing default route: %v", err)
 	}
@@ -74,7 +81,35 @@ func TestManagedMacOSProductionTUNRoutes(t *testing.T) {
 		}
 		t.Logf("reproduced legacy startup failure: %v", err)
 	})
-	for _, name := range []string{"connect", "reconnect after cleanup"} {
+	t.Run("competing VPN routes", func(t *testing.T) {
+		occupied := managedMacOSTunConfig()
+		occupied.Inet4Address = []netip.Prefix{netip.MustParsePrefix("198.19.252.1/30")}
+		occupied.Inet6Address = []netip.Prefix{netip.MustParsePrefix("fdfe:252::1/126")}
+		other, err := sing_tun.New(occupied, tunnel.Tunnel)
+		if err != nil {
+			t.Fatalf("start competing VPN fixture: %v", err)
+		}
+		defer func() {
+			if err := other.Close(); err != nil {
+				t.Errorf("close competing VPN fixture: %v", err)
+			}
+		}()
+		legacy, err := sing_tun.New(managedMacOSTunConfig(), tunnel.Tunnel)
+		if legacy != nil {
+			_ = legacy.Close()
+		}
+		if !errors.Is(err, syscall.EEXIST) {
+			t.Fatalf("expected paired /1 route collision, got %v", err)
+		}
+		t.Logf("reproduced occupied-route startup failure: %v", err)
+		for attempt := 0; attempt < 2; attempt++ {
+			listener, err := (macOSManagedNetwork{}).Open(context.Background(), nil, nil)
+			if listener != nil || managed.PublicError(err) != "managed_tun_route_conflict" {
+				t.Fatalf("preflight did not preserve the competing VPN: %v", err)
+			}
+		}
+	})
+	for _, name := range []string{"connect after other VPN disconnects", "reconnect after cleanup"} {
 		t.Run(name, func(t *testing.T) { runManagedMacOSTUNUDP(t, true) })
 	}
 }

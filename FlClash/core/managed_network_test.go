@@ -116,7 +116,7 @@ func TestManagedMacOSConfigurationAppliesWithoutOpeningTUN(t *testing.T) {
 }
 
 func TestManagedTUNOwnershipAndNoSystemProxyFallback(t *testing.T) {
-	for _, code := range []string{"managed_tun_permission_required", "managed_tun_start_failed"} {
+	for _, code := range []string{"managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_route_conflict", "managed_tun_route_check_failed"} {
 		t.Run(code, func(t *testing.T) {
 			engine := newManagedTestEngine(t)
 			view := applyManagedFixture(t, engine)

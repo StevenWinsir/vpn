@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/netip"
 	"os"
 	"runtime"
+	"syscall"
 
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
@@ -73,10 +75,16 @@ func (macOSManagedNetwork) Open(ctx context.Context, cfg *config.Config, plane C
 	if os.Geteuid() != 0 {
 		return nil, managedConfigError("managed_tun_permission_required")
 	}
+	if err := checkManagedTunRoutes(); err != nil {
+		return nil, err
+	}
 	tunConfig := managedMacOSTunConfig()
 	listener, err := sing_tun.New(tunConfig, plane)
 	if err != nil {
 		log.Errorln("[Managed TUN] startup failed: %v", err)
+		if errors.Is(err, syscall.EEXIST) {
+			return nil, managedConfigError("managed_tun_route_conflict")
+		}
 		return nil, managedConfigError("managed_tun_start_failed")
 	}
 	cfg.General.Tun = listener.Config()

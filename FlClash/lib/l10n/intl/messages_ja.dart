@@ -658,6 +658,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTunPermission": MessageLookupByLibrary.simpleMessage(
       "TUN には管理者権限が必要です。認可ボタンを押して再ログインしてください。プロキシは未接続です。",
     ),
+    "managedTunRouteCheckFailed": MessageLookupByLibrary.simpleMessage(
+      "システム経路を安全に確認できないため、プロキシを起動しませんでした。アプリを再起動し、ネットワーク権限を確認してから再試行してください。",
+    ),
+    "managedTunRouteConflict": MessageLookupByLibrary.simpleMessage(
+      "別の VPN またはトンネルが必要なシステム経路を使用しています。Shadowrocket、Clash などの VPN アプリで接続を切断してから再接続してください。ウィンドウを閉じるだけでは切断されません。再認可は不要です。このプロキシは未接続で、他の VPN の経路を上書きしません。",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "このサーバー設定には、管理対象クライアントが未対応の機能が含まれています。サービス管理者にお問い合わせください。",
     ),

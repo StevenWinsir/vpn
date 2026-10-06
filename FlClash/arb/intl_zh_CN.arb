@@ -1,5 +1,7 @@
 {
   "managedTunAuthorize": "授权 macOS TUN 并重启内核",
+  "managedTunRouteConflict": "其他 VPN 或隧道正在占用所需的系统路由。请先在 Shadowrocket、Clash 或其他 VPN 应用中断开连接（仅关闭窗口无效），再点击连接。无需重复授权；当前未连接，也不会抢占其他 VPN 的路由。",
+  "managedTunRouteCheckFailed": "无法安全检查系统路由，因此没有启动代理。请重启应用并检查网络权限后重试。",
   "managedTunDescription": "macOS 连接需要 TUN 接管 TCP、UDP 和 IPv6，而非仅设置系统代理。首次连接前请授权；内核重启后需要重新登录。这不等同于系统级断网保护。",
   "managedTunPermission": "TUN 需要管理员权限。请点击授权按钮，然后重新登录；当前并未连接代理。",
   "managedTunFailed": "TUN 未能安全启动或清理，没有降级为仅系统代理。请重启应用，并检查其他 VPN 冲突或网络权限。",

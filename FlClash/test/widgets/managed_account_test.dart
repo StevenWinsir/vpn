@@ -31,6 +31,56 @@ void main() {
     onAuthorizeTun: authorizeTun,
   );
 
+  for (final locale in [
+    const Locale('en'),
+    const Locale('zh', 'CN'),
+    const Locale('ja'),
+    const Locale('ru'),
+  ]) {
+    for (final code in [
+      'managed_tun_route_conflict',
+      'managed_tun_route_check_failed',
+    ]) {
+      testWidgets('$code has actionable feedback in $locale', (tester) async {
+        var authorizations = 0;
+        final state = ManagedAccountState(
+          ready: true,
+          error: code,
+          account: ManagedAccountSnapshot.fromJson(
+            managedSnapshot(phase: 'configuration_staged'),
+          ),
+        );
+        await tester.pumpWidget(
+          TestApp(
+            locale: locale,
+            child: view(
+              state: state,
+              authorizeTun: () async {
+                authorizations++;
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final strings = AppLocalizations.of(
+          tester.element(find.byType(ManagedAccountView)),
+        );
+        expect(
+          find.text(
+            code == 'managed_tun_route_conflict'
+                ? strings.managedTunRouteConflict
+                : strings.managedTunRouteCheckFailed,
+          ),
+          findsOneWidget,
+        );
+        expect(find.text(strings.managedTunPermission), findsNothing);
+        expect(find.text(strings.managedStopped), findsOneWidget);
+        expect(authorizations, 0);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets(
     'TUN permission stays explicit and duplicate authorization is blocked',
     (tester) async {

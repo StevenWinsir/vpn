@@ -225,7 +225,7 @@ func (c *Coordinator) setStatusLocked(status Status, started time.Time) {
 	// Server authorization cannot prove that the local TUN started successfully.
 	if status.CanConnect && c.snapshot.Configuration != nil && !c.runtime.Running() {
 		switch runtimeFailure {
-		case "managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed":
+		case "managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed", "managed_tun_route_conflict", "managed_tun_route_check_failed":
 			c.snapshot.ErrorCode = runtimeFailure
 		}
 	}

@@ -12,17 +12,25 @@ import (
 type recoverableNetworkStub struct {
 	*configurationStub
 	denied atomic.Bool
+	code   string
 }
 
 func (s *recoverableNetworkStub) Start(context.Context, ConfigurationOwner, string, int) error {
 	if s.denied.Load() {
-		return &APIError{"managed_tun_permission_required"}
+		return &APIError{s.code}
 	}
 	return nil
 }
 func (s *recoverableNetworkStub) Drain(context.Context) error { return nil }
 
 func TestTUNFailureSurvivesSettledDisconnectAndClearsAfterSuccessfulRetry(t *testing.T) {
+	for _, code := range []string{"managed_tun_permission_required", "managed_tun_route_conflict", "managed_tun_route_check_failed"} {
+		t.Run(code, func(t *testing.T) { testRecoverableTUNFailure(t, code) })
+	}
+}
+
+func testRecoverableTUNFailure(t *testing.T, code string) {
+	t.Helper()
 	fixture, c, _ := newAccountFixture(t)
 	fixture.hook = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.URL.Path != "/traffic" {
@@ -52,7 +60,7 @@ func TestTUNFailureSurvivesSettledDisconnectAndClearsAfterSuccessfulRetry(t *tes
 		_ = json.NewEncoder(w).Encode(map[string]Status{"session": status})
 		return true
 	}
-	engine := &recoverableNetworkStub{configurationStub: attachConfigurationStub(t, c)}
+	engine := &recoverableNetworkStub{configurationStub: attachConfigurationStub(t, c), code: code}
 	engine.denied.Store(true)
 	c.configuration = engine
 	c.sampler = func(context.Context) (int64, int64, error) { return 0, 0, nil }
@@ -62,15 +70,15 @@ func TestTUNFailureSurvivesSettledDisconnectAndClearsAfterSuccessfulRetry(t *tes
 		t.Fatal("fixture configuration not applied")
 	}
 	state, err = c.Connect(context.Background(), state.Generation, 17890)
-	if err != nil || state.CanConnect || state.ErrorCode != "managed_tun_permission_required" {
+	if err != nil || state.CanConnect || state.ErrorCode != code {
 		t.Fatalf("TUN refusal not exposed: %v / %s", err, state.ErrorCode)
 	}
 	state, err = c.Disconnect(context.Background(), state.Generation)
-	if err != nil || state.CanConnect || state.ErrorCode != "managed_tun_permission_required" {
+	if err != nil || state.CanConnect || state.ErrorCode != code {
 		t.Fatalf("settling cleanup hid the TUN error: %v / %s", err, state.ErrorCode)
 	}
 	state, err = c.Refresh(context.Background(), state.Generation)
-	if err != nil || state.ErrorCode != "managed_tun_permission_required" {
+	if err != nil || state.ErrorCode != code {
 		t.Fatal("meter heartbeat hid the TUN error")
 	}
 	engine.denied.Store(false)
@@ -81,7 +89,7 @@ func TestTUNFailureSurvivesSettledDisconnectAndClearsAfterSuccessfulRetry(t *tes
 }
 
 func TestTUNFailureSurvivesAccountRefreshUntilAuthorizationChanges(t *testing.T) {
-	for _, code := range []string{"managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed"} {
+	for _, code := range []string{"managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed", "managed_tun_route_conflict", "managed_tun_route_check_failed"} {
 		t.Run(code, func(t *testing.T) {
 			fixture, c, _ := newAccountFixture(t)
 			attachConfigurationStub(t, c)

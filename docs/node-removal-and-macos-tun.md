@@ -26,6 +26,25 @@ The managed route list uses `0.0.0.0/1`, `128.0.0.0/1`, `::/1`, and `8000::/1`. 
 
 ## What tests do and do not establish
 
+### Existing VPN route ownership
+
+Paired `/1` routes avoid a physical default-route collision, but another full-tunnel VPN can already own those same routes. In the reported M4 environment, the installed Core matched commit `e541e63` and its previous DMG hash, had `root:admin` setuid permissions, and actually launched with effective UID 0 and the user's real UID through local IPC. Independently, a read-only route inspection found an active Shadowrocket packet tunnel on `utun8`, including an unscoped default and `128.0.0.0/1`. These are verified current obstructions, not evidence that every earlier failure had the same cause; historical Core error logs were unavailable.
+
+Before opening a managed TUN, the macOS Core now reads the native routing table. It rejects an occupied required `/1` route or an unscoped `utun` default with `managed_tun_route_conflict`. Ordinary physical defaults, scoped macOS background-tunnel defaults, host/neighbor caches, and link-local routes are not treated as conflicts. An unreadable routing table fails closed with `managed_tun_route_check_failed`; a racing `EEXIST` from listener startup is also classified as a conflict. Neither path deletes routes, stops another VPN, requests more privilege, nor starts a system-proxy-only fallback. The bounded error survives healthy account/traffic refreshes until an explicit retry succeeds or entitlement changes. All four client languages explain the appropriate action.
+
+Disconnect the other VPN in its own application before connecting this client. Closing its window can leave its packet-tunnel extension active. Reauthorizing or reinstalling cannot free routes owned by another running VPN. This preflight is an initial conflict check, not a guarantee of safe nested VPNs, arbitrary split-tunnel coexistence, or protection against another VPN taking routes after connection.
+
+The read-only local diagnostic is opt-in and expects an already known competing VPN; it neither needs root nor opens a TUN:
+
+```bash
+cd FlClash/core
+CGO_ENABLED=0 RUN_MANAGED_ROUTE_INSPECTION_TEST=1 go test -tags with_gvisor -count=1 -run '^TestManagedMacOSActiveVPNPreflight$' -v .
+```
+
+On isolated macOS CI, the production-route test now creates another TUN owning the `/1` routes, reproduces the earlier listener's `EEXIST`, verifies repeated preflight rejection without removing the competitor, then disconnects the fixture and tests normal dual-stack connection and reconnection. CI runs this both as sudo-root and as a root-owned setuid executable launched by the unprivileged runner, matching the installed Core's real/effective UID split. The setuid mode is removed on exit. These disruptive tests remain prohibited on the user's active workstation.
+
+### Remaining acceptance boundaries
+
 Automated regressions cover administrator deletion/CSRF/concurrency, metadata synchronization, stale responses, tail-accounting preservation, TUN lifecycle failures, and actual loopback UDP rejection with a working positive control. A portable route test checks sing-tun's generated route ranges for full IPv4/IPv6 coverage without any `/0` additions. The macOS CI job retains the scoped `utun` UDP test and also runs the actual managed production-route opening path: it reproduces the legacy default-route collision, verifies dual-stack UDP, closes the listener, and repeats to verify reconnect cleanup. Neither test connects to an external proxy or STUN service.
 
 `RUN_MANAGED_TUN_FULL_ROUTE_TEST=1` is a separate privileged opt-in because that regression briefly captures all routed traffic. Run it only on an isolated runner, not on the user's active workstation or remote-management connection. The ordinary `RUN_MANAGED_TUN_TEST=1` test still installs only two documentation/test destination routes. The old scoped test alone could not catch the production default-route collision.
