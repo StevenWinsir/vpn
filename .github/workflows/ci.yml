@@ -183,11 +183,6 @@ jobs:
           workspaces: |
             FlClash/plugins/rust_api/rust
             FlClash/services/helper
-      - name: Real macOS TUN UDP / IPv4 and IPv6 regression
-        working-directory: FlClash/core
-        run: |
-          CGO_ENABLED=0 go test -c -o /tmp/vpn-managed-tun.test .
-          sudo env RUN_MANAGED_TUN_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOSRealTUNUDPBothFamilies$' -test.v -test.timeout=45s
       - name: Native macOS application (no acceptance tags)
         run: |
           printf '%s\n' 'CLIENT_API_BASE=https://ci.example.invalid/api/v1/client' > FlClash/.env
@@ -203,8 +198,14 @@ jobs:
             echo 'Acceptance-only code must not ship in the normal app.' >&2
             exit 1
           fi
+          grep -Eq -- '-tags=.*with_gvisor' /tmp/vpn-core-build.txt
           grep -Fq -- '-X core/managed.APIBase=https://ci.example.invalid/api/v1/client' /tmp/vpn-core-build.txt
           codesign --verify --deep --strict "$bundle"
+      - name: Real macOS TUN UDP / IPv4 and IPv6 regression
+        working-directory: FlClash/core
+        run: |
+          CGO_ENABLED=0 go test -tags with_gvisor -c -o /tmp/vpn-managed-tun.test .
+          sudo env RUN_MANAGED_TUN_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOSRealTUNUDPBothFamilies$' -test.v -test.timeout=45s
       - name: Verify signatures after an incremental Dart entrypoint change
         run: |
           bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=integration_test/managed_account_test.dart
