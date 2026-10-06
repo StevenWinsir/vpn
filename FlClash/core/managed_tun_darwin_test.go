@@ -83,6 +83,8 @@ func TestManagedMacOSProductionTUNRoutes(t *testing.T) {
 	})
 	t.Run("competing VPN routes", func(t *testing.T) {
 		occupied := managedMacOSTunConfig()
+		// Another VPN process does not share Mihomo's interface-binding singleton.
+		occupied.AutoDetectInterface = false
 		occupied.Inet4Address = []netip.Prefix{netip.MustParsePrefix("198.19.252.1/30")}
 		occupied.Inet6Address = []netip.Prefix{netip.MustParsePrefix("fdfe:252::1/126")}
 		other, err := sing_tun.New(occupied, tunnel.Tunnel)
