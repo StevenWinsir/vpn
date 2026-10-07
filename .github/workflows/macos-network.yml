@@ -1,0 +1,48 @@
+name: macOS network protection
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Network safety evidence must not wait behind a superseded Flutter/Xcode
+# cleanup build. This workflow is independent, but never skips its assertions.
+concurrency:
+  group: macos-network-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.26.6'
+
+jobs:
+  macos-network:
+    name: macOS TUN / physical-egress guard
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: FlClash/core/go.sum
+      - name: macOS network policy and STUN regressions
+        working-directory: FlClash/core
+        run: |
+          CGO_ENABLED=0 go test -tags with_gvisor -count=1 ./...
+      - name: Real macOS TUN / PF and dual-stack UDP
+        working-directory: FlClash/core
+        run: |
+          CGO_ENABLED=0 go test -tags with_gvisor -c -o /tmp/vpn-managed-tun.test .
+          sudo env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=120s
+      - name: Installed-app setuid TUN / competing VPN and recovery
+        run: |
+          trap 'sudo chmod 0755 /tmp/vpn-managed-tun.test' EXIT
+          sudo chown root:admin /tmp/vpn-managed-tun.test
+          sudo chmod 6755 /tmp/vpn-managed-tun.test
+          env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 RUN_MANAGED_TUN_SETUID_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=120s
