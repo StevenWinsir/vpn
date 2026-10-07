@@ -102,9 +102,17 @@ func sessionRate(sess model.NativeSession) int64 {
 }
 
 func (s *Server) catalogMetadata(db *gorm.DB, sub *model.Subscription) ([]model.Node, error) {
-	rows, err := s.catalogRows(db, true)
+	// Browser metadata reads must not even load encrypted connection parameters.
+	rows := []catalogRow{}
+	err := db.Table(s.cfg.Schema+".nodes AS n").
+		Select("n.id, n.name, n.region, n.line_type, n.rate_permille, n.version, c.plan_ids").
+		Joins("JOIN "+s.cfg.Schema+".node_configs AS c ON c.node_id = n.id").
+		Where("n.enabled = ?", true).Order("n.name, n.id").Limit(nodes.MaxNodes + 1).Find(&rows).Error
 	if err != nil {
 		return nil, err
+	}
+	if len(rows) > nodes.MaxNodes {
+		return nil, nodes.ErrInvalid
 	}
 	result := []model.Node{}
 	for _, row := range rows {

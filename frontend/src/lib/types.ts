@@ -43,6 +43,21 @@ export type Order = {
   created_at: string;
   paid_at: string;
 };
+// Explicit metadata contract. Never add connection parameters or YAML here.
+export type PublicNode = {
+  id: string;
+  name: string;
+  region: string;
+  line_type: 'direct' | 'dedicated';
+  rate_permille: number;
+  version: number;
+};
+export type NodeCatalog = {
+  nodes: PublicNode[];
+  entitlement_active: boolean;
+  expires_at: string;
+  is_test: boolean;
+};
 export type Meta = {
   test_purchase_enabled: boolean;
   proxy_service_ready: boolean;
