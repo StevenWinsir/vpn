@@ -213,13 +213,93 @@ func TestAdminNodeCatalogPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	want(request("GET", "/client/config?node_id="+dedicated.ID, "Bearer "+logged.Token, nil), 503)
+	want(request("DELETE", "/admin/nodes/"+dedicated.ID, "", map[string]int64{"version": 1}), 401)
+	want(request("DELETE", "/admin/nodes/"+dedicated.ID, userCookie, map[string]int64{"version": 1}), 403)
 	var auditCount int64
 	if err := db.Model(&model.AdminAudit{}).Count(&auditCount).Error; err != nil || auditCount != 5 {
 		t.Fatal("successful node mutations were not atomically audited")
 	}
 
+	t.Run("delete and live catalog revocation preserve billing", func(t *testing.T) {
+		if err := db.Model(&sub).Update("expires_at", now.Add(time.Hour)).Error; err != nil {
+			t.Fatal(err)
+		}
+		readCatalog := func(w *httptest.ResponseRecorder) nativeCatalog {
+			want(w, 200)
+			var catalog nativeCatalog
+			if json.Unmarshal(w.Body.Bytes(), &catalog) != nil || len(catalog.Revision) != 64 {
+				t.Fatal("invalid catalog response")
+			}
+			if strings.Contains(w.Body.String(), "catalog-private-secret") || strings.Contains(w.Body.String(), "127.0.0.1") {
+				t.Fatal("watch exposed node credentials")
+			}
+			return catalog
+		}
+		initial := readCatalog(request("GET", "/client/nodes", native, nil))
+		if len(initial.Nodes) != 1 || initial.Nodes[0].ID != dedicated.ID {
+			t.Fatal("watch did not filter by entitlement")
+		}
+		want(request("GET", "/client/nodes?revision=bad", native, nil), 400)
+		want(request("GET", "/client/nodes", "", nil), 401)
+		want(request("DELETE", "/admin/nodes/invalid", adminCookie, map[string]int64{"version": 1}), 400)
+		want(request("DELETE", "/admin/nodes/"+dedicated.ID, adminCookie, map[string]int64{"version": 0}), 400)
+		want(request("DELETE", "/admin/nodes/"+dedicated.ID, adminCookie, map[string]int64{"version": 2}), 409)
+		changed := make(chan *httptest.ResponseRecorder, 1)
+		go func() { changed <- request("GET", "/client/nodes?revision="+initial.Revision, native, nil) }()
+		want(request("DELETE", "/admin/nodes/"+dedicated.ID, adminCookie, map[string]int64{"version": 1}), 200)
+		select {
+		case response := <-changed:
+			catalog := readCatalog(response)
+			if len(catalog.Nodes) != 0 || catalog.Revision == initial.Revision {
+				t.Fatal("deleted last eligible node remained visible")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("online catalog did not observe deletion promptly")
+		}
+		want(request("DELETE", "/admin/nodes/"+dedicated.ID, adminCookie, map[string]int64{"version": 1}), 404)
+		want(request("GET", "/admin/nodes/"+dedicated.ID, adminCookie, nil), 404)
+		want(request("GET", "/client/config?last_sequence=5", native, nil), 503)
+		state := request("GET", "/client/session", native, nil)
+		want(state, 200)
+		if !strings.Contains(state.Body.String(), `"can_connect":false`) {
+			t.Fatal("deleted node still authorized")
+		}
+		want(report(6, 213, 100), 200)
+		want(report(6, 213, 100), 200)
+		var tail model.ClientTrafficReport
+		if err := db.Where("node_id = ? AND sequence = ?", dedicated.ID, 6).First(&tail).Error; err != nil || tail.RatePermille != 1000 || tail.ChargedUnits != 4000 {
+			t.Fatal("deleted node lost its rate snapshot or tail accounting")
+		}
+		var count int64
+		if err := db.Model(&model.NodeConfig{}).Where("node_id = ?", dedicated.ID).Count(&count).Error; err != nil || count != 0 {
+			t.Fatal("deleted node retained encrypted configuration")
+		}
+		if err := db.Model(&model.AdminAudit{}).Where("target_id = ? AND action = ?", dedicated.ID, "node.deleted").Count(&count).Error; err != nil || count != 1 {
+			t.Fatal("deletion was not audited exactly once")
+		}
+		fresh := save("", nodeBody("concurrent-delete", "direct", 500), 201)[0]
+		results := make(chan int, 2)
+		for range 2 {
+			go func() {
+				results <- request("DELETE", "/admin/nodes/"+fresh.ID, adminCookie, map[string]int64{"version": 1}).Code
+			}()
+		}
+		a, b := <-results, <-results
+		if !(a == 200 && b == 404 || a == 404 && b == 200) {
+			t.Fatalf("concurrent deletion: %d %d", a, b)
+		}
+	})
+
 	t.Run("csrf", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/admin/nodes", strings.NewReader(`{}`))
+		r.Header.Set("Cookie", adminCookie)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		want(w, 403)
+	})
+	t.Run("delete csrf", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/nodes/"+direct.ID, strings.NewReader(`{"version":3}`))
 		r.Header.Set("Cookie", adminCookie)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()

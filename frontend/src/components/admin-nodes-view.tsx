@@ -88,29 +88,35 @@ function NodeManager() {
   const [notice, setNotice] = useState('');
   const [opened, setOpened] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AdminNode | null>(null);
+  const [deleteError, setDeleteError] = useState('');
   const [editing, setEditing] = useState('');
   const [form, setForm] = useState<NodeForm>(emptyForm);
   const lifetime = useRef<AbortController | null>(null);
   const editRequest = useRef<AbortController | null>(null);
   const savePending = useRef(false);
+  const loadRevision = useRef(0);
 
   const load = useCallback((signal?: AbortSignal) => {
+    const revision = ++loadRevision.current;
+    const isCurrent = () => !signal?.aborted && revision === loadRevision.current;
     return Promise.all([
       api<{ nodes: AdminNode[]; supported_protocols?: string[] }>('/admin/nodes', { signal }),
       api<{ plans: Plan[] }>('/plans', { signal }),
     ])
       .then(([catalog, available]) => {
-        if (signal?.aborted) return;
+        if (!isCurrent()) return;
         setNodes(catalog.nodes);
         setProtocols(catalog.supported_protocols ?? []);
         setPlans(available.plans);
         setError('');
       })
       .catch((failure: unknown) => {
-        if (!signal?.aborted) setError(message(failure));
+        if (isCurrent()) setError(message(failure));
       })
       .finally(() => {
-        if (!signal?.aborted) setLoading(false);
+        if (isCurrent()) setLoading(false);
       });
   }, []);
 
@@ -164,6 +170,39 @@ function NodeManager() {
     setOpened(false);
     setForm(emptyForm());
     setFormError('');
+  };
+
+  const closeDelete = () => {
+    if (savePending.current) return;
+    setDeleteTarget(null);
+    setDeleteError('');
+  };
+
+  const remove = async () => {
+    if (!deleteTarget || savePending.current) return;
+    const target = deleteTarget;
+    savePending.current = true;
+    loadRevision.current++;
+    setDeleting(true);
+    setDeleteError('');
+    setNotice('');
+    try {
+      await api(`/admin/nodes/${target.id}`, {
+        method: 'DELETE',
+        signal: lifetime.current?.signal,
+        body: JSON.stringify({ version: target.version }),
+      });
+      if (lifetime.current?.signal.aborted) return;
+      setNodes((current) => current.filter((node) => node.id !== target.id));
+      setDeleteTarget(null);
+      setNotice('节点已删除。在线新版客户端会自动同步目录、停止旧连接并结清流量；剩余节点需重新点击连接。');
+      await load(lifetime.current?.signal);
+    } catch (failure) {
+      if (!lifetime.current?.signal.aborted) setDeleteError(message(failure));
+    } finally {
+      savePending.current = false;
+      if (!lifetime.current?.signal.aborted) setDeleting(false);
+    }
   };
 
   const save = async (event: React.FormEvent) => {
@@ -222,6 +261,7 @@ function NodeManager() {
           <Button
             variant="default"
             loading={loading}
+            disabled={saving || deleting}
             onClick={() => {
               setLoading(true);
               void load(lifetime.current?.signal);
@@ -230,7 +270,7 @@ function NodeManager() {
             刷新目录
           </Button>
           <Button
-            disabled={saving}
+            disabled={saving || deleting}
             onClick={() => {
               if (savePending.current) return;
               cancelEdit();
@@ -311,11 +351,26 @@ function NodeManager() {
                         variant="subtle"
                         size="xs"
                         loading={editing === node.id}
-                        disabled={!!editing && editing !== node.id}
+                        disabled={saving || deleting || (!!editing && editing !== node.id)}
                         onClick={() => void edit(node)}
                         aria-label={`编辑 ${node.name}`}
                       >
                         编辑
+                      </Button>
+                      <Button
+                        variant="subtle"
+                        color="red"
+                        size="xs"
+                        disabled={saving || deleting}
+                        aria-label={`删除 ${node.name}`}
+                        onClick={() => {
+                          if (savePending.current) return;
+                          cancelEdit();
+                          setDeleteError('');
+                          setDeleteTarget(node);
+                        }}
+                      >
+                        删除
                       </Button>
                     </Table.Td>
                   </Table.Tr>
@@ -325,6 +380,26 @@ function NodeManager() {
           </Table.ScrollContainer>
         )}
       </Paper>
+      <Modal
+        opened={deleteTarget !== null}
+        onClose={closeDelete}
+        title="确认删除节点"
+        closeOnClickOutside={!deleting}
+        closeOnEscape={!deleting}
+        withCloseButton={!deleting}
+      >
+        <Stack>
+          <Text>确定永久删除「{deleteTarget?.name}」吗？此操作不可撤销。</Text>
+          <Alert color="yellow" title="连接影响">
+            在线新版客户端会同步删除并停止旧配置的连接。删除最后一个可用节点后，用户将无法连接。历史流量及扣费记录会保留；共享代理凭据仍需在实际服务器上另行撤销。
+          </Alert>
+          {deleteError && <Alert color="red" title="未删除">{deleteError}</Alert>}
+          <Group justify="flex-end">
+            <Button variant="default" disabled={deleting} onClick={closeDelete}>取消</Button>
+            <Button color="red" loading={deleting} onClick={() => void remove()}>确认删除</Button>
+          </Group>
+        </Stack>
+      </Modal>
       <Modal
         opened={opened}
         onClose={close}
@@ -405,8 +480,8 @@ function NodeManager() {
               onChange={(event) => setForm({ ...form, enabled: event.currentTarget.checked })}
             />
             <Text size="sm" c="dimmed">
-              保存后服务端立即采用新版本。客户端按 60 秒心跳检查，90
-              秒授权租约到期会停止；切换线路会先断开并结清旧流量，需要重新点击连接。
+              保存后服务端通知在线新版客户端同步目录；跨后端实例按秒检查。计费仍每 60 秒上报，断网时 90
+              秒授权租约到期会停止；目录变更会先断开并结清旧流量，需要重新点击连接。
             </Text>
             <Group justify="flex-end">
               <Button variant="default" disabled={saving} onClick={close}>
