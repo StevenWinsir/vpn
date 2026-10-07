@@ -142,10 +142,16 @@ void main() {
       expectedRoot = true;
     }
     for (var attempt = 1; attempt <= 4; attempt++) {
-      if (expectedRoot) {
+      if (expectedRoot && attempt == 1) {
         final previous = (lifecycle.state as DesktopCoreRunning).session.pid;
         final button = find.byKey(const Key('managed-authorize-tun'));
-        await tester.pump();
+        // The privilege check is a real process query, so wait for the action
+        // that an unprivileged running Core must offer.
+        final shown = DateTime.now().add(const Duration(seconds: 15));
+        while (!tester.any(button) && DateTime.now().isBefore(shown)) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await tester.pump();
+        }
         await tester.ensureVisible(button);
         await tester.tap(button);
         final deadline = DateTime.now().add(const Duration(seconds: 30));
@@ -167,6 +173,17 @@ void main() {
         expect(await restart, isTrue);
       }
       await assertReady('restart $attempt');
+    }
+    if (expectedRoot) {
+      // A Core that already runs privileged needs no authorization, and
+      // offering a restart would only sign the user out for nothing.
+      final settled = DateTime.now().add(const Duration(seconds: 15));
+      while (tester.any(find.byKey(const Key('managed-authorize-tun'))) &&
+          DateTime.now().isBefore(settled)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+      }
+      expect(find.byKey(const Key('managed-authorize-tun')), findsNothing);
     }
     expect(
       failures,

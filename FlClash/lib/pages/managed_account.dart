@@ -26,7 +26,7 @@ bool isManagedStartFailure(String code) =>
 
 /// Whether the running Core still lacks the root privilege TUN needs.
 final managedTunPrivilegedProvider = FutureProvider.autoDispose<bool>(
-  (ref) => system.checkIsAdmin(),
+  (ref) => system.isCoreProcessPrivileged(),
 );
 
 class ManagedAccountPage extends ConsumerWidget {
@@ -81,7 +81,11 @@ class ManagedAccountPanel extends ConsumerWidget {
               ref.invalidate(managedTunPrivilegedProvider);
               // Already privileged and the running Core agrees: restarting
               // would only sign the user out without changing anything.
-              if (result == AuthorizeCode.none && !permissionRequired) return;
+              if (result == AuthorizeCode.none &&
+                  !permissionRequired &&
+                  await system.isCoreProcessPrivileged()) {
+                return;
+              }
               if (!context.mounted) return;
               final restarted = await ref
                   .read(coreActionProvider.notifier)

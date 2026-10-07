@@ -125,6 +125,37 @@ class System {
     return true;
   }
 
+  /// Whether the Core process that is actually running holds root privilege.
+  ///
+  /// The file mode alone is not enough: a Core started before the setuid bit
+  /// was applied keeps running as the ordinary user until it is restarted.
+  Future<bool> isCoreProcessPrivileged() async {
+    if (!isMacOS) {
+      return true;
+    }
+    try {
+      final result = await runProcess('/bin/ps', ['-axo', 'uid=,command=']);
+      if (result.exitCode == 0) {
+        final corePath = appPath.corePath;
+        var found = false;
+        for (final line in result.stdout.toString().split('\n')) {
+          final match = RegExp(r'^\s*(\d+)\s+(.*)$').firstMatch(line);
+          if (match == null || !match.group(2)!.startsWith(corePath)) {
+            continue;
+          }
+          found = true;
+          if (match.group(1) != '0') {
+            return false;
+          }
+        }
+        if (found) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return checkIsAdmin();
+  }
+
   static const _inheritedAclPermissions =
       'list,search,add_file,add_subdirectory,delete,delete_child,'
       'file_inherit,directory_inherit';
