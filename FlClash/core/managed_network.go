@@ -13,7 +13,6 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/listener/sing_tun"
-	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 )
 
@@ -81,7 +80,7 @@ func (macOSManagedNetwork) Open(ctx context.Context, cfg *config.Config, plane C
 	tunConfig := managedMacOSTunConfig()
 	listener, err := sing_tun.New(tunConfig, plane)
 	if err != nil {
-		log.Errorln("[Managed TUN] startup failed: %v", err)
+		managedLogError("[Managed TUN] startup failed: %v", err)
 		if errors.Is(err, syscall.EEXIST) {
 			return nil, managedConfigError("managed_tun_route_conflict")
 		}
@@ -99,7 +98,7 @@ func closeManagedNetworkLocked() error {
 		return nil
 	}
 	if err := managedNetworkCloser.Close(); err != nil {
-		log.Errorln("[Managed TUN] cleanup failed: %v", err)
+		managedLogError("[Managed TUN] cleanup failed: %v", err)
 		return managedConfigError("managed_tun_cleanup_failed")
 	}
 	managedNetworkCloser = nil

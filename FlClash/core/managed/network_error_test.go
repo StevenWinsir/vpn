@@ -24,7 +24,9 @@ func (s *recoverableNetworkStub) Start(context.Context, ConfigurationOwner, stri
 func (s *recoverableNetworkStub) Drain(context.Context) error { return nil }
 
 func TestTUNFailureSurvivesSettledDisconnectAndClearsAfterSuccessfulRetry(t *testing.T) {
-	for _, code := range []string{"managed_tun_permission_required", "managed_tun_route_conflict", "managed_tun_route_check_failed"} {
+	// Non-TUN start failures were previously erased by the settling refresh, so
+	// the app flashed "connected" and then stopped without any visible reason.
+	for _, code := range []string{"managed_tun_permission_required", "managed_tun_route_conflict", "managed_tun_route_check_failed", "runtime_start_failed", "request_failed", "managed_connection_required"} {
 		t.Run(code, func(t *testing.T) { testRecoverableTUNFailure(t, code) })
 	}
 }

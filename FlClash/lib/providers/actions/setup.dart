@@ -172,9 +172,14 @@ class SetupAction extends _$SetupAction {
         return true;
       } catch (_) {
         if (_isCurrent(request)) {
+          // Read the reason before the cleanup below rewrites account state.
+          final reason = ref.read(managedAccountProvider).errorCode;
           _setLocalRunning(false);
           await _stopManagedListener();
           await ref.read(managedAccountProvider.notifier).disconnect();
+          if (reason.isNotEmpty) {
+            dialogs.showNotifier('[$reason]', level: MessageLevel.error);
+          }
         }
         return false;
       }

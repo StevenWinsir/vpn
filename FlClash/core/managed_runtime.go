@@ -152,6 +152,7 @@ func (e *managedProfileEngine) Start(ctx context.Context, owner managed.Configur
 	tunnel.OnRunning()
 	network, err := e.networkPolicy().Open(ctx, currentConfig, plane)
 	if err != nil {
+		managedDiagnostic("[Managed Runtime] network open failed: code=%s", managed.PublicError(err))
 		plane.stop()
 		tunnel.OnSuspend()
 		listener.StopListener()
@@ -168,6 +169,7 @@ func (e *managedProfileEngine) Start(ctx context.Context, owner managed.Configur
 	}
 	listener.ReCreateMixed(port, plane)
 	if listener.GetPorts().MixedPort != port {
+		managedDiagnostic("[Managed Runtime] mixed listener did not bind port %d (got %d); another process may own it", port, listener.GetPorts().MixedPort)
 		plane.stop()
 		tunnel.OnSuspend()
 		listener.StopListener()

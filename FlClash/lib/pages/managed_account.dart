@@ -11,6 +11,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+/// Connection-start failures that must stay visible instead of falling back to
+/// the node page, where the failure would otherwise look like a silent stop.
+bool isManagedStartFailure(String code) =>
+    code.startsWith('managed_tun_') ||
+    const {
+      'runtime_start_failed',
+      'managed_connection_required',
+      'managed_configuration_required',
+      'traffic_unconfirmed',
+      'invalid_core_counters',
+      'request_failed',
+    }.contains(code);
+
+/// Whether the running Core still lacks the root privilege TUN needs.
+final managedTunPrivilegedProvider = FutureProvider.autoDispose<bool>(
+  (ref) => system.checkIsAdmin(),
+);
+
 class ManagedAccountPage extends ConsumerWidget {
   const ManagedAccountPage({super.key});
 
@@ -18,7 +36,7 @@ class ManagedAccountPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(managedAccountProvider);
     return state.account.configuration != null &&
-            !state.errorCode.startsWith('managed_tun_')
+            !isManagedStartFailure(state.errorCode)
         ? const HomePage()
         : const ManagedAccountPanel();
   }
@@ -31,6 +49,11 @@ class ManagedAccountPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(managedAccountProvider);
     final action = ref.read(managedAccountProvider.notifier);
+    final permissionRequired =
+        state.errorCode == 'managed_tun_permission_required';
+    final privileged = ref.watch(managedTunPrivilegedProvider).value ?? true;
+    final needsAuthorization =
+        system.isMacOS && (permissionRequired || !privileged);
     return ManagedAccountView(
       state: state,
       running: ref.watch(isStartProvider),
@@ -49,12 +72,16 @@ class ManagedAccountPanel extends ConsumerWidget {
       onLogout: action.logout,
       onRetryCore: () => ref.read(coreActionProvider.notifier).startCore(),
       onExit: () => ref.read(systemActionProvider.notifier).handleExit(),
-      onAuthorizeTun: system.isMacOS
+      onAuthorizeTun: needsAuthorization
           ? () async {
               final result = await system.authorizeCore();
               if (result == AuthorizeCode.error) {
                 throw StateError('TUN authorization declined');
               }
+              ref.invalidate(managedTunPrivilegedProvider);
+              // Already privileged and the running Core agrees: restarting
+              // would only sign the user out without changing anything.
+              if (result == AuthorizeCode.none && !permissionRequired) return;
               if (!context.mounted) return;
               final restarted = await ref
                   .read(coreActionProvider.notifier)
@@ -551,6 +578,12 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
                           style: TextStyle(color: context.colorScheme.error),
                         ),
                       ),
+                      if (!_actionFailed && isManagedStartFailure(error))
+                        SelectableText(
+                          '[$error]',
+                          key: const Key('managed-error-code'),
+                          textAlign: TextAlign.center,
+                        ),
                     ],
                     const SizedBox(height: 16),
                     OutlinedButton(

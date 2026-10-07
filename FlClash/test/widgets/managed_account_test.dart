@@ -11,6 +11,20 @@ import '../helpers/managed_fakes.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  test('every connection-start failure is kept visible, others are not', () {
+    for (final code in [
+      'managed_tun_start_failed',
+      'runtime_start_failed',
+      'managed_connection_required',
+      'request_failed',
+    ]) {
+      expect(isManagedStartFailure(code), isTrue, reason: code);
+    }
+    for (final code in ['', 'invalid_credentials', 'quota_exhausted']) {
+      expect(isManagedStartFailure(code), isFalse, reason: code);
+    }
+  });
+
   Future<void> nothing() async {}
   ManagedAccountView view({
     ManagedAccountState state = const ManagedAccountState(ready: true),
@@ -133,6 +147,7 @@ void main() {
         );
         expect(find.text(strings.managedTunPermission), findsNothing);
         expect(find.text(strings.managedStopped), findsOneWidget);
+        expect(find.text('[$code]'), findsOneWidget);
         expect(authorizations, 0);
         expect(tester.takeException(), isNull);
       });

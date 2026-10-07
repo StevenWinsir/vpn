@@ -45,6 +45,7 @@ type Coordinator struct {
 	runRevision           uint64
 	meterSyncedAt         time.Time
 	retirement            <-chan struct{}
+	startFailure          string
 }
 
 func NewCoordinator(transport func() http.RoundTripper, stop func(), configuration ConfigurationEngine, sampler ...SampleTotals) *Coordinator {
@@ -156,6 +157,7 @@ func (c *Coordinator) clearLocked(reason string) *retiredAccount {
 		c.lifeCancel()
 		c.lifeCancel = nil
 	}
+	c.startFailure = ""
 	account := &retiredAccount{client: c.client, meter: c.meter, done: make(chan struct{})}
 	if engine, ok := c.configuration.(RuntimeEngine); ok {
 		account.drain = engine.Drain
@@ -227,6 +229,9 @@ func (c *Coordinator) setStatusLocked(status Status, started time.Time) {
 		switch runtimeFailure {
 		case "managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed", "managed_tun_route_conflict", "managed_tun_route_check_failed":
 			c.snapshot.ErrorCode = runtimeFailure
+		}
+		if c.startFailure != "" {
+			c.snapshot.ErrorCode = c.startFailure
 		}
 	}
 	// Only an explicit runtime transition after Meter acknowledgement opens this gate.
