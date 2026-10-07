@@ -155,6 +155,20 @@ func managedUnprivilegedProbeBinary(t *testing.T) (string, *syscall.Credential) 
 	if copyErr != nil || closeErr != nil {
 		t.Fatalf("copy isolated non-setuid test probe: %v / %v", copyErr, closeErr)
 	}
+	// Byte-copying an arm64 Mach-O into a reused vnode can leave Darwin's
+	// code-signing cache stale. Sign and verify this exact immutable probe,
+	// rather than retrying a killed process or skipping a network assertion.
+	for _, arguments := range [][]string{
+		{"--force", "--sign", "-", path},
+		{"--verify", "--strict", path},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result, signErr := exec.CommandContext(ctx, "/usr/bin/codesign", arguments...).CombinedOutput()
+		cancel()
+		if signErr != nil {
+			t.Fatalf("sign isolated ordinary-user probe: %v: %s", signErr, result)
+		}
+	}
 	return path, &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
 }
 
