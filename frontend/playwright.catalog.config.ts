@@ -13,7 +13,7 @@ if (
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: 'admin-nodes.spec.ts',
+  testMatch: ['admin-nodes.spec.ts', 'user-nodes.spec.ts'],
   outputDir: process.env.CATALOG_OUTPUTS,
   workers: 1,
   retries: 0,

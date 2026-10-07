@@ -82,6 +82,7 @@ jobs:
           npm run build -- --webpack
           npm run typecheck
           npm run test:api-proxy
+          npm run test:nodes
       - name: Core regressions without coverage instrumentation
         working-directory: FlClash/core
         run: |
@@ -100,6 +101,8 @@ jobs:
           path: |
             artifacts/ci-catalog/summary.json
             artifacts/ci-catalog/traffic-evidence.json
+            artifacts/ci-catalog/browser-artifacts/nodes-desktop.png
+            artifacts/ci-catalog/browser-artifacts/nodes-mobile.png
 
   flutter:
     name: Flutter / account and lifecycle regressions

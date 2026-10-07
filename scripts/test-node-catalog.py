@@ -76,7 +76,7 @@ def main():
                     raise RuntimeError('Fixture readiness failed; see fixture.log')
                 time.sleep(0.1)
             metadata = json.loads(ready.read_text())
-            frontend_env = dict(env, API_INTERNAL_URL=metadata['api'] + '/api/v1')
+            frontend_env = dict(env, API_INTERNAL_URL=metadata['api'] + '/api/v1', NODE_LIST_REFRESH_MS='30000')
             if not args.skip_build:
                 run('frontend-build', ['node', 'node_modules/next/dist/bin/next', 'build'], ROOT / 'frontend', frontend_env)
             web = spawn('frontend', ['node', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1',
@@ -100,6 +100,7 @@ def main():
             run('browser', ['node', 'node_modules/@playwright/test/cli.js', 'test', '--config=playwright.catalog.config.ts'],
                 ROOT / 'frontend', browser_env)
             summary['checks'].append('administrator browser imports and edits weighted nodes; normal account receives HTTP 403; desktop/mobile rendering')
+            summary['checks'].append('user node list: safe metadata, administrator change synchronization, search/type filters, desktop/mobile, entitlement/errors and visibility polling')
             core_env = dict(env, CATALOG_ACCEPTANCE_DIR=temporary, CATALOG_OUTPUTS=str(output))
             run('mihomo', ['go', 'test', '-count=1', '-v', '-run', '^TestCatalogBackendMihomoAcceptance$', '.'],
                 ROOT / 'FlClash/core', core_env)

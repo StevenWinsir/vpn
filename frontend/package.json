@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test:e2e": "playwright test",
-    "test:api-proxy": "node --test scripts/api-proxy.test.mjs"
+    "test:api-proxy": "node --test scripts/api-proxy.test.mjs",
+    "test:nodes": "node --experimental-strip-types --test scripts/node-list.test.mjs"
   },
   "engines": {
     "node": ">=22"
