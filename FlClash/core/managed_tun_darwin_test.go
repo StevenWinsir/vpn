@@ -201,6 +201,17 @@ func runManagedMacOSTUNUDP(t *testing.T, productionRoutes bool) {
 		}()
 	}
 	if err != nil {
+		// Explicitly opted-in, disposable runner only: inspect its PF policy,
+		// never expose real user firewall rules in production diagnostics.
+		if rootRules, inspectErr := managedPFControl(context.Background(), "", "-s", "rules"); inspectErr == nil {
+			t.Logf("isolated runner PF root rules: %q", rootRules)
+		}
+		command := exec.Command("/sbin/pfctl", "-n", "-a", "com.apple/000.FlClash.test", "-f", "-")
+		rules, _ := managedPFRules("utun99")
+		command.Stdin = strings.NewReader(rules)
+		if output, parseErr := command.CombinedOutput(); parseErr != nil {
+			t.Logf("isolated PF syntax diagnostic: %v: %s", parseErr, output)
+		}
 		t.Fatalf("actual macOS TUN startup failed: %v", err)
 	}
 	guard := listener.(*managedMacOSNetworkResources).guard.(*managedPFEgressGuard)

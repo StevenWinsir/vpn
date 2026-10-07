@@ -211,7 +211,9 @@ func newManagedEgressGuard(ctx context.Context, device string) (io.Closer, error
 		// Only an empty filter ruleset may acquire our temporary root hook.
 		// -R affects filter rules only; NAT/rdr/options are not replaced.
 		g.lease.RootRule = fmt.Sprintf("anchor %q all", g.lease.Anchor)
-	case `anchor "com.apple/*" all`:
+	case `anchor "com.apple/*" all`, `scrub-anchor "com.apple/*" all fragment reassemble anchor "com.apple/*" all`:
+		// Darwin also prints its standard scrub hook in `-s rules`. It is
+		// normalization, not a pass/filter policy, and must remain untouched.
 		anchors, err := managedPFControl(ctx, "", "-a", "com.apple", "-s", "Anchors")
 		if err != nil {
 			return nil, err
