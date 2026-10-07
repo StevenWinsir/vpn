@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/managed_credentials.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/managed_account.dart';
 import 'package:fl_clash/pages/home.dart';
 import 'package:fl_clash/providers/managed_account.dart';
@@ -10,13 +11,27 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+/// Connection-start failures that must stay visible instead of falling back to
+/// the node page, where the failure would otherwise look like a silent stop.
+bool isManagedStartFailure(String code) =>
+    code.startsWith('managed_tun_') ||
+    const {
+      'runtime_start_failed',
+      'managed_connection_required',
+      'managed_configuration_required',
+      'traffic_unconfirmed',
+      'invalid_core_counters',
+      'request_failed',
+    }.contains(code);
+
 class ManagedAccountPage extends ConsumerWidget {
   const ManagedAccountPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(managedAccountProvider);
-    return state.account.configuration != null
+    return state.account.configuration != null &&
+            !isManagedStartFailure(state.errorCode)
         ? const HomePage()
         : const ManagedAccountPanel();
   }
@@ -29,6 +44,10 @@ class ManagedAccountPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(managedAccountProvider);
     final action = ref.read(managedAccountProvider.notifier);
+    // File permissions cannot establish the effective UID of an existing
+    // process. Offer an explicit repair action; the Core itself checks euid
+    // before opening TUN. This never marks the connection as established.
+    final needsAuthorization = system.isMacOS;
     return ManagedAccountView(
       state: state,
       running: ref.watch(isStartProvider),
@@ -47,6 +66,23 @@ class ManagedAccountPanel extends ConsumerWidget {
       onLogout: action.logout,
       onRetryCore: () => ref.read(coreActionProvider.notifier).startCore(),
       onExit: () => ref.read(systemActionProvider.notifier).handleExit(),
+      onAuthorizeTun: needsAuthorization
+          ? () async {
+              final result = await system.authorizeCore();
+              if (result == AuthorizeCode.error) {
+                throw StateError('TUN authorization declined');
+              }
+              // A process started before chmod keeps its old identity, even
+              // when authorizeCore reports that the file is already setuid.
+              // Always restart through the single lifecycle owner, then require
+              // a fresh login instead of reusing the old authorized session.
+              if (!context.mounted) return;
+              final restarted = await ref
+                  .read(coreActionProvider.notifier)
+                  .restartCore();
+              if (!restarted) throw StateError('Core restart failed');
+            }
+          : null,
       onWebsite: () async {
         if (!await launchUrl(
           Uri.parse('https://test.hyshentou.cn/plans'),
@@ -75,6 +111,7 @@ class ManagedAccountView extends StatefulWidget {
     required this.onRetryCore,
     required this.onExit,
     required this.onWebsite,
+    this.onAuthorizeTun,
   });
 
   final ManagedAccountState state;
@@ -91,6 +128,7 @@ class ManagedAccountView extends StatefulWidget {
   final Future<void> Function() onRetryCore;
   final Future<void> Function() onExit;
   final Future<void> Function() onWebsite;
+  final Future<void> Function()? onAuthorizeTun;
 
   @override
   State<ManagedAccountView> createState() => _ManagedAccountViewState();
@@ -102,6 +140,7 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
   final _password = TextEditingController();
   bool _submitting = false;
   bool _actionFailed = false;
+  bool _actionSubmitting = false;
   bool _remember = false;
   bool _credentialsError = false;
   bool _credentialsTouched = false;
@@ -220,17 +259,28 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
   }
 
   Future<void> _action(Future<void> Function() action) async {
-    setState(() => _actionFailed = false);
+    if (_actionSubmitting) return;
+    setState(() {
+      _actionFailed = false;
+      _actionSubmitting = true;
+    });
     try {
       await action();
     } catch (_) {
       if (mounted) setState(() => _actionFailed = true);
+    } finally {
+      if (mounted) setState(() => _actionSubmitting = false);
     }
   }
 
   String _message(BuildContext context, String code) {
     final strings = context.appLocalizations;
     return switch (code) {
+      'managed_tun_permission_required' => strings.managedTunPermission,
+      'managed_tun_route_conflict' => strings.managedTunRouteConflict,
+      'managed_tun_route_check_failed' => strings.managedTunRouteCheckFailed,
+      'managed_tun_start_failed' ||
+      'managed_tun_cleanup_failed' => strings.managedTunFailed,
       'invalid_credentials' => strings.managedCredentialsError,
       'credential_store_unavailable' => strings.managedCredentialStoreError,
       'native_session_required' ||
@@ -274,7 +324,7 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
     final account = state.account;
     final user = account.user;
     final session = account.session;
-    final busy = state.busy || _submitting;
+    final busy = state.busy || _submitting || _actionSubmitting;
     final error = state.errorCode;
     return PopScope(
       canPop: false,
@@ -314,12 +364,30 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
                     else
                       const SizedBox(height: 4),
                     const SizedBox(height: 16),
+                    if (widget.onAuthorizeTun != null && !widget.running) ...[
+                      Text(strings.managedTunDescription),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        key: const Key('managed-authorize-tun'),
+                        onPressed: busy
+                            ? null
+                            : () => _action(widget.onAuthorizeTun!),
+                        icon: const Icon(Icons.admin_panel_settings_outlined),
+                        label: Text(strings.managedTunAuthorize),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     if (!state.ready) ...[
                       Text(
                         state.working
                             ? strings.managedCoreStarting
                             : strings.managedCoreUnavailable,
                       ),
+                      if (state.diagnostic.isNotEmpty)
+                        SelectableText(
+                          strings.managedCoreDiagnostic(state.diagnostic),
+                          key: const Key('managed-core-diagnostic'),
+                        ),
                       const SizedBox(height: 12),
                       FilledButton(
                         onPressed: busy
@@ -504,6 +572,12 @@ class _ManagedAccountViewState extends State<ManagedAccountView> {
                           style: TextStyle(color: context.colorScheme.error),
                         ),
                       ),
+                      if (!_actionFailed && isManagedStartFailure(error))
+                        SelectableText(
+                          '[$error]',
+                          key: const Key('managed-error-code'),
+                          textAlign: TextAlign.center,
+                        ),
                     ],
                     const SizedBox(height: 16),
                     OutlinedButton(

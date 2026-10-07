@@ -25,8 +25,9 @@ import (
 )
 
 type managedProfileEngine struct {
-	home string
-	view *managed.ConfigurationView
+	network managedNetwork
+	home    string
+	view    *managed.ConfigurationView
 }
 
 type preparedManagedConfiguration struct {
@@ -208,6 +209,8 @@ func (e *managedProfileEngine) Prepare(ctx context.Context, profile managed.Prof
 	}
 	previousNames := config.GetProxyNameList()
 	defer config.SetProxyNameList(previousNames)
+	e.networkPolicy().Configure(raw)
+	raw.Rule = append(raw.Rule, "MATCH,REJECT")
 	cfg, err := config.ParseRawConfig(raw)
 	if err != nil {
 		return nil, managedConfigError("invalid_client_config")

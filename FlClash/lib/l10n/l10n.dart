@@ -55,6 +55,76 @@ class AppLocalizations {
     return Localizations.of<AppLocalizations>(context, AppLocalizations);
   }
 
+  /// `Core diagnostic code: {code}`
+  String managedCoreDiagnostic(Object code) {
+    return Intl.message(
+      'Core diagnostic code: $code',
+      name: 'managedCoreDiagnostic',
+      desc: '',
+      args: [code],
+    );
+  }
+
+  /// `Authorize macOS TUN and restart Core`
+  String get managedTunAuthorize {
+    return Intl.message(
+      'Authorize macOS TUN and restart Core',
+      name: 'managedTunAuthorize',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Another VPN or tunnel is using the required system routes. Disconnect it in Shadowrocket, Clash or the other VPN app (closing its window is not enough), then connect again. Reauthorization is not needed. This proxy is disconnected and will not take over the other VPN's routes.`
+  String get managedTunRouteConflict {
+    return Intl.message(
+      'Another VPN or tunnel is using the required system routes. Disconnect it in Shadowrocket, Clash or the other VPN app (closing its window is not enough), then connect again. Reauthorization is not needed. This proxy is disconnected and will not take over the other VPN\'s routes.',
+      name: 'managedTunRouteConflict',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The system routes could not be checked safely, so the proxy was not started. Restart the app and check network permissions before retrying.`
+  String get managedTunRouteCheckFailed {
+    return Intl.message(
+      'The system routes could not be checked safely, so the proxy was not started. Restart the app and check network permissions before retrying.',
+      name: 'managedTunRouteCheckFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `macOS connections require TUN to route TCP, UDP and IPv6 instead of relying only on system proxy settings. Authorize before the first connection; the Core restarts and you must sign in again. This is not a system-wide kill switch.`
+  String get managedTunDescription {
+    return Intl.message(
+      'macOS connections require TUN to route TCP, UDP and IPv6 instead of relying only on system proxy settings. Authorize before the first connection; the Core restarts and you must sign in again. This is not a system-wide kill switch.',
+      name: 'managedTunDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN requires administrator authorization. Use the authorization button, then sign in again. The proxy has not connected.`
+  String get managedTunPermission {
+    return Intl.message(
+      'TUN requires administrator authorization. Use the authorization button, then sign in again. The proxy has not connected.',
+      name: 'managedTunPermission',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN could not start or clean up safely. No system-proxy-only fallback was enabled. Restart the app and check for conflicting VPNs or network permissions.`
+  String get managedTunFailed {
+    return Intl.message(
+      'TUN could not start or clean up safely. No system-proxy-only fallback was enabled. Restart the app and check for conflicting VPNs or network permissions.',
+      name: 'managedTunFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `The server configuration is ready. Connecting requires a fresh traffic authorization; refreshing configuration does not start the proxy.`
   String get managedApplied {
     return Intl.message(

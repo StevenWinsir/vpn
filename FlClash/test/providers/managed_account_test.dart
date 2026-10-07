@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/core/controller.dart';
+import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/managed_account.dart';
@@ -35,6 +36,49 @@ void main() {
   });
 
   tearDown(() => container.dispose());
+
+  for (final entry in <Object, String>{
+    const CoreMethodException(code: 'no_response', message: 'private-payload'):
+        'no_response',
+    const CoreMethodException(
+      code: 'managed_error',
+      message: 'configuration_cleanup_failed',
+    ): 'configuration_cleanup_failed',
+    const CoreMethodException(
+      code: 'private-payload',
+      message: 'private-payload',
+    ): 'core_unknown_error',
+    const DesktopCoreFailure(
+      code: 'process_exit_unconfirmed',
+      phase: DesktopCorePhase.stopping,
+      revision: 1,
+      cause: 'private-payload',
+    ): 'process_exit_unconfirmed',
+    const DesktopCoreFailure(
+      code: 'private-payload',
+      phase: DesktopCorePhase.starting,
+      revision: 1,
+    ): 'core_unknown_error',
+    const FileSystemException('private-payload'): 'core_storage_error',
+    StateError('private-payload'): 'core_unknown_error',
+  }.entries) {
+    test(
+      'Core diagnostics preserve safe codes only: ${entry.key.runtimeType}/${entry.value}',
+      () {
+        action.failCore(entry.key);
+        final state = container.read(managedAccountProvider);
+        expect(state.ready, isFalse);
+        expect(state.busy, isFalse);
+        expect(state.errorCode, 'core_unavailable');
+        expect(state.diagnostic, entry.value);
+        expect(state.diagnostic, isNot(contains('private-payload')));
+        container.read(coreStatusProvider.notifier).value =
+            CoreStatus.connecting;
+        expect(container.read(managedAccountProvider).diagnostic, isEmpty);
+        expect(container.read(managedAccountProvider).busy, isTrue);
+      },
+    );
+  }
 
   test(
     'cold start stops old listeners and resets the Core account before login',
@@ -217,6 +261,8 @@ void main() {
     await action.login('fixture@example.invalid', 'fixture-password');
     container.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
     expect(container.read(managedAccountProvider).ready, isFalse);
+    expect(container.read(managedAccountProvider).busy, isTrue);
+    expect(container.read(managedAccountProvider).errorCode, isEmpty);
     expect(container.read(managedAccountProvider).account.user, isNull);
     expect(container.read(runTimeProvider), isNull);
     container.read(coreStatusProvider.notifier).value = CoreStatus.connected;

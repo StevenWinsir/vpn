@@ -11,6 +11,20 @@ import '../helpers/managed_fakes.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  test('every connection-start failure is kept visible, others are not', () {
+    for (final code in [
+      'managed_tun_start_failed',
+      'runtime_start_failed',
+      'managed_connection_required',
+      'request_failed',
+    ]) {
+      expect(isManagedStartFailure(code), isTrue, reason: code);
+    }
+    for (final code in ['', 'invalid_credentials', 'quota_exhausted']) {
+      expect(isManagedStartFailure(code), isFalse, reason: code);
+    }
+  });
+
   Future<void> nothing() async {}
   ManagedAccountView view({
     ManagedAccountState state = const ManagedAccountState(ready: true),
@@ -19,6 +33,7 @@ void main() {
     Future<void> Function()? logout,
     Future<void> Function()? website,
     Future<void> Function()? exit,
+    Future<void> Function()? authorizeTun,
   }) => ManagedAccountView(
     state: state,
     onLogin: login ?? (_, _) async {},
@@ -27,6 +42,160 @@ void main() {
     onRetryCore: nothing,
     onExit: exit ?? nothing,
     onWebsite: website ?? nothing,
+    onAuthorizeTun: authorizeTun,
+  );
+
+  for (final locale in [
+    const Locale('en'),
+    const Locale('zh', 'CN'),
+    const Locale('ja'),
+    const Locale('ru'),
+  ]) {
+    testWidgets('restarting is not a Core failure in $locale', (tester) async {
+      await tester.pumpWidget(
+        TestApp(
+          locale: locale,
+          child: view(
+            state: const ManagedAccountState(working: true),
+            authorizeTun: nothing,
+          ),
+        ),
+      );
+      await tester.pump();
+      final strings = AppLocalizations.of(
+        tester.element(find.byType(ManagedAccountView)),
+      );
+      expect(find.text(strings.managedCoreStarting), findsOneWidget);
+      expect(find.text(strings.managedCoreUnavailable), findsNothing);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const Key('managed-authorize-tun')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, strings.managedRetryCore),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.pumpWidget(const SizedBox());
+    });
+    testWidgets('real Core failure has a copyable diagnostic in $locale', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        TestApp(
+          locale: locale,
+          child: view(
+            state: const ManagedAccountState(
+              error: 'core_unavailable',
+              diagnostic: 'core_initialization_failed',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final strings = AppLocalizations.of(
+        tester.element(find.byType(ManagedAccountView)),
+      );
+      expect(find.byKey(const Key('managed-core-diagnostic')), findsOneWidget);
+      expect(
+        find.text(strings.managedCoreDiagnostic('core_initialization_failed')),
+        findsOneWidget,
+      );
+    });
+    for (final code in [
+      'managed_tun_route_conflict',
+      'managed_tun_route_check_failed',
+    ]) {
+      testWidgets('$code has actionable feedback in $locale', (tester) async {
+        var authorizations = 0;
+        final state = ManagedAccountState(
+          ready: true,
+          error: code,
+          account: ManagedAccountSnapshot.fromJson(
+            managedSnapshot(phase: 'configuration_staged'),
+          ),
+        );
+        await tester.pumpWidget(
+          TestApp(
+            locale: locale,
+            child: view(
+              state: state,
+              authorizeTun: () async {
+                authorizations++;
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final strings = AppLocalizations.of(
+          tester.element(find.byType(ManagedAccountView)),
+        );
+        expect(
+          find.text(
+            code == 'managed_tun_route_conflict'
+                ? strings.managedTunRouteConflict
+                : strings.managedTunRouteCheckFailed,
+          ),
+          findsOneWidget,
+        );
+        expect(find.text(strings.managedTunPermission), findsNothing);
+        expect(find.text(strings.managedStopped), findsOneWidget);
+        expect(find.text('[$code]'), findsOneWidget);
+        expect(authorizations, 0);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  testWidgets(
+    'TUN permission stays explicit and duplicate authorization is blocked',
+    (tester) async {
+      final pending = Completer<void>();
+      var calls = 0;
+      final state = ManagedAccountState(
+        ready: true,
+        error: 'managed_tun_permission_required',
+        account: ManagedAccountSnapshot.fromJson(
+          managedSnapshot(phase: 'configuration_staged'),
+        ),
+      );
+      await tester.pumpWidget(
+        TestApp(
+          child: view(
+            state: state,
+            authorizeTun: () {
+              calls++;
+              return pending.future;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final strings = AppLocalizations.of(
+        tester.element(find.byType(ManagedAccountView)),
+      );
+      expect(find.text(strings.managedTunPermission), findsOneWidget);
+      expect(find.text(strings.managedStopped), findsOneWidget);
+      expect(calls, 0);
+      final button = find.byKey(const Key('managed-authorize-tun'));
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pump();
+      expect(calls, 1);
+      pending.completeError(StateError('synthetic authorization refusal'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(tester.widget<OutlinedButton>(button).onPressed, isNotNull);
+    },
   );
 
   testWidgets(

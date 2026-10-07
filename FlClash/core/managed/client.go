@@ -325,6 +325,8 @@ func (c *Client) ConfigForNode(ctx context.Context, nodeID string) (Profile, err
 func PublicError(err error) string {
 	code := errorCode(err)
 	switch code {
+	case "managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed", "managed_tun_route_conflict", "managed_tun_route_check_failed":
+		return code
 	case "invalid_core_counters", "traffic_unconfirmed", "final_traffic_unconfirmed", "invalid_runtime_options", "managed_connection_required", "runtime_start_failed", "lifecycle_reconfirmation_required", "lease_expired", "session_mismatch":
 		return code
 	case "unsupported_managed_configuration", "configuration_storage_failed", "configuration_cleanup_failed", "configuration_apply_failed", "configuration_expired", "managed_configuration_required", "invalid_managed_selection":

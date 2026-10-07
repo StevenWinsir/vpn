@@ -69,9 +69,10 @@ func handleStopListener() bool {
 	defer configMu.Unlock()
 	isRunning.Store(false)
 	tunnel.OnSuspend()
+	err := closeManagedNetworkLocked()
 	listener.StopListener()
 	resolver.ResetConnection()
-	return true
+	return err == nil
 }
 
 func handleGetIsInit() bool {
@@ -94,6 +95,7 @@ func handleShutdown() bool {
 	configMu.Lock()
 	isRunning.Store(false)
 	listener.StopListener()
+	_ = closeManagedNetworkLocked()
 	updater.StopGeoUpdater()
 	executor.Shutdown()
 	currentConfig = nil

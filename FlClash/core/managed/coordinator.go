@@ -45,6 +45,7 @@ type Coordinator struct {
 	runRevision           uint64
 	meterSyncedAt         time.Time
 	retirement            <-chan struct{}
+	startFailure          string
 }
 
 func NewCoordinator(transport func() http.RoundTripper, stop func(), configuration ConfigurationEngine, sampler ...SampleTotals) *Coordinator {
@@ -148,6 +149,7 @@ func (c *Coordinator) Snapshot() AccountSnapshot {
 }
 
 func (c *Coordinator) clearLocked(reason string) *retiredAccount {
+	c.startFailure = ""
 	if c.requestCancel != nil {
 		c.requestCancel()
 		c.requestCancel = nil
@@ -191,6 +193,7 @@ func releaseClient(client *Client, revoke bool) bool {
 }
 
 func (c *Coordinator) setStatusLocked(status Status, started time.Time) {
+	runtimeFailure := c.snapshot.ErrorCode
 	c.deadline = started.Add(time.Duration(status.SessionIdleTimeout) * time.Second)
 	for _, limit := range []time.Time{started.Add(status.ExpiresAt.Sub(status.ServerTime)), status.ExpiresAt} {
 		if limit.Before(c.deadline) {
@@ -220,6 +223,16 @@ func (c *Coordinator) setStatusLocked(status Status, started time.Time) {
 		c.snapshot.Phase = "restricted"
 		c.snapshot.ErrorCode = PublicError(&APIError{status.Reason})
 		c.profile = nil
+	}
+	// Server authorization cannot prove that the local TUN started successfully.
+	if status.CanConnect && c.snapshot.Configuration != nil && !c.runtime.Running() {
+		switch runtimeFailure {
+		case "managed_tun_permission_required", "managed_tun_start_failed", "managed_tun_cleanup_failed", "managed_tun_route_conflict", "managed_tun_route_check_failed":
+			c.snapshot.ErrorCode = runtimeFailure
+		}
+		if c.startFailure != "" {
+			c.snapshot.ErrorCode = c.startFailure
+		}
 	}
 	// Only an explicit runtime transition after Meter acknowledgement opens this gate.
 	c.snapshot.CanConnect = false

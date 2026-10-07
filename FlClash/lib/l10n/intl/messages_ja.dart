@@ -63,38 +63,40 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m19(remaining, total) => "確認済み残量：${remaining} / ${total} MiB";
 
-  static String m20(upload, download) =>
+  static String m20(code) => "コア診断コード：${code}";
+
+  static String m21(upload, download) =>
       "セッション累計：アップロード ${upload} MiB / ダウンロード ${download} MiB";
 
-  static String m21(remaining) => "ローカル推定残量：${remaining} MiB（未確認の通信量を差し引いた値）";
+  static String m22(remaining) => "ローカル推定残量：${remaining} MiB（未確認の通信量を差し引いた値）";
 
-  static String m22(date) => "プランの有効期限：${date}";
+  static String m23(date) => "プランの有効期限：${date}";
 
-  static String m23(plan) => "プラン：${plan}";
+  static String m24(plan) => "プラン：${plan}";
 
-  static String m24(label, max) => "${label}は最大${max}文字です";
+  static String m25(label, max) => "${label}は最大${max}文字です";
 
-  static String m25(count) => "${count} 分前";
+  static String m26(count) => "${count} 分前";
 
-  static String m26(count) => "${count} か月前";
+  static String m27(count) => "${count} か月前";
 
-  static String m27(label) => "${label}はまだありません";
+  static String m28(label) => "${label}はまだありません";
 
-  static String m28(label) => "${label}は数値である必要があります";
+  static String m29(label) => "${label}は数値である必要があります";
 
-  static String m29(label) => "${label} は 1024〜49151 の範囲で指定してください";
+  static String m30(label) => "${label} は 1024〜49151 の範囲で指定してください";
 
-  static String m30(count) => "プロキシ ${count} 件";
+  static String m31(count) => "プロキシ ${count} 件";
 
-  static String m31(count) => "ルール ${count} 件";
+  static String m32(count) => "ルール ${count} 件";
 
-  static String m32(count) => "${count} 秒";
+  static String m33(count) => "${count} 秒";
 
-  static String m33(count) => "${count} 件選択中";
+  static String m34(count) => "${count} 件選択中";
 
-  static String m34(label) => "${label}はURLである必要があります";
+  static String m35(label) => "${label}はURLである必要があります";
 
-  static String m35(count) => "${count} 年前";
+  static String m36(count) => "${count} 年前";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -554,6 +556,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedConnecting": MessageLookupByLibrary.simpleMessage(
       "認可を確認しました。プラットフォームの接続を待っています。",
     ),
+    "managedCoreDiagnostic": m20,
     "managedCoreStarting": MessageLookupByLibrary.simpleMessage(
       "安全なアカウント接続を準備しています…",
     ),
@@ -569,15 +572,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedCredentialsError": MessageLookupByLibrary.simpleMessage(
       "メールアドレスまたはパスワードが正しくありません。",
     ),
-    "managedCumulativeTraffic": m20,
+    "managedCumulativeTraffic": m21,
     "managedDeviceLimit": MessageLookupByLibrary.simpleMessage(
       "端末数の上限に達しました。他の端末を切断して再試行してください。",
     ),
     "managedDisconnect": MessageLookupByLibrary.simpleMessage("切断"),
     "managedEmail": MessageLookupByLibrary.simpleMessage("メールアドレス"),
-    "managedEstimatedBalance": m21,
+    "managedEstimatedBalance": m22,
     "managedExitApp": MessageLookupByLibrary.simpleMessage("アプリを終了"),
-    "managedExpires": m22,
+    "managedExpires": m23,
     "managedFinalTrafficUnconfirmed": MessageLookupByLibrary.simpleMessage(
       "プロキシとローカルセッションを閉じましたが、終了期限内に最終通信量を確認できませんでした。精算は保証されず、表示残量を確定値として扱わないでください。",
     ),
@@ -601,7 +604,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "有効なサーバー管理の設定がありません。",
     ),
     "managedPassword": MessageLookupByLibrary.simpleMessage("パスワード"),
-    "managedPlan": m23,
+    "managedPlan": m24,
     "managedProtocolError": MessageLookupByLibrary.simpleMessage(
       "サーバーの応答を検証できません。プロキシは停止したままです。",
     ),
@@ -646,6 +649,24 @@ class MessageLookup extends MessageLookupByLibrary {
     "managedTrafficUnconfirmed": MessageLookupByLibrary.simpleMessage(
       "プロキシは停止しましたが、最終通信量は未確認です。セッションを維持して再試行し、確認後にログアウトしてください。",
     ),
+    "managedTunAuthorize": MessageLookupByLibrary.simpleMessage(
+      "macOS TUN を認可してコアを再起動",
+    ),
+    "managedTunDescription": MessageLookupByLibrary.simpleMessage(
+      "macOS ではシステムプロキシだけでなく、TUN で TCP・UDP・IPv6 を処理します。初回接続前に認可し、コアの再起動後に再ログインしてください。システム全体のキルスイッチではありません。",
+    ),
+    "managedTunFailed": MessageLookupByLibrary.simpleMessage(
+      "TUN を安全に起動または終了できませんでした。システムプロキシのみへの切り替えは行いません。アプリを再起動し、他の VPN やネットワーク権限を確認してください。",
+    ),
+    "managedTunPermission": MessageLookupByLibrary.simpleMessage(
+      "TUN には管理者権限が必要です。認可ボタンを押して再ログインしてください。プロキシは未接続です。",
+    ),
+    "managedTunRouteCheckFailed": MessageLookupByLibrary.simpleMessage(
+      "システム経路を安全に確認できないため、プロキシを起動しませんでした。アプリを再起動し、ネットワーク権限を確認してから再試行してください。",
+    ),
+    "managedTunRouteConflict": MessageLookupByLibrary.simpleMessage(
+      "別の VPN またはトンネルが必要なシステム経路を使用しています。Shadowrocket、Clash などの VPN アプリで接続を切断してから再接続してください。ウィンドウを閉じるだけでは切断されません。再認可は不要です。このプロキシは未接続で、他の VPN の経路を上書きしません。",
+    ),
     "managedUnsupported": MessageLookupByLibrary.simpleMessage(
       "このサーバー設定には、管理対象クライアントが未対応の機能が含まれています。サービス管理者にお問い合わせください。",
     ),
@@ -660,7 +681,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "matchTargetTitle": MessageLookupByLibrary.simpleMessage("マッチ先"),
     "maxFailedTimes": MessageLookupByLibrary.simpleMessage("最大失敗回数"),
-    "maxLengthTip": m24,
+    "maxLengthTip": m25,
     "maximize": MessageLookupByLibrary.simpleMessage("最大化"),
     "memoryInfo": MessageLookupByLibrary.simpleMessage("メモリ情報"),
     "messageTest": MessageLookupByLibrary.simpleMessage("メッセージテスト"),
@@ -671,11 +692,11 @@ class MessageLookup extends MessageLookupByLibrary {
     "minimizeOnExitDesc": MessageLookupByLibrary.simpleMessage(
       "システム標準の終了動作を変更します",
     ),
-    "minutesAgo": m25,
+    "minutesAgo": m26,
     "mixedPort": MessageLookupByLibrary.simpleMessage("Mixedポート"),
     "mode": MessageLookupByLibrary.simpleMessage("モード"),
     "monochromeScheme": MessageLookupByLibrary.simpleMessage("モノクローム"),
-    "monthsAgo": m26,
+    "monthsAgo": m27,
     "more": MessageLookupByLibrary.simpleMessage("その他"),
     "multipleValuesTip": MessageLookupByLibrary.simpleMessage(
       "複数の値はカンマで区切ってください",
@@ -713,8 +734,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "nullProfileDesc": MessageLookupByLibrary.simpleMessage(
       "プロファイルがありません。先にプロファイルを追加してください",
     ),
-    "nullTip": m27,
-    "numberTip": m28,
+    "nullTip": m28,
+    "numberTip": m29,
     "onDemand": MessageLookupByLibrary.simpleMessage("オンデマンド"),
     "onDemandDesc": MessageLookupByLibrary.simpleMessage(
       "特定のシナリオでのアプリの実行状態を設定します",
@@ -754,7 +775,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "port": MessageLookupByLibrary.simpleMessage("ポート"),
     "portConflictTip": MessageLookupByLibrary.simpleMessage("別のポートを入力してください"),
-    "portTip": m29,
+    "portTip": m30,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage("DoHでHTTP/3を優先します"),
     "prerequisites": MessageLookupByLibrary.simpleMessage("前提条件"),
     "pressKeyboard": MessageLookupByLibrary.simpleMessage("キーを押してください"),
@@ -783,7 +804,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "project": MessageLookupByLibrary.simpleMessage("プロジェクト"),
     "providers": MessageLookupByLibrary.simpleMessage("外部リソース"),
     "proxies": MessageLookupByLibrary.simpleMessage("プロキシ"),
-    "proxiesCount": m30,
+    "proxiesCount": m31,
     "proxiesEmpty": MessageLookupByLibrary.simpleMessage("プロキシが空です"),
     "proxyChains": MessageLookupByLibrary.simpleMessage("プロキシチェーン"),
     "proxyDetectedAbnormal": MessageLookupByLibrary.simpleMessage(
@@ -977,7 +998,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleSet": MessageLookupByLibrary.simpleMessage("ルールセット"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("ルールターゲット"),
     "rules": MessageLookupByLibrary.simpleMessage("ルール"),
-    "rulesCount": m31,
+    "rulesCount": m32,
     "save": MessageLookupByLibrary.simpleMessage("保存"),
     "saveChanges": MessageLookupByLibrary.simpleMessage("変更を保存しますか？"),
     "script": MessageLookupByLibrary.simpleMessage("スクリプト"),
@@ -987,7 +1008,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "scrollToSelected": MessageLookupByLibrary.simpleMessage("選択項目へスクロール"),
     "search": MessageLookupByLibrary.simpleMessage("検索"),
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
-    "secondsCount": m32,
+    "secondsCount": m33,
     "selectAll": MessageLookupByLibrary.simpleMessage("すべて選択"),
     "selectMatchTarget": MessageLookupByLibrary.simpleMessage(
       "MATCH-TARGET を選択",
@@ -1002,7 +1023,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "selectSubRule": MessageLookupByLibrary.simpleMessage("サブルールを選択してください"),
     "selected": MessageLookupByLibrary.simpleMessage("選択済み"),
-    "selectedCountTitle": m33,
+    "selectedCountTitle": m34,
     "settings": MessageLookupByLibrary.simpleMessage("設定"),
     "show": MessageLookupByLibrary.simpleMessage("表示"),
     "showLess": MessageLookupByLibrary.simpleMessage("折りたたむ"),
@@ -1099,7 +1120,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("URLからプロファイルを取得します"),
-    "urlTip": m34,
+    "urlTip": m35,
     "useHosts": MessageLookupByLibrary.simpleMessage("Hostsを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムのHostsを使用"),
     "usedTraffic": MessageLookupByLibrary.simpleMessage("使用済みトラフィック"),
@@ -1116,7 +1137,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "vpnTip": MessageLookupByLibrary.simpleMessage("変更はVPNの再起動後に有効になります"),
     "webDAVConfiguration": MessageLookupByLibrary.simpleMessage("WebDAV設定"),
     "whitelistMode": MessageLookupByLibrary.simpleMessage("ホワイトリストモード"),
-    "yearsAgo": m35,
+    "yearsAgo": m36,
     "zhCN": MessageLookupByLibrary.simpleMessage("簡体字中国語"),
   };
 }
