@@ -174,5 +174,28 @@ test('administrator imports and reopens VLESS Reality and WireGuard without losi
     await expect(page.getByLabel('节点 YAML')).toHaveValue(new RegExp(fixture.preserved));
     await expect(page.getByLabel('启用节点', { exact: true })).not.toBeChecked();
     await page.getByRole('button', { name: '取消', exact: true }).click();
+    await page.getByRole('button', { name: `删除 ${fixture.name}`, exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '确认删除节点' })).toBeVisible();
+    await expect(page.getByText(/历史流量及扣费记录会保留/)).toBeVisible();
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+    await expect(page.getByRole('button', { name: `删除 ${fixture.name}`, exact: true })).toBeVisible();
+    await page.getByRole('button', { name: `删除 ${fixture.name}`, exact: true }).click();
+    let rejectOnce = true;
+    const deleteRoute = '**/api/v1/admin/nodes/*';
+    await page.route(deleteRoute, async (route) => {
+      if (route.request().method() === 'DELETE' && rejectOnce) {
+        rejectOnce = false;
+        await route.fulfill({ status: 409, json: { error: { code: 'node_version_conflict', message: '节点已被修改，请刷新目录' } } });
+      } else await route.continue();
+    });
+    await page.getByRole('button', { name: '确认删除', exact: true }).click();
+    await expect(page.getByText('节点已被修改，请刷新目录')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '确认删除节点' })).toBeVisible();
+    await page.getByRole('button', { name: '确认删除', exact: true }).click();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await page.unroute(deleteRoute);
+    await expect(page.getByRole('button', { name: `删除 ${fixture.name}`, exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole('button', { name: `删除 ${fixture.name}`, exact: true })).toHaveCount(0);
   }
 });

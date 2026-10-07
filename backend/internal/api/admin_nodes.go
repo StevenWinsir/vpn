@@ -212,11 +212,58 @@ func (s *Server) adminNodeSave(c *gin.Context) {
 	if s.adminFailure(c, err) {
 		return
 	}
+	s.catalogUpdates.notify()
 	status := http.StatusOK
 	if id == "" {
 		status = http.StatusCreated
 	}
 	c.JSON(status, gin.H{"nodes": result})
+}
+
+func (s *Server) adminNodeDelete(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil || id == uuid.Nil {
+		fail(c, 400, "invalid_node", "节点标识无效")
+		return
+	}
+	var in struct {
+		Version int64 `json:"version"`
+	}
+	if !decode(c, &in) {
+		return
+	}
+	if in.Version < 1 {
+		fail(c, 400, "invalid_node", "删除时需要当前节点版本号")
+		return
+	}
+	err = s.database(c).Transaction(func(tx *gorm.DB) error {
+		var actor model.User
+		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&actor, "id = ? AND role = ? AND status = ?", currentUser(c).ID, "admin", "active").Error; e != nil {
+			return &apiError{403, "admin_required", "管理员权限已变更"}
+		}
+		if e := tx.Exec("SELECT pg_advisory_xact_lock(708614922)").Error; e != nil {
+			return e
+		}
+		var node model.Node
+		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&node, "id = ?", id.String()).Error; e != nil {
+			return e
+		}
+		if node.Version != in.Version {
+			return &apiError{409, "node_version_conflict", "节点已被其他管理员修改，请刷新目录后重新确认删除"}
+		}
+		if e := tx.Delete(&model.NodeConfig{}, "node_id = ?", node.ID).Error; e != nil {
+			return e
+		}
+		if e := tx.Delete(&node).Error; e != nil {
+			return e
+		}
+		return tx.Create(&model.AdminAudit{ID: uuid.NewString(), ActorID: actor.ID, Action: "node.deleted", TargetID: node.ID, Version: node.Version}).Error
+	})
+	if s.adminFailure(c, err) {
+		return
+	}
+	s.catalogUpdates.notify()
+	c.JSON(http.StatusOK, gin.H{"deleted": true, "id": id.String(), "version": in.Version})
 }
 
 func (s *Server) adminFailure(c *gin.Context, err error) bool {
