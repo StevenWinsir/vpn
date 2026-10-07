@@ -68,6 +68,7 @@ func TestManagedMacOSProductionTUNRoutes(t *testing.T) {
 	if err := exec.Command("/sbin/route", "-n", "get", "default").Run(); err != nil {
 		t.Fatalf("regression requires an existing default route: %v", err)
 	}
+	t.Run("recover abandoned PF owner", testManagedPFRecovery)
 	t.Run("legacy default route collision", func(t *testing.T) {
 		legacy := managedMacOSTunConfig()
 		legacy.RouteAddress = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
@@ -168,6 +169,7 @@ func runManagedMacOSTUNUDP(t *testing.T, productionRoutes bool) {
 		t.Fatal("explicit real-TUN test requires root")
 	}
 	endpoints := managedTunUDPEndpoints(t)
+	probeBinary, credential := managedUnprivilegedProbeBinary(t)
 	engine := newManagedTestEngine(t)
 	if productionRoutes {
 		engine.network = macOSManagedNetwork{}
@@ -185,18 +187,67 @@ func runManagedMacOSTUNUDP(t *testing.T, productionRoutes bool) {
 		cfg := managedMacOSTunConfig()
 		cfg.RouteAddress = []netip.Prefix{netip.MustParsePrefix("198.19.253.2/32"), netip.MustParsePrefix("2001:db8:ffff::2/128")}
 		cfg.DNSHijack = nil
-		listener, err = sing_tun.New(cfg, plane)
+		resources, openErr := openManagedMacOSTun(context.Background(), cfg, plane)
+		err = openErr
+		if resources != nil {
+			listener = resources
+		}
+	}
+	if listener != nil {
+		defer func() {
+			if err := listener.Close(); err != nil {
+				t.Errorf("actual TUN/PF cleanup failed: %v", err)
+			}
+		}()
 	}
 	if err != nil {
 		t.Fatalf("actual macOS TUN startup failed: %v", err)
 	}
-	defer func() {
-		if err := listener.Close(); err != nil {
-			t.Errorf("actual TUN cleanup failed: %v", err)
-		}
-	}()
+	guard := listener.(*managedMacOSNetworkResources).guard.(*managedPFEgressGuard)
 	for _, endpoint := range endpoints {
 		t.Run(endpoint.name, func(t *testing.T) {
+			label := managedPFLabel + "_" + endpoint.network
+			before, err := managedPFRejectedPackets(context.Background(), guard, label)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if endpoint.source != nil {
+				// The installed Core has non-root real UID but root effective UID.
+				// Its physically bound proxy socket must remain usable in both modes.
+				physicalTarget := "198.19.253.250:32123"
+				if endpoint.network == "udp6" {
+					physicalTarget = "[2001:db8:ffff::250]:32123"
+				}
+				rootDialer := &net.Dialer{LocalAddr: &net.UDPAddr{IP: endpoint.source}, Timeout: time.Second}
+				rootConnection, err := rootDialer.Dial(endpoint.network, physicalTarget)
+				if err != nil {
+					t.Fatalf("privileged physical egress failed: %v", err)
+				}
+				_, writeErr := rootConnection.Write([]byte("managed-privileged-egress"))
+				_ = rootConnection.Close()
+				afterRoot, countErr := managedPFRejectedPackets(context.Background(), guard, label)
+				if writeErr != nil || countErr != nil || afterRoot != before {
+					t.Fatalf("guard blocked the Core's privileged physical UDP: %v / %v / counters %d -> %d", writeErr, countErr, before, afterRoot)
+				}
+				runManagedUnprivilegedUDP(t, probeBinary, credential, endpoint)
+				after, err := managedPFRejectedPackets(context.Background(), guard, label)
+				if err != nil || after <= before {
+					t.Fatalf("timeout is not proof of protection: real PF UDP counter did not increase (%d -> %d, %v)", before, after, err)
+				}
+				t.Logf("verified source-bound %s rejection in PF: packets %d -> %d", endpoint.network, before, after)
+				return
+			}
+			// Positive control under a browser UID: normal UDP still roundtrips
+			// through TUN rather than being blanket-disabled by the guard.
+			runManagedUnprivilegedUDP(t, probeBinary, credential, endpoint)
+			select {
+			case result := <-probe.received:
+				if result.err != nil || result.metadata.Type != C.TUN {
+					t.Fatal("unprivileged positive control did not traverse the managed TUN")
+				}
+			default:
+				t.Fatal("unprivileged positive control did not reach the managed data plane")
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			dialer := &net.Dialer{}

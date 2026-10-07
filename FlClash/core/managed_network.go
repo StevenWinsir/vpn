@@ -78,7 +78,39 @@ func (macOSManagedNetwork) Open(ctx context.Context, cfg *config.Config, plane C
 	if err := checkManagedTunRoutes(); err != nil {
 		return nil, err
 	}
-	tunConfig := managedMacOSTunConfig()
+	resources, err := openManagedMacOSTun(ctx, managedMacOSTunConfig(), plane)
+	if resources == nil {
+		return nil, err
+	}
+	if err == nil {
+		cfg.General.Tun = resources.listener.Config()
+	}
+	return resources, err
+}
+
+type managedMacOSNetworkResources struct {
+	listener *sing_tun.Listener
+	guard    io.Closer
+}
+
+func (r *managedMacOSNetworkResources) Close() error {
+	if r.listener != nil {
+		if err := r.listener.Close(); err != nil {
+			return err
+		}
+		r.listener = nil
+	}
+	if r.guard != nil {
+		if err := r.guard.Close(); err != nil {
+			return err
+		}
+		r.guard = nil
+	}
+	return nil
+}
+
+func openManagedMacOSTun(ctx context.Context, tunConfig LC.Tun, plane C.Tunnel) (*managedMacOSNetworkResources, error) {
+	tunConfig.Device = sing_tun.CalculateInterfaceName("")
 	listener, err := sing_tun.New(tunConfig, plane)
 	if err != nil {
 		log.Errorln("[Managed TUN] startup failed: %v", err)
@@ -87,8 +119,13 @@ func (macOSManagedNetwork) Open(ctx context.Context, cfg *config.Config, plane C
 		}
 		return nil, managedConfigError("managed_tun_start_failed")
 	}
-	cfg.General.Tun = listener.Config()
-	return listener, nil
+	resources := &managedMacOSNetworkResources{listener: listener}
+	resources.guard, err = newManagedEgressGuard(ctx, tunConfig.Device)
+	if err != nil {
+		log.Errorln("[Managed TUN] egress protection failed: %v", err)
+		return resources, managedConfigError("managed_tun_start_failed")
+	}
+	return resources, nil
 }
 
 // Owned under configMu; retain failed cleanup ownership rather than open another TUN.

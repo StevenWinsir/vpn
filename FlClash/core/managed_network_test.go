@@ -26,12 +26,16 @@ type networkFixture struct {
 	loopbackManagedNetwork
 	openError     error
 	closeError    error
+	partialOpen   bool
 	opens, closes int
 }
 
 func (n *networkFixture) Open(context.Context, *config.Config, C.Tunnel) (io.Closer, error) {
 	n.opens++
 	if n.openError != nil {
+		if n.partialOpen {
+			return n, n.openError
+		}
 		return nil, n.openError
 	}
 	return n, nil
@@ -133,6 +137,43 @@ func TestManagedTUNOwnershipAndNoSystemProxyFallback(t *testing.T) {
 			if err == nil {
 				conn.Close()
 				t.Fatal("failed TUN silently left mixed proxy available")
+			}
+		})
+	}
+	for _, failCleanup := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partially opened guard cleanup failure=%t", failCleanup), func(t *testing.T) {
+			engine := newManagedTestEngine(t)
+			view := applyManagedFixture(t, engine)
+			network := &networkFixture{openError: managedConfigError("managed_tun_start_failed"), partialOpen: true}
+			if failCleanup {
+				network.closeError = errors.New("synthetic guard cleanup failure")
+			}
+			engine.network = network
+			port := managedTestPort(t)
+			expected := "managed_tun_start_failed"
+			if failCleanup {
+				expected = "managed_tun_cleanup_failed"
+			}
+			if err := engine.Start(context.Background(), view.Owner, view.ID, port); managed.PublicError(err) != expected {
+				t.Fatalf("lost partial-open failure: %v", err)
+			}
+			if isRunning.Load() || network.opens != 1 || network.closes != 1 {
+				t.Fatal("partially opened guard was not rolled back")
+			}
+			if failCleanup {
+				if managedNetworkCloser != network {
+					t.Fatal("lost ownership of the partially opened guard")
+				}
+				if err := engine.Start(context.Background(), view.Owner, view.ID, port); managed.PublicError(err) != "managed_tun_cleanup_failed" || network.opens != 1 {
+					t.Fatal("cleanup failure allowed another guard to open")
+				}
+				network.closeError = nil
+				if !handleStopListener() {
+					t.Fatal("partial guard cleanup could not be retried")
+				}
+			}
+			if managedNetworkCloser != nil {
+				t.Fatal("successful rollback retained a closed guard")
 			}
 		})
 	}

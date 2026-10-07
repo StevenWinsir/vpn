@@ -152,14 +152,17 @@ func (e *managedProfileEngine) Start(ctx context.Context, owner managed.Configur
 	inbound.SetSkipAuthPrefixes(loopback)
 	tunnel.OnRunning()
 	network, err := e.networkPolicy().Open(ctx, currentConfig, plane)
+	managedNetworkCloser = network
 	if err != nil {
+		if cleanupErr := closeManagedNetworkLocked(); cleanupErr != nil {
+			err = cleanupErr
+		}
 		log.Errorln("[Managed Runtime] network open failed: code=%s", managed.PublicError(err))
 		plane.stop()
 		tunnel.OnSuspend()
 		listener.StopListener()
 		return err
 	}
-	managedNetworkCloser = network
 	if ctx.Err() != nil {
 		plane.stop()
 		tunnel.OnSuspend()

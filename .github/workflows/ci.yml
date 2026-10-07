@@ -152,6 +152,34 @@ jobs:
           dart analyze
           dart test
 
+  macos-network:
+    name: macOS TUN / physical-egress guard
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: FlClash/core/go.sum
+      - name: macOS network policy and STUN regressions
+        working-directory: FlClash/core
+        run: |
+          CGO_ENABLED=0 go test -tags with_gvisor -count=1 ./...
+      - name: Real macOS TUN / PF and dual-stack UDP
+        working-directory: FlClash/core
+        run: |
+          CGO_ENABLED=0 go test -tags with_gvisor -c -o /tmp/vpn-managed-tun.test .
+          sudo env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=120s
+      - name: Installed-app setuid TUN / competing VPN and recovery
+        run: |
+          trap 'sudo chmod 0755 /tmp/vpn-managed-tun.test' EXIT
+          sudo chown root:admin /tmp/vpn-managed-tun.test
+          sudo chmod 6755 /tmp/vpn-managed-tun.test
+          env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 RUN_MANAGED_TUN_SETUID_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=120s
+
   macos:
     name: macOS native build
     runs-on: macos-15
@@ -200,21 +228,6 @@ jobs:
           grep -Eq -- '-tags=.*with_gvisor' /tmp/vpn-core-build.txt
           grep -Fq -- '-X core/managed.APIBase=https://ci.example.invalid/api/v1/client' /tmp/vpn-core-build.txt
           codesign --verify --deep --strict "$bundle"
-      - name: macOS network policy and STUN regressions
-        working-directory: FlClash/core
-        run: |
-          CGO_ENABLED=0 go test -tags with_gvisor -count=1 ./...
-      - name: Real macOS TUN / production routes and dual-stack UDP
-        working-directory: FlClash/core
-        run: |
-          CGO_ENABLED=0 go test -tags with_gvisor -c -o /tmp/vpn-managed-tun.test .
-          sudo env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=60s
-      - name: Installed-app setuid TUN / competing VPN and reconnect
-        run: |
-          trap 'sudo chmod 0755 /tmp/vpn-managed-tun.test' EXIT
-          sudo chown root:admin /tmp/vpn-managed-tun.test
-          sudo chmod 6755 /tmp/vpn-managed-tun.test
-          env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 RUN_MANAGED_TUN_SETUID_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes)$' -test.v -test.timeout=60s
       - name: Verify signatures after an incremental Dart entrypoint change
         run: |
           bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=integration_test/managed_account_test.dart
