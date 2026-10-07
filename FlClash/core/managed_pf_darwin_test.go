@@ -166,7 +166,7 @@ func runManagedUnprivilegedUDP(t *testing.T, binary string, credential *syscall.
 	command.SysProcAttr = &syscall.SysProcAttr{Credential: credential}
 	command.Env = []string{"RUN_MANAGED_UNPRIVILEGED_PROBE=1", "MANAGED_PROBE_NETWORK=" + endpoint.network, "MANAGED_PROBE_ADDRESS=" + endpoint.address}
 	if endpoint.source != nil {
-		command.Env = append(command.Env, "MANAGED_PROBE_SOURCE="+endpoint.source.String())
+		command.Env = append(command.Env, "MANAGED_PROBE_SOURCE="+endpoint.source.String(), "MANAGED_PROBE_INTERFACE="+strconv.Itoa(endpoint.interfaceIndex))
 	}
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("unprivileged UDP probe failed: %v\n%s", err, output)
@@ -184,6 +184,11 @@ func TestManagedMacOSUnprivilegedUDPProbe(t *testing.T) {
 	source := os.Getenv("MANAGED_PROBE_SOURCE")
 	if source != "" {
 		dialer.LocalAddr = &net.UDPAddr{IP: net.ParseIP(source)}
+		index, err := strconv.Atoi(os.Getenv("MANAGED_PROBE_INTERFACE"))
+		if err != nil || index <= 0 {
+			t.Fatal("missing physical interface for an explicitly scoped probe")
+		}
+		dialer.Control = managedPhysicalSocketControl(index)
 	}
 	connection, err := dialer.Dial(os.Getenv("MANAGED_PROBE_NETWORK"), os.Getenv("MANAGED_PROBE_ADDRESS"))
 	if err != nil {

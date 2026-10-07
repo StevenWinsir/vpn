@@ -121,6 +121,7 @@ func TestManagedMacOSProductionTUNRoutes(t *testing.T) {
 type managedTunUDPEndpoint struct {
 	name, network, address string
 	source                 net.IP
+	interfaceIndex         int
 }
 
 // WebRTC commonly binds a socket to an interface's source address. Testing
@@ -154,6 +155,8 @@ func managedTunUDPEndpoints(t *testing.T) []managedTunUDPEndpoint {
 			}
 			endpoint.name += "/source-bound-" + device.Name
 			endpoint.source = prefix.Addr().AsSlice()
+			endpoint.interfaceIndex = device.Index
+			endpoint.address = managedPhysicalProbeTarget(t, device, endpoint.network)
 			endpoints = append(endpoints, endpoint)
 		}
 	}
@@ -225,12 +228,8 @@ func runManagedMacOSTUNUDP(t *testing.T, productionRoutes bool) {
 			if endpoint.source != nil {
 				// The installed Core has non-root real UID but root effective UID.
 				// Its physically bound proxy socket must remain usable in both modes.
-				physicalTarget := "198.19.253.250:32123"
-				if endpoint.network == "udp6" {
-					physicalTarget = "[2001:db8:ffff::250]:32123"
-				}
-				rootDialer := &net.Dialer{LocalAddr: &net.UDPAddr{IP: endpoint.source}, Timeout: time.Second}
-				rootConnection, err := rootDialer.Dial(endpoint.network, physicalTarget)
+				rootDialer := &net.Dialer{LocalAddr: &net.UDPAddr{IP: endpoint.source}, Control: managedPhysicalSocketControl(endpoint.interfaceIndex), Timeout: time.Second}
+				rootConnection, err := rootDialer.Dial(endpoint.network, endpoint.address)
 				if err != nil {
 					t.Fatalf("privileged physical egress failed: %v", err)
 				}
@@ -238,7 +237,7 @@ func runManagedMacOSTUNUDP(t *testing.T, productionRoutes bool) {
 				_ = rootConnection.Close()
 				afterRoot, countErr := managedPFRejectedPackets(context.Background(), guard, label)
 				if writeErr != nil || countErr != nil || afterRoot != before {
-					t.Fatalf("guard blocked the Core's privileged physical UDP: %v / %v / counters %d -> %d", writeErr, countErr, before, afterRoot)
+					t.Fatalf("privileged physical UDP must succeed without matching the guard: %v / %v / counters %d -> %d", writeErr, countErr, before, afterRoot)
 				}
 				runManagedUnprivilegedUDP(t, probeBinary, credential, endpoint)
 				after, err := managedPFRejectedPackets(context.Background(), guard, label)
