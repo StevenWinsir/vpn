@@ -17,6 +17,12 @@ class CoreAction extends _$CoreAction {
     if (!isInit) {
       final res = await _core.init(version);
       commonPrint.log('init result: $res');
+      if (!res) {
+        throw const CoreMethodException(
+          code: 'core_initialization_failed',
+          message: 'Core initialization was not acknowledged',
+        );
+      }
     } else {
       await ref.read(proxiesActionProvider.notifier).updateGroups();
     }
@@ -29,6 +35,7 @@ class CoreAction extends _$CoreAction {
       await _applyLifecycleResult(result);
     } catch (error) {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
+      ref.read(managedAccountProvider.notifier).failCore(error);
       dialogs.showNotifier(error.toString(), level: MessageLevel.error);
     }
   }
@@ -43,23 +50,15 @@ class CoreAction extends _$CoreAction {
     return _core.restart();
   }
 
-  // Nothing in lib/ calls CoreController.stop(); only close() (app exit)
-  // supersedes a start/restart. statusFirst lets onCrash catch a crash
-  // during initCore itself (it early-returns unless status is connected).
-  Future<bool> _applyLifecycleResult(
-    CoreLifecycleResult result, {
-    bool statusFirst = false,
-  }) async {
+  Future<bool> _applyLifecycleResult(CoreLifecycleResult result) async {
     if (result.outcome == CoreLifecycleOutcome.superseded) {
       return false;
     }
-    if (statusFirst) {
-      ref.read(coreStatusProvider.notifier).value = CoreStatus.connected;
-      await initCore();
-    } else {
-      await initCore();
-      ref.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await initCore();
+    if (ref.read(coreStatusProvider) != CoreStatus.connecting) {
+      return false;
     }
+    ref.read(coreStatusProvider.notifier).value = CoreStatus.connected;
     return true;
   }
 
@@ -95,7 +94,7 @@ class CoreAction extends _$CoreAction {
     try {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
       final result = await restartLifecycle();
-      if (!await _applyLifecycleResult(result, statusFirst: true)) {
+      if (!await _applyLifecycleResult(result)) {
         return false;
       }
 
@@ -119,8 +118,9 @@ class CoreAction extends _$CoreAction {
         appliedRevision = revision;
       }
       return applied;
-    } catch (_) {
+    } catch (error) {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
+      ref.read(managedAccountProvider.notifier).failCore(error);
       rethrow;
     } finally {
       _restartOperation = null;

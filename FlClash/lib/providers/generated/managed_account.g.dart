@@ -75,7 +75,7 @@ final class ManagedAccountProvider
   }
 }
 
-String _$managedAccountHash() => r'de8f25cfc481c7aef8e96d68f76488a51466dbca';
+String _$managedAccountHash() => r'c522fcc84315e2e053ad6738d4c4b6d459e6e799';
 
 abstract class _$ManagedAccount extends $Notifier<ManagedAccountState> {
   ManagedAccountState build();

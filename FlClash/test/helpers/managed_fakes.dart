@@ -121,6 +121,7 @@ class ManagedCoreFake extends CoreHandlerInterface {
 
   Object? defaultResponse(CoreMethod method, Object? arguments) {
     switch (method) {
+      case CoreMethod.managedTunReady:
       case CoreMethod.stopListener:
         return true;
       case CoreMethod.startListener:

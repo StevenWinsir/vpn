@@ -200,12 +200,20 @@ jobs:
             echo 'Acceptance-only code must not ship in the normal app.' >&2
             exit 1
           fi
+          grep -Eq -- '-tags=.*with_gvisor' /tmp/vpn-core-build.txt
           grep -Fq -- '-X core/managed.APIBase=https://ci.example.invalid/api/v1/client' /tmp/vpn-core-build.txt
           codesign --verify --deep --strict "$bundle"
       - name: Verify signatures after an incremental Dart entrypoint change
         run: |
           bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=integration_test/managed_account_test.dart
           codesign --verify --deep --strict FlClash/build/macos/Build/Products/Debug/FlClash.app
+      - name: Real Flutter authorization and Core restart lifecycle
+        run: |
+          core=FlClash/build/macos/Build/Products/Debug/FlClash.app/Contents/MacOS/FlClashCore
+          trap 'if [ -f "$core" ]; then sudo chmod 0755 "$core"; sudo chown "$(id -u):$(id -g)" "$core"; fi' EXIT
+          bash scripts/flclash-env.sh flutter clean
+          bash scripts/flclash-env.sh flutter pub get
+          bash scripts/flclash-env.sh flutter drive -d macos --debug --no-pub --target=integration_test/managed_core_restart_test.dart --driver=test_driver/managed_account_test.dart --dart-define=RESTART_AUTHORIZE_TEST=true --timeout=120
       - name: Restore and verify the normal application entrypoint
         if: always()
         run: |

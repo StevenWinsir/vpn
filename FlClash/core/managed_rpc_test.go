@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -66,6 +67,22 @@ func rpcAccount(t *testing.T, response MethodResponse) managed.AccountSnapshot {
 		}
 	}
 	return state
+}
+
+func TestManagedTunReadyReportsCurrentCoreIdentityWithoutGrantingConnection(t *testing.T) {
+	previous := isInit.Load()
+	defer isInit.Store(previous)
+	for _, initialized := range []bool{false, true} {
+		isInit.Store(initialized)
+		response := managedRPC(t, managedTunReadyMethod, "null")
+		expected := initialized && (runtime.GOOS != "darwin" || os.Geteuid() == 0)
+		if response.Error != nil || response.Result != expected {
+			t.Fatalf("privilege probe did not reflect the responding Core: %+v", response)
+		}
+		if managedConnectionAllowed() {
+			t.Fatal("privilege probe granted a managed connection")
+		}
+	}
 }
 
 func TestManagedRPCLoginLoadStatusFlushAndLogoutStaySeparate(t *testing.T) {

@@ -44,6 +44,7 @@ enum CoreMethod {
   managedFlush,
   managedLogout,
   managedReset,
+  managedTunReady,
 }
 
 class CoreMethodCall {

@@ -89,6 +89,8 @@ class CoreController {
 
   Future<ManagedAccountSnapshot> managedReset() => _interface.managedReset();
 
+  Future<bool> managedTunReady() => _interface.managedTunReady();
+
   static Future<void> ensureHomeDir() async {
     final homePath = await appPath.homeDirPath;
     final homeDir = Directory(homePath);

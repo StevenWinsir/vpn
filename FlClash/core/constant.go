@@ -123,6 +123,7 @@ const (
 	managedFlushMethod             CoreMethod = "managedFlush"
 	managedLogoutMethod            CoreMethod = "managedLogout"
 	managedResetMethod             CoreMethod = "managedReset"
+	managedTunReadyMethod          CoreMethod = "managedTunReady"
 )
 
 type CoreMethod string

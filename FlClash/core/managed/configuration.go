@@ -50,6 +50,7 @@ func (c *Coordinator) configurationOwnerLocked() ConfigurationOwner {
 }
 
 func (c *Coordinator) discardConfigurationLocked() error {
+	c.startFailure = ""
 	c.profile = nil
 	c.snapshot.Configuration = nil
 	c.snapshot.ProfileVersion = ""

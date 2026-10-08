@@ -40,7 +40,7 @@ func managedProfileFixture(data string) managed.Profile {
 
 func newManagedTestEngine(t *testing.T) *managedProfileEngine {
 	t.Helper()
-	engine := &managedProfileEngine{home: t.TempDir()}
+	engine := &managedProfileEngine{home: t.TempDir(), network: loopbackManagedNetwork{}}
 	previousHome := C.Path.HomeDir()
 	C.SetHomeDir(engine.home)
 	wasInit := isInit.Swap(true)
@@ -77,7 +77,7 @@ func TestManagedConfigurationAppliesRealMihomoWithoutListenersOrLocalOverrides(t
 		t.Fatal(err)
 	}
 	view := applyManagedFixture(t, engine)
-	if currentConfig == nil || tunnel.AllProxies()["Server-A"] == nil || len(currentConfig.Rules) != 1 {
+	if currentConfig == nil || tunnel.AllProxies()["Server-A"] == nil || len(currentConfig.Rules) != 2 {
 		t.Fatal("configuration was not applied to Mihomo")
 	}
 	if isRunning.Load() || currentConfig.General.MixedPort != 0 || currentConfig.General.AllowLan || currentConfig.General.Tun.Enable || currentConfig.Controller.ExternalController != "" || currentConfig.Controller.ExternalUIURL != "" || currentConfig.Profile.StoreSelected || currentConfig.NTP.Enable || currentConfig.DNS.Listen != "" {

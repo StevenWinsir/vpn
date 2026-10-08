@@ -2,7 +2,7 @@
 
 Next.js + Mantine 前端、Go + Gin + GORM API、PostgreSQL，以及基于 FlClash/Mihomo 的托管客户端。前后端分别使用自己的 `.env`。
 
-**当前是可验证的开发闭环，不是可直接收费运营的成品。** 已接通管理员节点 YAML、套餐过滤、真实内核累计流量与逐节点倍率结算；账本仍属于 `client_reported`，没有节点侧独立计量/可撤销的每用户代理凭据。托管 macOS 连接当前使用回环 mixed 监听和系统代理，不是全设备 TUN。生产模式拒绝启用这种代理下发方式，避免把开发账本误当成商业强制计费。
+**当前是可验证的开发闭环，不是可直接收费运营的成品。** 已接通管理员节点 YAML、套餐过滤、真实内核累计流量与逐节点倍率结算；账本仍属于 `client_reported`，没有节点侧独立计量/可撤销的每用户代理凭据。托管 macOS 已切换为特权 Core 管理的双栈 TUN，不再开启 mixed 监听或设置系统代理；这不等于完整断网保护或已通过公网防泄漏验收，详见 [macOS TUN 生命周期与验证边界](docs/managed-macos-tun.md)。生产模式拒绝启用这种代理下发方式，避免把开发账本误当成商业强制计费。
 
 ## 已实现的主链路
 
@@ -113,13 +113,13 @@ bash scripts/node.sh npm --prefix frontend run test:api-proxy
 (cd backend && go run ./cmd/doctor -email test@test.com)
 ```
 
-测试使用私有数据库/临时浏览器用户目录和本地可控代理，不读取日常 Chrome 资料。macOS App 三阶段验收脚本为 `scripts/test-macos-managed.py`，它隔离文件、钥匙串测试项与系统代理命令。验收日志和截图保留在 `artifacts/`，不得将其当作真实公网节点、全设备 TUN、正式支付或线上 TLS 的验收证据。历史阶段记录见 `docs/verification.md`；本次完整结果以 PR 和 CI 的实际状态为准。
+测试使用私有数据库/临时浏览器用户目录和本地可控代理，不读取日常 Chrome 资料。`scripts/test-macos-managed.py` 是旧 mixed/system-proxy 链路的历史三阶段验收脚本，不代表当前 TUN 验收；当前使用独立 `Managed macOS TUN` CI 验证实际 utun、TCP 代理流量采样、双栈 UDP、冲突路由与重连，并在原生应用 CI 验证授权后的真实 Core 重启。验收日志和截图保留在 `artifacts/`，不得将其当作真实公网节点、全设备 TUN、正式支付或线上 TLS 的验收证据。历史阶段记录见 `docs/verification.md`；本次完整结果以 PR 和 CI 的实际状态为准。
 
 本轮本机验收记录见 [开发闭环验收](docs/development-acceptance.md)。GitHub CI 状态应以该 PR 的实时 Checks 为准，不能用本机结果替代。
 
 ## 正式商业上线前仍必须完成
 
-节点侧的独立计量、每用户认证与可撤销凭据、到期/超额即时限额执行；macOS TUN/特权服务及 DNS/IPv6/UDP 泄漏、休眠/网络切换/崩溃测试；真实支付与验签对账、退款与纠纷流程；邮箱验证、找回密码和管理员 MFA；数据库验证 TLS、密钥轮换、监控告警、备份恢复和高可用；签名、公证和其他平台逐一验收。
+节点侧的独立计量、每用户认证与可撤销凭据、到期/超额即时限额执行；macOS TUN 商业发行权限加固及公网 DNS/IPv6/UDP 泄漏、休眠/网络切换/崩溃测试；真实支付与验签对账、退款与纠纷流程；邮箱验证、找回密码和管理员 MFA；数据库验证 TLS、密钥轮换、监控告警、备份恢复和高可用；签名、公证和其他平台逐一验收。
 
 FlClash 及其依赖的许可证必须分别审查。项目保留了上游 [GPL-3.0 许可证](FlClash/LICENSE)，收费不等于可以忽略修改版客户端分发时的源码和许可证义务。不要承诺向付费用户提供无法兑现的带宽、专线质量或隐私保障。
 

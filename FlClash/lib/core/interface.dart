@@ -38,6 +38,8 @@ mixin CoreInterface {
 
   Future<ManagedAccountSnapshot> managedReset();
 
+  Future<bool> managedTunReady();
+
   Future<CoreLifecycleResult> start();
 
   Future<CoreLifecycleResult> restart();
@@ -109,6 +111,21 @@ mixin CoreInterface {
 }
 
 abstract class CoreHandlerInterface with CoreInterface {
+  @override
+  Future<bool> managedTunReady() async {
+    final result = await _invokeMethod<Object>(
+      method: CoreMethod.managedTunReady,
+      timeout: const Duration(seconds: 5),
+    );
+    if (result is! bool) {
+      throw const CoreMethodException(
+        code: 'invalid_server_response',
+        message: 'Invalid managed privilege response',
+      );
+    }
+    return result;
+  }
+
   @override
   Future<ManagedAccountSnapshot> managedConnect(
     int generation,

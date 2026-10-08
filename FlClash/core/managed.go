@@ -6,6 +6,8 @@ import (
 	"core/managed"
 	"encoding/json"
 	"io"
+	"os"
+	"runtime"
 	"time"
 )
 
@@ -74,6 +76,9 @@ func managedResponse(response MethodResponse, run func(context.Context) (managed
 }
 
 func init() {
+	registerMethod(managedTunReadyMethod, withoutArguments(func(response MethodResponse) {
+		response.success(isInit.Load() && (runtime.GOOS != "darwin" || os.Geteuid() == 0))
+	}))
 	registerMethod(managedConnectMethod, func(call *MethodCall, response MethodResponse) {
 		var params struct {
 			Generation      uint64 `json:"generation"`

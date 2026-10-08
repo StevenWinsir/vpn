@@ -1,0 +1,54 @@
+name: Managed macOS TUN
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-tun-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tun:
+    name: macOS TUN / routes, TCP metering and UDP
+    runs-on: macos-15
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: FlClash/core
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: FlClash/core/go.sum
+      - name: Core policy and managed metering regressions
+        run: |
+          CGO_ENABLED=0 go test -tags=with_gvisor -count=1 ./...
+          CGO_ENABLED=0 go vet -tags=with_gvisor ./...
+          go test -race -count=1 ./managed
+      - name: Compile and sign isolated TUN test binary
+        run: |
+          CGO_ENABLED=0 go test -tags=with_gvisor -c -o /tmp/vpn-managed-tun.test .
+          codesign --force --sign - /tmp/vpn-managed-tun.test
+          codesign --verify --strict /tmp/vpn-managed-tun.test
+      - name: Real TUN without system proxy, TCP metering and dual-stack UDP
+        run: |
+          scutil --proxy > /tmp/vpn-system-proxy-before.txt
+          sudo env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes|TUNTCPMeterAndReconnect)$' -test.v -test.timeout=90s
+          scutil --proxy > /tmp/vpn-system-proxy-after.txt
+          diff -u /tmp/vpn-system-proxy-before.txt /tmp/vpn-system-proxy-after.txt
+      - name: Installed-app setuid identity, competing routes and reconnect
+        run: |
+          trap 'sudo chmod 0755 /tmp/vpn-managed-tun.test' EXIT
+          sudo chown root:admin /tmp/vpn-managed-tun.test
+          sudo chmod 6755 /tmp/vpn-managed-tun.test
+          env RUN_MANAGED_TUN_TEST=1 RUN_MANAGED_TUN_FULL_ROUTE_TEST=1 RUN_MANAGED_TUN_SETUID_TEST=1 /tmp/vpn-managed-tun.test -test.run '^TestManagedMacOS(RealTUNUDPBothFamilies|ProductionTUNRoutes|TUNTCPMeterAndReconnect)$' -test.v -test.timeout=90s
+          scutil --proxy > /tmp/vpn-system-proxy-setuid.txt
+          diff -u /tmp/vpn-system-proxy-before.txt /tmp/vpn-system-proxy-setuid.txt

@@ -214,7 +214,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('a crash is ignored when the core is not connected', (
+  testWidgets('a crash during initialization ends the connecting state', (
     tester,
   ) async {
     final coreInterface = _coreInterface();
@@ -231,9 +231,9 @@ void main() {
     coreEventManager.sendEvent(_crash);
     await tester.pump();
 
-    expect(container.read(coreStatusProvider), CoreStatus.connecting);
-    expect(transitions, isEmpty);
-    expect(find.text('boom'), findsNothing);
+    expect(container.read(coreStatusProvider), CoreStatus.disconnected);
+    expect(transitions, [CoreStatus.disconnected]);
+    expect(find.text('boom'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

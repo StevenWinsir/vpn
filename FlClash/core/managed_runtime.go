@@ -12,7 +12,9 @@ import (
 	"github.com/metacubex/mihomo/adapter/inbound"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
+	P "github.com/metacubex/mihomo/constant/provider"
 	"github.com/metacubex/mihomo/listener"
+	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 )
@@ -23,8 +25,11 @@ var managedPlanes = struct {
 	items map[*managedTrafficTunnel]struct{}
 }{items: map[*managedTrafficTunnel]struct{}{}}
 
+type managedProviderAccess interface{ P.Tunnel }
+
 type managedTrafficTunnel struct {
 	C.Tunnel
+	managedProviderAccess
 	mu      sync.Mutex
 	running bool
 	tcp     map[net.Conn]struct{}
@@ -133,7 +138,11 @@ func (e *managedProfileEngine) Start(ctx context.Context, owner managed.Configur
 	if port < 1024 || port > 65535 {
 		return managedConfigError("invalid_runtime_options")
 	}
+	if managedNetworkCloser != nil {
+		return managedConfigError("managed_tun_cleanup_failed")
+	}
 	plane := newManagedTrafficTunnel(tunnel.Tunnel)
+	plane.managedProviderAccess = tunnel.Tunnel
 	managedDataPlane.Store(plane)
 	listener.SetAllowLan(false)
 	listener.SetBindAddress("127.0.0.1")
@@ -142,11 +151,35 @@ func (e *managedProfileEngine) Start(ctx context.Context, owner managed.Configur
 	inbound.SetDisAllowedIPs(nil)
 	inbound.SetSkipAuthPrefixes(loopback)
 	tunnel.OnRunning()
-	listener.ReCreateMixed(port, plane)
-	if listener.GetPorts().MixedPort != port {
+	network, err := e.networkPolicy().Open(ctx, currentConfig, plane)
+	if err != nil {
+		log.Errorln("[Managed Runtime] network open failed: code=%s", managed.PublicError(err))
 		plane.stop()
 		tunnel.OnSuspend()
 		listener.StopListener()
+		return err
+	}
+	managedNetworkCloser = network
+	if ctx.Err() != nil {
+		plane.stop()
+		tunnel.OnSuspend()
+		if err := closeManagedNetworkLocked(); err != nil {
+			return err
+		}
+		return managedConfigError("operation_superseded")
+	}
+	if !e.networkPolicy().NeedsMixedListener() {
+		port = 0
+	}
+	listener.ReCreateMixed(port, plane)
+	if listener.GetPorts().MixedPort != port {
+		log.Errorln("[Managed Runtime] mixed listener did not bind port %d (got %d); another process may own it", port, listener.GetPorts().MixedPort)
+		plane.stop()
+		tunnel.OnSuspend()
+		listener.StopListener()
+		if err := closeManagedNetworkLocked(); err != nil {
+			return err
+		}
 		return managedConfigError("runtime_start_failed")
 	}
 	currentConfig.General.MixedPort = port

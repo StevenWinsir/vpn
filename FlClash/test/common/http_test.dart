@@ -6,6 +6,7 @@ import 'package:fl_clash/common/http.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
+import 'package:fl_clash/providers/managed_account.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:riverpod/riverpod.dart';
 
@@ -37,13 +38,17 @@ void main() {
 
   ProviderContainer buildContainer({
     bool running = true,
+    bool tunRequired = false,
     String? currentSsid,
     List<String> excludeSSIDs = const [],
     int mixedPort = 7890,
     bool checkCertificate = true,
   }) {
     final container = ProviderContainer(
-      overrides: [excludeSSIDsProvider.overrideWithValue(excludeSSIDs)],
+      overrides: [
+        excludeSSIDsProvider.overrideWithValue(excludeSSIDs),
+        managedTunRequiredProvider.overrideWithValue(tunRequired),
+      ],
     );
     addTearDown(container.dispose);
     container.read(runTimeProvider.notifier).value = running ? 1 : null;
@@ -67,6 +72,11 @@ void main() {
       ),
       'DIRECT',
     );
+  });
+
+  test('macOS uses OS routing, never an application mixed proxy', () {
+    final container = buildContainer(tunRequired: true, mixedPort: 7891);
+    expect(FlClashHttpOverrides.findProxyFor(container, remote), 'DIRECT');
   });
 
   test('routes through the mixed port while the core is running', () {

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/core/controller.dart';
+import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/managed_account.dart';
@@ -35,6 +36,70 @@ void main() {
   });
 
   tearDown(() => container.dispose());
+
+  test(
+    'privilege readiness never queries a disconnected or restarting Core',
+    () async {
+      final probe = ProviderContainer(
+        overrides: [
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+          managedTunRequiredProvider.overrideWithValue(true),
+        ],
+      );
+      addTearDown(probe.dispose);
+      expect(await probe.read(managedTunReadyProvider.future), isFalse);
+      expect(core.calls, isEmpty);
+      probe.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+      expect(await probe.read(managedTunReadyProvider.future), isTrue);
+      final queries = core.calls.length;
+      probe.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
+      expect(await probe.read(managedTunReadyProvider.future), isFalse);
+      expect(core.calls.length, queries);
+    },
+  );
+
+  for (final entry in <Object, String>{
+    const CoreMethodException(code: 'no_response', message: 'private-payload'):
+        'no_response',
+    const CoreMethodException(
+      code: 'managed_error',
+      message: 'configuration_cleanup_failed',
+    ): 'configuration_cleanup_failed',
+    const CoreMethodException(
+      code: 'private-payload',
+      message: 'private-payload',
+    ): 'core_unknown_error',
+    const DesktopCoreFailure(
+      code: 'process_exit_unconfirmed',
+      phase: DesktopCorePhase.stopping,
+      revision: 1,
+      cause: 'private-payload',
+    ): 'process_exit_unconfirmed',
+    const DesktopCoreFailure(
+      code: 'private-payload',
+      phase: DesktopCorePhase.starting,
+      revision: 1,
+    ): 'core_unknown_error',
+    const FileSystemException('private-payload'): 'core_storage_error',
+    StateError('private-payload'): 'core_unknown_error',
+  }.entries) {
+    test(
+      'Core diagnostics preserve safe codes only: ${entry.key.runtimeType}/${entry.value}',
+      () {
+        action.failCore(entry.key);
+        final state = container.read(managedAccountProvider);
+        expect(state.ready, isFalse);
+        expect(state.busy, isFalse);
+        expect(state.errorCode, 'core_unavailable');
+        expect(state.diagnostic, entry.value);
+        expect(state.diagnostic, isNot(contains('private-payload')));
+        container.read(coreStatusProvider.notifier).value =
+            CoreStatus.connecting;
+        expect(container.read(managedAccountProvider).diagnostic, isEmpty);
+        expect(container.read(managedAccountProvider).busy, isTrue);
+      },
+    );
+  }
 
   test(
     'cold start stops old listeners and resets the Core account before login',
@@ -217,6 +282,8 @@ void main() {
     await action.login('fixture@example.invalid', 'fixture-password');
     container.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
     expect(container.read(managedAccountProvider).ready, isFalse);
+    expect(container.read(managedAccountProvider).busy, isTrue);
+    expect(container.read(managedAccountProvider).errorCode, isEmpty);
     expect(container.read(managedAccountProvider).account.user, isNull);
     expect(container.read(runTimeProvider), isNull);
     container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
@@ -267,6 +334,49 @@ void main() {
       expect(container.read(managedAccountProvider).account.user, isNull);
     },
   );
+
+  test('macOS refuses login until the responding Core is privileged', () async {
+    container.dispose();
+    container = ProviderContainer(
+      overrides: [
+        coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+        managedAppVersionProvider.overrideWithValue('test'),
+        managedTunRequiredProvider.overrideWithValue(true),
+      ],
+    );
+    action = container.read(managedAccountProvider.notifier);
+    await action.coldStart();
+    core.respond = (method, arguments) => method == CoreMethod.managedTunReady
+        ? false
+        : core.defaultResponse(method, arguments);
+    await action.login('fixture@example.invalid', 'fixture-password');
+    expect(
+      container.read(managedAccountProvider).errorCode,
+      'managed_tun_permission_required',
+    );
+    expect(
+      core.calls.where((call) => call.method == CoreMethod.managedLogin),
+      isEmpty,
+    );
+    expect(container.read(managedConnectionAllowedProvider), isFalse);
+    core.respond = null;
+    await action.login('fixture@example.invalid', 'fixture-password');
+    expect(container.read(managedAccountProvider).account.user, isNotNull);
+  });
+
+  test('privilege responses must be booleans, never truthy metadata', () async {
+    core.respond = (_, _) => {'ready': true};
+    await expectLater(
+      CoreController.scoped(core).managedTunReady(),
+      throwsA(
+        isA<CoreMethodException>().having(
+          (error) => error.code,
+          'code',
+          'invalid_server_response',
+        ),
+      ),
+    );
+  });
 
   test(
     'installation ID is stable but the account does not survive a new container',

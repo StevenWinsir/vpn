@@ -45,7 +45,9 @@ ProxyState proxyState(Ref ref) {
   );
   return ProxyState(
     isStart: suspend ? false : isStart,
-    systemProxy: systemProxySelector.systemProxy,
+    systemProxy:
+        !ref.watch(managedTunRequiredProvider) &&
+        systemProxySelector.systemProxy,
     bassDomain: systemProxySelector.bypassDomain,
     port: mixedPort,
   );

@@ -6,6 +6,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
+import 'package:fl_clash/providers/managed_account.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/views/navigation.dart';
 import 'package:material_ui/material_ui.dart';
@@ -21,7 +22,10 @@ void main() {
     navigationPort = navigation;
     addTearDown(() => navigationPort = null);
     container = ProviderContainer(
-      overrides: [profilesProvider.overrideWith(TestProfiles.new)],
+      overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
+        managedTunRequiredProvider.overrideWithValue(false),
+      ],
     );
   });
 

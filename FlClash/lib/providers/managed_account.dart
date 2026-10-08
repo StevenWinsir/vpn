@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:fl_clash/common/managed_credentials.dart';
 import 'package:fl_clash/core/controller.dart';
+import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/managed_account.dart';
@@ -14,6 +15,18 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 part 'generated/managed_account.g.dart';
+
+final managedTunRequiredProvider = Provider<bool>((ref) => Platform.isMacOS);
+final managedTunReadyProvider = FutureProvider<bool>((ref) async {
+  if (!ref.watch(managedTunRequiredProvider)) return true;
+  if (ref.watch(coreStatusProvider) != CoreStatus.connected) return false;
+  final core = ref.watch(coreHandlerProvider);
+  try {
+    return await core.managedTunReady();
+  } catch (_) {
+    return false;
+  }
+});
 
 final managedCredentialStoreProvider = Provider<ManagedCredentialStore>(
   (ref) => createManagedCredentialStore(),
@@ -57,12 +70,14 @@ class ManagedAccountState {
     this.ready = false,
     this.working = false,
     this.error = '',
+    this.diagnostic = '',
   });
 
   final ManagedAccountSnapshot account;
   final bool ready;
   final bool working;
   final String error;
+  final String diagnostic;
 
   bool get busy => working || account.busy;
   String get errorCode => error.isEmpty ? account.errorCode : error;
@@ -79,7 +94,9 @@ class ManagedAccount extends _$ManagedAccount {
   @override
   ManagedAccountState build() {
     ref.listen(coreStatusProvider, (previous, next) {
-      if (next != CoreStatus.connected) {
+      if (next == CoreStatus.connecting) {
+        forget(reason: '', working: true);
+      } else if (next != CoreStatus.connected) {
         forget();
       } else if (previous != CoreStatus.connected) {
         unawaited(coldStart());
@@ -115,11 +132,50 @@ class ManagedAccount extends _$ManagedAccount {
     ref.read(groupsProvider.notifier).value = [];
   }
 
-  void forget({String reason = 'core_unavailable'}) {
+  void forget({
+    String reason = 'core_unavailable',
+    bool working = false,
+    String diagnostic = '',
+  }) {
     _isolateLegacyState();
     _epoch++;
-    state = ManagedAccountState(error: reason);
+    state = ManagedAccountState(
+      error: reason,
+      working: working,
+      diagnostic: diagnostic,
+    );
     ref.read(runTimeProvider.notifier).value = null;
+  }
+
+  void failCore(Object error) {
+    final code = switch (error) {
+      DesktopCoreFailure(:final code) => code,
+      CoreMethodException(code: 'managed_error', :final message) => message,
+      CoreMethodException(:final code) => code,
+      FileSystemException() => 'core_storage_error',
+      ProcessException() => 'core_process_error',
+      TimeoutException() => 'core_timeout',
+      _ => 'core_unknown_error',
+    };
+    const allowed = {
+      'core_initialization_failed',
+      'no_response',
+      'transport_disconnected',
+      'transport_error',
+      'invalid_server_response',
+      'configuration_cleanup_failed',
+      'configuration_storage_failed',
+      'start_failed',
+      'stop_failed',
+      'process_exit_unconfirmed',
+      'process_stop_failed',
+      'unexpected_disconnect',
+      'transport_failed',
+      'core_storage_error',
+      'core_process_error',
+      'core_timeout',
+    };
+    forget(diagnostic: allowed.contains(code) ? code : 'core_unknown_error');
   }
 
   Future<void> coldStart() async {
@@ -134,9 +190,9 @@ class ManagedAccount extends _$ManagedAccount {
       if (_current(epoch)) {
         state = ManagedAccountState(account: account, ready: true);
       }
-    } catch (_) {
+    } catch (error) {
       if (_current(epoch)) {
-        state = const ManagedAccountState(error: 'core_unavailable');
+        failCore(error);
       }
     }
   }
@@ -151,6 +207,13 @@ class ManagedAccount extends _$ManagedAccount {
     final operationEpoch = _epoch + 1;
     await _perform((epoch) async {
       final deviceId = await ref.read(managedInstallationIdProvider.future);
+      if (ref.read(managedTunRequiredProvider) &&
+          !await _core.managedTunReady()) {
+        throw const CoreMethodException(
+          code: 'managed_tun_permission_required',
+          message: 'Authorize the Core before starting a managed session',
+        );
+      }
       if (!_current(epoch)) {
         throw const CoreMethodException(
           code: 'operation_superseded',

@@ -1,4 +1,11 @@
 {
+  "managedCoreDiagnostic": "Core diagnostic code: {code}",
+  "managedTunAuthorize": "Authorize macOS TUN and restart Core",
+  "managedTunRouteConflict": "Another VPN or tunnel is using the required system routes. Disconnect it in Shadowrocket, Clash or the other VPN app (closing its window is not enough), then connect again. Reauthorization is not needed. This proxy is disconnected and will not take over the other VPN's routes.",
+  "managedTunRouteCheckFailed": "The system routes could not be checked safely, so the proxy was not started. Restart the app and check network permissions before retrying.",
+  "managedTunDescription": "macOS connections require TUN to route TCP, UDP and IPv6 instead of relying only on system proxy settings. Authorize before the first connection; the Core restarts and you must sign in again. This is not a system-wide kill switch.",
+  "managedTunPermission": "TUN requires administrator authorization. Use the authorization button, then sign in again. The proxy has not connected.",
+  "managedTunFailed": "TUN could not start or clean up safely. No system-proxy-only fallback was enabled. Restart the app and check for conflicting VPNs or network permissions.",
   "managedApplied": "The server configuration is ready. Connecting requires a fresh traffic authorization; refreshing configuration does not start the proxy.",
   "managedConnect": "Connect",
   "managedDisconnect": "Disconnect",

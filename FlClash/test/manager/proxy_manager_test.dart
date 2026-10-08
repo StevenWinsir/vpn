@@ -2,6 +2,7 @@ import 'package:fl_clash/manager/proxy_manager.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
+import 'package:fl_clash/providers/managed_account.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
 import 'package:material_ui/material_ui.dart';
@@ -16,7 +17,9 @@ void main() {
   late ProviderContainer container;
 
   setUp(() {
-    container = ProviderContainer();
+    container = ProviderContainer(
+      overrides: [managedTunRequiredProvider.overrideWithValue(false)],
+    );
     globalState.container = container;
   });
 
@@ -93,6 +96,20 @@ void main() {
     expect(state.isStart, isTrue);
     expect(state.systemProxy, isTrue);
     expect(state.port, 7892);
+  });
+
+  test('managed macOS ignores a previously saved system-proxy preference', () {
+    final macOS = ProviderContainer(
+      overrides: [managedTunRequiredProvider.overrideWithValue(true)],
+    );
+    addTearDown(macOS.dispose);
+    macOS.read(networkSettingProvider.notifier).value = const NetworkProps()
+        .copyWith(systemProxy: true);
+    for (final runtime in <int?>[null, 1, null, 2]) {
+      macOS.read(runTimeProvider.notifier).value = runtime;
+      expect(macOS.read(proxyStateProvider).systemProxy, isFalse);
+      expect(macOS.read(proxyStateProvider).isStart, runtime != null);
+    }
   });
 
   test('an excluded SSID suspends the system proxy', () {

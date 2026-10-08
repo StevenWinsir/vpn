@@ -203,6 +203,13 @@ func (c *Coordinator) Connect(ctx context.Context, generation uint64, port int, 
 	if err != nil {
 		lease.Stop()
 		c.snapshot.ErrorCode = PublicError(err)
+		// A refresh after the failed start must not erase why it failed.
+		if c.snapshot.ErrorCode != "operation_superseded" {
+			c.startFailure = c.snapshot.ErrorCode
+		}
+	} else {
+		c.snapshot.ErrorCode = ""
+		c.startFailure = ""
 	}
 	result := c.snapshotLocked()
 	c.mu.Unlock()
