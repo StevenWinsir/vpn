@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"slices"
 	"testing"
@@ -63,6 +64,15 @@ func TestManagedMacOSTUNPolicy(t *testing.T) {
 	policy.Configure(raw)
 	if !raw.IPv6 || raw.Mode != tunnel.Rule || !raw.DNS.Enable || !raw.DNS.IPv6 || !raw.DNS.RespectRules || raw.DNS.EnhancedMode != C.DNSFakeIP || len(raw.DNS.ProxyServerNameserver) == 0 || raw.DNS.Listen != "" {
 		t.Fatal("macOS managed DNS policy does not cover both address families through proxy rules")
+	}
+	for _, server := range raw.DNS.ProxyServerNameserver {
+		parsed, err := url.Parse(server)
+		if err != nil || parsed.Scheme != "https" || net.ParseIP(parsed.Hostname()) == nil {
+			t.Fatalf("direct nameserver %q must be DoH on a literal IP", server)
+		}
+	}
+	if !slices.Contains(raw.DNS.ProxyServerNameserver, "https://223.5.5.5/dns-query") || !slices.Contains(raw.DNS.ProxyServerNameserver, "https://1.1.1.1/dns-query") {
+		t.Fatal("direct nameservers must cover in-region and overseas networks")
 	}
 	tun := managedMacOSTunConfig()
 	if !tun.Enable || !tun.AutoRoute || !tun.AutoDetectInterface || !tun.StrictRoute || tun.Stack != C.TunGvisor || !tun.DisableICMPForwarding || len(tun.Inet4Address) == 0 || len(tun.Inet6Address) == 0 || len(tun.RouteExcludeAddress) != 0 || !slices.Contains(tun.DNSHijack, "any:53") || !slices.Contains(tun.DNSHijack, "tcp://any:53") {

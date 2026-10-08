@@ -11,6 +11,21 @@ import 'package:wifi_ssid/wifi_ssid.dart';
 
 typedef SsidReader = Future<String?> Function();
 
+// connectivity_plus on macOS never reports `vpn`: every utun, including the
+// managed TUN this app opens, surfaces as `other`.
+const _tunnelConnectivity = {ConnectivityResult.vpn, ConnectivityResult.other};
+
+String physicalConnectivitySignature(List<ConnectivityResult> results) {
+  final physical =
+      results
+          .where((value) => !_tunnelConnectivity.contains(value))
+          .map((value) => value.name)
+          .toSet()
+          .toList()
+        ..sort();
+  return physical.join(',');
+}
+
 class ConnectivityManager extends ConsumerStatefulWidget {
   final Function(List<ConnectivityResult> results)? onConnectivityChanged;
   final Stream<List<ConnectivityResult>>? connectivityStream;

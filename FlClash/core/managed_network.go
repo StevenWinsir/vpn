@@ -53,9 +53,16 @@ func (macOSManagedNetwork) Configure(raw *config.RawConfig) {
 		Enable: true, IPv6: true, RespectRules: true,
 		EnhancedMode: C.DNSFakeIP, FakeIPRange: "198.18.0.1/16", FakeIPRange6: "fc00::/18",
 		NameServer:            []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"},
-		ProxyServerNameserver: []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"},
-		DefaultNameserver:     []string{"1.1.1.1", "8.8.8.8"},
+		ProxyServerNameserver: managedDirectNameservers,
+		DefaultNameserver:     []string{"223.5.5.5", "119.29.29.29", "1.1.1.1"},
 	}
+}
+
+// Node and control-plane hosts resolve outside the tunnel and race every entry.
+// Overseas DoH is unreachable on some networks, so in-region DoH must be present;
+// plain or system DNS is excluded because poisoned UDP answers win the race.
+var managedDirectNameservers = []string{
+	"https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query", "https://1.1.1.1/dns-query",
 }
 
 func managedMacOSTunConfig() LC.Tun {

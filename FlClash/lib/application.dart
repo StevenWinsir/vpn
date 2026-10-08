@@ -99,13 +99,7 @@ class ApplicationState extends ConsumerState<Application> {
     List<ConnectivityResult> results,
   ) async {
     commonPrint.log('connectivityChanged ${results.toString()}');
-    final physical =
-        results
-            .where((value) => value != ConnectivityResult.vpn)
-            .map((value) => value.name)
-            .toList()
-          ..sort();
-    final signature = physical.join(',');
+    final signature = physicalConnectivitySignature(results);
     final previous = _physicalConnectivity;
     _physicalConnectivity = signature;
     if (system.isDesktop &&

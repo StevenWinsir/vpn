@@ -65,6 +65,16 @@ bash scripts/flclash-env.sh dart run tool/check_coverage.dart coverage/lcov.info
 
 测试命令和代码不是通过证明；结果以本 PR 当前提交的 Checks 为准。没有使用历史 PR 的绿灯代替本次结果。
 
+## M4 实机问题：点击连接后立即断开
+
+现象：已授权、可登录、能加载节点，点击连接后状态闪一下即回到未连接。M4 统一日志显示 `utun8` 三次 attached 后约 140 ms 即 detached，期间 Core 没有发出任何代理连接；CI 只直接驱动 Go Core，没有运行 Flutter 网络监听，因此未暴露。
+
+根因：桌面端 `_handleConnectivityChanged` 在已授权连接期间，只要“物理网络签名”变化就调用 `setRunning(false)`，签名只排除了 `vpn`。connectivity_plus 7.2.0 在 macOS 上从不返回 `vpn`，所有 utun（包括本应用刚建立的 TUN）都报告为 `other`。TUN 一上线，签名从 `wifi` 变为 `other,wifi`，于是被当成网络切换并立即断开。现在 `vpn` 与 `other` 都不计入物理签名（`physicalConnectivitySignature`），Wi-Fi/以太网真实切换仍会断开并要求重新连接。
+
+同时修正直连解析：节点域名和后端 API 主机经 `proxy-server-nameserver` 在隧道外解析，原先只有 `1.1.1.1`/`8.8.8.8` DoH；实机日志中这些连接在物理网卡上只发 SYN、无应答并 5 秒超时。现在并发使用 `223.5.5.5`、`1.12.12.12` 和 `1.1.1.1` 的 IP 直连 DoH，任一可达即可；不加入明文或系统 DNS，避免被污染的 UDP 应答抢先返回。经代理的普通域名解析不变。
+
+其他 VPN（例如 Windscribe）连接时会占用 `0/1`、`128.0/1`，本应用按设计拒绝启动并提示路由冲突；测试前需断开其他 VPN，并关闭其“始终开启防火墙”类阻断功能。
+
 ## M4 安装后人工验收与限制
 
 应用复制到可写安装位置后运行，不要从只读 DMG 内授权。首先确认“授权 → 内核重启 → 可登录”，然后使用已有测试账号登录；关闭其他 VPN 的连接而非仅关闭其窗口。选择套餐允许的节点，检查 utun/路由和系统代理状态，再验证普通 TCP、UDP、节点切换、倍率扣量、到期/额度关闭、断开重连及正常退出。真实线路质量、倍率到账与公网出口应使用管理员实际配置逐项核对，不以本地代理夹具代替。

@@ -261,4 +261,54 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+  group('physicalConnectivitySignature', () {
+    test('ignores the managed TUN that macOS reports as other', () {
+      expect(
+        physicalConnectivitySignature([ConnectivityResult.wifi]),
+        physicalConnectivitySignature([
+          ConnectivityResult.other,
+          ConnectivityResult.wifi,
+        ]),
+      );
+    });
+
+    test('ignores explicit VPN results', () {
+      expect(
+        physicalConnectivitySignature([
+          ConnectivityResult.vpn,
+          ConnectivityResult.ethernet,
+        ]),
+        'ethernet',
+      );
+    });
+
+    test('still detects a real physical network switch', () {
+      expect(
+        physicalConnectivitySignature([
+          ConnectivityResult.wifi,
+          ConnectivityResult.other,
+        ]),
+        isNot(
+          physicalConnectivitySignature([
+            ConnectivityResult.ethernet,
+            ConnectivityResult.other,
+          ]),
+        ),
+      );
+      expect(physicalConnectivitySignature([ConnectivityResult.none]), 'none');
+    });
+
+    test('is order independent', () {
+      expect(
+        physicalConnectivitySignature([
+          ConnectivityResult.wifi,
+          ConnectivityResult.ethernet,
+        ]),
+        physicalConnectivitySignature([
+          ConnectivityResult.ethernet,
+          ConnectivityResult.wifi,
+        ]),
+      );
+    });
+  });
 }
