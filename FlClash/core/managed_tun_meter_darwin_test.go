@@ -19,6 +19,32 @@ import (
 	"github.com/metacubex/mihomo/listener"
 )
 
+func applyManagedTUNMeterFixture(t *testing.T, engine *managedProfileEngine, nodePort int) managed.ConfigurationView {
+	t.Helper()
+	yaml := fmt.Sprintf("proxies: [{name: TUN-Node, type: http, server: 127.0.0.1, port: %d}]\nproxy-groups: [{name: VIP, type: select, proxies: [TUN-Node]}]\nrules: ['MATCH,VIP']\n", nodePort)
+	profile := managedProfileFixture(yaml)
+	prepared, err := engine.Prepare(context.Background(), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := prepared.Apply(context.Background(), managed.ConfigurationOwner{
+		Generation: 1, UserID: "tun-meter-user", SessionID: profile.Session.SessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return view
+}
+
+func TestManagedTUNMeterFixtureAppliesWithoutPrivilege(t *testing.T) {
+	engine := newManagedTestEngine(t)
+	engine.network = macOSManagedNetwork{}
+	view := applyManagedTUNMeterFixture(t, engine, 12345)
+	if view.Owner.SessionID != "session-a" || len(view.Groups) != 1 || view.Groups[0].Selected != "TUN-Node" {
+		t.Fatal("TUN metering fixture does not belong to its authenticated profile session")
+	}
+}
+
 func TestManagedMacOSTUNTCPMeterAndReconnect(t *testing.T) {
 	if os.Getenv("RUN_MANAGED_TUN_FULL_ROUTE_TEST") != "1" {
 		t.Skip("requires an isolated privileged macOS runner; captures routed traffic")
@@ -61,15 +87,7 @@ func TestManagedMacOSTUNTCPMeterAndReconnect(t *testing.T) {
 	nodePort := upstream.Listener.Addr().(*net.TCPAddr).Port
 	engine := newManagedTestEngine(t)
 	engine.network = macOSManagedNetwork{}
-	yaml := fmt.Sprintf("proxies: [{name: TUN-Node, type: http, server: 127.0.0.1, port: %d}]\nproxy-groups: [{name: VIP, type: select, proxies: [TUN-Node]}]\nrules: ['MATCH,VIP']\n", nodePort)
-	prepared, err := engine.Prepare(context.Background(), managedProfileFixture(yaml))
-	if err != nil {
-		t.Fatal(err)
-	}
-	view, err := prepared.Apply(context.Background(), managed.ConfigurationOwner{Generation: 1, UserID: "tun-meter-user", SessionID: "tun-meter-session"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	view := applyManagedTUNMeterFixture(t, engine, nodePort)
 	for attempt := 1; attempt <= 2; attempt++ {
 		beforeUp, beforeDown, err := managedTotals(context.Background())
 		if err != nil {
