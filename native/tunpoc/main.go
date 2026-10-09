@@ -97,6 +97,9 @@ func main() {
 	sum := sha256.Sum256([]byte(*server))
 	rep.ServerHost = hex.EncodeToString(sum[:8])
 
+	if vpns := otherVPNs(); len(vpns) > 0 {
+		fail("BLOCKED: another VPN appears active (" + strings.Join(vpns, "; ") + "); disconnect it first")
+	}
 	before := capture()
 	rep.BaselineExit = fetch(ctx, *probe)
 	if rep.BaselineExit == "" {
@@ -303,6 +306,34 @@ func finish(rep *report, output string) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// otherVPNs reports a utun that carries an IPv4 address (WireGuard and most VPN
+// clients assign one; macOS' own utun devices only have IPv6 link-local) or a default
+// route that already leaves through a utun. Stacking a second tunnel over a live VPN
+// can send that VPN's traffic to the test node and cut it off, so the PoC refuses.
+func otherVPNs() []string {
+	var found []string
+	interfaces, _ := net.Interfaces()
+	for _, i := range interfaces {
+		if !strings.HasPrefix(i.Name, "utun") {
+			continue
+		}
+		addresses, _ := i.Addrs()
+		for _, a := range addresses {
+			if ip, _, err := net.ParseCIDR(a.String()); err == nil && ip.To4() != nil {
+				found = append(found, i.Name+" has IPv4 "+ip.String())
+				break
+			}
+		}
+	}
+	out, _ := exec.Command("route", "-n", "get", "1.1.1.1").Output() // VPNs often split 0/1+128/1, hiding behind the default route
+	for _, line := range strings.Split(string(out), "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[0] == "interface:" && strings.HasPrefix(f[1], "utun") {
+			found = append(found, "default route leaves via "+f[1])
+		}
+	}
+	return found
 }
 
 func fail(message string) {

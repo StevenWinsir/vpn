@@ -604,7 +604,7 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 未解决问题与可复现步骤：
   1. 真实 TUN 实传未执行：需要一个测试 SS 节点（主机/端口/密码）和你同意在这台 Mac 上临时改路由/DNS，然后按 docs/macos-tun-poc.md 运行。
   2. SMAppService.daemon 注册/XPC 伪调用方拒绝/取消授权不能创建 TUN：需要在系统设置“登录项”里批准，未在无人值守下执行。ad-hoc 签名能否通过注册、以及 Team ID 级校验，须用 Developer ID 重测。
-  3. 节点控制能力（阶段 4 前置）：尚不知道节点服务器是否由你管理。倾向评估 Xray-core 适配（VLESS+明确验证的 SS），但其动态用户/统计/断开存量连接能力未核验。
+  3. 节点控制能力：已确认当前测试节点是供应商提供的共享凭据，无服务器控制权——该节点只能作开发/非权威节点（阶段 3 的 client_reported 测试），不能满足阶段 4 的每用户授权/撤销/独立计量；收费闭环需另备可管理的自有节点或支持每用户凭据的供应商。
   4. 偏差：用 SwiftPM + 脚本组装 .app，而非 xcodeproj（CI 可复现、无需 xcodegen）；阶段 5 做公证/DMG 时再评估是否转 Xcode 工程。
   5. 发现：锁定 Mihomo 分支的 executor.ApplyConfig 不启动监听器，TUN 须显式 listener.ReCreateTun（已写入 docs/macos-tun-poc.md）。
   6. 构建基线：CI 沿用 macos-15 + Xcode_26.3 + Go 1.26.6，以 PR 的 CI 结果为准。
