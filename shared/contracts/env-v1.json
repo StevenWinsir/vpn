@@ -1,0 +1,86 @@
+{
+  "contract": "asterlink-macos-env",
+  "description": "Both scripts/native_env.py and the Swift ClientEnvironment parser must accept/reject exactly these inputs.",
+  "cases": [
+    {
+      "name": "development with https",
+      "env": "APP_ENV=development\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": true
+    },
+    {
+      "name": "comments and blank lines are fine",
+      "env": "# public build parameters only\n\nAPP_ENV=release\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn/\n",
+      "ok": true
+    },
+    {
+      "name": "development allows loopback http",
+      "env": "APP_ENV=development\nAPI_BASE_URL=http://127.0.0.1:8080/api/v1/client\nWEBSITE_BASE_URL=http://localhost:3000\n",
+      "ok": true
+    },
+    {
+      "name": "release refuses http",
+      "env": "APP_ENV=release\nAPI_BASE_URL=http://127.0.0.1:8080/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "development refuses non-loopback http",
+      "env": "APP_ENV=development\nAPI_BASE_URL=http://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "duplicate key",
+      "env": "APP_ENV=development\nAPP_ENV=release\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "unknown key (database secrets must never be accepted here)",
+      "env": "APP_ENV=development\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\nDATABASE_URL=postgres://x\n",
+      "ok": false
+    },
+    {
+      "name": "missing key",
+      "env": "APP_ENV=development\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\n",
+      "ok": false
+    },
+    {
+      "name": "shell interpolation",
+      "env": "APP_ENV=development\nAPI_BASE_URL=https://$HOST/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "export prefix",
+      "env": "export APP_ENV=development\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "quoted value",
+      "env": "APP_ENV=development\nAPI_BASE_URL=\"https://demo.hyshentou.cn/api/v1/client\"\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "wrong api path",
+      "env": "APP_ENV=development\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "credentials in url",
+      "env": "APP_ENV=development\nAPI_BASE_URL=https://user:pw@demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "query in url",
+      "env": "APP_ENV=development\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client?x=1\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "unknown environment",
+      "env": "APP_ENV=staging\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    },
+    {
+      "name": "line without equals",
+      "env": "APP_ENV=development\nAPI_BASE_URL\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n",
+      "ok": false
+    }
+  ]
+}

@@ -103,7 +103,7 @@ def main():
             summary['checks'].append('user node list: safe metadata, administrator change synchronization, search/type filters, desktop/mobile, entitlement/errors and visibility polling')
             core_env = dict(env, CATALOG_ACCEPTANCE_DIR=temporary, CATALOG_OUTPUTS=str(output))
             run('mihomo', ['go', 'test', '-count=1', '-v', '-run', '^TestCatalogBackendMihomoAcceptance$', '.'],
-                ROOT / 'FlClash/core', core_env)
+                ROOT / "native/legacy-core", core_env)
             summary['checks'].append('official Core logs in, applies single-node credentials, transfers real payload, rebinds 0.5x/1x rates after settlement, rejects expired entitlement')
             summary['passed'] = True
         finally:

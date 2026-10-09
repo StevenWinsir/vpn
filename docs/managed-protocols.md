@@ -2,9 +2,9 @@
 
 ## 支持依据与部署
 
-本项目按 `FlClash/core/Clash.Meta` gitlink **70f0570405c3c2c47bb113b88db95006d239b346** 的实际适配器实现验证，不以最新网上文档或任意 Clash 分支作为兼容依据。升级子模块时，CI 会要求同步审查协议策略及样例，并直接检查已允许的顶层字段是否存在于 core 的对应 Option 结构体。运行共享模块的兼容测试前需要初始化该子模块。
+本项目按 `native/third_party/Clash.Meta` gitlink **70f0570405c3c2c47bb113b88db95006d239b346** 的实际适配器实现验证，不以最新网上文档或任意 Clash 分支作为兼容依据。升级子模块时，CI 会要求同步审查协议策略及样例，并直接检查已允许的顶层字段是否存在于 core 的对应 Option 结构体。运行共享模块的兼容测试前需要初始化该子模块。
 
-协议规则的唯一维护源是 `FlClash/core/nodepolicy`，不依赖 Mihomo；API 不启动代理、不解析 DNS、不探测管理员提交的服务器。客户端继续直接引用它，保留原生构建输入追踪。后端改用随目录交付的 `backend/nodepolicy` 精确快照：`scripts/sync-backend-shared.py --check` 在 CI 逐字节检查它与源文件一致，禁止独立修改后端规则。现在单独复制完整 `backend/` 即可编译/测试，不需要同级 FlClash 目录或 Mihomo 子模块。部署操作见 [backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md)。
+协议规则的唯一维护源是 `shared/nodepolicy`，不依赖 Mihomo；API 不启动代理、不解析 DNS、不探测管理员提交的服务器。客户端继续直接引用它，保留原生构建输入追踪。后端改用随目录交付的 `backend/nodepolicy` 精确快照：`scripts/sync-backend-shared.py --check` 在 CI 逐字节检查它与源文件一致，禁止独立修改后端规则。现在单独复制完整 `backend/` 即可编译/测试，不需要同级 FlClash 目录或 Mihomo 子模块。部署操作见 [backend/DEPLOYMENT.md](../backend/DEPLOYMENT.md)。
 
 更新后需要重新编译后端和 macOS 客户端。旧客户端的托管白名单并不包含所有新增类型；应先更新测试客户端，再导入新协议节点。管理员 `/admin/nodes` 从 API 返回的 `supported_protocols` 显示支持列表；这不是客户端版本协商机制。不需要数据库迁移、修改 `.env` 或重新录入已有的合法 SS/HTTP/SOCKS5 节点。
 
@@ -50,12 +50,12 @@ WireGuard 的 `private-key` 是严格验证的 32 字节 Base64 内容，不是�
 python3 scripts/sync-backend-shared.py --check
 python3 scripts/test-backend-shared.py
 python3 scripts/test-backend-standalone.py
-(cd FlClash/core/nodepolicy && go test -race -count=1 ./... && go vet ./...)
+(cd shared/nodepolicy && go test -race -count=1 ./... && go vet ./...)
 (cd backend && go test -count=1 ./internal/nodes)
 (cd backend && go test -run='^$' -fuzz=FuzzParseNodeYAML -fuzztime=20s -parallel=2 ./internal/nodes)
 python3 scripts/test-native.py
-(cd FlClash/core && CGO_ENABLED=0 go test -count=1 ./...)
-(cd FlClash/core && CGO_ENABLED=0 go vet ./... && go test -race -count=1 ./managed)
+(cd native/legacy-core && CGO_ENABLED=0 go test -count=1 ./...)
+(cd native/legacy-core && CGO_ENABLED=0 go vet ./... && go test -race -count=1 ./managed)
 bash scripts/node.sh npm --prefix frontend run lint
 bash scripts/node.sh npm --prefix frontend run build -- --webpack
 bash scripts/node.sh npm --prefix frontend run typecheck

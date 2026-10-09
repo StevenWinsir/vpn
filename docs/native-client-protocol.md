@@ -4,7 +4,7 @@
 
 ## 共享夹具与包裹层
 
-唯一公共 JSON 夹具为 `FlClash/test/fixtures/native_client_contract.json`，`contract_version=1` 只表示测试语料版本，不是已经实现的 HTTP 协商机制。其八个案例覆盖登录、免费状态、VIP 未绑定、配置就绪、正常结算、额度耗尽、会话过期及退出。固定日期、示例 UUID 和令牌仅用于测试，不是可登录凭据。
+唯一公共 JSON 夹具为 `shared/contracts/native-v1.json`，`contract_version=1` 只表示测试语料版本，不是已经实现的 HTTP 协商机制。其八个案例覆盖登录、免费状态、VIP 未绑定、配置就绪、正常结算、额度耗尽、会话过期及退出。固定日期、示例 UUID 和令牌仅用于测试，不是可登录凭据。
 
 | 方法 / 路径 | 成功响应 |
 | --- | --- |
@@ -104,7 +104,7 @@ authorization_expires_at = min(server_time + 90 秒,
 python3 scripts/test-native.py
 cd backend
 RUN_DB_TESTS=0 GOPROXY=off GOTOOLCHAIN=local go vet ./...
-cd ../FlClash/core
+cd ../native/legacy-core
 GOPROXY=off GOTOOLCHAIN=local go test -race -count=1 -v ./managed
 GOPROXY=off GOTOOLCHAIN=local go vet ./managed
 # Xcode 已初始化，继续使用命令级环境包装；无需再次执行许可证操作。

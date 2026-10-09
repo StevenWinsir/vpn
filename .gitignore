@@ -21,3 +21,4 @@ scripts/*
 FlClClash/
 frontend/playwright-report/
 frontend/test-results/
+**/.build/

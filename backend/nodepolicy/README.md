@@ -1,7 +1,7 @@
 # Generated standalone dependency
 
 Do not edit this directory independently. Its Go source, tests and fixtures are
-byte-identical snapshots of FlClash/core/nodepolicy. From the repository root:
+byte-identical snapshots of shared/nodepolicy. From the repository root:
 
     python3 scripts/sync-backend-shared.py --write
     python3 scripts/sync-backend-shared.py --check

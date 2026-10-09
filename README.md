@@ -1,6 +1,6 @@
 # AsterLink · VPN 账户、节点管理与 macOS 开发闭环
 
-Next.js + Mantine 前端、Go + Gin + GORM API、PostgreSQL，以及基于 FlClash/Mihomo 的托管客户端。前后端分别使用自己的 `.env`。
+Next.js + Mantine 前端、Go + Gin + GORM API、PostgreSQL，以及基于 Mihomo TUN 的原生 macOS 托管客户端。前后端分别使用自己的 `.env`。
 
 **当前是可验证的开发闭环，不是可直接收费运营的成品。** 已接通管理员节点 YAML、套餐过滤、真实内核累计流量与逐节点倍率结算；账本仍属于 `client_reported`，没有节点侧独立计量/可撤销的每用户代理凭据。托管 macOS 连接当前使用回环 mixed 监听和系统代理，不是全设备 TUN。生产模式拒绝启用这种代理下发方式，避免把开发账本误当成商业强制计费。
 
@@ -63,21 +63,16 @@ bash scripts/dev.sh
 
 浏览器统一使用 `http://localhost:3000`。所有浏览器 API 请求发往同源 `/api/v1`，Next.js 服务端再按 `frontend/.env` 的 `API_INTERNAL_URL` 转发到 Go。不要混用 localhost 与 127.0.0.1 的 Cookie。浏览器不读取内部后端地址或任何数据库/代理密钥。
 
-构建连接本机 API 的普通 macOS 开发应用：
-
-从集成测试切换回普通应用时，先执行 `bash scripts/flclash-env.sh flutter clean`，避免复用测试期间变动的 App.framework；最后检查整个 bundle 的嵌套签名。不要同时运行同一 Flutter 工程的打包和测试任务。
+构建原生 macOS 开发包（SwiftUI App + Swift 特权 Helper + Go Core，弃用 FlClash/Flutter；当前为阶段 1，仅有特权服务与内核握手骨架，尚无登录/连接界面）：
 
 ```bash
-test -f FlClash/.env || cp FlClash/.env.example FlClash/.env
-chmod 600 FlClash/.env
-# 确认 FlClash/.env 的 CLIENT_API_BASE 为本机或实际 HTTPS 入口。
-bash scripts/flclash-env.sh flutter pub get
-bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=lib/main.dart
-codesign --verify --deep --strict FlClash/build/macos/Build/Products/Debug/FlClash.app
-open FlClash/build/macos/Build/Products/Debug/FlClash.app
+cp apps/macos/.env.example apps/macos/.env   # 仅公开构建参数：APP_ENV / API_BASE_URL / WEBSITE_BASE_URL
+python3 scripts/test-native-macos.py --suite unit     # Go / Swift / 环境契约，不改系统网络
+python3 scripts/test-native-macos.py --suite bundle   # 构建 Debug 包 + Helper→Core 握手 + 篡改拒绝
+python3 scripts/build-native-macos.py --configuration Debug
 ```
 
-`FlClash/.env` 的 `CLIENT_API_BASE` 是 Core 的构建参数，文件变化纳入构建缓存依赖；不要仅依赖 Flutter 钩子可能过滤掉的终端环境变量。正式远程入口必须使用 HTTPS。替换地址需要重新构建 App；普通构建不得包含 `managed_acceptance` 标签或测试主机注入。以上是本机开发包，不代表 Apple Developer 签名、公证或 App Store 发布完成。
+构建参数在构建时严格校验并写入签名后的 bundle，之后改 `.env` 不影响已安装的 App；正式入口必须 HTTPS。`--suite tun` 会改动本机路由/DNS，必须在受控测试机上显式授权后运行，见 [handoff_app.md](handoff_app.md) 与 [docs/macos-tun-poc.md](docs/macos-tun-poc.md)。以上是开发包，不代表 Apple Developer 签名、公证或 App Store 发布完成。
 
 ## 管理节点和计费
 
@@ -94,7 +89,7 @@ open FlClash/build/macos/Build/Products/Debug/FlClash.app
 
 ## 验证
 
-根目录 CI 执行 Go/PostgreSQL 竞态回归、Next.js 构建与同源代理安全测试、真实浏览器节点管理到 Mihomo 计费验收、Flutter 回归/覆盖率，以及 macOS 普通应用构建。嵌套的 `FlClash/.github/workflows` 不会替代根仓库 CI。
+根目录 CI 执行 Go/PostgreSQL 竞态回归、Next.js 构建与同源代理安全测试、真实浏览器节点管理到 Mihomo 计费验收、原生 Core/IPC/共享策略测试，以及 macOS App+Helper+Core 打包与签名校验。
 
 ```bash
 # 私有临时 PostgreSQL，自动清理，不读取开发 .env。
@@ -121,6 +116,6 @@ bash scripts/node.sh npm --prefix frontend run test:api-proxy
 
 节点侧的独立计量、每用户认证与可撤销凭据、到期/超额即时限额执行；macOS TUN/特权服务及 DNS/IPv6/UDP 泄漏、休眠/网络切换/崩溃测试；真实支付与验签对账、退款与纠纷流程；邮箱验证、找回密码和管理员 MFA；数据库验证 TLS、密钥轮换、监控告警、备份恢复和高可用；签名、公证和其他平台逐一验收。
 
-FlClash 及其依赖的许可证必须分别审查。项目保留了上游 [GPL-3.0 许可证](FlClash/LICENSE)，收费不等于可以忽略修改版客户端分发时的源码和许可证义务。不要承诺向付费用户提供无法兑现的带宽、专线质量或隐私保障。
+内嵌的 Mihomo（`native/third_party/Clash.Meta` 子模块，GPL-3.0，见其 LICENSE）及其依赖的许可证必须逐一审查；收费不等于可以忽略分发时的源码和许可证义务。不要承诺向付费用户提供无法兑现的带宽、专线质量或隐私保障。
 
 **已在聊天中披露的数据库和代理凭据应轮换。** 当前开发数据库如仍使用 `sslmode=disable`，其公网链路未加密；提高超时不能替代 TLS、网络隔离和访问控制。
