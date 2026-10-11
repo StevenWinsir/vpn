@@ -49,7 +49,7 @@ bash scripts/node.sh python3 scripts/test-node-catalog.py \
 ```sh
 PLAYWRIGHT_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   bash scripts/node.sh npm --prefix frontend run test:api-proxy
-(cd FlClash/core && go test -race -count=1 ./managed)
+(cd native/legacy-core && go test -race -count=1 ./managed)
 ```
 
 macOS 原生验收使用 `scripts/test-macos-managed.py`，要求独立构建的 `managed_acceptance` Core，并隔离系统代理命令。它会构建测试入口；验收后必须重新执行正常 `flutter build macos --debug --no-pub`，不能将测试入口或 acceptance Core 当作交付包。

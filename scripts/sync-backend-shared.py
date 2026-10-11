@@ -9,15 +9,15 @@ import stat
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY = Path('FlClash/core/nodepolicy')
+POLICY = Path('shared/nodepolicy')
 BUNDLE = Path('backend/nodepolicy')
 POLICY_FILES = ('go.mod', 'policy.go', 'policy_test.go', 'testdata/proxies.yaml')
 # Requires the actual pinned Mihomo source. It stays in the Core module and CI.
 CORE_ONLY = {'pinned_schema_test.go'}
-CONTRACT = Path('FlClash/test/fixtures/native_client_contract.json')
+CONTRACT = Path('shared/contracts/native-v1.json')
 CONTRACT_COPY = Path('backend/internal/api/testdata/native_client_contract.json')
 MANIFEST = Path('backend/shared-sources.json')
-README = b'''# Generated standalone dependency\n\nDo not edit this directory independently. Its Go source, tests and fixtures are\nbyte-identical snapshots of FlClash/core/nodepolicy. From the repository root:\n\n    python3 scripts/sync-backend-shared.py --write\n    python3 scripts/sync-backend-shared.py --check\n\nCommit the regenerated files together with canonical changes. CI rejects drift,\nmissing files, unexpected files and symlinks. The pinned-schema compatibility\ntest remains in the canonical Core module because it needs Mihomo source.\nServers need only the complete backend directory; Python, Flutter and Mihomo\nsource are not required to build the API. See ../DEPLOYMENT.md.\n'''
+README = b'''# Generated standalone dependency\n\nDo not edit this directory independently. Its Go source, tests and fixtures are\nbyte-identical snapshots of shared/nodepolicy. From the repository root:\n\n    python3 scripts/sync-backend-shared.py --write\n    python3 scripts/sync-backend-shared.py --check\n\nCommit the regenerated files together with canonical changes. CI rejects drift,\nmissing files, unexpected files and symlinks. The pinned-schema compatibility\ntest remains in the canonical Core module because it needs Mihomo source.\nServers need only the complete backend directory; Python, Flutter and Mihomo\nsource are not required to build the API. See ../DEPLOYMENT.md.\n'''
 
 
 def checked_path(root: Path, relative: Path) -> Path:

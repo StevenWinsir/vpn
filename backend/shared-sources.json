@@ -2,27 +2,27 @@
   "format": 1,
   "files": [
     {
-      "source": "FlClash/test/fixtures/native_client_contract.json",
+      "source": "shared/contracts/native-v1.json",
       "destination": "backend/internal/api/testdata/native_client_contract.json",
       "sha256": "41e1569362039370540669602a4e045e948cf9977f802984ec492252a5cde433"
     },
     {
-      "source": "FlClash/core/nodepolicy/go.mod",
+      "source": "shared/nodepolicy/go.mod",
       "destination": "backend/nodepolicy/go.mod",
       "sha256": "b049fed62e93d3354791c28213ed96ff94bb9f779c72e924771de4a4ccf8885a"
     },
     {
-      "source": "FlClash/core/nodepolicy/policy.go",
+      "source": "shared/nodepolicy/policy.go",
       "destination": "backend/nodepolicy/policy.go",
       "sha256": "f99f4e19220b2a9537a5465138c807ba598d944d087981bb890b8dbf74560ffc"
     },
     {
-      "source": "FlClash/core/nodepolicy/policy_test.go",
+      "source": "shared/nodepolicy/policy_test.go",
       "destination": "backend/nodepolicy/policy_test.go",
       "sha256": "044447b12f58a3542cc335f26a629e66b547a749c2ad6bd155ccd4359ca48f3c"
     },
     {
-      "source": "FlClash/core/nodepolicy/testdata/proxies.yaml",
+      "source": "shared/nodepolicy/testdata/proxies.yaml",
       "destination": "backend/nodepolicy/testdata/proxies.yaml",
       "sha256": "b8bd654ef5f8bf9663f24f27a66179cff64ff736fc1c11da874671adc3cbe725"
     }

@@ -1,0 +1,50 @@
+{
+  "contract": "asterlink-ipc",
+  "protocol_version": 1,
+  "framing": "4-byte big-endian length + one JSON document; max frame 2097152 bytes",
+  "commands": ["hello", "login", "read_snapshot", "refresh_catalog", "select_node", "connect", "disconnect", "logout", "shutdown"],
+  "implemented_in_stage1": ["hello", "shutdown"],
+  "cases": [
+    {
+      "name": "hello ok",
+      "request": "{\"request_id\":\"r1\",\"protocol_version\":1,\"generation\":7,\"command\":\"hello\"}",
+      "expect": {"ok": true, "request_id": "r1", "generation": 7}
+    },
+    {
+      "name": "protocol version mismatch is refused",
+      "request": "{\"request_id\":\"r2\",\"protocol_version\":2,\"generation\":0,\"command\":\"hello\"}",
+      "expect": {"ok": false, "request_id": "r2", "error_code": "protocol_unsupported"}
+    },
+    {
+      "name": "unknown command",
+      "request": "{\"request_id\":\"r3\",\"protocol_version\":1,\"generation\":0,\"command\":\"exec\"}",
+      "expect": {"ok": false, "request_id": "r3", "error_code": "unknown_command"}
+    },
+    {
+      "name": "recognised but unimplemented command",
+      "request": "{\"request_id\":\"r4\",\"protocol_version\":1,\"generation\":0,\"command\":\"connect\"}",
+      "expect": {"ok": false, "request_id": "r4", "error_code": "not_implemented"}
+    },
+    {
+      "name": "unknown field rejected",
+      "request": "{\"request_id\":\"r5\",\"protocol_version\":1,\"generation\":0,\"command\":\"hello\",\"path\":\"/bin/sh\"}",
+      "expect": {"ok": false, "request_id": "", "error_code": "invalid_request"}
+    },
+    {
+      "name": "trailing data rejected",
+      "request": "{\"request_id\":\"r6\",\"protocol_version\":1,\"generation\":0,\"command\":\"hello\"}{}",
+      "expect": {"ok": false, "request_id": "", "error_code": "invalid_request"}
+    },
+    {
+      "name": "missing request id",
+      "request": "{\"protocol_version\":1,\"generation\":0,\"command\":\"hello\"}",
+      "expect": {"ok": false, "request_id": "", "error_code": "invalid_request"}
+    },
+    {
+      "name": "hello body over its limit",
+      "request_padding_bytes": 5000,
+      "request": "{\"request_id\":\"r8\",\"protocol_version\":1,\"generation\":0,\"command\":\"hello\",\"payload\":\"%PAD%\"}",
+      "expect": {"ok": false, "request_id": "r8", "error_code": "payload_too_large"}
+    }
+  ]
+}

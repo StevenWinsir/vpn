@@ -73,7 +73,7 @@ P4 接受内联节点、显式 select 组和受限内联规则/DNS；拒绝远�
 
 ## 已接线的账户协调器与待接线 Meter
 
-`FlClash/core/managed/` 的通信/账户/安全文件生产代码使用 Go 标准库；真实 Mihomo 配置引擎在主包 `core/managed_configuration.go`。协调器和七个 RPC 已调用登录、配置、状态、受限节点选择及退出；既有 Meter 仍独立待接。`managedSelectProxy` 校验 generation、configuration_id、owner 和服务器声明的组成员，元数据不包含原始 YAML/凭据。专属 transport 禁止环境代理/跳转/不可信证书，Android 非 VPN DNS 观察在登录前启动，DNS 和 TCP 共用 protect 适配；通用日志不输出请求参数。
+`native/legacy-core/managed/` 的通信/账户/安全文件生产代码使用 Go 标准库；真实 Mihomo 配置引擎在主包 `core/managed_configuration.go`。协调器和七个 RPC 已调用登录、配置、状态、受限节点选择及退出；既有 Meter 仍独立待接。`managedSelectProxy` 校验 generation、configuration_id、owner 和服务器声明的组成员，元数据不包含原始 YAML/凭据。专属 transport 禁止环境代理/跳转/不可信证书，Android 非 VPN DNS 观察在登录前启动，DNS 和 TCP 共用 protect 适配；通用日志不输出请求参数。
 
 库实现首次确认后授权、每分钟上报、一秒采样、最多 90 秒且受套餐/会话到期约束的授权、失败/额度不足停止回调、计数回退拒绝、串行上报和原批重试。本轮以请求开始时间保守换算截止，覆盖响应延迟/时钟偏差，不在响应到达时重置 90 秒。关闭包含受 context 约束的 HTTP 最终上报和可选退出，但等待锁/采样回调的整个 Close 尚无可证明硬时限。关闭后再次 Flush 不触发报告/停止回调；调用方仍须等待旧会话关闭再安装新会话。
 
@@ -90,7 +90,7 @@ python3 scripts/test-native.py
 cd backend
 GOPROXY=off GOTOOLCHAIN=local go vet ./...
 
-cd ../FlClash/core
+cd ../native/legacy-core
 GOPROXY=off GOTOOLCHAIN=local go test -race -count=3 -v ./managed
 GOPROXY=off GOTOOLCHAIN=local go vet ./managed
 ```

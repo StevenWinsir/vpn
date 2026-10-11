@@ -27,7 +27,7 @@ jobs:
           go-version: '1.26.6'
           cache-dependency-path: backend/go.sum
       - name: Shared pure-Go policy
-        working-directory: FlClash/core/nodepolicy
+        working-directory: shared/nodepolicy
         run: |
           go test -race -count=1 ./...
           go vet ./...
@@ -51,9 +51,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.6'
-          cache-dependency-path: FlClash/core/go.sum
+          cache-dependency-path: native/legacy-core/go.sum
       - name: Real Core managed protocol regressions
-        working-directory: FlClash/core
+        working-directory: native/legacy-core
         env:
           CGO_ENABLED: '0'
         run: go test -count=1 -v -run='TestManagedProtocol|TestManagedConfiguration|TestManagedClearCloses' .

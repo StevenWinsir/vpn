@@ -15,7 +15,6 @@ concurrency:
 
 env:
   GO_VERSION: '1.26.6'
-  FLUTTER_VERSION: '3.47.1'
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
@@ -44,7 +43,7 @@ jobs:
         run: python3 scripts/test-native.py
 
   web-core:
-    name: Browser / node catalog / Mihomo ledger
+    name: Browser / node catalog / legacy Mihomo ledger
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -56,7 +55,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
             backend/go.sum
-            FlClash/core/go.sum
+            native/legacy-core/go.sum
+            native/core/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -70,7 +70,7 @@ jobs:
       - name: Download locked dependencies
         run: |
           (cd backend && go mod download)
-          (cd FlClash/core && go mod download)
+          (cd native/legacy-core && go mod download)
           npm ci --prefix frontend
       - name: Install isolated browser
         working-directory: frontend
@@ -83,8 +83,8 @@ jobs:
           npm run typecheck
           npm run test:api-proxy
           npm run test:nodes
-      - name: Core regressions without coverage instrumentation
-        working-directory: FlClash/core
+      - name: Legacy managed-core regressions (kept until the new Core re-implements them in stage 2)
+        working-directory: native/legacy-core
         run: |
           CGO_ENABLED=0 go test -count=1 ./...
           CGO_ENABLED=0 go vet ./...
@@ -104,59 +104,38 @@ jobs:
             artifacts/ci-catalog/browser-artifacts/nodes-desktop.png
             artifacts/ci-catalog/browser-artifacts/nodes-mobile.png
 
-  flutter:
-    name: Flutter / account and lifecycle regressions
+  native-core:
+    name: Native Core / IPC contract / shared policy
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: FlClash
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - run: flutter pub get
-      - run: flutter analyze --no-fatal-infos
-      - name: Isolate unit tests from native build hooks
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            native/core/go.mod
+            backend/go.sum
+      - name: Env contract (Python parser)
+        working-directory: scripts
+        run: python3 test-native-env.py
+      - name: Core IPC (race) and vet
+        working-directory: native/core
         run: |
-          cp pubspec.yaml /tmp/vpn-original-pubspec.yaml
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('pubspec.yaml')
-          source = p.read_text()
-          assert source.count('build_assets: true') == 2
-          p.write_text(source.replace('build_assets: true', 'build_assets: false'))
-          PY
-      - name: Full Flutter suite
+          CGO_ENABLED=1 go test -race -count=1 ./...
+          go vet ./...
+      - name: Shared policy including pinned Mihomo schema check
+        working-directory: shared/nodepolicy
         run: |
-          ulimit -n 4096
-          flutter test --reporter expanded --concurrency=2 --coverage
-      - name: Existing coverage gate
-        run: dart run tool/check_coverage.dart coverage/lcov.info 75
-      - name: Restore native build settings
-        if: always()
-        run: |
-          if [ -f /tmp/vpn-original-pubspec.yaml ]; then
-            cp /tmp/vpn-original-pubspec.yaml pubspec.yaml
-          fi
-      - name: Platform proxy ownership tests
-        working-directory: FlClash/plugins/proxy
-        run: |
-          flutter pub get
-          flutter analyze --no-fatal-infos
-          flutter test --reporter expanded
-      - name: Build configuration tests
-        working-directory: FlClash/plugins/setup/setup_hooks
-        run: |
-          dart pub get
-          dart analyze
-          dart test
+          go test -race -count=1 ./...
+          go vet ./...
+      - name: Backend copies are generated from shared/
+        run: python3 scripts/sync-backend-shared.py --check
 
   macos:
-    name: macOS native build
+    name: macOS App / Helper / Core bundle
     runs-on: macos-15
     timeout-minutes: 40
     env:
@@ -165,49 +144,40 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Verify pinned Xcode and required Network SDK
-        run: |
-          test -x "$DEVELOPER_DIR/usr/bin/xcodebuild"
-          xcodebuild -version
-          xcrun --sdk macosx --show-sdk-version
-          printf '%s\n' 'import Network' '@available(macOS 26.0, *)' 'func verifyNetworkSDK(_ path: NWPath) { _ = path.isUltraConstrained }' | xcrun swiftc -typecheck -
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: FlClash/core/go.sum
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            FlClash/plugins/rust_api/rust
-            FlClash/services/helper
-      - name: Native macOS application (no acceptance tags)
+          cache-dependency-path: |
+            native/core/go.mod
+            native/tunpoc/go.sum
+      - name: Toolchain versions (recorded, not assumed)
         run: |
-          printf '%s\n' 'CLIENT_API_BASE=https://ci.example.invalid/api/v1/client' > FlClash/.env
-          bash scripts/flclash-env.sh flutter pub get
-          bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=lib/main.dart
-      - name: Verify native bundle
+          test -x "$DEVELOPER_DIR/usr/bin/xcodebuild"
+          xcodebuild -version
+          swift --version
+          go version
+          sw_vers
+      - name: Unit suite (Go IPC, shared policy, env contract, Swift)
+        run: python3 scripts/test-native-macos.py --suite unit --run-id ci
+      - name: Bundle suite (Debug app, ad-hoc signed; Helper -> verified Core handshake + tamper refusals)
+        run: python3 scripts/test-native-macos.py --suite bundle --run-id ci
+      - name: TUN proof of concept compiles (it is NOT run in CI: it changes machine routes)
+        working-directory: native/tunpoc
         run: |
-          bundle=FlClash/build/macos/Build/Products/Debug/FlClash.app
-          test -x "$bundle/Contents/MacOS/FlClash"
-          test -x "$bundle/Contents/MacOS/FlClashCore"
-          go version -m "$bundle/Contents/MacOS/FlClashCore" > /tmp/vpn-core-build.txt
-          if grep -q 'managed_acceptance' /tmp/vpn-core-build.txt; then
-            echo 'Acceptance-only code must not ship in the normal app.' >&2
-            exit 1
-          fi
-          grep -Fq -- '-X core/managed.APIBase=https://ci.example.invalid/api/v1/client' /tmp/vpn-core-build.txt
-          codesign --verify --deep --strict "$bundle"
-      - name: Verify signatures after an incremental Dart entrypoint change
+          CGO_ENABLED=0 go vet ./...
+          CGO_ENABLED=0 go build -o /tmp/tunpoc .
+      - name: TUN suite must report BLOCKED without explicit consent
         run: |
-          bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=integration_test/managed_account_test.dart
-          codesign --verify --deep --strict FlClash/build/macos/Build/Products/Debug/FlClash.app
-      - name: Restore and verify the normal application entrypoint
+          set +e
+          python3 scripts/test-native-macos.py --suite tun --run-id ci
+          test $? -eq 3
+      - name: Retain sanitized build and test reports
         if: always()
-        run: |
-          bash scripts/flclash-env.sh flutter build macos --debug --no-pub --target=lib/main.dart
-          codesign --verify --deep --strict FlClash/build/macos/Build/Products/Debug/FlClash.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-macos-reports
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/native-macos/*-report-*/test-report.json
+            artifacts/native-macos/*/build-manifest.json
