@@ -9,6 +9,9 @@ import Foundation
     /// Verifies and installs the bundled worker, starts exactly one, performs the IPC hello.
     func startWorker(reply: @escaping (Data) -> Void)
     func stopWorker(reply: @escaping (Data) -> Void)
+    /// Forwards one whitelisted Core command (`HelperCommandPolicy`). `payload` is a JSON
+    /// object; the reply is the Core's response document, or a Core-shaped failure.
+    func command(name: String, generation: UInt64, payload: Data, reply: @escaping (Data) -> Void)
 }
 
 public enum HelperErrorCode: String, Codable, Sendable {

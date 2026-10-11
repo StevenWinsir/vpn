@@ -28,6 +28,10 @@ def main() -> None:
                 raise SystemExit((directory / "postgres.log").read_text())
             started = True
             environment = dict(os.environ)
+            # The real Core binary is exercised against the real API (TestNativeCoreEndToEnd).
+            core_bin = directory / "asterlink-core"
+            subprocess.run(["go", "build", "-o", str(core_bin), "./cmd/asterlink-core"], cwd=ROOT / "native/core", check=True, env=dict(os.environ, CGO_ENABLED="0"))
+            environment["ASTERLINK_CORE_BIN"] = str(core_bin)
             environment.update(NATIVE_TEST_DSN=f"host={socket} user=postgres dbname=postgres sslmode=disable", RUN_DB_TESTS="0", GOPROXY="off", GOTOOLCHAIN="local")
             subprocess.run(["go", "test", "-race", "-count=1", "-v", "./..."], cwd=ROOT / "backend", env=environment, check=True)
         finally:

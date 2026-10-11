@@ -1,5 +1,5 @@
-// Command asterlink-core is the Managed Core worker. Stage 1 exposes only the IPC
-// handshake over stdin/stdout; the Helper owns the pipes. Diagnostics go to stderr
+// Command asterlink-core is the Managed Core worker. It speaks the framed IPC protocol
+// over stdin/stdout; the Helper owns the pipes. Diagnostics go to stderr
 // and must never contain tokens, passwords or node configuration.
 package main
 
@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"asterlink/core/internal/ipc"
+	"asterlink/core/internal/managed"
+	"asterlink/core/internal/service"
 )
 
 // Set with -ldflags "-X main.version=... -X main.mihomoRevision=...".
@@ -30,7 +32,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "asterlink-core accepts no arguments")
 		os.Exit(2)
 	}
-	if err := ipc.Serve(stdio{}, ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}); err != nil {
+	manager := managed.New(managed.Options{CoreVersion: version})
+	if err := ipc.ServeWith(stdio{}, ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}, service.New(manager)); err != nil {
 		fmt.Fprintln(os.Stderr, "ipc terminated:", err)
 		os.Exit(1)
 	}

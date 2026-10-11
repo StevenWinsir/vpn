@@ -56,7 +56,7 @@ func (s *Server) readNativeCatalog(c *gin.Context) (nativeCatalog, error) {
 			return e
 		}
 		var sess model.NativeSession
-		if e := tx.First(&sess, "id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", identity.ID, identity.UserID, now, now.Add(-nativeIdleTTL)).Error; e != nil {
+		if e := tx.First(&sess, "id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", identity.ID, identity.UserID, now, now.Add(-s.cfg.IdleTTL())).Error; e != nil {
 			if errors.Is(e, gorm.ErrRecordNotFound) {
 				return &apiError{401, "native_session_expired", "请重新登录客户端"}
 			}
@@ -109,7 +109,7 @@ func (s *Server) nativeNodes(c *gin.Context) {
 			return
 		}
 	}
-	deadline := time.NewTimer(5 * time.Second)
+	deadline := time.NewTimer(s.cfg.NodeWatch())
 	defer deadline.Stop()
 	poll := time.NewTicker(time.Second)
 	defer poll.Stop()

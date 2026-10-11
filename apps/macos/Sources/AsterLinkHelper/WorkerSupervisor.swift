@@ -14,7 +14,12 @@ struct HelperFailure: Error {
 /// Owns at most one Go Core worker. All state is guarded by `lock`; callers get
 /// deterministic `worker_busy` for a second start instead of a queued second worker.
 final class WorkerSupervisor {
+    /// `lock` serialises worker lifecycle and I/O. `stateLock` guards only the flags below so
+    /// status queries and a forced stop never wait behind a slow exchange.
     private let lock = NSLock()
+    private let stateLock = NSLock()
+    private var running = false
+    private var activeProcess: Process?
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
@@ -29,8 +34,15 @@ final class WorkerSupervisor {
     }
 
     var isRunning: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return process?.isRunning == true
+        stateLock.lock(); defer { stateLock.unlock() }
+        return running && activeProcess?.isRunning == true
+    }
+
+    private func publish(_ child: Process?) {
+        stateLock.lock()
+        activeProcess = child
+        running = child != nil
+        stateLock.unlock()
     }
 
     func start() throws -> CoreHello {
@@ -61,6 +73,7 @@ final class WorkerSupervisor {
             throw HelperFailure(code: .workerFailed, detail: "worker could not start")
         }
         process = child
+        publish(child)
         input = toChild.fileHandleForWriting
         output = fromChild.fileHandleForReading
 
@@ -82,7 +95,14 @@ final class WorkerSupervisor {
     }
 
     func stop() {
-        lock.lock(); defer { lock.unlock() }
+        // A command may be blocked on the network inside the Core for tens of seconds.
+        // Give it a moment, then kill the worker so a quit or lost caller is not held hostage.
+        if !lock.lock(before: Date().addingTimeInterval(1)) {
+            stateLock.lock(); let victim = activeProcess; stateLock.unlock()
+            victim?.terminate()
+            lock.lock()
+        }
+        defer { lock.unlock() }
         if process?.isRunning == true {
             _ = try? exchangeLocked(CoreRequest(requestID: UUID().uuidString, command: "shutdown"), timeout: 2)
         }
@@ -99,20 +119,28 @@ final class WorkerSupervisor {
             process.waitUntilExit()
         }
         process = nil; input = nil; output = nil
+        publish(nil)
     }
 
     /// One request/one reply with a hard deadline; a worker that does not answer is killed.
     private func exchangeLocked(_ request: CoreRequest, timeout: TimeInterval) throws -> CoreResponse {
+        let raw = try exchangeRawLocked(body: JSONEncoder().encode(request), requestID: request.requestID, timeout: timeout)
+        guard let response = try? JSONDecoder().decode(CoreResponse.self, from: raw) else {
+            throw HelperFailure(code: .workerFailed, detail: "unreadable reply")
+        }
+        return response
+    }
+
+    private func exchangeRawLocked(body: Data, requestID: String, timeout: TimeInterval) throws -> Data {
         guard let input, let output else { throw HelperFailure(code: .workerFailed, detail: "no worker") }
-        try input.write(contentsOf: IPCFrame.encode(JSONEncoder().encode(request)))
-        var result: Result<CoreResponse, Error>?
+        try input.write(contentsOf: IPCFrame.encode(body))
+        var result: Result<Data, Error>?
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
             do {
                 let header = try WorkerSupervisor.readExactly(4, from: output)
                 let length = try IPCFrame.declaredLength(header: header)
-                let body = try WorkerSupervisor.readExactly(length, from: output)
-                result = .success(try JSONDecoder().decode(CoreResponse.self, from: body))
+                result = .success(try WorkerSupervisor.readExactly(length, from: output))
             } catch { result = .failure(error) }
             done.signal()
         }
@@ -120,11 +148,35 @@ final class WorkerSupervisor {
             process?.terminate()
             throw HelperFailure(code: .workerFailed, detail: "worker timed out")
         }
-        let response = try result!.get()
-        guard response.requestID == request.requestID else {
+        let raw = try result!.get()
+        struct Echo: Decodable { var request_id: String }
+        guard let echo = try? JSONDecoder().decode(Echo.self, from: raw), echo.request_id == requestID else {
             throw HelperFailure(code: .workerFailed, detail: "mismatched reply")
         }
-        return response
+        return raw
+    }
+
+    /// Forwards one validated command and returns the Core's raw response document. A
+    /// timeout or broken pipe kills the worker: the App must start a fresh one and log in again.
+    func forward(name: String, generation: UInt64, payload: Data) throws -> Data {
+        let requestID = UUID().uuidString
+        let built: (body: Data, timeout: TimeInterval)
+        do {
+            built = try HelperCommandPolicy.buildRequest(requestID: requestID, name: name, generation: generation, payload: payload)
+        } catch {
+            throw HelperFailure(code: .workerInvalid, detail: "command rejected")
+        }
+        lock.lock(); defer { lock.unlock() }
+        guard process?.isRunning == true else { throw HelperFailure(code: .workerFailed, detail: "worker not running") }
+        do {
+            return try exchangeRawLocked(body: built.body, requestID: requestID, timeout: built.timeout)
+        } catch let failure as HelperFailure {
+            teardownLocked()
+            throw failure
+        } catch {
+            teardownLocked()
+            throw HelperFailure(code: .workerFailed, detail: "worker connection lost")
+        }
     }
 
     static func readExactly(_ count: Int, from handle: FileHandle) throws -> Data {

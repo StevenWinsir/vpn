@@ -1,94 +1,112 @@
 import AsterLinkShared
 import SwiftUI
 
-/// Stage 1 shell: proves the App -> Helper (XPC) -> Core (pipe) chain and the Helper
-/// authorization states. Login, nodes and connect arrive in later stages.
+/// App entry. Closing the window keeps the app in the menu bar; the menu's Quit (or ⌘Q)
+/// stops the Core, which revokes the session before the process exits.
 @main
 struct AsterLinkApp: App {
-    @StateObject private var helper: HelperClient
-    private let environment: ClientEnvironment?
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    private let model = AppModel.make()
 
-    init() {
+    var body: some Scene {
+        WindowGroup("AsterLink", id: "main") {
+            if let session = model.session {
+                RootView(session: session, helper: model.helper, diagnostics: model.diagnostics)
+                    .onAppear { delegate.session = session }
+            } else {
+                ConfigurationErrorView()
+            }
+        }
+        .windowResizability(.contentMinSize)
+
+        MenuBarExtra("AsterLink", systemImage: "bolt.shield") {
+            MenuContent(session: model.session)
+        }
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var session: SessionController?
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let session else { return .terminateNow }
+        Task {
+            await session.shutdown()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
+
+struct MenuContent: View {
+    let session: SessionController?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        if let session {
+            Text(session.phase == .signedIn ? (session.snapshot.user?.email ?? "已登录") : "未登录")
+        }
+        Button("打开 AsterLink") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Divider()
+        Button("退出") { NSApp.terminate(nil) }.keyboardShortcut("q")
+    }
+}
+
+struct ConfigurationErrorView: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.octagon").font(.largeTitle).foregroundStyle(.red)
+            Text("应用配置缺失或无效，已拒绝启动。").font(.headline)
+            Text("请重新安装官方版本。").foregroundStyle(.secondary)
+        }.padding(40)
+    }
+}
+
+/// Wires the real collaborators once. A missing or invalid build configuration yields no
+/// session at all: there is no default server to fall back to.
+@MainActor
+struct AppModel {
+    let session: SessionController?
+    let helper: HelperClient
+    let diagnostics: AppDiagnostics
+
+    static func make() -> AppModel {
         let info = Bundle.main.infoDictionary ?? [:]
         let channel = BuildChannel(rawValue: (info["AsterLinkChannel"] as? String) ?? "development") ?? .development
         let team = (info["AsterLinkTeamID"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let policy = (try? SigningPolicy(channel: channel, teamID: team)) ?? (try! SigningPolicy(channel: .development, teamID: nil))
-        _helper = StateObject(wrappedValue: HelperClient(policy: policy))
+        let connection = HelperConnection(policy: policy)
+        let helper = HelperClient(connection: connection)
+
+        var environment: ClientEnvironment?
         if let api = info["AsterLinkAPIBase"] as? String, let site = info["AsterLinkWebsiteBase"] as? String {
-            // Re-validate with the same rules as the build script; never trust the plist blindly.
+            // Re-validated with the same rules as the build script; the plist is not trusted blindly.
             environment = try? ClientEnvironment.parse("APP_ENV=\(channel.rawValue)\nAPI_BASE_URL=\(api)\nWEBSITE_BASE_URL=\(site)\n")
-        } else {
-            environment = nil
         }
-    }
-
-    var body: some Scene {
-        WindowGroup("AsterLink") {
-            StatusView(helper: helper, environment: environment)
-                .frame(minWidth: 460, minHeight: 360)
+        #if DEBUG
+        if environment == nil, channel == .development, let api = ProcessInfo.processInfo.environment["ASTERLINK_DEV_API"],
+           let site = ProcessInfo.processInfo.environment["ASTERLINK_DEV_SITE"] {
+            environment = try? ClientEnvironment.parse("APP_ENV=development\nAPI_BASE_URL=\(api)\nWEBSITE_BASE_URL=\(site)\n")
         }
-        .windowResizability(.contentSize)
-    }
-}
+        #endif
+        let diagnostics = AppDiagnostics(environment: environment)
+        guard let environment else { return AppModel(session: nil, helper: helper, diagnostics: diagnostics) }
 
-struct StatusView: View {
-    @ObservedObject var helper: HelperClient
-    let environment: ClientEnvironment?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("AsterLink").font(.title.bold())
-            Text("阶段 1：特权服务与内核握手验证（尚未登录/连接）").foregroundStyle(.secondary)
-            GroupBox("构建配置") {
-                if let environment {
-                    VStack(alignment: .leading) {
-                        Text("通道：\(environment.channel.rawValue)")
-                        Text("API：\(environment.apiBase.absoluteString)").textSelection(.enabled)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text("配置缺失或无效，拒绝连接").foregroundStyle(.red)
-                }
-            }
-            GroupBox("特权服务（Helper）") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(label(helper.registration))
-                    HStack {
-                        Button("启用") { helper.register() }.disabled(helper.registration == .enabled)
-                        Button("打开系统设置") { helper.openSystemSettings() }
-                        Button("刷新") { helper.refreshRegistration() }
-                    }
-                    HStack {
-                        Button("握手 Helper") { helper.hello() }
-                        Button("启动并握手 Core") { helper.startWorker() }
-                        Button("停止 Core") { helper.stopWorker() }
-                    }.disabled(helper.registration != .enabled || helper.busy)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let reply = helper.lastReply {
-                GroupBox("最近一次回复") {
-                    VStack(alignment: .leading) {
-                        Text("Helper \(reply.helperVersion) · 协议 v\(reply.protocolVersion) · Core 运行：\(reply.workerRunning ? "是" : "否")")
-                        if let core = reply.core {
-                            Text("Core \(core.coreVersion) · Mihomo \(core.mihomoRevision.prefix(10))")
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            if let error = helper.lastError {
-                Text(error).foregroundStyle(.red).textSelection(.enabled)
-            }
-            Spacer()
+        var transport: CoreTransport = XPCCoreTransport(connection: connection)
+        #if DEBUG
+        if channel == .development, let path = ProcessInfo.processInfo.environment["ASTERLINK_DEV_CORE"] {
+            transport = DirectCoreTransport(executable: URL(fileURLWithPath: path))
         }
-        .padding(20)
-    }
-
-    private func label(_ state: HelperRegistration) -> String {
-        switch state {
-        case .enabled: "已启用"
-        case .requiresApproval: "需要在“系统设置 › 通用 › 登录项”中批准"
-        case .notRegistered: "未启用"
-        case .notFound: "未找到服务（请使用完整签名的 App 包运行）"
-        case .unknown: "未知"
-        }
+        #endif
+        let client = CoreClient(transport: transport, environment: environment, appVersion: diagnostics.appVersion)
+        let session = SessionController(client: client, environment: environment, credentials: KeychainCredentialStore(),
+                                        preferences: UserDefaultsLoginPreferences(), devices: KeychainDeviceIdentity())
+        return AppModel(session: session, helper: helper, diagnostics: diagnostics)
     }
 }

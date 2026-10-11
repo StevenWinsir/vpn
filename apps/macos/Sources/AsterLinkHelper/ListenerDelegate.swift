@@ -83,4 +83,16 @@ final class HelperService: NSObject, AsterLinkHelperXPC {
             reply(HelperReply(ok: true, helperVersion: self.helperVersion, workerRunning: false).encoded())
         }
     }
+
+    func command(name: String, generation: UInt64, payload: Data, reply: @escaping (Data) -> Void) {
+        DispatchQueue.global().async {
+            do {
+                reply(try self.supervisor.forward(name: name, generation: generation, payload: payload))
+            } catch let failure as HelperFailure {
+                reply(HelperCommandPolicy.failureReply(code: failure.code.rawValue, message: failure.detail))
+            } catch {
+                reply(HelperCommandPolicy.failureReply(code: HelperErrorCode.workerFailed.rawValue, message: "worker failed"))
+            }
+        }
+    }
 }

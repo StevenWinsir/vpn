@@ -1,0 +1,45 @@
+{
+  "contract": "asterlink-core-snapshot",
+  "protocol_version": 1,
+  "note": "Redacted UI state returned by the Core. It never contains a token, password, YAML or any server/port/credential. Decoded by both the Go Core tests and the Swift tests.",
+  "snapshots": {
+    "signed_out_after_expiry": {
+      "generation": 4, "state": "signed_out", "user": null, "entitlement": null, "nodes": [],
+      "selected_node_id": "", "catalog_revision": "", "profile_version": "", "config_ready": false, "tunnel_health": "idle",
+      "metering": null,
+      "last_error": {"code": "native_session_expired", "message": "登录已失效，请重新登录"},
+      "core_version": "0.0.0-dev"
+    },
+    "ready_with_selection": {
+      "generation": 7, "state": "ready",
+      "user": {"id": "22222222-2222-4222-8222-222222222222", "email": "fixture@example.invalid", "name": "Fixture", "role": "user"},
+      "entitlement": {
+        "plan_name": "VIP", "subscription_expires_at": "2030-01-01T00:10:00Z", "authorization_expires_at": "2030-01-01T00:01:30Z",
+        "lease_remaining_seconds": 87, "account_authorized": true, "can_connect": true, "reason": "", "reason_message": "",
+        "total_bytes": 1073741824, "remaining_bytes": 1073741000, "used_units": 824000
+      },
+      "nodes": [
+        {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "name": "HK Dedicated", "region": "HK", "line_type": "dedicated", "rate_permille": 1000},
+        {"id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "name": "JP Standard", "region": "JP", "line_type": "direct", "rate_permille": 500}
+      ],
+      "selected_node_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "catalog_revision": "191ed7ece6ec8b4ae68e897af41900f7de83ae3cabf80592a1406e97a405547a",
+      "profile_version": "191ed7ece6ec8b4ae68e897af41900f7de83ae3cabf80592a1406e97a405547a",
+      "config_ready": true, "tunnel_health": "idle",
+      "metering": {"source": "client_reported", "upload_bytes": 0, "download_bytes": 0, "last_sequence": 0, "upload_bytes_per_second": 0, "download_bytes_per_second": 0},
+      "last_error": null, "core_version": "0.0.0-dev"
+    },
+    "blocked_no_plan": {
+      "generation": 9, "state": "blocked",
+      "user": {"id": "22222222-2222-4222-8222-222222222222", "email": "test@test.com", "name": "Admin", "role": "admin"},
+      "entitlement": {
+        "plan_name": "", "subscription_expires_at": null, "authorization_expires_at": null,
+        "lease_remaining_seconds": 0, "account_authorized": false, "can_connect": false, "reason": "upgrade_required", "reason_message": "当前账号没有有效套餐，请前往网站购买",
+        "total_bytes": 0, "remaining_bytes": 0, "used_units": 0
+      },
+      "nodes": [], "selected_node_id": "", "catalog_revision": "2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d", "profile_version": "", "config_ready": false, "tunnel_health": "idle",
+      "metering": {"source": "client_reported", "upload_bytes": 0, "download_bytes": 0, "last_sequence": 0, "upload_bytes_per_second": 0, "download_bytes_per_second": 0},
+      "last_error": null, "core_version": "0.0.0-dev"
+    }
+  }
+}

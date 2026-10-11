@@ -563,7 +563,7 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 | 阶段 | 状态 | 负责人 | commit / 构建 | 证据与阻塞 |
 | --- | --- | --- | --- | --- |
 | 1 原生TUN技术验证 | IN_REVIEW（PR 待 CI） | Claude Code 会话 | 分支 `worktree-stage1-native-foundation` | 共享源迁移、骨架、签名/XPC 验证已完成；真实 TUN 实传 BLOCKED（需受控测试节点+root 授权）；Helper 实际 SMAppService 注册待用户在系统设置批准；节点控制能力待用户确认 |
-| 2 账号与节点接入 | NOT_STARTED | 待分配 | — | 依赖阶段1 |
+| 2 账号与节点接入 | IMPLEMENTED（待 PR 合并 / CI） | Claude | 分支 feat/stage2-login-nodes-keychain | Core v1 登录/session/nodes/config/logout、Keychain、SwiftUI 三页、XPC 命令转发、后端时限 env；真实 Core 二进制 ↔ 真实 API/PostgreSQL 端到端通过；未做：TUN（阶段3）、UI 目测（无桌面截图权限）、真实 demo 服务器登录（未持有测试账号密码） |
 | 3 开发计量闭环 | NOT_STARTED | 待分配 | — | 依赖阶段2，仍是client_reported |
 | 4 节点权威收费闭环 | NOT_STARTED | 待分配 | — | 必须具备真实节点管理能力 |
 | 5 签名发布与回归 | NOT_STARTED | 待分配 | — | 所有硬门槛及网站外部发布条件 |
@@ -612,7 +612,13 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 停止/回退方法及数据安全注意事项：本阶段不改后端数据库；tunpoc 异常退出的恢复步骤见 docs/macos-tun-poc.md；回退本 PR 即恢复旧结构（FlClash 目录在版本历史中）。
 ```
 
-当前交接结论：**阶段 1 代码部分已完成并待 CI；真实 TUN 实传、Helper 真机注册、节点控制能力三项仍需用户配合。**（以下为原勘察结论，保留作历史记录。） 建议下一位先完成共享源码脱钩与真实特权 TUN PoC，同时核实节点控制能力；不要先重做网站，也不要继续修补旧 FlClash UI。
+阶段 2 交接（2026-10-11）：
+- 改动：`native/core/internal/{apiclient,managed,service}`（HTTP 客户端、状态机、配置校验、IPC 处理）；`apps/macos` 的 CoreClient/SessionController/Keychain/三页界面/XPC `command`；`backend/internal/config` 新增 `CLIENT_REPORT_INTERVAL_SECONDS` 等四个时限（默认 60/90/180/5）；`shared/contracts/snapshot-v1.json`。
+- 验证：`python3 scripts/test-native.py`（含 TestNativeCoreEndToEnd：管理员改名/倍率/停用约 0.4–0.5s 反映到客户端，到期约 0.4s）；`go test -race ./...`（native/core）；`swift test` 38 项。
+- 未完成/限制：Connect 通过全部闸门后由 UnavailableEngine 返回 `tun_unavailable`（阶段3接入 Mihomo）；`shared/nodepolicy` 固定内核测试需初始化 Clash.Meta 子模块；DEBUG 直连内核（ASTERLINK_DEV_CORE）仅用于无签名本地验证。
+- 下一步：阶段 3 从 EngineAdapter/Meter 开始。
+
+当前交接结论（阶段1时）：**阶段 1 代码部分已完成并待 CI；真实 TUN 实传、Helper 真机注册、节点控制能力三项仍需用户配合。**（以下为原勘察结论，保留作历史记录。） 建议下一位先完成共享源码脱钩与真实特权 TUN PoC，同时核实节点控制能力；不要先重做网站，也不要继续修补旧 FlClash UI。
 
 ## 附录 A. 源码依据与核验入口
 
