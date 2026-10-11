@@ -23,8 +23,6 @@ import (
 	"vpn/backend/internal/model"
 )
 
-const nativeIdleTTL = 3 * time.Minute
-const nativeLeaseSeconds = 90
 const maxNativeProfileBytes = 1 << 20
 
 var nativePlanID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
@@ -125,7 +123,7 @@ func (s *Server) requireNativeSession() gin.HandlerFunc {
 		}
 		var sess model.NativeSession
 		now := time.Now().UTC()
-		err := s.database(c).Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", refreshHash(strings.TrimPrefix(header, "Bearer ")), now, now.Add(-nativeIdleTTL)).First(&sess).Error
+		err := s.database(c).Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", refreshHash(strings.TrimPrefix(header, "Bearer ")), now, now.Add(-s.cfg.IdleTTL())).First(&sess).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			fail(c, 401, "native_session_expired", "客户端会话已失效，请重新登录")
 			return
@@ -151,7 +149,7 @@ func (s *Server) nativeTransaction(c *gin.Context, action func(*gorm.DB, *model.
 			return e
 		}
 		now := time.Now().UTC()
-		if sess.RevokedAt != nil || !now.Before(sess.ExpiresAt) || !sess.LastSeenAt.After(now.Add(-nativeIdleTTL)) {
+		if sess.RevokedAt != nil || !now.Before(sess.ExpiresAt) || !sess.LastSeenAt.After(now.Add(-s.cfg.IdleTTL())) {
 			return &apiError{401, "native_session_expired", "客户端会话已失效，请重新登录"}
 		}
 		sub, e := readNativeSubscription(tx, user.ID)
@@ -214,7 +212,7 @@ func nativeAuthorizationBound(sess model.NativeSession, sub *model.Subscription)
 }
 
 func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time, transactions ...*gorm.DB) nativeState {
-	out := nativeState{ServerTime: now, SessionIdleTimeout: int(nativeIdleTTL / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: 60, LeaseSeconds: nativeLeaseSeconds, MeteringSource: "client_reported", RatePermille: sessionRate(sess)}
+	out := nativeState{ServerTime: now, SessionIdleTimeout: int(s.cfg.IdleTTL() / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: int(s.cfg.ReportInterval() / time.Second), LeaseSeconds: int(s.cfg.Lease() / time.Second), MeteringSource: "client_reported", RatePermille: sessionRate(sess)}
 	if sub != nil {
 		out.SubscriptionExpiresAt = &sub.ExpiresAt
 		out.TotalBytes, out.UsedUnits, out.PlanName = sub.TrafficLimitBytes, sub.UsedUnits, sub.PlanName
@@ -254,7 +252,7 @@ func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscriptio
 	}
 	out.CanConnect = out.Reason == "" && out.RemainingBytes > 0
 	if out.CanConnect {
-		deadline := now.Add(nativeLeaseSeconds * time.Second)
+		deadline := now.Add(s.cfg.Lease())
 		if sess.ExpiresAt.Before(deadline) {
 			deadline = sess.ExpiresAt
 		}
@@ -353,7 +351,7 @@ func (s *Server) nativeConfig(c *gin.Context) {
 		}
 		var active int64
 		fingerprint := nativeEntitlementFingerprint(sub)
-		if e = tx.Model(&model.NativeSession{}).Where("user_id = ? AND id <> ? AND subscription_id = ? AND subscription_starts_at = ? AND entitlement_fingerprint = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", sess.UserID, sess.ID, sub.ID, sub.StartsAt, fingerprint, now, now.Add(-nativeIdleTTL)).Count(&active).Error; e != nil {
+		if e = tx.Model(&model.NativeSession{}).Where("user_id = ? AND id <> ? AND subscription_id = ? AND subscription_starts_at = ? AND entitlement_fingerprint = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", sess.UserID, sess.ID, sub.ID, sub.StartsAt, fingerprint, now, now.Add(-s.cfg.IdleTTL())).Count(&active).Error; e != nil {
 			return e
 		}
 		if sub.MaxDevices <= 0 || active >= int64(sub.MaxDevices) {

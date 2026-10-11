@@ -18,6 +18,7 @@ type Config struct {
 	NodeEncryptionKey                                                             string
 	ClientProfileDir                                                              string
 	ClientAllowTestEntitlements                                                   bool
+	ClientReportInterval, ClientLease, ClientIdleTimeout, ClientNodeWatch         time.Duration
 	RequestTimeout, MigrationTimeout                                              time.Duration
 	Env, Addr, Host, Port, Database, User, Password, Schema, SSLMode, SSLRootCert string
 	JWTSecret, Issuer, Audience                                                   string
@@ -68,6 +69,23 @@ func Load() (Config, error) {
 		}
 		*x.dest = time.Duration(v) * x.unit
 	}
+	for _, x := range []struct {
+		key      string
+		dest     *time.Duration
+		def, min int
+		max      int
+	}{{"CLIENT_REPORT_INTERVAL_SECONDS", &c.ClientReportInterval, DefaultReportSeconds, 10, 600}, {"CLIENT_LEASE_SECONDS", &c.ClientLease, DefaultLeaseSeconds, 20, 900}, {"CLIENT_IDLE_TIMEOUT_SECONDS", &c.ClientIdleTimeout, DefaultIdleSeconds, 60, 3600}, {"CLIENT_NODE_WATCH_SECONDS", &c.ClientNodeWatch, DefaultNodeWatchSeconds, 1, 30}} {
+		v, err := strconv.Atoi(env(x.key, strconv.Itoa(x.def)))
+		if err != nil || v < x.min || v > x.max {
+			return c, fmt.Errorf("invalid %s (allowed %d-%d)", x.key, x.min, x.max)
+		}
+		*x.dest = time.Duration(v) * time.Second
+	}
+	// A lease must outlive one report so a healthy client always renews before expiry,
+	// and an idle window must outlive a lease so renewal gaps do not look like abandonment.
+	if c.ClientLease <= c.ClientReportInterval || c.ClientIdleTimeout < c.ClientLease || c.ClientNodeWatch >= c.ClientLease {
+		return c, fmt.Errorf("client timing must satisfy REPORT_INTERVAL < LEASE <= IDLE_TIMEOUT and NODE_WATCH < LEASE")
+	}
 	for _, origin := range strings.Split(env("ALLOWED_ORIGINS", "http://localhost:3000"), ",") {
 		origin = strings.TrimSpace(origin)
 		u, err := url.Parse(origin)
@@ -114,6 +132,33 @@ func Load() (Config, error) {
 	}
 	return c, nil
 }
+
+// Defaults reproduce the previously hard-coded native protocol timings.
+const (
+	DefaultReportSeconds    = 60
+	DefaultLeaseSeconds     = 90
+	DefaultIdleSeconds      = 180
+	DefaultNodeWatchSeconds = 5
+)
+
+func orDefault(value time.Duration, seconds int) time.Duration {
+	if value <= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return value
+}
+
+// The accessors treat an unset (zero) value as the default so a Config built without
+// Load (tests, tools) still behaves like production defaults.
+func (c Config) ReportInterval() time.Duration {
+	return orDefault(c.ClientReportInterval, DefaultReportSeconds)
+}
+func (c Config) Lease() time.Duration   { return orDefault(c.ClientLease, DefaultLeaseSeconds) }
+func (c Config) IdleTTL() time.Duration { return orDefault(c.ClientIdleTimeout, DefaultIdleSeconds) }
+func (c Config) NodeWatch() time.Duration {
+	return orDefault(c.ClientNodeWatch, DefaultNodeWatchSeconds)
+}
+
 func env(k, fallback string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
