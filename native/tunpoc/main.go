@@ -64,7 +64,7 @@ func main() {
 	server := flag.String("server", "", "test Shadowsocks server host")
 	port := flag.Int("port", 0, "test Shadowsocks server port")
 	cipher := flag.String("cipher", "aes-256-gcm", "Shadowsocks AEAD cipher")
-	probe := flag.String("probe-url", "https://api.ipify.org", "URL returning the caller's public address as plain text")
+	probe := flag.String("probe-url", "https://ipv4.icanhazip.com,https://ipinfo.io/ip,https://v4.ident.me", "comma-separated URLs (tried in order) returning the caller's public IPv4 address as plain text")
 	expect := flag.String("expect-exit", "", "optional exact tunnel exit address (e.g. the test node's IP)")
 	stack := flag.String("stack", "system", "Mihomo TUN stack to validate (system|gvisor|mixed)")
 	output := flag.String("output", "", "new directory for the sanitized JSON report")
@@ -199,7 +199,16 @@ func shutdown() {
 	executor.Shutdown()
 }
 
-func fetch(ctx context.Context, url string) string {
+func fetch(ctx context.Context, urls string) string {
+	for _, url := range strings.Split(urls, ",") {
+		if text := fetchOne(ctx, strings.TrimSpace(url)); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func fetchOne(ctx context.Context, url string) string {
 	// Proxy: nil — the probe must not rely on any HTTP/SOCKS proxy setting.
 	client := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -242,6 +251,11 @@ func lines(name string, args ...string) []string {
 		fields := strings.Fields(line)
 		if len(fields) >= 4 && !strings.HasPrefix(line, "Routing") && !strings.HasPrefix(line, "Internet") {
 			// destination, gateway, flags, interface; drop volatile expire column.
+			// Skip neighbour-cache and temporary-address entries (flags W/L): the LAN
+			// adds and removes them on its own, independent of the tunnel.
+			if strings.ContainsAny(fields[2], "WL") {
+				continue
+			}
 			result = append(result, strings.Join(fields[:4], " "))
 		} else if name == "scutil" {
 			result = append(result, strings.TrimSpace(line))

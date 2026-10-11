@@ -21,6 +21,15 @@ sudo -E python3 scripts/test-native-macos.py --suite tun --allow-network-changes
 安全措施：缺少 `--allow-network-changes`、非 root 或缺少环境变量一律报 `BLOCKED`（退出码 3），
 不会用 mock 冒充通过；整个运行有 `--max-seconds`（默认 90）硬上限，并响应 SIGINT/SIGTERM。
 
+探测地址默认依次尝试 `ipv4.icanhazip.com`、`ipinfo.io/ip`、`v4.ident.me`（可用 `--probe-url` 传逗号分隔列表覆盖）；
+`api.ipify.org` 在部分国内网络不可达，不再作为默认。路由对比忽略 IPv6/IPv4 邻居缓存与临时地址（标志含 `W`/`L`），
+因为它们会随局域网自行变化，与隧道无关。
+
+## 实机记录
+
+- 2026-10-10，macOS（Mac mini M4），`stack: system`，关闭其他 VPN 后：T01 PASS，`exit_changed=True`，
+  关闭后无遗留 utun、路由或 DNS 变化。未设置 `ASTERLINK_POC_EXPECT_EXIT`，因此尚未断言出口等于节点 IP。
+
 ## 异常后手动恢复
 
 ```bash
