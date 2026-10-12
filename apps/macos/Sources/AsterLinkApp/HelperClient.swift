@@ -9,6 +9,7 @@ final class HelperClient: ObservableObject {
     @Published private(set) var lastReply: HelperReply?
     @Published private(set) var lastError: String?
     @Published private(set) var busy = false
+    @Published private(set) var versionWarning: String?
 
     private let connection: HelperConnection
 
@@ -28,6 +29,32 @@ final class HelperClient: ObservableObject {
             lastError = "注册失败：\(error.localizedDescription)"
         }
         refreshRegistration()
+    }
+
+    /// Asks the Helper to stop its Core, drops the connection, then removes the launchd
+    /// registration. Only this product's service is touched; other VPNs are never involved.
+    func unregister() async {
+        busy = true
+        defer { busy = false; refreshRegistration() }
+        if registration == .enabled {
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                guard let proxy = try? connection.proxy(onError: { _ in done.resume() }) else { return done.resume() }
+                proxy.stopWorker { _ in done.resume() }
+            }
+        }
+        connection.invalidate()
+        do {
+            try await HelperConnection.service.unregister()
+            lastError = nil
+        } catch {
+            lastError = "移除失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// Upgrade path: remove the stale registration, then register the Helper from this bundle.
+    func reinstall() async {
+        await unregister()
+        if lastError == nil { register() }
     }
 
     func openSystemSettings() { SMAppService.openSystemSettingsLoginItems() }
@@ -54,6 +81,9 @@ final class HelperClient: ObservableObject {
                     if let reply = try? JSONDecoder().decode(HelperReply.self, from: data),
                        reply.protocolVersion == AsterLinkIdentity.protocolVersion {
                         self.lastReply = reply
+                        self.versionWarning = HelperUpgradePolicy.userMessage(for: HelperUpgradePolicy.verdict(
+                            helperVersion: reply.helperVersion,
+                            appVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"))
                         self.lastError = reply.ok ? nil : "\(reply.errorCode?.rawValue ?? "error")：\(reply.detail ?? "")"
                     } else {
                         self.lastError = "特权服务返回了不兼容的数据"

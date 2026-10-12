@@ -1,0 +1,104 @@
+name: macOS release (Developer ID + notarization)
+
+# UNVERIFIED TEMPLATE: written before an Apple Developer account existed, so it has never run.
+# It only runs by hand (workflow_dispatch) and stops immediately if any secret is missing.
+# Until it has produced one notarized DMG that passes `--suite release` with zero BLOCKED
+# cases, treat docs/macos-release.md section 4 as the source of truth, not this file.
+#
+# Required repository secrets (names only; values never appear in code or logs):
+#   MACOS_CERT_P12_BASE64     base64 of the "Developer ID Application" .p12
+#   MACOS_CERT_PASSWORD       its export password
+#   CODESIGN_IDENTITY         e.g. "Developer ID Application: Example Ltd (ABCDE12345)"
+#   ASTERLINK_TEAM_ID         the 10-character Team ID
+#   NOTARY_KEY_P8_BASE64      base64 of the App Store Connect API key (.p8)
+#   NOTARY_KEY_ID / NOTARY_ISSUER_ID
+# Required repository variables (public): RELEASE_API_BASE_URL, RELEASE_WEBSITE_BASE_URL
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: 'Semantic version, e.g. 1.0.0'
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.6'
+  DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment: macos-release   # protect with required reviewers in repository settings
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: native/core/go.sum
+      - name: Refuse to run without every signing input
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          TEAM: ${{ secrets.ASTERLINK_TEAM_ID }}
+          KEY: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          API: ${{ vars.RELEASE_API_BASE_URL }}
+        run: |
+          for name in P12 IDENTITY TEAM KEY API; do
+            if [ -z "${!name}" ]; then echo "missing input: $name"; exit 1; fi
+          done
+      - name: Import the certificate into a throwaway keychain
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+      - name: Store notarization credentials
+        env:
+          KEY: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "$KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials asterlink-notary --key "$RUNNER_TEMP/notary.p8" --key-id "$KEY_ID" --issuer "$ISSUER"
+          rm -f "$RUNNER_TEMP/notary.p8"
+      - name: Public build parameters (release channel, HTTPS only)
+        env:
+          API: ${{ vars.RELEASE_API_BASE_URL }}
+          SITE: ${{ vars.RELEASE_WEBSITE_BASE_URL }}
+        run: |
+          printf 'APP_ENV=release\nAPI_BASE_URL=%s\nWEBSITE_BASE_URL=%s\n' "$API" "$SITE" > apps/macos/.env
+      - name: Build, sign inside-out with Hardened Runtime
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          ASTERLINK_TEAM_ID: ${{ secrets.ASTERLINK_TEAM_ID }}
+        run: python3 scripts/build-native-macos.py --configuration Release --app-version "${{ inputs.app_version }}" --run-id release
+      - name: DMG, notarize, staple
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          ASTERLINK_NOTARY_PROFILE: asterlink-notary
+        run: python3 scripts/package-native-macos.py --build-run-id release --notarize
+      - name: Release audit (Gatekeeper and staple must PASS, not BLOCKED)
+        run: |
+          python3 scripts/test-native-macos.py --suite release --build-run-id release --run-id release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asterlink-${{ inputs.app_version }}
+          retention-days: 30
+          path: |
+            artifacts/native-macos/release/release/*
+            artifacts/native-macos/release-report-release/test-report.json

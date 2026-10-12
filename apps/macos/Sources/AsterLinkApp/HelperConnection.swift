@@ -86,7 +86,12 @@ private final class Once<T>: @unchecked Sendable {
 final class XPCCoreTransport: CoreTransport {
     private let connection: HelperConnection
 
-    init(connection: HelperConnection) { self.connection = connection }
+    private let appVersion: String
+
+    init(connection: HelperConnection, appVersion: String) {
+        self.connection = connection
+        self.appVersion = appVersion
+    }
 
     private func call(_ invoke: @escaping (AsterLinkHelperXPC, @escaping (Data) -> Void) -> Void) async throws -> Data {
         guard HelperConnection.registration == .enabled else {
@@ -104,6 +109,14 @@ final class XPCCoreTransport: CoreTransport {
     }
 
     func start() async throws {
+        // Version gate first, so a stale Helper left over from an upgrade never starts a Core.
+        let greeting = try await call { $0.hello(reply: $1) }
+        guard let hello = try? JSONDecoder().decode(HelperReply.self, from: greeting), hello.protocolVersion == AsterLinkIdentity.protocolVersion else {
+            throw HelperUnavailable("特权服务返回了不兼容的数据")
+        }
+        if let message = HelperUpgradePolicy.userMessage(for: HelperUpgradePolicy.verdict(helperVersion: hello.helperVersion, appVersion: appVersion)) {
+            throw HelperUnavailable(message)
+        }
         let data = try await call { $0.startWorker(reply: $1) }
         guard let reply = try? JSONDecoder().decode(HelperReply.self, from: data), reply.protocolVersion == AsterLinkIdentity.protocolVersion else {
             throw HelperUnavailable("特权服务返回了不兼容的数据")

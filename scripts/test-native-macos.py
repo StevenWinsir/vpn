@@ -3,6 +3,7 @@
 
     python3 scripts/test-native-macos.py --suite unit
     python3 scripts/test-native-macos.py --suite bundle          # builds a Debug app, no network changes
+    python3 scripts/test-native-macos.py --suite release         # builds + packages the internal ad-hoc DMG and audits it
     sudo -E python3 scripts/test-native-macos.py --suite tun --allow-network-changes
 
 Every case records case_id / expected / observed / result (pass|fail|blocked). A suite
@@ -21,6 +22,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 RESULTS = []
 
 
@@ -52,6 +54,20 @@ def suite_unit():
     ran = re.search(r'Ran (\d+) tests', result.stderr)
     record('U-ENV-PY', 'shared env fixtures accepted/rejected identically', 'ran %s tests' % (ran.group(1) if ran else '0'),
            'pass' if result.returncode == 0 and ran else 'fail', result.stderr[-400:] if result.returncode else '')
+    # S02: no production log/print statement may mention a credential-bearing value.
+    log_call = re.compile(r'\b(os\.Stderr|log\.(Print|Fatal|Panic)\w*|slog\.\w+|NSLog|os_log|Logger\(|print\(|debugPrint\()')
+    sensitive = re.compile(r'password|token|yaml|secret|passwd|uuid|credential', re.IGNORECASE)
+    offenders, scanned = [], 0
+    for base, suffix in ((ROOT / 'native/core', '.go'), (ROOT / 'native/nodeagent', '.go'), (ROOT / 'apps/macos/Sources', '.swift')):
+        for path in base.rglob('*' + suffix):
+            if path.name.endswith('_test.go') or 'asterlink-tuntest' in path.parts:
+                continue
+            scanned += 1
+            for number, line in enumerate(path.read_text(errors='replace').splitlines(), 1):
+                if log_call.search(line) and sensitive.search(line):
+                    offenders.append('%s:%d' % (path.relative_to(ROOT), number))
+    record('U-LOGLINT', 'no production log/print line mentions password/token/yaml/secret/uuid', '%d files, offenders: %s' % (scanned, ', '.join(offenders) or 'none'),
+           'fail' if offenders else 'pass')
     result = sh(['swift', 'test'], cwd=ROOT / 'apps/macos')
     summary = re.findall(r'Executed (\d+) tests, with (\d+) failures', result.stdout + result.stderr)
     executed = max((int(a) for a, _ in summary), default=0)
@@ -173,12 +189,23 @@ def suite_tun(allow):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--suite', choices=['unit', 'bundle', 'tun'], required=True)
+    parser.add_argument('--suite', choices=['unit', 'bundle', 'release', 'soak', 'tun'], required=True)
     parser.add_argument('--allow-network-changes', action='store_true')
+    parser.add_argument('--build-run-id', help='release suite: audit an existing build/package instead of building one')
+    parser.add_argument('--soak-minutes', type=float, default=30.0)
+    parser.add_argument('--soak-interval', type=float, default=5.0)
+    parser.add_argument('--max-rss-growth-pct', type=float, default=20.0, help='soak: fail if resident memory grows more than this')
     parser.add_argument('--run-id', default=time.strftime('%Y%m%d-%H%M%S'))
     args = parser.parse_args()
     if args.suite == 'unit':
         suite_unit()
+    elif args.suite == 'soak':
+        import soak_suite
+        soak_suite.run({'record': record}, args.soak_minutes, args.soak_interval, args.max_rss_growth_pct,
+                       ROOT / 'artifacts/native-macos' / (args.run_id + '-soak'))
+    elif args.suite == 'release':
+        import release_suite
+        release_suite.run({'record': record, 'sh': sh, 'ROOT': ROOT}, args.run_id, args.build_run_id)
     elif args.suite == 'bundle':
         suite_bundle(args.run_id)
     else:

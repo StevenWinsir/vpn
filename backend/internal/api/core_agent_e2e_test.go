@@ -98,6 +98,13 @@ func TestCoreWithRealAgentEndToEndPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	core.waitSnapshot("the Core to stop after the subscription ended", 15*time.Second, func(s snapshotView) bool {
+		// "blocked" is the Core's own verdict that the account may no longer connect. Its
+		// LastError is only a transient note: the keep-alive loop clears it on the next
+		// successful poll (manager.go), so waiting for LastError raced with that poll. The
+		// enforcement that matters is asserted below: the node closes the established flow.
+		if s.State == "blocked" {
+			return s.Entitlement != nil && !s.Entitlement.CanConnect
+		}
 		return s.State != "connected" && s.State != "stopping" && s.LastError != nil
 	})
 	coreStop := time.Since(ended)
