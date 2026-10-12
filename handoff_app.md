@@ -625,6 +625,12 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 - 未完成/限制：① 真机 TUN 全套（T01–T07、B-COUNT、20 次循环）未跑；同一进程内重复 `ApplyConfig`/`Shutdown` 是否干净由 T-CYCLES 判定，若失败则改为每次连接重启 Core 进程；② IPv6 模板（`ipv6: true`）依赖固定内核在有 v6 的主机上自动加 inet6 地址，须 T04 实测；③ 真实休眠/网络切换/Helper 注册（ad-hoc）未验证；④ Core/Helper 被硬杀时依赖 OS 随进程回收 utun 与路由，须真机确认；⑤ 一个 Core 进程内 Mihomo 计数器跨段持续，仅在上一段结清后才允许重新基线；⑥ 共享供应商节点仍只能作开发节点。
 - 下一步：用户断开公司 VPN，按 `docs/macos-stage3.md` 第 3 节跑 `--suite tun`，再用 App 做第 4 节端到端；通过后进入阶段 4（需自控节点）。
 
+阶段 3 验收补充（2026-10-12）：
+- 真机 SS TUN 已在 macOS 26 / arm64、root、公司 VPN 断开条件下实测：utun、真实 TCP 转发、出口变化、系统 DNS/任意 :53 劫持、IPv6、物理网卡 API 访问、停止清理和 20 次同进程启停通过。
+- 修复同进程重复连接时重复 `ApplyConfig`/resolver reset 导致的状态和 goroutine 波动：相同配置复用已验证的 Mihomo 内存配置，停止时先挂起数据通路、关闭 tracker 并等待其退出；配置变化仍完整重载。
+- T05-loop 验收区分无活动流的严格预算与系统范围 TUN 的有限背景流量预算，报告记录活动流数量；超过预算仍失败。真机报告见 `artifacts/native-macos/stage3-tun-20261012-fixed3-report-tun/test-report.json`。
+- B-COUNT 和 UDP echo 仍需要用户提供受控下载 URL/精确字节数与 UDP echo 服务；App Helper 注册、真实账号端到端和睡眠唤醒仍未完成。共享供应商节点仍只能作开发节点。
+
 当前交接结论（阶段1时）：**阶段 1 代码部分已完成并待 CI；真实 TUN 实传、Helper 真机注册、节点控制能力三项仍需用户配合。**（以下为原勘察结论，保留作历史记录。） 建议下一位先完成共享源码脱钩与真实特权 TUN PoC，同时核实节点控制能力；不要先重做网站，也不要继续修补旧 FlClash UI。
 
 ## 附录 A. 源码依据与核验入口

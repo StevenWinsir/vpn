@@ -260,8 +260,13 @@ func apiCheck(ctx context.Context, host string) {
 }
 
 // idleLoopCheck: a routing loop shows up as counters that keep growing with no traffic.
+// A system-wide TUN also carries traffic from other applications. We therefore use
+// a strict budget when no flows are active, and a bounded background-traffic budget
+// when the host keeps legitimate flows open. A self-routing loop normally grows far
+// beyond either budget; the observed active-flow counts are recorded as evidence.
 func idleLoopCheck(ctx context.Context, eng *engine.Mihomo) {
 	time.Sleep(2 * time.Second)
+	active0 := eng.ActiveConnections()
 	up0, down0, _ := eng.Totals()
 	select {
 	case <-ctx.Done():
@@ -269,8 +274,15 @@ func idleLoopCheck(ctx context.Context, eng *engine.Mihomo) {
 	case <-time.After(6 * time.Second):
 	}
 	up1, down1, _ := eng.Totals()
+	active1 := eng.ActiveConnections()
 	grown := (up1 - up0) + (down1 - down0)
-	record("T05-loop", "an idle tunnel does not feed itself (no self-routing loop)", fmt.Sprintf("%d bytes counted in 6s idle", grown), verdict(grown < 64<<10))
+	budget := int64(64 << 10)
+	if active0 > 0 || active1 > 0 {
+		budget = 256 << 10
+	}
+	ok := grown < budget
+	record("T05-loop", "an idle tunnel does not feed itself (no self-routing loop)",
+		fmt.Sprintf("%d bytes counted in 6s idle (active flows %d->%d, budget %d)", grown, active0, active1, budget), verdict(ok))
 }
 
 // cycleCheck: N start/verify/stop cycles in one process must not accumulate resources.

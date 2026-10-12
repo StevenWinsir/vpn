@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -40,9 +41,12 @@ type Mihomo struct {
 	StartTimeout time.Duration
 	ProbeTimeout time.Duration
 
-	mu      sync.Mutex
-	running bool
-	home    string
+	mu         sync.Mutex
+	running    bool
+	home       string
+	configData []byte
+	tunConf    LC.Tun
+	configured bool
 }
 
 func New() *Mihomo {
@@ -93,22 +97,38 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 	if err != nil {
 		return err
 	}
-	home, err := os.MkdirTemp("", "asterlink-engine-")
-	if err != nil {
-		return err
-	}
-	constant.SetHomeDir(home)
-	cfg, err := executor.ParseWithBytes(data)
-	if err != nil {
-		_ = os.RemoveAll(home)
-		return err
+	// Reusing the reviewed in-memory Mihomo configuration for an identical
+	// profile avoids repeatedly starting resolver/reset goroutines and keeps
+	// same-process reconnects deterministic. A changed profile still performs a
+	// complete ApplyConfig so node changes cannot inherit old runtime state.
+	home := ""
+	tunConf := e.tunConf
+	if !e.configured || !bytes.Equal(e.configData, data) {
+		home, err = os.MkdirTemp("", "asterlink-engine-")
+		if err != nil {
+			return err
+		}
+		constant.SetHomeDir(home)
+		cfg, parseErr := executor.ParseWithBytes(data)
+		if parseErr != nil {
+			_ = os.RemoveAll(home)
+			return parseErr
+		}
+		tunConf = cfg.General.Tun
+		executor.ApplyConfig(cfg, true)
+		e.configData = append(e.configData[:0], data...)
+		e.tunConf = tunConf
+		e.configured = true
+	} else {
+		// ApplyConfig marks the tunnel running. Reconnects that reuse the same
+		// profile need to restore that lifecycle state explicitly after Stop.
+		tunnel.OnRunning()
 	}
 	before := tunnelDevices()
 	e.home, e.running = home, true
-	executor.ApplyConfig(cfg, true)
 	// The pinned fork's ApplyConfig leaves listeners alone (docs/macos-tun-poc.md), so
 	// the TUN is created explicitly, and torn down explicitly in Stop.
-	listener.ReCreateTun(cfg.General.Tun, tunnel.Tunnel)
+	listener.ReCreateTun(tunConf, tunnel.Tunnel)
 
 	deadline := time.Now().Add(e.StartTimeout)
 	for {
@@ -174,6 +194,14 @@ func (e *Mihomo) Totals() (int64, int64, error) {
 	return up, down, nil
 }
 
+// ActiveConnections reports tracked proxy flows that are still draining. The
+// privileged acceptance harness records this alongside its idle-window counter
+// so host background traffic is distinguished from an internal routing loop; it
+// does not expose a control-plane listener or alter the production session API.
+func (e *Mihomo) ActiveConnections() int {
+	return len(statistic.DefaultManager.Snapshot().Connections)
+}
+
 // Stop closes the data path: no new flows, every tracked flow closed, device removed.
 func (e *Mihomo) Stop() error {
 	e.mu.Lock()
@@ -186,13 +214,26 @@ func (e *Mihomo) stopLocked() {
 	if !e.running {
 		return
 	}
+	tunnel.OnSuspend()
 	listener.ReCreateTun(LC.Tun{}, tunnel.Tunnel)
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
 		_ = c.Close()
 		return true
 	})
+	// Closing a tracker wakes its socket, but the handler goroutine may need a
+	// scheduling turn to leave the manager. Wait briefly so repeated in-process
+	// Start/Stop cycles do not accumulate old flow workers.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(statistic.DefaultManager.Snapshot().Connections) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	executor.Shutdown()
-	_ = os.RemoveAll(e.home)
+	if e.home != "" {
+		_ = os.RemoveAll(e.home)
+	}
 	e.running, e.home = false, ""
 	// Give the kernel a moment to retire the device and its routes.
 	for range 20 {

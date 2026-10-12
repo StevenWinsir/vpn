@@ -56,6 +56,8 @@ sudo -E python3 scripts/test-native-macos.py --suite tun --allow-network-changes
 | T07 | 停止后没有遗留 utun / 路由 / DNS 变化 |
 | T-CYCLES | 连续 20 次连接/断开，goroutine、文件描述符、utun 不累积 |
 
+T05-loop 对没有活动流的主机使用 64 KiB/6 秒严格预算；macOS 系统范围 TUN 若有其他应用保持流量，则使用 256 KiB/6 秒的有限背景流量预算，并在报告中记录活动流数量。超过预算仍失败，不能用“有背景流量”掩盖持续自循环。
+
 异常中断后的手动恢复见 `docs/macos-tun-poc.md`（`sudo pkill -f asterlink-tuntest`，进程退出即拆除 utun 与路由）。
 
 ## 4. 用 App 端到端试：管理员改节点 → 客户端登录 → 连接 → 看扣量
