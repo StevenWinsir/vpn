@@ -98,7 +98,7 @@ struct AppModel {
         let diagnostics = AppDiagnostics(environment: environment)
         guard let environment else { return AppModel(session: nil, helper: helper, diagnostics: diagnostics) }
 
-        var transport: CoreTransport = XPCCoreTransport(connection: connection)
+        var transport: CoreTransport = XPCCoreTransport(connection: connection, appVersion: diagnostics.appVersion)
         #if DEBUG
         if channel == .development, let path = ProcessInfo.processInfo.environment["ASTERLINK_DEV_CORE"] {
             transport = DirectCoreTransport(executable: URL(fileURLWithPath: path))

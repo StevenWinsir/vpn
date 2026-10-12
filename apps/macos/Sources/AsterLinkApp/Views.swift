@@ -314,6 +314,13 @@ struct SettingsView: View {
                         Button("刷新") { helper.refreshRegistration() }
                         Button("握手") { helper.hello() }.disabled(helper.registration != .enabled || helper.busy)
                     }
+                    HStack {
+                        let idle = HelperUpgradePolicy.mayChangeService(whileState: session.snapshot.state) && !helper.busy
+                        Button("重新安装特权服务") { Task { await helper.reinstall() } }.disabled(!idle)
+                        Button("移除特权服务", role: .destructive) { Task { await helper.unregister() } }
+                            .disabled(!idle || helper.registration == .notRegistered)
+                    }
+                    if let warning = helper.versionWarning { Text(warning).font(.caption).foregroundStyle(.orange) }
                     if let reply = helper.lastReply {
                         Text("Helper \(reply.helperVersion) · 协议 v\(reply.protocolVersion) · 内核运行：\(reply.workerRunning ? "是" : "否")").font(.caption)
                     }

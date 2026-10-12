@@ -180,7 +180,14 @@ jobs:
         run: python3 scripts/test-native-macos.py --suite unit --run-id ci
       - name: Bundle suite (Debug app, ad-hoc signed; Helper -> verified Core handshake + tamper refusals)
         run: python3 scripts/test-native-macos.py --suite bundle --run-id ci
-      - name: TUN proof of concept compiles (it is NOT run in CI: it changes machine routes)
+      - name: Release suite (optimized ad-hoc DMG; signature, entitlements, secrets, manifests, licenses, uninstaller)
+        run: |
+          # Exit 3 = BLOCKED cases (Gatekeeper / notarization need a Developer ID). Only 0 or 3 may pass.
+          set +e
+          python3 scripts/test-native-macos.py --suite release --run-id ci
+          code=$?
+          test $code -eq 0 -o $code -eq 3
+      - name: "TUN proof of concept compiles (it is NOT run in CI, because it changes machine routes)"
         working-directory: native/tunpoc
         run: |
           CGO_ENABLED=0 go vet ./...
@@ -200,3 +207,14 @@ jobs:
           path: |
             artifacts/native-macos/*-report-*/test-report.json
             artifacts/native-macos/*/build-manifest.json
+      - name: Retain the internal (ad-hoc, NOT notarized) installer for manual testing
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asterlink-internal-adhoc-dmg
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/native-macos/ci-release/release/*.dmg
+            artifacts/native-macos/ci-release/release/SHA256SUMS
+            artifacts/native-macos/ci-release/release/release-manifest.json

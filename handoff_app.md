@@ -459,12 +459,12 @@ remaining_bytes = max(0, floor((total_bytes * 1000 - used_units) / 1000))
 **目标：** 非开发人员在正常 macOS 安全机制下安装、授权、使用、升级和卸载，出现问题可定位和回退。
 
 **任务：**
-- [ ] 单入口构建/测试脚本，CI 不再依赖 FlClash/Flutter/Rust；保留网站/后端回归，不混入测试节点或测试开关。
-- [ ] Developer ID 从内到外逐个签名 App/Helper/Core，启用适当 Hardened Runtime，验证没有 `get-task-allow` 和不必要 entitlement。
-- [ ] 公证、staple、DMG 制作，干净用户/测试机 Gatekeeper 安装；不得全局关 SIP/Gatekeeper 或通过删除 quarantine 冒充发布测试。
-- [ ] 升级先断开，处理 Helper 版本不一致；卸载指引清理已注册服务/本产品资源，不动其他 VPN。
-- [ ] 长时运行、20 次启停、至少 10 次睡眠/网络切换、Core硬杀与多实例测试；记录原生崩溃率/内存/CPU基线，不填写猜测指标。
-- [ ] 日志脱敏、隐私/许可证/对应源码交付、密钥轮换、节点计量报警、备份与回滚演练；明确网站的真实支付/MFA/恢复等外部发布阻塞项。
+- [x] 单入口构建/测试脚本，CI 不再依赖 FlClash/Flutter/Rust；保留网站/后端回归，不混入测试节点或测试开关。（`build/package/test-native-macos.py`；`--suite release` 12+ 项；CI macos 作业新增 release 审计与内部 DMG 产物。`native/legacy-core` 是**纯 Go**的旧托管核心，保留它只因为 `test-node-catalog.py` 与 `node-protocols.yml` 的真实 Mihomo 协议/账本回归依赖它——有意保留而非遗漏，迁移到新 Core 前不得删。）
+- [~] Developer ID 从内到外逐个签名 App/Helper/Core，启用适当 Hardened Runtime，验证没有 `get-task-allow` 和不必要 entitlement。（内到外签名、Hardened Runtime、零 entitlement 已对**临时签名包**实测通过；Developer ID 部分 BLOCKED：无账号）
+- [~] 公证、staple、DMG 制作，干净用户/测试机 Gatekeeper 安装。（DMG 制作+校验+挂载审计已通过；`package-native-macos.py --notarize` 与 `release-macos.yml` 已写但**从未运行**；临时签名包不得公证，脚本退出码 3）
+- [x] 升级先断开，处理 Helper 版本不一致；卸载指引清理已注册服务/本产品资源，不动其他 VPN。（`HelperUpgradePolicy` + 设置页"重新安装/移除特权服务"，连接中禁用；`uninstall-asterlink.sh` 沙箱测试；真实 launchd 注销需用户在真机点按验证）
+- [~] 长时运行、20 次启停、至少 10 次睡眠/网络切换、Core硬杀与多实例测试；记录原生崩溃率/内存/CPU基线，不填写猜测指标。（20 次启停阶段 3 已过；`--suite soak` 采样工具已实现并验证"未运行即 BLOCKED"；睡眠/网络切换/硬杀/崩溃率**未执行**）
+- [~] 日志脱敏、隐私/许可证/对应源码交付、密钥轮换、节点计量报警、备份与回滚演练；明确网站的真实支付/MFA/恢复等外部发布阻塞项。（`U-LOGLINT`、许可证与源码归档已实现；密钥轮换/告警/备份写成运维清单，**主动告警与 NODE_ENCRYPTION_KEY 轮换工具未实现**，恢复演练未做；见 `docs/macos-release.md`）
 
 **验收：** 在签名且公证的 Release 包上完成第 9 节矩阵；没有真实数据库/代理密码、测试证书、测试授权、任意 API 覆盖入口；核心版本/哈希与发布 manifest 一致。发布回退停用新 grant/新客户端时不恢复不安全共享模式。
 
@@ -566,7 +566,7 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 | 2 账号与节点接入 | IMPLEMENTED（待 PR 合并 / CI） | Claude | 分支 feat/stage2-login-nodes-keychain | Core v1 登录/session/nodes/config/logout、Keychain、SwiftUI 三页、XPC 命令转发、后端时限 env；真实 Core 二进制 ↔ 真实 API/PostgreSQL 端到端通过；未做：TUN（阶段3）、UI 目测（无桌面截图权限）、真实 demo 服务器登录（未持有测试账号密码） |
 | 3 开发计量闭环 | IN_REVIEW（PR 待 CI；真机 TUN 待验收） | Claude | 分支 worktree-stage3-tun-metering-recovery | Core 引擎/计量/状态机/看门狗、Swift 界面、真实 Core↔API↔PostgreSQL 账本端到端通过；**真机 TUN/休眠/20 次循环未执行**（无 root，且用户在公司 VPN 下，Core 会以 vpn_conflict 拒绝）；仍是 client_reported |
 | 4 节点权威收费闭环 | IN_REVIEW（PR 待 CI；真实商业节点 BLOCKED） | Claude | 分支 worktree-stage4-authoritative-metering | 后端 grant/Agent/预算/契约、`native/nodeagent`（参考 VLESS 转发器）、Core `node_reported`、管理员"节点代理"面板；真实 Core + 真实 Agent + 真实 mTLS + PostgreSQL 回环端到端通过（见 `docs/macos-stage4.md` 第 6 节）；**真实商业节点与真机 TUN 联调未做**；SS 未做 |
-| 5 签名发布与回归 | NOT_STARTED | 待分配 | — | 所有硬门槛及网站外部发布条件 |
+| 5 签名发布与回归 | IN_REVIEW（PR 待 CI；Developer ID/公证 BLOCKED） | Claude | 分支 worktree-stage5-release-handoff | internal-adhoc 优化包+DMG+校验和+清单+许可证/源码归档、`--suite release` 审计、Helper 版本不一致拦截、卸载脚本、soak 采样、release-macos.yml 模板；**未做：Developer ID 签名、公证、Gatekeeper/干净机安装、真机睡眠/硬杀、真实 Helper 注册** |
 
 每次交接追加：
 
@@ -638,6 +638,14 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 - 未完成/限制（详见 `docs/macos-stage4.md` 第 7 节）：① 真实商业节点与真机 TUN+Agent 联调；② SS/Trojan/Reality/XTLS/Mux 无权威适配；③ VLESS UDP 未与 Mihomo 对接；④ 无批量 usage 端点；⑤ 管理员改任一线路仍使所有会话 `profile_changed`（阶段 2 遗留）。
 - 下一步：在你能管理的服务器上部署 Agent 并让节点 YAML 指向它（`docs/macos-stage4.md` 第 3、4 节），断开公司 VPN 后用 App 做真机端到端；通过后进入阶段 5（签名公证与回归）。
 - 回退：见 `docs/macos-stage4.md` 第 8 节。
+
+阶段 5 交接（2026-10-12）：
+- 改动：`scripts/{package-native-macos,collect_licenses,release_suite,soak_suite}.py`、`scripts/uninstall-asterlink.sh`；`build-native-macos.py` 新增 `--internal`（Release 优化+Hardened Runtime+临时签名，开发通道）并把许可证/SOURCE.txt 封入包；`test-native-macos.py` 新增 `release`/`soak` 套件与 `U-LOGLINT`；Swift：`HelperUpgradePolicy`、`XPCCoreTransport` 连接前版本门、设置页重装/移除特权服务；`.github/workflows/{ci,release-macos}.yml`；`docs/macos-release.md`。后端 API/数据库**无变化**。
+- 关键事实：release 通道的 XPC 校验要求 Developer ID + Team ID，所以临时签名包只能走 development 通道——不能为了方便放宽 `SigningPolicy`。
+- 验证（macOS 26.6 / arm64 / Xcode 27.0 / Go 1.26.6）：`--suite unit` 7/7（Swift 43 项）；`--suite release` 13 项：通过 R-BUILD/SIGN/ENT/NOHOOKS/SECRET(+SELF)/PLIST/MANIFEST/LICENSE/DMG/R02-UNINSTALL，R01-GATEKEEPER/R01-STAPLE 为 BLOCKED（预期）；排查中发现并修复了卸载脚本的 bash 多字节变量名 bug、PEM 扫描误报。
+- 未完成：见 `docs/macos-release.md` 第 10 节。许可证缺失的 2 个模块待人工核对。
+- 下一步：用户取得 Apple Developer 账号后按 `docs/macos-release.md` 第 4 节执行；此前可在断开公司 VPN 后做真机连接/扣费验收（第 6 节）。
+- 回退：回退本 PR 即恢复阶段 4 的构建脚本；无数据迁移。
 
 阶段 3 验收补充（2026-10-12）：
 - 真机 SS TUN 已在 macOS 26 / arm64、root、公司 VPN 断开条件下实测：utun、真实 TCP 转发、出口变化、系统 DNS/任意 :53 劫持、IPv6、物理网卡 API 访问、停止清理和 20 次同进程启停通过。
