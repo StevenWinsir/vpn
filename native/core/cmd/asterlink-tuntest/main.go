@@ -424,10 +424,23 @@ func capture() snapshot {
 // temporary-address entries (flags W/L) that the LAN changes on its own.
 func routeLines(args ...string) []string {
 	out, _ := exec.Command("/usr/sbin/netstat", append([]string{"-rn"}, args...)...).Output()
+	return parseRouteLines(string(out))
+}
+
+// parseRouteLines turns the stable four columns of macOS netstat into a sorted
+// comparison set. The Expire column is deliberately omitted: its countdown is
+// expected to change while a test is running. Entries with W (waiting) or L
+// (link-layer/neighbor cache) flags are also omitted because they are maintained
+// asynchronously by the LAN and are not tunnel-owned routes.
+func parseRouteLines(output string) []string {
 	var lines []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 4 || strings.HasPrefix(line, "Routing") || strings.HasPrefix(line, "Internet") || strings.ContainsAny(f[2], "WL") {
+		if len(f) < 4 || f[0] == "Destination" || f[0] == "Routing" || f[0] == "Internet" {
+			continue
+		}
+		flags := strings.ToUpper(f[2])
+		if strings.ContainsAny(flags, "WL") {
 			continue
 		}
 		lines = append(lines, strings.Join(f[:4], " "))

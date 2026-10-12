@@ -653,3 +653,9 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 | 本机ServiceManagement API确实存在 | 已安装Xcode SDK `ServiceManagement.framework/Headers/SMAppService.h`，读取到 daemon 注册、注销和状态API；这不是签名分发测试 |
 
 外部复核入口（本次未联网验证其最新内容）：[Apple SMAppService](https://developer.apple.com/documentation/servicemanagement/smappservice)、[Apple Network Extension](https://developer.apple.com/documentation/networkextension)、[Apple macOS 公证](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)、[Mihomo 源码](https://github.com/MetaCubeX/mihomo)。商业节点适配器以选定服务器的固定版本源码及真实能力测试为准；开源许可最终核对该版本 LICENSE，而不是只引用网页摘要。
+
+阶段 3 验收补充（2026-10-12，路由清理修复后）
+- 修复 `native/core/cmd/asterlink-tuntest` 的 `netstat` 路由快照解析：显式跳过表头，忽略 flags 含 `W`/`L` 的动态邻居/链路缓存项，保留默认路由和 utun 路由；新增 `main_test.go` 覆盖动态邻居过滤与隧道/默认路由保留。
+- 真机验收重新执行：`tun-20261012-routefix`，12 项中 10 pass、2 blocked、0 fail。T01/T01a/T02、DNS system 与任意 :53、T04 IPv6、T05 物理网卡 API、T05-loop、T07 清理、T-CYCLES 20 次全部通过；B-COUNT 与 T03-UDP 因未提供受控下载目标/UDP echo 服务按程序设计保持 BLOCKED。报告：`artifacts/native-macos/tun-20261012-routefix-report-tun/test-report.json`。
+- 回归验证：`go test ./...`、`go test -race ./...`、`scripts/test-native-macos.py --suite unit`（5/5）、`--suite bundle`（6/6）、`scripts/test-native.py`（真实 Core/API/PostgreSQL E2E）全部通过。
+- 仍未验证的产品验收：App 真账号/Helper SMAppService 批准、管理员后台改节点后的 App 端到端、真实睡眠唤醒；这些不阻塞 Core/TUN 阶段代码合并，但在发布前仍需单独验收。共享供应商节点仅作开发测试节点。
