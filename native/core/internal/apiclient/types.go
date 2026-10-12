@@ -27,6 +27,10 @@ type Session struct {
 	LeaseSeconds           int        `json:"lease_seconds"`
 	MeteringSource         string     `json:"metering_source"`
 	RatePermille           int64      `json:"rate_permille"`
+	// Set only for node_reported sessions holding a grant (contract native-v2).
+	GrantID        string     `json:"grant_id,omitempty"`
+	GrantState     string     `json:"grant_state,omitempty"`
+	GrantExpiresAt *time.Time `json:"grant_expires_at,omitempty"`
 }
 
 type User struct {
@@ -59,7 +63,13 @@ type NodeChoice struct {
 	LineType     string `json:"line_type"`
 	RatePermille int64  `json:"rate_permille"`
 	Version      int64  `json:"version"`
+	// MeteringSource is "node_reported" when a node-side agent governs this node; such
+	// a node is only usable through a grant. Empty means the development ledger.
+	MeteringSource string `json:"metering_source,omitempty"`
 }
+
+// MeteringNode marks nodes (and sessions) billed from the forwarder's own counters.
+const MeteringNode = "node_reported"
 
 type Catalog struct {
 	SessionID string       `json:"session_id"`
@@ -76,4 +86,33 @@ type ConfigResponse struct {
 	Session Session      `json:"session"`
 	Nodes   []NodeChoice `json:"nodes"`
 	NodeID  string       `json:"node_id"`
+}
+
+// GrantStatus is the server's view of one grant. YAML and Version are present only when
+// State is "ready"; like ConfigResponse they must be consumed and dropped, never kept.
+type GrantStatus struct {
+	GrantID string   `json:"grant_id"`
+	State   string   `json:"state"`
+	Reason  string   `json:"reason"`
+	YAML    string   `json:"yaml"`
+	Version string   `json:"version"`
+	NodeID  string   `json:"node_id"`
+	Session *Session `json:"session"`
+}
+
+// Grant lifecycle states (contract native-v2).
+const (
+	GrantPending  = "pending"
+	GrantReady    = "ready"
+	GrantRevoking = "revoking"
+	GrantRevoked  = "revoked"
+	GrantExpired  = "expired"
+)
+
+// Capabilities are the server's public, non-secret feature flags.
+type Capabilities struct {
+	ContractVersions   []int    `json:"contract_versions"`
+	MeteringModes      []string `json:"metering_modes"`
+	MinAppVersion      string   `json:"min_app_version"`
+	CorePolicyRevision string   `json:"core_policy_revision"`
 }

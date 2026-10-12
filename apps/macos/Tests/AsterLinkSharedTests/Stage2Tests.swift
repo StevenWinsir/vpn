@@ -94,6 +94,18 @@ final class SnapshotContractTests: XCTestCase {
         XCTAssertTrue(snap.configReady)
     }
 
+    func testNodeReportedSnapshotDecodesAndLabelsTheLine() async throws {
+        let sample = try XCTUnwrap(try snapshotSamples()["connected_node_reported"])
+        let transport = FakeTransport()
+        transport.handler = { _, _, _ in envelope(result: sample) }
+        let snap = try await CoreClient(transport: transport, environment: environment, appVersion: "t").readSnapshot()
+        XCTAssertEqual(snap.metering?.source, "node_reported")
+        XCTAssertEqual(snap.metering?.confirmedRemainingBytes, 1_073_610_752)
+        XCTAssertEqual(snap.nodes.first?.meteringSource, "node_reported")
+        XCTAssertTrue(snap.nodes.first?.isNodeMetered ?? false)
+        XCTAssertFalse(CoreNode(id: "a", name: "n", region: "HK", lineType: "direct", ratePermille: 1000).isNodeMetered)
+    }
+
     func testNodeLabels() {
         let dedicated = CoreNode(id: "a", name: "n", region: "HK", lineType: "dedicated", ratePermille: 1000)
         let ordinary = CoreNode(id: "b", name: "n", region: "JP", lineType: "direct", ratePermille: 500)

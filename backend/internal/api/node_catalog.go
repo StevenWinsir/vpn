@@ -23,12 +23,57 @@ type nodeChoice struct {
 	LineType     string `json:"line_type"`
 	RatePermille int64  `json:"rate_permille"`
 	Version      int64  `json:"version"`
+	// MeteringSource is "node_reported" for nodes governed by an enabled NodeAgent and
+	// omitted otherwise, so catalogs without agents keep their original shape.
+	MeteringSource string `json:"metering_source,omitempty"`
 }
 
 type catalogProfile struct {
 	Data  []byte
 	Nodes []nodeChoice
 	Node  model.Node
+	// Proxy is the decrypted, validated definition of the selected node. It never
+	// leaves the server except through Data (shared mode) or a credentialed grant.
+	Proxy map[string]any
+	// Tag identifies the visible catalog; it is embedded in Data so any catalog edit
+	// changes the profile version (conservative, see handoff_app.md 2.2 item 5).
+	Tag string
+}
+
+const meteringNode = "node_reported"
+const meteringClient = "client_reported"
+
+// agentNodes returns node ids governed by an enabled agent, mapped to the protocols
+// that agent claims to enforce.
+func (s *Server) agentNodes(db *gorm.DB) (map[string][]string, error) {
+	var agents []model.NodeAgent
+	if err := db.Where("enabled = ?", true).Find(&agents).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string, len(agents))
+	for _, a := range agents {
+		var protocols []string
+		if json.Unmarshal([]byte(a.Protocols), &protocols) != nil {
+			protocols = nil
+		}
+		out[a.NodeID] = protocols
+	}
+	return out, nil
+}
+
+// listable decides whether a node appears in a client catalog. Production never
+// lists nodes that no agent governs: their shared credentials cannot be metered.
+func (s *Server) listable(nodeID string, governed map[string][]string) bool {
+	_, ok := governed[nodeID]
+	return ok || s.cfg.DevMetering()
+}
+
+func choiceOf(n model.Node, governed map[string][]string) nodeChoice {
+	choice := nodeChoice{ID: n.ID, Name: n.Name, Region: n.Region, LineType: n.LineType, RatePermille: n.RatePermille, Version: n.Version}
+	if _, ok := governed[n.ID]; ok {
+		choice.MeteringSource = meteringNode
+	}
+	return choice
 }
 
 func (s *Server) catalogRows(db *gorm.DB, enabled bool) ([]catalogRow, error) {
@@ -54,6 +99,10 @@ func (s *Server) catalogProfile(db *gorm.DB, sub *model.Subscription, nodeID str
 	if err != nil {
 		return out, unavailable
 	}
+	governed, err := s.agentNodes(db)
+	if err != nil {
+		return out, unavailable
+	}
 	var selected *catalogRow
 	for i := range rows {
 		row := &rows[i]
@@ -61,10 +110,10 @@ func (s *Server) catalogProfile(db *gorm.DB, sub *model.Subscription, nodeID str
 		if json.Unmarshal([]byte(row.PlanIDs), &plans) != nil {
 			return out, unavailable
 		}
-		if row.LineType == "dedicated" && !sub.AllowDedicated || len(plans) != 0 && !slices.Contains(plans, sub.PlanID) {
+		if row.LineType == "dedicated" && !sub.AllowDedicated || len(plans) != 0 && !slices.Contains(plans, sub.PlanID) || !s.listable(row.ID, governed) {
 			continue
 		}
-		out.Nodes = append(out.Nodes, nodeChoice{row.ID, row.Name, row.Region, row.LineType, row.RatePermille, row.Version})
+		out.Nodes = append(out.Nodes, choiceOf(row.Node, governed))
 		if row.ID == nodeID || nodeID == "" && selected == nil {
 			selected = row
 		}
@@ -80,18 +129,29 @@ func (s *Server) catalogProfile(db *gorm.DB, sub *model.Subscription, nodeID str
 	if err != nil || len(proxies) != 1 || proxies[0]["name"] != selected.Name || selected.RatePermille < 1 || selected.RatePermille > 10000 {
 		return out, unavailable
 	}
+	metadata, _ := json.Marshal(out.Nodes)
+	out.Tag = nativeProfileVersion(metadata)
+	out.Proxy = proxies[0]
+	if out.Data, err = renderProfile(out.Tag, proxies[0]); err != nil {
+		return out, unavailable
+	}
+	out.Node = selected.Node
+	return out, nil
+}
+
+// renderProfile is the single place a client document is produced: one proxy, one
+// select group, one MATCH rule.
+func renderProfile(tag string, proxy map[string]any) ([]byte, error) {
+	name, _ := proxy["name"].(string)
 	profile, err := yaml.Marshal(map[string]any{
-		"mode": "rule", "proxies": proxies,
-		"proxy-groups": []map[string]any{{"name": nodes.GroupName, "type": "select", "proxies": []string{selected.Name}}},
+		"mode": "rule", "proxies": []map[string]any{proxy},
+		"proxy-groups": []map[string]any{{"name": nodes.GroupName, "type": "select", "proxies": []string{name}}},
 		"rules":        []string{"MATCH," + nodes.GroupName},
 	})
 	if err != nil {
-		return out, unavailable
+		return nil, err
 	}
-	metadata, _ := json.Marshal(out.Nodes)
-	out.Data = append([]byte("# catalog: "+nativeProfileVersion(metadata)+"\n"), profile...)
-	out.Node = selected.Node
-	return out, nil
+	return append([]byte("# catalog: "+tag+"\n"), profile...), nil
 }
 
 func sessionRate(sess model.NativeSession) int64 {
@@ -101,7 +161,7 @@ func sessionRate(sess model.NativeSession) int64 {
 	return sess.RatePermille
 }
 
-func (s *Server) catalogMetadata(db *gorm.DB, sub *model.Subscription) ([]model.Node, error) {
+func (s *Server) catalogMetadata(db *gorm.DB, sub *model.Subscription) ([]nodeChoice, error) {
 	// Browser metadata reads must not even load encrypted connection parameters.
 	rows := []catalogRow{}
 	err := db.Table(s.cfg.Schema+".nodes AS n").
@@ -114,16 +174,20 @@ func (s *Server) catalogMetadata(db *gorm.DB, sub *model.Subscription) ([]model.
 	if len(rows) > nodes.MaxNodes {
 		return nil, nodes.ErrInvalid
 	}
-	result := []model.Node{}
+	governed, err := s.agentNodes(db)
+	if err != nil {
+		return nil, err
+	}
+	result := []nodeChoice{}
 	for _, row := range rows {
 		var plans []string
 		if json.Unmarshal([]byte(row.PlanIDs), &plans) != nil {
 			return nil, nodes.ErrInvalid
 		}
-		if row.LineType == "dedicated" && !sub.AllowDedicated || len(plans) != 0 && !slices.Contains(plans, sub.PlanID) {
+		if row.LineType == "dedicated" && !sub.AllowDedicated || len(plans) != 0 && !slices.Contains(plans, sub.PlanID) || !s.listable(row.ID, governed) {
 			continue
 		}
-		result = append(result, row.Node)
+		result = append(result, choiceOf(row.Node, governed))
 	}
 	return result, nil
 }

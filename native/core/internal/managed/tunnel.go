@@ -16,6 +16,9 @@ type connection struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	wg     sync.WaitGroup // in-flight report goroutines
+	// metered: the client ledger (meter) is the renewal writer. False for node-reported
+	// segments, where GET /session renews the lease.
+	metered bool
 }
 
 // abortConnLocked cancels the live segment's workers without waiting. It is used by
@@ -33,7 +36,7 @@ func (m *Manager) classifyLocked() {
 		return
 	}
 	s := m.session
-	if s.CanConnect || s.Reason == "profile_required" || s.Reason == "profile_changed" {
+	if m.readyLocked(*s) {
 		m.state = StateReady
 	} else {
 		m.state = StateBlocked
@@ -122,9 +125,13 @@ func (m *Manager) Connect(ctx context.Context) (Snapshot, error) {
 		return m.snapshotLocked(), nil // already connected: idempotent
 	}
 	selected := m.selected
+	nodeMode := m.nodeReportedLocked(selected)
 	m.mu.Unlock()
 	if selected == "" {
 		return m.Snapshot(), codeError("profile_required")
+	}
+	if nodeMode {
+		return m.connectGranted(ctx, gen, client, token, selected)
 	}
 
 	if err = m.settleIdle(ctx, gen); err != nil {
@@ -237,7 +244,7 @@ func (m *Manager) Connect(ctx context.Context) (Snapshot, error) {
 		return m.Snapshot(), codeError("stale_generation")
 	}
 	monitorCtx, cancel := context.WithCancel(context.Background())
-	conn := &connection{cancel: cancel, done: make(chan struct{})}
+	conn := &connection{cancel: cancel, done: make(chan struct{}), metered: true}
 	m.conn = conn
 	m.state = StateConnected
 	m.lastError = nil
@@ -290,7 +297,7 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 	defer m.stopMu.Unlock()
 
 	m.mu.Lock()
-	gen, conn, mt := m.generation, m.conn, m.meter
+	gen, conn, mt, grant, local := m.generation, m.conn, m.meter, m.grant, m.local
 	active := conn != nil || m.state == StateConnected || m.state == StateConnecting
 	m.conn = nil
 	if active {
@@ -304,6 +311,14 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 	}
 	_ = m.opts.Engine.Stop()
 	m.opts.Egress.Clear()
+
+	// Node-reported: the data path is closed, so the grant can now be revoked at the node.
+	if grant != nil {
+		m.finishGrant(ctx, gen, grant)
+	}
+	if local != nil {
+		local.Idle()
+	}
 
 	var settleErr error
 	if mt != nil {

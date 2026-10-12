@@ -39,7 +39,7 @@ def count_tests(text, pattern):
 
 def suite_unit():
     go_env = dict(os.environ, CGO_ENABLED='0')
-    for case_id, directory in (('U-GO-IPC', 'native/core'), ('U-GO-POLICY', 'shared/nodepolicy')):
+    for case_id, directory in (('U-GO-IPC', 'native/core'), ('U-GO-POLICY', 'shared/nodepolicy'), ('U-GO-NODEAGENT', 'native/nodeagent')):
         result = sh(['go', 'test', '-count=1', '-v', './...'], cwd=ROOT / directory, env=go_env)
         passed = count_tests(result.stdout, r'(?m)^\s*--- PASS')
         failed = count_tests(result.stdout, r'(?m)^\s*--- FAIL')

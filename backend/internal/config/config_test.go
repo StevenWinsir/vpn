@@ -40,6 +40,59 @@ func TestProductionGuard(t *testing.T) {
 	}
 }
 
+func TestProductionAllowsCatalogOnlyThroughAuthoritativeAgents(t *testing.T) {
+	t.Setenv("CLIENT_ALLOW_TEST_ENTITLEMENTS", "false")
+	t.Setenv("CLIENT_PROFILE_DIR", "")
+	for k, v := range map[string]string{"APP_ENV": "production", "DATABASE_HOST": "db.example.invalid", "DATABASE_USER": "test", "DATABASE_NAME": "test", "DATABASE_PASSWORD": "test-only", "JWT_SECRET": strings.Repeat("a", 64), "COOKIE_SECURE": "true", "AUTO_MIGRATE": "false", "TEST_PURCHASE_ENABLED": "false", "DATABASE_SSLMODE": "verify-full", "ALLOWED_ORIGINS": "https://app.example.invalid", "CLIENT_NODE_CATALOG_ENABLED": "true", "NODE_ENCRYPTION_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="} {
+		t.Setenv(k, v)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("catalog without the agent listener accepted in production")
+	}
+	t.Setenv("NODE_AGENT_ADDR", "0.0.0.0:8443")
+	if _, err := Load(); err == nil {
+		t.Fatal("agent listener without mTLS material accepted")
+	}
+	t.Setenv("NODE_AGENT_TLS_CERT_FILE", "/etc/agent/server.pem")
+	t.Setenv("NODE_AGENT_TLS_KEY_FILE", "/etc/agent/server.key")
+	t.Setenv("NODE_AGENT_CLIENT_CA_FILE", "/etc/agent/ca.pem")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DevMetering() || !c.AgentEnabled() {
+		t.Fatal("production must refuse client-reported metering and enable agents")
+	}
+	// Static shared profile files stay forbidden even with agents.
+	t.Setenv("CLIENT_PROFILE_DIR", "/private/profiles")
+	if _, err = Load(); err == nil {
+		t.Fatal("production accepted shared static profiles")
+	}
+	t.Setenv("CLIENT_PROFILE_DIR", "")
+	for key, bad := range map[string]string{"NODE_AGENT_STALE_SECONDS": "1", "NODE_AGENT_SETTLE_GRACE_SECONDS": "5", "GRANT_BUDGET_BYTES": "100", "CLIENT_MIN_APP_VERSION": "one.two"} {
+		t.Setenv(key, bad)
+		if _, err = Load(); err == nil {
+			t.Fatalf("%s=%s accepted", key, bad)
+		}
+		t.Setenv(key, "")
+	}
+	t.Setenv("CLIENT_MIN_APP_VERSION", "1.2.0")
+	if c, err = Load(); err != nil || c.ClientMinAppVersion != "1.2.0" {
+		t.Fatal("valid minimum version rejected")
+	}
+}
+
+func TestVersionComparison(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		less bool
+	}{{"1.1.9", "1.2.0", true}, {"1.2.0", "1.2.0", false}, {"1.2", "1.2.0", false}, {"1.10.0", "1.9.9", false}, {"test", "1.0", true}, {"1.0", "bogus", false}, {"", "0.0.1", true}} {
+		if VersionLess(tc.a, tc.b) != tc.less {
+			t.Fatalf("VersionLess(%q,%q) != %v", tc.a, tc.b, tc.less)
+		}
+	}
+}
+
 func timingBase(t *testing.T) {
 	t.Helper()
 	for k, v := range map[string]string{"APP_ENV": "development", "DATABASE_HOST": "db.example.invalid", "DATABASE_USER": "test", "DATABASE_NAME": "test", "DATABASE_PASSWORD": "test-only", "JWT_SECRET": strings.Repeat("a", 64), "DATABASE_SSLMODE": "disable", "CLIENT_NODE_CATALOG_ENABLED": "false"} {

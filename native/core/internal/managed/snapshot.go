@@ -22,6 +22,8 @@ type NodeView struct {
 	Region       string `json:"region"`
 	LineType     string `json:"line_type"`
 	RatePermille int64  `json:"rate_permille"`
+	// MeteringSource is "node_reported" for nodes billed from the node's own counters.
+	MeteringSource string `json:"metering_source,omitempty"`
 }
 
 type EntitlementView struct {
@@ -109,10 +111,13 @@ func (m *Manager) snapshotLocked() Snapshot {
 		out.User = &UserView{ID: m.user.ID, Email: m.user.Email, Name: m.user.Name, Role: m.user.Role}
 	}
 	for _, node := range m.nodes {
-		out.Nodes = append(out.Nodes, NodeView{ID: node.ID, Name: node.Name, Region: node.Region, LineType: node.LineType, RatePermille: node.RatePermille})
+		out.Nodes = append(out.Nodes, NodeView{ID: node.ID, Name: node.Name, Region: node.Region, LineType: node.LineType, RatePermille: node.RatePermille, MeteringSource: node.MeteringSource})
 	}
 	if m.profile != nil {
 		out.ConfigReady, out.ProfileVersion = true, m.profile.Version
+	} else if m.selectedNodeReportedLocked() {
+		// Nothing to fetch ahead of time: the credential is minted when connecting.
+		out.ConfigReady = true
 	}
 	if s := m.session; s != nil {
 		now := m.opts.Now()
@@ -139,7 +144,19 @@ func (m *Manager) snapshotLocked() Snapshot {
 			ConfirmedRemainingBytes: s.RemainingBytes, EstimatedRemainingBytes: s.RemainingBytes, RatePermille: s.RatePermille,
 			History: []meter.Sample{},
 		}
-		if m.meter != nil {
+		if m.local != nil && s.MeteringSource == apiclient.MeteringNode {
+			// The node is the ledger. Show what this machine measured (speed, session
+			// bytes) next to the server's own balance, never a client-side "confirmation".
+			v := m.local.View()
+			view.UploadBytes, view.DownloadBytes = v.UploadBytes, v.DownloadBytes
+			view.ConfirmedUploadBytes, view.ConfirmedDownloadBytes = 0, 0
+			view.ConfirmedRemainingBytes, view.EstimatedRemainingBytes = s.RemainingBytes, min(s.RemainingBytes, v.EstimatedRemaining)
+			view.RatePermille, view.Pending, view.LastSequence = s.RatePermille, false, 0
+			view.UploadRate, view.DownloadRate = v.UploadRate, v.DownloadRate
+			if v.History != nil {
+				view.History = v.History
+			}
+		} else if m.meter != nil {
 			v := m.meter.View()
 			view.UploadBytes, view.DownloadBytes = v.UploadBytes, v.DownloadBytes
 			view.LastSequence = v.LastSequence

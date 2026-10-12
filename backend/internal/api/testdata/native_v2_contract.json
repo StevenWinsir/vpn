@@ -1,0 +1,328 @@
+{
+  "contract_version": 2,
+  "notes": [
+    "Capability-negotiated addition to native-v1: v1 login/session/nodes/config/traffic/logout are unchanged.",
+    "A session binds to exactly one metering source: client_reported (/config + /traffic) or node_reported (grant).",
+    "node_reported sessions are billed only from node usage; /traffic is refused with metering_source_mismatch.",
+    "Grant credentials are minted by the server per user and per grant; the shared node secret is never delivered.",
+    "Usage counters are cumulative per (grant, epoch). An epoch is one agent process lifetime and starts at sequence 1."
+  ],
+  "cases": {
+    "capabilities": {
+      "method": "GET",
+      "path": "/capabilities",
+      "status": 200,
+      "response": {
+        "contract_versions": [
+          1,
+          2
+        ],
+        "metering_modes": [
+          "client_reported",
+          "node_reported"
+        ],
+        "min_app_version": "",
+        "core_policy_revision": "70f0570405c3c2c47bb113b88db95006d239b346"
+      }
+    },
+    "node_choice_governed": {
+      "method": "GET",
+      "path": "/nodes",
+      "status": 200,
+      "response": {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "revision": "0000000000000000000000000000000000000000000000000000000000000000",
+        "reason": "",
+        "nodes": [
+          {
+            "id": "66666666-6666-4666-8666-666666666666",
+            "name": "Fixture-Node",
+            "region": "HK",
+            "line_type": "dedicated",
+            "rate_permille": 500,
+            "version": 1,
+            "metering_source": "node_reported"
+          }
+        ]
+      }
+    },
+    "grant_create": {
+      "method": "POST",
+      "path": "/grants",
+      "headers": {
+        "Idempotency-Key": "fixture-key-0001"
+      },
+      "status": 202,
+      "request": {
+        "node_id": "66666666-6666-4666-8666-666666666666"
+      },
+      "response": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "state": "pending",
+        "reason": "grant_pending"
+      }
+    },
+    "grant_pending": {
+      "method": "GET",
+      "path": "/grants/55555555-5555-4555-8555-555555555555",
+      "status": 202,
+      "response": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "state": "pending",
+        "reason": "grant_pending"
+      }
+    },
+    "grant_ready": {
+      "method": "GET",
+      "path": "/grants/55555555-5555-4555-8555-555555555555",
+      "status": 200,
+      "response": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "state": "ready",
+        "yaml": "# catalog: 0000000000000000000000000000000000000000000000000000000000000000\nmode: rule\nproxies:\n    - name: Fixture-Node\n      port: 9\n      server: 127.0.0.1\n      type: vless\n      udp: true\n      uuid: 44444444-4444-4444-8444-444444444444\nproxy-groups:\n    - name: VPN\n      proxies:\n        - Fixture-Node\n      type: select\nrules:\n    - MATCH,VPN\n",
+        "version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+        "node_id": "66666666-6666-4666-8666-666666666666",
+        "session": {
+          "server_time": "2030-01-01T00:00:00Z",
+          "subscription_expires_at": "2030-01-01T00:10:00Z",
+          "authorization_expires_at": "2030-01-01T00:01:30Z",
+          "session_idle_timeout_seconds": 180,
+          "profile_version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+          "session_id": "11111111-1111-4111-8111-111111111111",
+          "expires_at": "2030-01-01T01:00:00Z",
+          "can_connect": true,
+          "reason": "",
+          "remaining_bytes": 1048576,
+          "total_bytes": 1048576,
+          "used_units": 0,
+          "plan_name": "VIP",
+          "last_sequence": 0,
+          "upload_bytes": 0,
+          "download_bytes": 0,
+          "report_interval_seconds": 60,
+          "lease_seconds": 90,
+          "metering_source": "node_reported",
+          "rate_permille": 500,
+          "grant_id": "55555555-5555-4555-8555-555555555555",
+          "grant_state": "ready",
+          "grant_expires_at": "2030-01-01T00:01:30Z"
+        }
+      }
+    },
+    "grant_revoke": {
+      "method": "POST",
+      "path": "/grants/55555555-5555-4555-8555-555555555555/revoke",
+      "status": 200,
+      "request": {},
+      "response": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "state": "revoking"
+      }
+    },
+    "grant_revoked": {
+      "method": "GET",
+      "path": "/grants/55555555-5555-4555-8555-555555555555",
+      "status": 200,
+      "response": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "state": "revoked"
+      }
+    },
+    "session_node_reported": {
+      "method": "GET",
+      "path": "/session",
+      "status": 200,
+      "response": {
+        "server_time": "2030-01-01T00:00:00Z",
+        "subscription_expires_at": "2030-01-01T00:10:00Z",
+        "authorization_expires_at": "2030-01-01T00:01:30Z",
+        "session_idle_timeout_seconds": 180,
+        "profile_version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "expires_at": "2030-01-01T01:00:00Z",
+        "can_connect": true,
+        "reason": "",
+        "remaining_bytes": 1048576,
+        "total_bytes": 1048576,
+        "used_units": 0,
+        "plan_name": "VIP",
+        "last_sequence": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "report_interval_seconds": 60,
+        "lease_seconds": 90,
+        "metering_source": "node_reported",
+        "rate_permille": 500,
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "grant_state": "ready",
+        "grant_expires_at": "2030-01-01T00:01:30Z"
+      }
+    },
+    "agent_sync_request": {
+      "method": "POST",
+      "path": "/internal/v1/node-agents/sync",
+      "request": {
+        "epoch": 3,
+        "agent_version": "1.0.0",
+        "protocols": [
+          "vless"
+        ],
+        "installed": [
+          "55555555-5555-4555-8555-555555555555"
+        ],
+        "removed": []
+      }
+    },
+    "agent_sync_response": {
+      "status": 200,
+      "response": {
+        "server_time": "2030-01-01T00:00:00Z",
+        "node_id": "66666666-6666-4666-8666-666666666666",
+        "lease_seconds": 90,
+        "grants": [
+          {
+            "grant_id": "55555555-5555-4555-8555-555555555555",
+            "action": "install",
+            "protocol": "vless",
+            "credential": {
+              "uuid": "44444444-4444-4444-8444-444444444444"
+            },
+            "rate_permille": 500,
+            "expires_at": "2030-01-01T00:01:30Z",
+            "epoch_budget_bytes": 536870912
+          },
+          {
+            "grant_id": "77777777-7777-4777-8777-777777777777",
+            "action": "keep",
+            "rate_permille": 1000,
+            "expires_at": "2030-01-01T00:01:30Z",
+            "epoch_budget_bytes": 1048576
+          },
+          {
+            "grant_id": "88888888-8888-4888-8888-888888888888",
+            "action": "revoke",
+            "epoch_budget_bytes": 0
+          }
+        ]
+      }
+    },
+    "agent_usage_request": {
+      "method": "POST",
+      "path": "/internal/v1/node-agents/usage",
+      "request": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "epoch": 3,
+        "sequence": 1,
+        "upload_bytes": 20971520,
+        "download_bytes": 83886080,
+        "final": false
+      }
+    },
+    "agent_usage_response": {
+      "status": 200,
+      "response": {
+        "replayed": false,
+        "state": "ready",
+        "epoch": 3,
+        "sequence": 1,
+        "epoch_budget_bytes": 432013312
+      }
+    }
+  },
+  "errors": {
+    "agent_unavailable": {
+      "status": 503,
+      "where": "POST /grants"
+    },
+    "metering_source_mismatch": {
+      "status": 409,
+      "where": "POST /traffic, GET /config, POST /grants"
+    },
+    "client_upgrade_required": {
+      "status": 426,
+      "where": "POST /grants, GET /config, POST /traffic (production)"
+    },
+    "grant_expired": {
+      "status": 410,
+      "where": "GET /grants/:id; session reason"
+    },
+    "grant_not_found": {
+      "status": 404,
+      "where": "GET /grants/:id, POST /grants/:id/revoke, POST /usage"
+    },
+    "idempotency_conflict": {
+      "status": 409,
+      "where": "POST /grants"
+    },
+    "invalid_idempotency_key": {
+      "status": 400,
+      "where": "POST /grants"
+    },
+    "quota_exhausted": {
+      "status": 403,
+      "where": "POST /grants"
+    },
+    "profile_changed": {
+      "status": 409,
+      "where": "GET /grants/:id"
+    },
+    "agent_required": {
+      "status": 401,
+      "where": "agent API (no client certificate)"
+    },
+    "agent_unknown": {
+      "status": 401,
+      "where": "agent API (certificate not registered or disabled)"
+    },
+    "invalid_agent_sync": {
+      "status": 400,
+      "where": "POST /sync"
+    },
+    "agent_epoch_stale": {
+      "status": 409,
+      "where": "POST /sync, POST /usage"
+    },
+    "usage_epoch_unknown": {
+      "status": 409,
+      "where": "POST /usage"
+    },
+    "usage_sequence": {
+      "status": 409,
+      "where": "POST /usage"
+    },
+    "usage_regression": {
+      "status": 409,
+      "where": "POST /usage"
+    },
+    "usage_conflict": {
+      "status": 409,
+      "where": "POST /usage"
+    },
+    "usage_closed": {
+      "status": 409,
+      "where": "POST /usage"
+    },
+    "usage_overflow": {
+      "status": 409,
+      "where": "POST /usage"
+    },
+    "invalid_usage": {
+      "status": 400,
+      "where": "POST /usage"
+    },
+    "agent_service_unavailable": {
+      "status": 503,
+      "where": "agent API"
+    }
+  },
+  "states": {
+    "grant_pending": "state pending: created, waiting for the node to confirm installation (HTTP 202, reason grant_pending)",
+    "grant_states": [
+      "pending",
+      "ready",
+      "revoking",
+      "revoked",
+      "expired"
+    ]
+  }
+}

@@ -97,19 +97,21 @@ type snapshotView struct {
 		ID, Name, Region string
 		LineType         string `json:"line_type"`
 		RatePermille     int64  `json:"rate_permille"`
+		MeteringSource   string `json:"metering_source"`
 	} `json:"nodes"`
 	SelectedNodeID  string `json:"selected_node_id"`
 	CatalogRevision string `json:"catalog_revision"`
 	ConfigReady     bool   `json:"config_ready"`
 	TunnelHealth    string `json:"tunnel_health"`
 	Metering        *struct {
-		UploadBytes             int64 `json:"upload_bytes"`
-		DownloadBytes           int64 `json:"download_bytes"`
-		LastSequence            int64 `json:"last_sequence"`
-		ConfirmedRemainingBytes int64 `json:"confirmed_remaining_bytes"`
-		EstimatedRemaining      int64 `json:"estimated_remaining_bytes"`
-		RatePermille            int64 `json:"rate_permille"`
-		Pending                 bool  `json:"pending"`
+		UploadBytes             int64  `json:"upload_bytes"`
+		DownloadBytes           int64  `json:"download_bytes"`
+		LastSequence            int64  `json:"last_sequence"`
+		Source                  string `json:"source"`
+		ConfirmedRemainingBytes int64  `json:"confirmed_remaining_bytes"`
+		EstimatedRemaining      int64  `json:"estimated_remaining_bytes"`
+		RatePermille            int64  `json:"rate_permille"`
+		Pending                 bool   `json:"pending"`
 	} `json:"metering"`
 	LastError   *struct{ Code, Message string } `json:"last_error"`
 	ActionError *struct{ Code, Message string } `json:"action_error"`

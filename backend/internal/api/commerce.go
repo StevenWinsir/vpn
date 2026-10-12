@@ -169,12 +169,16 @@ func (s *Server) bootstrap(c *gin.Context) {
 	}
 	nodes := []model.Node{}
 	if s.cfg.ClientNodeCatalog {
-		nodes, err = s.catalogMetadata(s.database(c), sub)
-		if err != nil {
+		choices, catalogErr := s.catalogMetadata(s.database(c), sub)
+		if catalogErr != nil {
 			fail(c, 503, "database_unavailable", "节点信息暂时不可用")
 			return
 		}
-		c.JSON(200, gin.H{"entitlement_active": true, "expires_at": sub.ExpiresAt, "is_test": sub.IsTest, "nodes": nodes, "proxy_service_ready": false, "metering_connected": true, "metering_source": "client_reported", "message": "节点目录已接入；客户端需单独登录授权，尚无节点侧强制配额"})
+		if !s.cfg.DevMetering() {
+			c.JSON(200, gin.H{"entitlement_active": true, "expires_at": sub.ExpiresAt, "is_test": sub.IsTest, "nodes": choices, "proxy_service_ready": false, "metering_connected": true, "metering_source": meteringNode, "message": "节点目录已接入；代理凭据由节点侧按用户授权并独立计量"})
+			return
+		}
+		c.JSON(200, gin.H{"entitlement_active": true, "expires_at": sub.ExpiresAt, "is_test": sub.IsTest, "nodes": choices, "proxy_service_ready": false, "metering_connected": true, "metering_source": "client_reported", "message": "节点目录已接入；客户端需单独登录授权，尚无节点侧强制配额"})
 		return
 	}
 	query := s.database(c).Where("enabled = ?", true)

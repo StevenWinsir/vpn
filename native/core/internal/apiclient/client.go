@@ -86,6 +86,10 @@ func New(base *url.URL) *Client {
 func (c *Client) CloseIdle() { c.http.CloseIdleConnections() }
 
 func (c *Client) do(ctx context.Context, timeout time.Duration, method, path string, query url.Values, token string, in, out any) error {
+	return c.doWith(ctx, timeout, method, path, query, token, nil, in, out)
+}
+
+func (c *Client) doWith(ctx context.Context, timeout time.Duration, method, path string, query url.Values, token string, headers map[string]string, in, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	target := *c.base
@@ -110,6 +114,9 @@ func (c *Client) do(ctx context.Context, timeout time.Duration, method, path str
 	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	for name, value := range headers {
+		request.Header.Set(name, value)
 	}
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -243,4 +250,39 @@ func (c *Client) Traffic(ctx context.Context, token string, in Counters) (Sessio
 
 func (c *Client) Logout(ctx context.Context, token string) error {
 	return c.do(ctx, RequestTimeout, http.MethodPost, "/logout", nil, token, struct{}{}, nil)
+}
+
+// Capabilities reads the public feature flags (no authentication).
+func (c *Client) Capabilities(ctx context.Context) (Capabilities, error) {
+	var out Capabilities
+	err := c.do(ctx, RequestTimeout, http.MethodGet, "/capabilities", nil, "", nil, &out)
+	return out, err
+}
+
+// CreateGrant asks for a per-user credential on a node-reported node. The idempotency
+// key makes a retry after a lost reply return the same grant instead of a second one.
+func (c *Client) CreateGrant(ctx context.Context, token, nodeID, key string) (GrantStatus, error) {
+	var out GrantStatus
+	err := c.doWith(ctx, RequestTimeout, http.MethodPost, "/grants", nil, token, map[string]string{"Idempotency-Key": key}, map[string]string{"node_id": nodeID}, &out)
+	if err == nil && out.GrantID == "" {
+		return GrantStatus{}, &Error{Code: "bad_response"}
+	}
+	return out, err
+}
+
+// Grant polls one grant. A pending grant has no credential yet.
+func (c *Client) Grant(ctx context.Context, token, id string) (GrantStatus, error) {
+	var out GrantStatus
+	err := c.do(ctx, RequestTimeout, http.MethodGet, "/grants/"+url.PathEscape(id), nil, token, nil, &out)
+	if err == nil && out.GrantID != id {
+		return GrantStatus{}, &Error{Code: "bad_response"}
+	}
+	return out, err
+}
+
+// RevokeGrant ends a grant. It is idempotent on the server.
+func (c *Client) RevokeGrant(ctx context.Context, token, id string) (GrantStatus, error) {
+	var out GrantStatus
+	err := c.do(ctx, RequestTimeout, http.MethodPost, "/grants/"+url.PathEscape(id)+"/revoke", nil, token, struct{}{}, &out)
+	return out, err
 }

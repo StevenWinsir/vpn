@@ -23,6 +23,7 @@ import {
 } from '@mantine/core';
 import { api, message } from '@/lib/api';
 import type { Plan } from '@/lib/types';
+import { AdminAgentsPanel } from './admin-agents-panel';
 import { useAuth } from './providers';
 import { RequireAuth } from './require-auth';
 
@@ -283,8 +284,8 @@ function NodeManager() {
           </Button>
         </Group>
       </Group>
-      <Alert color="yellow" title="开发联调计费，不是服务端强制配额">
-        当前流量仅由官方客户端上报，后端按节点倍率记账。共享代理密码仍可能被提取；即使保留客户端计费，服务节点也需要每用户鉴权与到期撤销。客户端被篡改后的少报无法仅靠请求签名杜绝。普通线路不是本地
+      <Alert color="yellow" title="未绑定节点代理的线路仍是开发联调计费">
+        没有节点代理的线路，流量仅由官方客户端上报，共享代理密码仍可能被提取，少报无法仅靠请求签名杜绝，不能用于收费。为线路登记并上线节点代理后，该线路改由节点实测计费、按用户发放独立凭据并由节点强制撤销与到期。普通线路不是本地
         DIRECT 绕过。
       </Alert>
       {error && (
@@ -380,6 +381,7 @@ function NodeManager() {
           </Table.ScrollContainer>
         )}
       </Paper>
+      <AdminAgentsPanel nodes={nodes.map((node) => ({ id: node.id, name: node.name }))} />
       <Modal
         opened={deleteTarget !== null}
         onClose={closeDelete}
