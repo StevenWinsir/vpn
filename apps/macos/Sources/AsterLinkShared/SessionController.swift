@@ -172,10 +172,13 @@ public final class SessionController {
         defer { busy = false }
         // Closing the data path also acknowledges the last traffic batch, which can take a
         // few seconds on a slow network; the Core reports any problem in `lastError`.
-        if let updated = try? await client.disconnect() {
+        do {
+            let updated = try await client.disconnect()
             apply(updated)
             message = updated.lastError?.message
-        }
+        } catch let error as CoreCommandError where error.code == HelperErrorCode.workerFailed.rawValue {
+            workerLost()
+        } catch {}
     }
 
     private func run(_ action: @escaping () async throws -> CoreActionReply) async {
@@ -185,6 +188,8 @@ public final class SessionController {
             let reply = try await action()
             apply(reply.snapshot)
             message = reply.actionError?.message
+        } catch let error as CoreCommandError where error.code == HelperErrorCode.workerFailed.rawValue {
+            workerLost()
         } catch let error as CoreCommandError where error.code == "stale_generation" {
             if let latest = try? await client.readSnapshot() { apply(latest) }
             message = error.message
@@ -219,9 +224,21 @@ public final class SessionController {
             let latest = try await client.readSnapshot()
             serviceProblem = nil
             apply(latest)
+        } catch let error as CoreCommandError where error.code == HelperErrorCode.workerFailed.rawValue {
+            workerLost()
         } catch {
             serviceProblem = Self.describe(error)
         }
+    }
+
+    /// The Helper reported that the Core exited or its pipe broke. The session, token and
+    /// tunnel lived only in that process, so nothing is resumed: the user signs in online
+    /// again, which starts a fresh Core (handoff_app.md section 6.3).
+    private func workerLost() {
+        stopPolling()
+        phase = .signedOut
+        snapshot = .signedOut
+        message = "内核已意外退出，连接已停止，请重新登录"
     }
 
     private func apply(_ latest: CoreSnapshot) {

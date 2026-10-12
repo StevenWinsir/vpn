@@ -410,6 +410,35 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.snapshot.state, .blocked)
     }
 
+    func testLostWorkerSignsOutAndNextLoginStartsAFreshCore() async {
+        let transport = FakeTransport()
+        let lost = Counter()
+        transport.handler = { [self] command, _, _ in
+            switch command {
+            case "login": return reply(ready)
+            case "connect":
+                lost.logins += 1
+                return HelperCommandPolicy.failureReply(code: HelperErrorCode.workerFailed.rawValue, message: "worker connection lost")
+            default: return envelope(result: ready)
+            }
+        }
+        let controller = makeController(transport)
+        await controller.signIn(email: "fixture@example.invalid", password: "pw", remember: false)
+        await controller.connect()
+        XCTAssertEqual(lost.logins, 1)
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertEqual(controller.snapshot.state, .signedOut)
+        XCTAssertEqual(controller.message, "内核已意外退出，连接已停止，请重新登录")
+        // A dead Core is never driven again: no further command until the user signs in.
+        let sent = transport.commands.count
+        await controller.connect()
+        try? await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(transport.commands.count, sent)
+        await controller.signIn(email: "fixture@example.invalid", password: "pw", remember: false)
+        XCTAssertEqual(controller.phase, .signedIn)
+        XCTAssertEqual(transport.commands.last, "login")
+    }
+
     func testWebsiteLinksPointAtConfiguredSite() async {
         let controller = makeController(FakeTransport())
         XCTAssertEqual(controller.plansURL.absoluteString, "https://test.hyshentou.cn/plans")

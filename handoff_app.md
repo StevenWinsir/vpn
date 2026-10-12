@@ -681,3 +681,10 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 - 真机验收重新执行：`tun-20261012-routefix`，12 项中 10 pass、2 blocked、0 fail。T01/T01a/T02、DNS system 与任意 :53、T04 IPv6、T05 物理网卡 API、T05-loop、T07 清理、T-CYCLES 20 次全部通过；B-COUNT 与 T03-UDP 因未提供受控下载目标/UDP echo 服务按程序设计保持 BLOCKED。报告：`artifacts/native-macos/tun-20261012-routefix-report-tun/test-report.json`。
 - 回归验证：`go test ./...`、`go test -race ./...`、`scripts/test-native-macos.py --suite unit`（5/5）、`--suite bundle`（6/6）、`scripts/test-native.py`（真实 Core/API/PostgreSQL E2E）全部通过。
 - 仍未验证的产品验收：App 真账号/Helper SMAppService 批准、管理员后台改节点后的 App 端到端、真实睡眠唤醒；这些不阻塞 Core/TUN 阶段代码合并，但在发布前仍需单独验收。共享供应商节点仅作开发测试节点。
+
+真机 App 连接故障修复（2026-10-12）
+- 现象：DMG 安装后登录成功，选节点点"连接"先报 `worker connection lost`，再点报 `worker not running`。
+- 根因：固定版 Mihomo 的 `log` 包在 `init()` 里 `logrus.SetOutput(os.Stdout)`，而 `asterlink-core` 的 stdout 正是 Helper↔Core 的私有 IPC 帧管道。连接时 `ParseWithBytes`/`ApplyConfig`/TUN 打出的 `time="…" level=info …` 进入帧流，Helper 把 `"time"` 读成约 1.9 GB 的长度头 → 帧解析失败 → `worker connection lost` 并杀掉 Core；之后 App 仍显示已登录，再点即 `worker not running`。端到端测试用 `fakeengine`、`asterlink-tuntest` 的 stdout 不是 IPC，所以此前未暴露。产物目录旁边那个单独的 `asterlink-core` 与 App 包内的不是同一文件，Helper 只用包内经哈希/签名校验的副本，与本故障无关。
+- 修复：`native/core/cmd/asterlink-core/main.go` 启动即把 stdout 管道 dup 到私有描述符专供 IPC，并把 fd 1 指向 stderr（Helper 丢弃），任何库写 stdout 都不再污染帧；`main_test.go` 在子进程里用真实 Mihomo logger 验证管道只含帧（旧代码复现 `frame exceeds limit: 1953066341`）。Swift `SessionController` 收到 Helper 的 `worker_failed` 时停止轮询、回到登录页并提示"内核已意外退出，连接已停止，请重新登录"，重新登录会启动全新 Core，不复用旧授权。
+- 验证：`go test -race ./...`（native/core）、`--suite unit` 7/7（Swift 44）、`--suite bundle` 6/6、`scripts/test-native.py` 全绿；internal 包 `macmini-ipcfix-20261012` 的 `--suite release` 10 pass / 2 blocked（预期）/ 1 fail（R02-UNINSTALL：本机 AsterLink 正在运行，脚本按设计拒绝，非代码问题）。
+- 待用户真机：断开公司 VPN，退出旧 App，安装新 DMG（或在设置页"重新安装特权服务"），登录→选节点→连接。
