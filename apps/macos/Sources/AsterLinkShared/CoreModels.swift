@@ -71,6 +71,15 @@ public struct CoreEntitlement: Codable, Sendable, Equatable {
     }
 }
 
+/// One second of throughput for the live chart.
+public struct CoreRateSample: Codable, Sendable, Equatable {
+    public var upload: Int64
+    public var download: Int64
+}
+
+/// Physical proxy bytes and billing are deliberately separate: `uploadBytes`/`downloadBytes`
+/// are what the tunnel carried (confirmed + not yet acknowledged); the balance is shown both
+/// as the server's confirmed figure and as an estimate that already subtracts unreported use.
 public struct CoreMetering: Codable, Sendable, Equatable {
     public var source: String
     public var uploadBytes: Int64
@@ -78,11 +87,60 @@ public struct CoreMetering: Codable, Sendable, Equatable {
     public var lastSequence: Int64
     public var uploadBytesPerSecond: Int64
     public var downloadBytesPerSecond: Int64
+    public var confirmedUploadBytes: Int64
+    public var confirmedDownloadBytes: Int64
+    public var confirmedRemainingBytes: Int64
+    public var estimatedRemainingBytes: Int64
+    public var ratePermille: Int64
+    public var pending: Bool
+    public var history: [CoreRateSample]
 
     enum CodingKeys: String, CodingKey {
         case source, uploadBytes = "upload_bytes", downloadBytes = "download_bytes", lastSequence = "last_sequence"
         case uploadBytesPerSecond = "upload_bytes_per_second", downloadBytesPerSecond = "download_bytes_per_second"
+        case confirmedUploadBytes = "confirmed_upload_bytes", confirmedDownloadBytes = "confirmed_download_bytes"
+        case confirmedRemainingBytes = "confirmed_remaining_bytes", estimatedRemainingBytes = "estimated_remaining_bytes"
+        case ratePermille = "rate_permille", pending, history
     }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = try c.decode(String.self, forKey: .source)
+        uploadBytes = try c.decode(Int64.self, forKey: .uploadBytes)
+        downloadBytes = try c.decode(Int64.self, forKey: .downloadBytes)
+        lastSequence = try c.decode(Int64.self, forKey: .lastSequence)
+        uploadBytesPerSecond = try c.decode(Int64.self, forKey: .uploadBytesPerSecond)
+        downloadBytesPerSecond = try c.decode(Int64.self, forKey: .downloadBytesPerSecond)
+        // Added in stage 3; an older Core simply omits them.
+        confirmedUploadBytes = try c.decodeIfPresent(Int64.self, forKey: .confirmedUploadBytes) ?? uploadBytes
+        confirmedDownloadBytes = try c.decodeIfPresent(Int64.self, forKey: .confirmedDownloadBytes) ?? downloadBytes
+        confirmedRemainingBytes = try c.decodeIfPresent(Int64.self, forKey: .confirmedRemainingBytes) ?? 0
+        estimatedRemainingBytes = try c.decodeIfPresent(Int64.self, forKey: .estimatedRemainingBytes) ?? confirmedRemainingBytes
+        ratePermille = try c.decodeIfPresent(Int64.self, forKey: .ratePermille) ?? 1000
+        pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+        history = try c.decodeIfPresent([CoreRateSample].self, forKey: .history) ?? []
+    }
+
+    public init(source: String, uploadBytes: Int64 = 0, downloadBytes: Int64 = 0, lastSequence: Int64 = 0,
+                uploadBytesPerSecond: Int64 = 0, downloadBytesPerSecond: Int64 = 0, confirmedRemainingBytes: Int64 = 0,
+                estimatedRemainingBytes: Int64 = 0, ratePermille: Int64 = 1000, pending: Bool = false, history: [CoreRateSample] = []) {
+        self.source = source
+        self.uploadBytes = uploadBytes
+        self.downloadBytes = downloadBytes
+        self.lastSequence = lastSequence
+        self.uploadBytesPerSecond = uploadBytesPerSecond
+        self.downloadBytesPerSecond = downloadBytesPerSecond
+        self.confirmedUploadBytes = uploadBytes
+        self.confirmedDownloadBytes = downloadBytes
+        self.confirmedRemainingBytes = confirmedRemainingBytes
+        self.estimatedRemainingBytes = estimatedRemainingBytes
+        self.ratePermille = ratePermille
+        self.pending = pending
+        self.history = history
+    }
+
+    /// Proxy bytes the server has not acknowledged yet.
+    public var unreportedBytes: Int64 { max(0, uploadBytes - confirmedUploadBytes) + max(0, downloadBytes - confirmedDownloadBytes) }
 }
 
 public struct CoreSnapshot: Codable, Sendable, Equatable {

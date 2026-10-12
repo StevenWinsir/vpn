@@ -9,12 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"asterlink/core/internal/network"
 )
 
 const (
@@ -64,8 +65,10 @@ type Client struct {
 // New builds a client with its own transport: no system proxy, no redirects, TLS 1.2+.
 func New(base *url.URL) *Client {
 	transport := &http.Transport{
-		Proxy:                 nil,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		Proxy: nil,
+		// While the tunnel is up this pins sockets to the physical interface; otherwise
+		// it is a plain dial. Either way the Core's API calls never ride the paid node.
+		DialContext:           network.Default.DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: WatchTimeout,
@@ -214,6 +217,28 @@ func (c *Client) Config(ctx context.Context, token, nodeID string, lastSequence 
 	var out ConfigResponse
 	err := c.do(ctx, RequestTimeout, http.MethodGet, "/config", query, token, nil, &out)
 	return out, err
+}
+
+// Counters is one cumulative traffic report (handoff_app.md 5.1, 7.1).
+type Counters struct {
+	Sequence      int64 `json:"sequence"`
+	UploadBytes   int64 `json:"upload_bytes"`
+	DownloadBytes int64 `json:"download_bytes"`
+}
+
+// Traffic posts one cumulative report. The server acknowledges a repeated identical
+// batch with replayed=true and never charges it twice; a different body under an
+// already-used sequence is refused as traffic_conflict.
+func (c *Client) Traffic(ctx context.Context, token string, in Counters) (Session, bool, error) {
+	var out struct {
+		Session  Session `json:"session"`
+		Replayed bool    `json:"replayed"`
+	}
+	err := c.do(ctx, RequestTimeout, http.MethodPost, "/traffic", nil, token, in, &out)
+	if err == nil && out.Session.SessionID == "" {
+		return Session{}, false, &Error{Code: "bad_response"}
+	}
+	return out.Session, out.Replayed, err
 }
 
 func (c *Client) Logout(ctx context.Context, token string) error {

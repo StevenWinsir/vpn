@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"asterlink/core/internal/apiclient"
+	"asterlink/core/internal/network"
 )
 
 const (
@@ -60,7 +61,14 @@ type fakeAPI struct {
 	loginHits    atomic.Int32
 	logoutHits   atomic.Int32
 	configHits   atomic.Int32
+	trafficHits  atomic.Int32
 	longPoll     time.Duration
+
+	// Ledger state for /traffic.
+	trafficErr *apiError
+	loseAcks   int // apply the next n batches, then fail the reply (a lost acknowledgement)
+	reports    map[int64]apiclient.Counters
+	bodies     []apiclient.Counters
 }
 
 type apiError struct {
@@ -69,7 +77,7 @@ type apiError struct {
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
-	f := &fakeAPI{t: t, password: "right-password", longPoll: 50 * time.Millisecond, configYAML: profileYAML, revision: 1}
+	f := &fakeAPI{t: t, password: "right-password", longPoll: 50 * time.Millisecond, configYAML: profileYAML, revision: 1, reports: map[int64]apiclient.Counters{}}
 	now := time.Now().UTC()
 	exp := now.Add(time.Hour)
 	f.session = apiclient.Session{
@@ -86,6 +94,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	mux.HandleFunc("/api/v1/client/session", f.sessionHandler)
 	mux.HandleFunc("/api/v1/client/nodes", f.nodesHandler)
 	mux.HandleFunc("/api/v1/client/config", f.config)
+	mux.HandleFunc("/api/v1/client/traffic", f.traffic)
 	mux.HandleFunc("/api/v1/client/logout", func(w http.ResponseWriter, r *http.Request) {
 		f.logoutHits.Add(1)
 		f.auth(w, r)
@@ -244,6 +253,51 @@ func (f *fakeAPI) config(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(apiclient.ConfigResponse{YAML: document, Version: sha(document), Session: f.snapshotSession(), Nodes: f.nodes, NodeID: id})
 }
 
+// traffic is a faithful miniature of the server's nativeTraffic handler.
+func (f *fakeAPI) traffic(w http.ResponseWriter, r *http.Request) {
+	f.trafficHits.Add(1)
+	if !f.auth(w, r) {
+		return
+	}
+	var in apiclient.Counters
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.trafficErr != nil {
+		writeError(w, *f.trafficErr)
+		return
+	}
+	f.bodies = append(f.bodies, in)
+	s := &f.session
+	replayed := false
+	if in.Sequence <= s.LastSequence {
+		if f.reports[in.Sequence] != in {
+			writeError(w, apiError{409, "traffic_conflict"})
+			return
+		}
+		replayed = true
+	} else {
+		if in.Sequence != s.LastSequence+1 || in.UploadBytes < s.UploadBytes || in.DownloadBytes < s.DownloadBytes {
+			writeError(w, apiError{409, "traffic_sequence"})
+			return
+		}
+		delta := (in.UploadBytes - s.UploadBytes) + (in.DownloadBytes - s.DownloadBytes)
+		s.UsedUnits += delta * s.RatePermille
+		s.UploadBytes, s.DownloadBytes, s.LastSequence = in.UploadBytes, in.DownloadBytes, in.Sequence
+		s.RemainingBytes = max(0, (s.TotalBytes*1000-s.UsedUnits)/1000)
+		if s.RemainingBytes == 0 {
+			s.CanConnect, s.Reason = false, "quota_exhausted"
+		}
+		f.reports[in.Sequence] = in
+		if f.loseAcks > 0 {
+			f.loseAcks--
+			writeError(w, apiError{503, "client_service_unavailable"})
+			return
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"session": f.snapshotSession(), "replayed": replayed})
+}
+
 // Helpers for tests.
 
 func (f *fakeAPI) mutate(change func()) {
@@ -277,14 +331,35 @@ func waitFor(t *testing.T, what string, condition func() bool) {
 }
 
 type recordingEngine struct {
-	starts, stops atomic.Int32
-	last          atomic.Pointer[Profile]
-	err           error
+	starts, stops, verifies, preflights atomic.Int32
+	last                                atomic.Pointer[Profile]
+	err                                 error // Start failure
+	preflightErr, verifyErr             error
+	verifyHook                          func()
+	up, down                            atomic.Int64
+	// trafficAtStart records how many /traffic requests had been made when Start ran.
+	api            *fakeAPI
+	trafficAtStart atomic.Int32
 }
 
+func (e *recordingEngine) Preflight(context.Context) (network.Interface, error) {
+	e.preflights.Add(1)
+	return network.Interface{}, e.preflightErr
+}
 func (e *recordingEngine) Start(_ context.Context, p Profile) error {
 	e.starts.Add(1)
 	e.last.Store(&p)
+	if e.api != nil {
+		e.trafficAtStart.Store(e.api.trafficHits.Load())
+	}
 	return e.err
 }
-func (e *recordingEngine) Stop() error { e.stops.Add(1); return nil }
+func (e *recordingEngine) Verify(context.Context) error {
+	e.verifies.Add(1)
+	if e.verifyHook != nil {
+		e.verifyHook()
+	}
+	return e.verifyErr
+}
+func (e *recordingEngine) Totals() (int64, int64, error) { return e.up.Load(), e.down.Load(), nil }
+func (e *recordingEngine) Stop() error                   { e.stops.Add(1); return nil }

@@ -113,7 +113,9 @@ final class WorkerSupervisor {
         try? input?.close()
         try? output?.close()
         if let process, process.isRunning {
-            let deadline = Date().addingTimeInterval(2)
+            // After the shutdown command the Core closes the data path, settles the last traffic
+            // batch and revokes the session; give that bounded work time before terminating.
+            let deadline = Date().addingTimeInterval(12)
             while process.isRunning && Date() < deadline { usleep(20_000) }
             if process.isRunning { process.terminate() }
             process.waitUntilExit()

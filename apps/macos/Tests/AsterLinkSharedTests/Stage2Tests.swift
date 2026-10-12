@@ -77,6 +77,18 @@ final class SnapshotContractTests: XCTestCase {
         XCTAssertEqual(snap.state, .ready)
         XCTAssertEqual(snap.nodes.count, 2)
         XCTAssertEqual(snap.selectedNode?.name, "HK Dedicated")
+        // Stage 3 metering: physical bytes, confirmed and estimated balance, live history.
+        let live = try await {
+            let t = FakeTransport()
+            t.handler = { _, _, _ in envelope(result: samples["connected_metering"]) }
+            return try await CoreClient(transport: t, environment: environment, appVersion: "t").readSnapshot()
+        }()
+        XCTAssertEqual(live.state, .connected)
+        XCTAssertEqual(live.tunnelHealth, "up")
+        XCTAssertEqual(live.metering?.history.count, 3)
+        XCTAssertEqual(live.metering?.unreportedBytes, 1_048_576)
+        XCTAssertEqual(live.metering?.estimatedRemainingBytes, 967_835_648)
+        XCTAssertEqual(live.metering?.ratePermille, 1000)
         XCTAssertEqual(snap.entitlement?.remainingBytes, 1073741000)
         XCTAssertNotNil(snap.entitlement?.subscriptionExpiresAt)
         XCTAssertTrue(snap.configReady)

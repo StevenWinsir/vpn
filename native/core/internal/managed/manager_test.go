@@ -240,7 +240,7 @@ func TestConnectHappyPathAndStageTwoEngine(t *testing.T) {
 	if engine.starts.Load() != 1 || profile == nil || profile.Proxy["server"] != "192.0.2.10" || profile.NodeID != nodeA {
 		t.Fatal("engine did not receive the validated profile")
 	}
-	if snap = m.Disconnect(); snap.State != StateReady || engine.stops.Load() == 0 {
+	if snap = m.Disconnect(t.Context()); snap.State != StateReady || engine.stops.Load() == 0 {
 		t.Fatalf("disconnect: %+v", snap)
 	}
 	// The shipped engine refuses: a passing gate must not pretend a tunnel exists.

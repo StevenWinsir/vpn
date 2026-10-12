@@ -167,8 +167,15 @@ public final class SessionController {
     }
 
     public func disconnect() async {
-        guard phase == .signedIn else { return }
-        if let updated = try? await client.disconnect() { apply(updated) }
+        guard phase == .signedIn, !busy else { return }
+        busy = true
+        defer { busy = false }
+        // Closing the data path also acknowledges the last traffic batch, which can take a
+        // few seconds on a slow network; the Core reports any problem in `lastError`.
+        if let updated = try? await client.disconnect() {
+            apply(updated)
+            message = updated.lastError?.message
+        }
     }
 
     private func run(_ action: @escaping () async throws -> CoreActionReply) async {
@@ -192,7 +199,9 @@ public final class SessionController {
         stopPolling()
         pollTask = Task { [weak self, pollInterval] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: pollInterval)
+                // Live rates are only worth a faster read while a tunnel is carrying traffic.
+                let live = await self?.snapshot.state == .connected
+                try? await Task.sleep(for: live ? .seconds(1) : pollInterval)
                 guard let self, !Task.isCancelled else { return }
                 await self.poll()
             }

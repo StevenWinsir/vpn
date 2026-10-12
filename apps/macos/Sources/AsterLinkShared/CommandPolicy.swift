@@ -13,10 +13,12 @@ public enum HelperCommandPolicy {
         "login": Limit(maxPayload: 16 << 10, timeout: 40),
         "read_snapshot": Limit(maxPayload: 64, timeout: 10),
         "refresh_catalog": Limit(maxPayload: 64, timeout: 40),
-        "select_node": Limit(maxPayload: 4 << 10, timeout: 40),
-        "connect": Limit(maxPayload: 64, timeout: 40),
-        "disconnect": Limit(maxPayload: 64, timeout: 15),
-        "logout": Limit(maxPayload: 64, timeout: 15),
+        // Connect covers: settle an old tail, preflight, first metering ack, TUN start and the
+        // forwarding probe. Disconnect/select/logout cover a bounded traffic settlement.
+        "select_node": Limit(maxPayload: 4 << 10, timeout: 60),
+        "connect": Limit(maxPayload: 64, timeout: 100),
+        "disconnect": Limit(maxPayload: 64, timeout: 40),
+        "logout": Limit(maxPayload: 64, timeout: 40),
     ]
 
     public enum Rejection: Error, Equatable { case unknownCommand, payloadTooLarge, payloadNotObject }
