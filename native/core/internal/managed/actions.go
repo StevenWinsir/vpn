@@ -63,6 +63,12 @@ func (m *Manager) SelectNode(ctx context.Context, nodeID, catalogRevision string
 		return m.Snapshot(), codeError("stale_catalog")
 	}
 	m.mu.Unlock()
+	// Switching nodes (or re-reading a changed one) never overlaps with forwarding:
+	// close the data path and have the old tail acknowledged before the new bind, so the
+	// new config is fetched against the confirmed last_sequence (section 6.3).
+	if err = m.stopTunnel(ctx, ""); err != nil {
+		return m.Snapshot(), err
+	}
 	if err = m.bindNode(ctx, gen, client, token, nodeID); err != nil {
 		return m.Snapshot(), err
 	}
@@ -135,73 +141,6 @@ func (m *Manager) bindNode(ctx context.Context, gen uint64, client *apiclient.Cl
 	return nil
 }
 
-// Connect is the only path to Engine.Start, and it re-checks every gate itself:
-// signed in, selected node, a fresh server authorization with an active lease, and
-// a config that was validated against the same version. Stage 2 ships an engine that
-// refuses, so a passing gate ends in tun_unavailable rather than a tunnel.
-func (m *Manager) Connect(ctx context.Context) (Snapshot, error) {
-	gen, client, token, err := m.handles()
-	if err != nil {
-		return m.Snapshot(), err
-	}
-	m.mu.Lock()
-	selected := m.selected
-	m.mu.Unlock()
-	if selected == "" {
-		return m.Snapshot(), codeError("profile_required")
-	}
-
-	// Fresh authorization first: connecting never relies on a cached verdict.
-	if err = m.refreshSession(ctx, gen, client, token); err != nil {
-		return m.Snapshot(), err
-	}
-	// If the server says our binding is stale (or we hold nothing), bind once.
-	m.mu.Lock()
-	need := m.profile == nil
-	m.mu.Unlock()
-	if need {
-		if err = m.bindNode(ctx, gen, client, token, selected); err != nil {
-			return m.Snapshot(), err
-		}
-	}
-
-	m.mu.Lock()
-	if m.generation != gen {
-		m.mu.Unlock()
-		return m.Snapshot(), codeError("stale_generation")
-	}
-	code := m.gateLocked()
-	if code != "" {
-		m.failLocked(codeError(code))
-		m.mu.Unlock()
-		return m.Snapshot(), codeError(code)
-	}
-	profile := *m.profile
-	m.state = StateConnecting
-	m.mu.Unlock()
-
-	startErr := m.opts.Engine.Start(ctx, profile)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.generation != gen {
-		_ = m.opts.Engine.Stop()
-		return m.snapshotLocked(), codeError("stale_generation")
-	}
-	if startErr != nil {
-		code := "tun_unavailable"
-		if !errors.Is(startErr, ErrTunUnavailable) {
-			code = "network_unreachable"
-		}
-		m.state = StateReady
-		m.failLocked(codeError(code))
-		return m.snapshotLocked(), codeError(code)
-	}
-	m.state = StateConnected
-	m.lastError = nil
-	return m.snapshotLocked(), nil
-}
-
 // gateLocked is the authorization verdict as of now ("" means allowed). It is also
 // what Snapshot reports, so the UI button and the real gate can never disagree.
 func (m *Manager) gateLocked() string {
@@ -222,20 +161,4 @@ func (m *Manager) gateLocked() string {
 		return "profile_changed"
 	}
 	return ""
-}
-
-// Disconnect stops the data path. It is idempotent.
-func (m *Manager) Disconnect() Snapshot {
-	m.mu.Lock()
-	if m.state == StateConnected || m.state == StateConnecting {
-		m.state = StateStopping
-	}
-	m.mu.Unlock()
-	_ = m.opts.Engine.Stop()
-	m.mu.Lock()
-	if m.state == StateStopping {
-		m.state = StateReady
-	}
-	m.mu.Unlock()
-	return m.Snapshot()
 }

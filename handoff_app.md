@@ -427,12 +427,12 @@ remaining_bytes = max(0, floor((total_bytes * 1000 - used_units) / 1000))
 **目标：** 完成用户最关心的“登录→选节点→连接→真实流量→正确倍率扣量→到期停连”。此时仍明确属于开发账本。
 
 **任务：**
-- [ ] 固定全局 TUN/DNS 模板；IPv4/IPv6、UDP、外层出口、控制面直连与循环检测。
-- [ ] SS AEAD、实际选用的 VLESS TLS/Reality 节点真实转发；不把 YAML parse 成功当握手成功。
-- [ ] 唯一累计 Meter、速率图、确认/估算余额、分钟上报、pending 原批幂等重试。
-- [ ] 断开/换节点/改倍率/禁用时先停流结账；错误 ACK 不丢 pending；会话代次与 Core 重启保护。
-- [ ] 睡眠/唤醒、接口变化、API断网、UI/Core/Helper崩溃、正常退出和残留恢复。
-- [ ] 完善 TUN 权限集成测试入口，必须显式指定受控目标和授权，不在普通单元测试里修改真实机器网络。
+- [~] 固定全局 TUN/DNS 模板；IPv4/IPv6、UDP、外层出口、控制面直连与循环检测。（模板与全部逻辑已实现，固定版 Mihomo 解析测试通过；真机 TUN 实测待用户断开公司 VPN 后用 `--suite tun` 执行）
+- [~] SS AEAD、实际选用的 VLESS TLS/Reality 节点真实转发；不把 YAML parse 成功当握手成功。（引擎有“经隧道真实探测”门禁，VLESS 模板解析通过；真实握手待真机）
+- [x] 唯一累计 Meter、速率图、确认/估算余额、分钟上报、pending 原批幂等重试。
+- [x] 断开/换节点/改倍率/禁用时先停流结账；错误 ACK 不丢 pending；会话代次与 Core 重启保护。
+- [~] 睡眠/唤醒、接口变化、API断网、UI/Core/Helper崩溃、正常退出和残留恢复。（看门狗与结账逻辑已单测/端到端；真实休眠唤醒、Helper/Core 硬杀后系统残留未在真机验证）
+- [x] 完善 TUN 权限集成测试入口，必须显式指定受控目标和授权，不在普通单元测试里修改真实机器网络。（`asterlink-tuntest`，未授权一律 BLOCKED）
 
 **验收：** 用同层可对账的受控上传/下载验证 0.5×、1×和中途换倍率，账本精确匹配整数计算；重试/并发不二次扣费；额度/到期/删除/网络确认失败时官方客户端停止代理；连接期间 DNS/IPv6/UDP/WebRTC 无未声明公网出口泄漏。断开后本机正常网络可恢复，连续至少 20 次连接/断开没有资源累积。
 
@@ -564,7 +564,7 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 | --- | --- | --- | --- | --- |
 | 1 原生TUN技术验证 | IN_REVIEW（PR 待 CI） | Claude Code 会话 | 分支 `worktree-stage1-native-foundation` | 共享源迁移、骨架、签名/XPC 验证已完成；真实 TUN 实传 BLOCKED（需受控测试节点+root 授权）；Helper 实际 SMAppService 注册待用户在系统设置批准；节点控制能力待用户确认 |
 | 2 账号与节点接入 | IMPLEMENTED（待 PR 合并 / CI） | Claude | 分支 feat/stage2-login-nodes-keychain | Core v1 登录/session/nodes/config/logout、Keychain、SwiftUI 三页、XPC 命令转发、后端时限 env；真实 Core 二进制 ↔ 真实 API/PostgreSQL 端到端通过；未做：TUN（阶段3）、UI 目测（无桌面截图权限）、真实 demo 服务器登录（未持有测试账号密码） |
-| 3 开发计量闭环 | NOT_STARTED | 待分配 | — | 依赖阶段2，仍是client_reported |
+| 3 开发计量闭环 | IN_REVIEW（PR 待 CI；真机 TUN 待验收） | Claude | 分支 worktree-stage3-tun-metering-recovery | Core 引擎/计量/状态机/看门狗、Swift 界面、真实 Core↔API↔PostgreSQL 账本端到端通过；**真机 TUN/休眠/20 次循环未执行**（无 root，且用户在公司 VPN 下，Core 会以 vpn_conflict 拒绝）；仍是 client_reported |
 | 4 节点权威收费闭环 | NOT_STARTED | 待分配 | — | 必须具备真实节点管理能力 |
 | 5 签名发布与回归 | NOT_STARTED | 待分配 | — | 所有硬门槛及网站外部发布条件 |
 
@@ -618,6 +618,19 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 - 未完成/限制：Connect 通过全部闸门后由 UnavailableEngine 返回 `tun_unavailable`（阶段3接入 Mihomo）；`shared/nodepolicy` 固定内核测试需初始化 Clash.Meta 子模块；DEBUG 直连内核（ASTERLINK_DEV_CORE）仅用于无签名本地验证。
 - 下一步：阶段 3 从 EngineAdapter/Meter 开始。
 
+阶段 3 交接（2026-10-11）：
+- 改动：`native/core/internal/{engine,meter,network}`（Mihomo 适配与固定 TUN/DNS 模板、唯一计量器、物理网卡绑定/VPN 冲突检测）；`managed/tunnel.go`（连接生命周期、看门狗、结账）、`managed/{engine,snapshot,actions,manager}.go`；`apiclient.Traffic`；`cmd/asterlink-tuntest`（特权验收）；Swift 界面（速率曲线、物理/确认/估算分开显示）；`shared/contracts/snapshot-v1.json` 增 `connected_metering`；`docs/macos-stage3.md`。后端 API/数据库**无变化**。
+- 契约/配置：Core 现链接固定版 Mihomo（`native/core/go.mod` replace 到子模块，CI backend 作业需 `submodules: recursive`）；`-tags fakeengine` 仅测试脚本使用。Helper 命令超时 connect 100s/disconnect 40s，退出等待 Core 结账最多 12s。
+- 验证（macOS 26 / arm64 / Go 1.26.6）：`go test -race ./...`（native/core）全绿；`python3 scripts/test-native.py`（隔离 PostgreSQL + 真实 Core 二进制）全绿，含 1×/0.5×精确扣量 104,857,600,000 / 52,428,800,000 units、中途换线路、额度耗尽约 1.0s 停连、到期/吊销停连；`--suite unit` 5/5、`--suite bundle` 6/6；`--suite tun` 未授权正确报 BLOCKED。
+- 未完成/限制：① 真机 TUN 全套（T01–T07、B-COUNT、20 次循环）未跑；同一进程内重复 `ApplyConfig`/`Shutdown` 是否干净由 T-CYCLES 判定，若失败则改为每次连接重启 Core 进程；② IPv6 模板（`ipv6: true`）依赖固定内核在有 v6 的主机上自动加 inet6 地址，须 T04 实测；③ 真实休眠/网络切换/Helper 注册（ad-hoc）未验证；④ Core/Helper 被硬杀时依赖 OS 随进程回收 utun 与路由，须真机确认；⑤ 一个 Core 进程内 Mihomo 计数器跨段持续，仅在上一段结清后才允许重新基线；⑥ 共享供应商节点仍只能作开发节点。
+- 下一步：用户断开公司 VPN，按 `docs/macos-stage3.md` 第 3 节跑 `--suite tun`，再用 App 做第 4 节端到端；通过后进入阶段 4（需自控节点）。
+
+阶段 3 验收补充（2026-10-12）：
+- 真机 SS TUN 已在 macOS 26 / arm64、root、公司 VPN 断开条件下实测：utun、真实 TCP 转发、出口变化、系统 DNS/任意 :53 劫持、IPv6、物理网卡 API 访问、停止清理和 20 次同进程启停通过。
+- 修复同进程重复连接时重复 `ApplyConfig`/resolver reset 导致的状态和 goroutine 波动：相同配置复用已验证的 Mihomo 内存配置，停止时先挂起数据通路、关闭 tracker 并等待其退出；配置变化仍完整重载。
+- T05-loop 验收区分无活动流的严格预算与系统范围 TUN 的有限背景流量预算，报告记录活动流数量；超过预算仍失败。真机报告见 `artifacts/native-macos/stage3-tun-20261012-fixed3-report-tun/test-report.json`。
+- B-COUNT 和 UDP echo 仍需要用户提供受控下载 URL/精确字节数与 UDP echo 服务；App Helper 注册、真实账号端到端和睡眠唤醒仍未完成。共享供应商节点仍只能作开发节点。
+
 当前交接结论（阶段1时）：**阶段 1 代码部分已完成并待 CI；真实 TUN 实传、Helper 真机注册、节点控制能力三项仍需用户配合。**（以下为原勘察结论，保留作历史记录。） 建议下一位先完成共享源码脱钩与真实特权 TUN PoC，同时核实节点控制能力；不要先重做网站，也不要继续修补旧 FlClash UI。
 
 ## 附录 A. 源码依据与核验入口
@@ -640,3 +653,9 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 | 本机ServiceManagement API确实存在 | 已安装Xcode SDK `ServiceManagement.framework/Headers/SMAppService.h`，读取到 daemon 注册、注销和状态API；这不是签名分发测试 |
 
 外部复核入口（本次未联网验证其最新内容）：[Apple SMAppService](https://developer.apple.com/documentation/servicemanagement/smappservice)、[Apple Network Extension](https://developer.apple.com/documentation/networkextension)、[Apple macOS 公证](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)、[Mihomo 源码](https://github.com/MetaCubeX/mihomo)。商业节点适配器以选定服务器的固定版本源码及真实能力测试为准；开源许可最终核对该版本 LICENSE，而不是只引用网页摘要。
+
+阶段 3 验收补充（2026-10-12，路由清理修复后）
+- 修复 `native/core/cmd/asterlink-tuntest` 的 `netstat` 路由快照解析：显式跳过表头，忽略 flags 含 `W`/`L` 的动态邻居/链路缓存项，保留默认路由和 utun 路由；新增 `main_test.go` 覆盖动态邻居过滤与隧道/默认路由保留。
+- 真机验收重新执行：`tun-20261012-routefix`，12 项中 10 pass、2 blocked、0 fail。T01/T01a/T02、DNS system 与任意 :53、T04 IPv6、T05 物理网卡 API、T05-loop、T07 清理、T-CYCLES 20 次全部通过；B-COUNT 与 T03-UDP 因未提供受控下载目标/UDP echo 服务按程序设计保持 BLOCKED。报告：`artifacts/native-macos/tun-20261012-routefix-report-tun/test-report.json`。
+- 回归验证：`go test ./...`、`go test -race ./...`、`scripts/test-native-macos.py --suite unit`（5/5）、`--suite bundle`（6/6）、`scripts/test-native.py`（真实 Core/API/PostgreSQL E2E）全部通过。
+- 仍未验证的产品验收：App 真账号/Helper SMAppService 批准、管理员后台改节点后的 App 端到端、真实睡眠唤醒；这些不阻塞 Core/TUN 阶段代码合并，但在发布前仍需单独验收。共享供应商节点仅作开发测试节点。

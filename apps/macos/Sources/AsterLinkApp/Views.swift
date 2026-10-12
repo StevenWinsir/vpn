@@ -1,4 +1,5 @@
 import AsterLinkShared
+import Charts
 import SwiftUI
 
 struct RootView: View {
@@ -186,22 +187,54 @@ struct MainView: View {
                 Circle().fill(stateColor).frame(width: 10, height: 10)
                 Text(stateText).font(.headline)
                 Spacer()
-                if snap.state == .connected {
-                    Button("断开") { Task { await session.disconnect() } }
-                } else {
+                switch snap.state {
+                case .connected:
+                    Button("断开") { Task { await session.disconnect() } }.disabled(session.busy)
+                case .connecting, .preparing, .stopping:
+                    ProgressView().controlSize(.small)
+                default:
                     Button("连接") { Task { await session.connect() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(snap.selectedNodeID.isEmpty || snap.entitlement?.accountAuthorized != true || session.busy)
                 }
             }
-            if let metering = snap.metering {
+            if snap.state != .connected, let failure = snap.lastError, session.message == nil {
+                Label(failure.message, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+            }
+            if let metering = snap.metering, snap.state == .connected || metering.uploadBytes + metering.downloadBytes > 0 {
+                meteringCard(metering)
+            }
+        }
+    }
+
+    private func meteringCard(_ metering: CoreMetering) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 16) {
                     Label("↑ \(Formatting.bytes(metering.uploadBytesPerSecond))/s", systemImage: "arrow.up")
                     Label("↓ \(Formatting.bytes(metering.downloadBytesPerSecond))/s", systemImage: "arrow.down")
                     Spacer()
-                    Text("累计 \(Formatting.bytes(metering.uploadBytes + metering.downloadBytes))")
-                }.font(.callout).foregroundStyle(.secondary)
-            }
+                    Text("线路倍率 \(CoreNode.formatRate(metering.ratePermille))").foregroundStyle(.secondary)
+                }
+                if !metering.history.isEmpty {
+                    Chart {
+                        ForEach(Array(metering.history.enumerated()), id: \.offset) { index, sample in
+                            LineMark(x: .value("秒", index), y: .value("下行", sample.download), series: .value("方向", "下行"))
+                                .foregroundStyle(by: .value("方向", "下行"))
+                            LineMark(x: .value("秒", index), y: .value("上行", sample.upload), series: .value("方向", "上行"))
+                                .foregroundStyle(by: .value("方向", "上行"))
+                        }
+                    }
+                    .chartXAxis(.hidden)
+                    .chartYAxis(.hidden)
+                    .chartLegend(.hidden)
+                    .frame(height: 44)
+                }
+                Text("本次登录已经线路传输：上行 \(Formatting.bytes(metering.uploadBytes)) · 下行 \(Formatting.bytes(metering.downloadBytes))")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("预估剩余套餐流量 \(Formatting.bytes(metering.estimatedRemainingBytes))（服务器已确认 \(Formatting.bytes(metering.confirmedRemainingBytes))\(metering.pending ? "，有批次待确认" : "")）")
+                    .font(.callout).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

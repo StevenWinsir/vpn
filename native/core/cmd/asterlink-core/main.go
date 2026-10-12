@@ -32,7 +32,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "asterlink-core accepts no arguments")
 		os.Exit(2)
 	}
-	manager := managed.New(managed.Options{CoreVersion: version})
+	manager := managed.New(managed.Options{CoreVersion: version, Engine: newEngine()})
 	if err := ipc.ServeWith(stdio{}, ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}, service.New(manager)); err != nil {
 		fmt.Fprintln(os.Stderr, "ipc terminated:", err)
 		os.Exit(1)

@@ -1,0 +1,245 @@
+package engine
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/hub/executor"
+	"github.com/metacubex/mihomo/listener"
+	LC "github.com/metacubex/mihomo/listener/config"
+	"github.com/metacubex/mihomo/tunnel"
+	"github.com/metacubex/mihomo/tunnel/statistic"
+
+	"asterlink/core/internal/managed"
+	"asterlink/core/internal/network"
+)
+
+// DefaultProbes are plain-HTTP reachability endpoints. They are fetched through the
+// tunnel (the Core's probe client has no proxy and no interface binding), so a 2xx
+// answer proves the whole chain: utun -> Mihomo -> paid node -> internet.
+var DefaultProbes = []string{
+	"http://cp.cloudflare.com/generate_204",
+	"http://www.gstatic.com/generate_204",
+	"http://captive.apple.com/hotspot-detect.html",
+}
+
+// Mihomo is the production Engine.
+type Mihomo struct {
+	// Probes and the timeouts are variables only so the acceptance harness can aim
+	// them at controlled targets.
+	Probes       []string
+	StartTimeout time.Duration
+	ProbeTimeout time.Duration
+
+	mu         sync.Mutex
+	running    bool
+	home       string
+	configData []byte
+	tunConf    LC.Tun
+	configured bool
+}
+
+func New() *Mihomo {
+	return &Mihomo{Probes: DefaultProbes, StartTimeout: 15 * time.Second, ProbeTimeout: 8 * time.Second}
+}
+
+var _ managed.Engine = (*Mihomo)(nil)
+
+// Preflight refuses to stack on another VPN and finds the physical egress that the
+// outer node connection and the Core's own API calls must keep using.
+func (e *Mihomo) Preflight(context.Context) (network.Interface, error) {
+	if runtime.GOOS != "darwin" {
+		return network.Interface{}, managed.ErrTunUnavailable
+	}
+	if len(network.Conflicts()) > 0 {
+		return network.Interface{}, managed.ErrVPNConflict
+	}
+	iface, err := network.PhysicalDefault()
+	if err != nil {
+		return network.Interface{}, managed.ErrNoNetwork
+	}
+	return iface, nil
+}
+
+func tunnelDevices() map[string]bool {
+	found := map[string]bool{}
+	interfaces, _ := net.Interfaces()
+	for _, i := range interfaces {
+		if strings.HasPrefix(i.Name, "utun") {
+			found[i.Name] = true
+		}
+	}
+	return found
+}
+
+// Start brings the TUN up and returns once the device and its routes exist. It does
+// not claim the tunnel forwards: Verify does.
+func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.running {
+		return errors.New("engine already running")
+	}
+	if runtime.GOOS != "darwin" {
+		return managed.ErrTunUnavailable
+	}
+	data, err := BuildConfig(profile)
+	if err != nil {
+		return err
+	}
+	// Reusing the reviewed in-memory Mihomo configuration for an identical
+	// profile avoids repeatedly starting resolver/reset goroutines and keeps
+	// same-process reconnects deterministic. A changed profile still performs a
+	// complete ApplyConfig so node changes cannot inherit old runtime state.
+	home := ""
+	tunConf := e.tunConf
+	if !e.configured || !bytes.Equal(e.configData, data) {
+		home, err = os.MkdirTemp("", "asterlink-engine-")
+		if err != nil {
+			return err
+		}
+		constant.SetHomeDir(home)
+		cfg, parseErr := executor.ParseWithBytes(data)
+		if parseErr != nil {
+			_ = os.RemoveAll(home)
+			return parseErr
+		}
+		tunConf = cfg.General.Tun
+		executor.ApplyConfig(cfg, true)
+		e.configData = append(e.configData[:0], data...)
+		e.tunConf = tunConf
+		e.configured = true
+	} else {
+		// ApplyConfig marks the tunnel running. Reconnects that reuse the same
+		// profile need to restore that lifecycle state explicitly after Stop.
+		tunnel.OnRunning()
+	}
+	before := tunnelDevices()
+	e.home, e.running = home, true
+	// The pinned fork's ApplyConfig leaves listeners alone (docs/macos-tun-poc.md), so
+	// the TUN is created explicitly, and torn down explicitly in Stop.
+	listener.ReCreateTun(tunConf, tunnel.Tunnel)
+
+	deadline := time.Now().Add(e.StartTimeout)
+	for {
+		added := false
+		for name := range tunnelDevices() {
+			if !before[name] {
+				added = true
+			}
+		}
+		if added && network.ViaTunnel() != "" {
+			return nil
+		}
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			e.stopLocked()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return managed.ErrTunnelFailed
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// Verify proves real forwarding with a bounded probe through the tunnel.
+func (e *Mihomo) Verify(ctx context.Context) error {
+	client := &http.Client{
+		Timeout: e.ProbeTimeout,
+		// No proxy setting and no interface binding: the request must take the same
+		// path as any application, i.e. the TUN.
+		Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSHandshakeTimeout: e.ProbeTimeout},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	defer client.CloseIdleConnections()
+	for _, url := range e.Probes {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			continue
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			continue
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		response.Body.Close()
+		if response.StatusCode >= 200 && response.StatusCode < 400 {
+			return nil
+		}
+	}
+	return managed.ErrTunnelUnhealthy
+}
+
+// Totals are Mihomo's proxy-only cumulative bytes (chain != DIRECT): payload carried
+// to and from the paid node, excluding the Core's bound control-plane traffic, which
+// never enters the tunnel. They persist across Stop/Start inside one process.
+func (e *Mihomo) Totals() (int64, int64, error) {
+	up, down := statistic.DefaultManager.TotalTraffic(true)
+	return up, down, nil
+}
+
+// ActiveConnections reports tracked proxy flows that are still draining. The
+// privileged acceptance harness records this alongside its idle-window counter
+// so host background traffic is distinguished from an internal routing loop; it
+// does not expose a control-plane listener or alter the production session API.
+func (e *Mihomo) ActiveConnections() int {
+	return len(statistic.DefaultManager.Snapshot().Connections)
+}
+
+// Stop closes the data path: no new flows, every tracked flow closed, device removed.
+func (e *Mihomo) Stop() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.stopLocked()
+	return nil
+}
+
+func (e *Mihomo) stopLocked() {
+	if !e.running {
+		return
+	}
+	tunnel.OnSuspend()
+	listener.ReCreateTun(LC.Tun{}, tunnel.Tunnel)
+	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
+		_ = c.Close()
+		return true
+	})
+	// Closing a tracker wakes its socket, but the handler goroutine may need a
+	// scheduling turn to leave the manager. Wait briefly so repeated in-process
+	// Start/Stop cycles do not accumulate old flow workers.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(statistic.DefaultManager.Snapshot().Connections) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	executor.Shutdown()
+	if e.home != "" {
+		_ = os.RemoveAll(e.home)
+	}
+	e.running, e.home = false, ""
+	// Give the kernel a moment to retire the device and its routes.
+	for range 20 {
+		if network.ViaTunnel() == "" {
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}

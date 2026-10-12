@@ -140,7 +140,7 @@ func TestSnapshotMatchesSharedSample(t *testing.T) {
 	if err := decoder.Decode(&sample); err != nil {
 		t.Fatalf("sample does not match the Core's Snapshot type: %v", err)
 	}
-	if len(sample.Snapshots) < 3 {
+	if len(sample.Snapshots) < 4 {
 		t.Fatal("sample too small")
 	}
 	// Re-encoding must be a stable superset: no field is silently dropped.

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"asterlink/core/internal/apiclient"
+	"asterlink/core/internal/meter"
 )
 
 type UserView struct {
@@ -39,14 +40,24 @@ type EntitlementView struct {
 	UsedUnits      int64  `json:"used_units"`
 }
 
+// MeteringView separates what the proxy physically carried from what was charged:
+// upload/download are real proxy bytes (confirmed + unreported); the balance is
+// confirmed (server) and estimated (confirmed minus unreported at the bound rate).
 type MeteringView struct {
 	Source        string `json:"source"`
 	UploadBytes   int64  `json:"upload_bytes"`
 	DownloadBytes int64  `json:"download_bytes"`
 	LastSequence  int64  `json:"last_sequence"`
-	// Stage 2 has no tunnel and therefore no live rate.
-	UploadRate   int64 `json:"upload_bytes_per_second"`
-	DownloadRate int64 `json:"download_bytes_per_second"`
+	UploadRate    int64  `json:"upload_bytes_per_second"`
+	DownloadRate  int64  `json:"download_bytes_per_second"`
+
+	ConfirmedUploadBytes    int64          `json:"confirmed_upload_bytes"`
+	ConfirmedDownloadBytes  int64          `json:"confirmed_download_bytes"`
+	ConfirmedRemainingBytes int64          `json:"confirmed_remaining_bytes"`
+	EstimatedRemainingBytes int64          `json:"estimated_remaining_bytes"`
+	RatePermille            int64          `json:"rate_permille"`
+	Pending                 bool           `json:"pending"`
+	History                 []meter.Sample `json:"history"`
 }
 
 type ErrorView struct {
@@ -86,8 +97,13 @@ func (m *Manager) snapshotLocked() Snapshot {
 	if m.lastError != nil {
 		out.LastError = &ErrorView{Code: m.lastError.Code, Message: m.lastError.Message}
 	}
-	if m.state == StateConnected {
+	switch m.state {
+	case StateConnected:
 		out.TunnelHealth = "up"
+	case StateConnecting, StatePreparing:
+		out.TunnelHealth = "starting"
+	case StateStopping:
+		out.TunnelHealth = "stopping"
 	}
 	if m.user != nil {
 		out.User = &UserView{ID: m.user.ID, Email: m.user.Email, Name: m.user.Name, Role: m.user.Role}
@@ -117,7 +133,25 @@ func (m *Manager) snapshotLocked() Snapshot {
 		if accountReason != "" {
 			out.Entitlement.ReasonMessage = apiclient.Message(accountReason)
 		}
-		out.Metering = &MeteringView{Source: s.MeteringSource, UploadBytes: s.UploadBytes, DownloadBytes: s.DownloadBytes, LastSequence: s.LastSequence}
+		view := &MeteringView{
+			Source: s.MeteringSource, UploadBytes: s.UploadBytes, DownloadBytes: s.DownloadBytes, LastSequence: s.LastSequence,
+			ConfirmedUploadBytes: s.UploadBytes, ConfirmedDownloadBytes: s.DownloadBytes,
+			ConfirmedRemainingBytes: s.RemainingBytes, EstimatedRemainingBytes: s.RemainingBytes, RatePermille: s.RatePermille,
+			History: []meter.Sample{},
+		}
+		if m.meter != nil {
+			v := m.meter.View()
+			view.UploadBytes, view.DownloadBytes = v.UploadBytes, v.DownloadBytes
+			view.LastSequence = v.LastSequence
+			view.ConfirmedUploadBytes, view.ConfirmedDownloadBytes = v.ConfirmedUpload, v.ConfirmedDownload
+			view.ConfirmedRemainingBytes, view.EstimatedRemainingBytes = v.ConfirmedRemaining, v.EstimatedRemaining
+			view.RatePermille, view.Pending = v.RatePermille, v.Pending
+			view.UploadRate, view.DownloadRate = v.UploadRate, v.DownloadRate
+			if v.History != nil {
+				view.History = v.History
+			}
+		}
+		out.Metering = view
 	}
 	return out
 }

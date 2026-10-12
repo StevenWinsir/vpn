@@ -129,37 +129,46 @@ def suite_bundle(run_id):
 
 
 def suite_tun(allow):
+    """Privileged acceptance of the production engine on a controlled node (stage 3).
+
+    BLOCKED (exit 3) unless: --allow-network-changes, root, and a test node in the
+    environment (ASTERLINK_TUN_PROXY_JSON, or ASTERLINK_POC_SS_SERVER/_PORT/_PASSWORD).
+    Optional controlled targets widen coverage: ASTERLINK_TUN_DOWNLOAD_URL + _BYTES (counter
+    reconciliation), ASTERLINK_TUN_UDP_ECHO (host:port), ASTERLINK_TUN_API_HOST (host:port).
+    """
     reasons = []
     if not allow:
         reasons.append('--allow-network-changes not given')
     if os.geteuid() != 0:
         reasons.append('not running as root (utun needs root)')
-    for key in ('ASTERLINK_POC_SS_PASSWORD', 'ASTERLINK_POC_SS_SERVER', 'ASTERLINK_POC_SS_PORT'):
-        if not os.environ.get(key):
-            reasons.append(key + ' not set')
+    if not os.environ.get('ASTERLINK_TUN_PROXY_JSON'):
+        for key in ('ASTERLINK_POC_SS_PASSWORD', 'ASTERLINK_POC_SS_SERVER', 'ASTERLINK_POC_SS_PORT'):
+            if not os.environ.get(key):
+                reasons.append(key + ' not set')
     if reasons:
         record('T01', 'real TUN carries a no-proxy TCP probe and leaves nothing behind', '; '.join(reasons), 'blocked')
         return
     run_id = time.strftime('%Y%m%d-%H%M%S')
     output = ROOT / 'artifacts/native-macos' / ('tun-' + run_id)
-    binary = Path(tempfile.mkdtemp(prefix='tunpoc-')) / 'tunpoc'
-    build = sh(['go', 'build', '-o', str(binary), '.'], cwd=ROOT / 'native/tunpoc', env=dict(os.environ, CGO_ENABLED='0'))
+    binary = Path(tempfile.mkdtemp(prefix='asterlink-tuntest-')) / 'asterlink-tuntest'
+    build = sh(['go', 'build', '-o', str(binary), './cmd/asterlink-tuntest'], cwd=ROOT / 'native/core', env=dict(os.environ, CGO_ENABLED='0'))
     if build.returncode != 0:
-        record('T01', 'tunpoc builds', build.stderr[-300:], 'fail')
+        record('T01', 'asterlink-tuntest builds', build.stderr[-300:], 'fail')
         return
-    command = [str(binary), '--allow-network-changes', '--server', os.environ['ASTERLINK_POC_SS_SERVER'],
-               '--port', os.environ['ASTERLINK_POC_SS_PORT'], '--output', str(output)]
-    if os.environ.get('ASTERLINK_POC_EXPECT_EXIT'):
-        command += ['--expect-exit', os.environ['ASTERLINK_POC_EXPECT_EXIT']]
-    result = subprocess.run(command, capture_output=True, text=True)
+    command = [str(binary), '--allow-network-changes', '--output', str(output)]
+    for flag, key in (('--expect-exit', 'ASTERLINK_POC_EXPECT_EXIT'), ('--download-url', 'ASTERLINK_TUN_DOWNLOAD_URL'),
+                      ('--download-bytes', 'ASTERLINK_TUN_DOWNLOAD_BYTES'), ('--udp-echo', 'ASTERLINK_TUN_UDP_ECHO'),
+                      ('--api-host', 'ASTERLINK_TUN_API_HOST')):
+        if os.environ.get(key):
+            command += [flag, os.environ[key]]
+    result = subprocess.run(command, text=True)
     try:
-        report = json.loads((output / 'tun-poc-report.json').read_text())
+        report = json.loads((output / 'tun-report.json').read_text())
     except (OSError, ValueError):
-        report = {}
-    ok = result.returncode == 0 and report.get('pass')
-    record('T01', 'exit address changes without proxy settings; no utun/route/DNS left after shutdown',
-           'exit_changed=%s leftovers=%s problems=%s' % (report.get('exit_changed'), report.get('cleanup_leftovers'), report.get('problems')),
-           'pass' if ok else 'fail', str(output))
+        record('T01', 'harness produced a report', 'no report (exit %d)' % result.returncode, 'fail')
+        return
+    for case in report.get('cases', []):
+        record(case['case_id'], case['expected'], case['observed'], case['result'], str(output))
 
 
 def main():

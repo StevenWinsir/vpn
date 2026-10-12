@@ -17,7 +17,12 @@ import (
 	"asterlink/core/internal/managed"
 )
 
-const commandTimeout = 30 * time.Second
+// Per-command budgets stay below the Helper's deadlines (connect 100s, others 40-60s) so the
+// Core, not the Helper, decides how a slow exchange ends.
+const (
+	commandTimeout = 45 * time.Second
+	connectTimeout = 90 * time.Second
+)
 
 var (
 	deviceID   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -30,10 +35,10 @@ type Service struct {
 
 func New(manager *managed.Manager) *Service { return &Service{manager: manager} }
 
-// Close runs when the session ends. The revoke is best effort and bounded: the Helper
-// only waits a few seconds for the process to exit.
+// Close runs when the session ends: close the data path, settle the last traffic batch,
+// revoke. All of it is bounded; the Helper waits up to 12 seconds for the process to exit.
 func (s *Service) Close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	s.manager.Shutdown(ctx)
 }
@@ -64,7 +69,11 @@ func fromError(err error) *ipc.Error {
 var needsFreshGeneration = map[string]bool{ipc.CmdRefreshCatalog: true, ipc.CmdSelectNode: true, ipc.CmdConnect: true}
 
 func (s *Service) Handle(parent context.Context, request ipc.Request) (any, *ipc.Error) {
-	ctx, cancel := context.WithTimeout(parent, commandTimeout)
+	budget := commandTimeout
+	if request.Command == ipc.CmdConnect {
+		budget = connectTimeout
+	}
+	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
 	if needsFreshGeneration[request.Command] && request.Generation != s.manager.Generation() {
 		return nil, &ipc.Error{Code: "stale_generation", Message: apiclient.Message("stale_generation")}
@@ -118,7 +127,7 @@ func (s *Service) Handle(parent context.Context, request ipc.Request) (any, *ipc
 		snapshot, err := s.manager.Connect(ctx)
 		return reply(snapshot, err)
 	case ipc.CmdDisconnect:
-		return s.manager.Disconnect(), nil
+		return s.manager.Disconnect(ctx), nil
 	case ipc.CmdLogout:
 		return s.manager.Logout(ctx), nil
 	}

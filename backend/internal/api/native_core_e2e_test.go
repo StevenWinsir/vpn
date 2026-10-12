@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,20 +35,31 @@ type coreProc struct {
 	device string
 	all    bytes.Buffer // every byte the Core ever sent, scanned for secrets
 	gen    uint64
+	// counters is the file the test-only fake engine reads as "forwarded" proxy bytes.
+	counters string
 }
 
 func startCore(t *testing.T, bin, apiURL string) *coreProc {
 	t.Helper()
 	cmd := exec.Command(bin)
-	cmd.Env = []string{}
+	counters := filepath.Join(t.TempDir(), "counters")
+	cmd.Env = []string{"ASTERLINK_FAKE_COUNTERS=" + counters}
 	in, _ := cmd.StdinPipe()
 	out, _ := cmd.StdoutPipe()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	c := &coreProc{t: t, cmd: cmd, in: in, out: out, apiURL: apiURL, device: uuid.NewString()}
+	c := &coreProc{t: t, cmd: cmd, in: in, out: out, apiURL: apiURL, device: uuid.NewString(), counters: counters}
 	t.Cleanup(func() { c.close() })
 	return c
+}
+
+// carry makes the fake engine report these cumulative proxy bytes.
+func (c *coreProc) carry(upload, download int64) {
+	c.t.Helper()
+	if err := os.WriteFile(c.counters, []byte(fmt.Sprintf("%d %d", upload, download)), 0o600); err != nil {
+		c.t.Fatal(err)
+	}
 }
 
 func (c *coreProc) close() {
@@ -86,11 +98,21 @@ type snapshotView struct {
 		LineType         string `json:"line_type"`
 		RatePermille     int64  `json:"rate_permille"`
 	} `json:"nodes"`
-	SelectedNodeID  string                          `json:"selected_node_id"`
-	CatalogRevision string                          `json:"catalog_revision"`
-	ConfigReady     bool                            `json:"config_ready"`
-	LastError       *struct{ Code, Message string } `json:"last_error"`
-	ActionError     *struct{ Code, Message string } `json:"action_error"`
+	SelectedNodeID  string `json:"selected_node_id"`
+	CatalogRevision string `json:"catalog_revision"`
+	ConfigReady     bool   `json:"config_ready"`
+	TunnelHealth    string `json:"tunnel_health"`
+	Metering        *struct {
+		UploadBytes             int64 `json:"upload_bytes"`
+		DownloadBytes           int64 `json:"download_bytes"`
+		LastSequence            int64 `json:"last_sequence"`
+		ConfirmedRemainingBytes int64 `json:"confirmed_remaining_bytes"`
+		EstimatedRemaining      int64 `json:"estimated_remaining_bytes"`
+		RatePermille            int64 `json:"rate_permille"`
+		Pending                 bool  `json:"pending"`
+	} `json:"metering"`
+	LastError   *struct{ Code, Message string } `json:"last_error"`
+	ActionError *struct{ Code, Message string } `json:"action_error"`
 }
 
 func (c *coreProc) call(command string, generation uint64, payload any) (coreReply, snapshotView) {
@@ -283,8 +305,11 @@ func TestNativeCoreEndToEnd(t *testing.T) {
 			t.Fatalf("select: %+v %+v", reply.Error, selected)
 		}
 		_, connected := core.call("connect", core.gen, nil)
-		if connected.ActionError == nil || connected.ActionError.Code != "tun_unavailable" || connected.State == "connected" {
-			t.Fatalf("stage 2 must stop at the engine boundary: %+v", connected)
+		if connected.ActionError != nil || connected.State != "connected" || connected.TunnelHealth != "up" {
+			t.Fatalf("connect with an authorized plan: %+v", connected.ActionError)
+		}
+		if _, off := core.call("disconnect", 0, nil); off.State != "ready" {
+			t.Fatalf("disconnect: %+v", off.State)
 		}
 		// VLESS too: select the ordinary line.
 		_, vless := core.call("select_node", core.gen, map[string]string{"node_id": ordinary.ID, "catalog_revision": connected.CatalogRevision})
@@ -352,6 +377,152 @@ func TestNativeCoreEndToEnd(t *testing.T) {
 		}
 	})
 
+	// Stage 3: real metering through the real Core and the real ledger. The engine is the
+	// test-only fake (no root, no routes): it "forwards" whatever bytes the test writes.
+	planUser := func(label string, quota int64) model.User {
+		hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+		u := model.User{ID: uuid.NewString(), Email: label + "-" + uuid.NewString()[:8] + "@example.invalid", Name: label, PasswordHash: string(hash), Role: "user", Status: "active"}
+		if err := db.Create(&u).Error; err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		sub := model.Subscription{ID: uuid.NewString(), UserID: u.ID, PlanID: "pro", PlanName: "VIP", StartsAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), TrafficLimitBytes: quota, MaxDevices: 2, AllowDedicated: true}
+		if err := db.Create(&sub).Error; err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	usage := func(userID string) model.Subscription {
+		var sub model.Subscription
+		if err := db.Where("user_id = ?", userID).First(&sub).Error; err != nil {
+			t.Fatal(err)
+		}
+		return sub
+	}
+	const mib = int64(1 << 20)
+	bind := func(t *testing.T, core *coreProc, nodeID string) snapshotView {
+		t.Helper()
+		snap, _ := core.waitSnapshot("catalog", 6*time.Second, func(s snapshotView) bool { return len(s.Nodes) == 2 })
+		if reply, s := core.call("select_node", core.gen, map[string]string{"node_id": nodeID, "catalog_revision": snap.CatalogRevision}); !reply.OK || s.ActionError != nil {
+			t.Fatalf("select: %+v", s.ActionError)
+		}
+		_, connected := core.call("connect", core.gen, nil)
+		if connected.ActionError != nil || connected.State != "connected" {
+			t.Fatalf("connect: %+v", connected.ActionError)
+		}
+		return connected
+	}
+
+	t.Run("ledger_matches_integer_charges_for_both_rates_and_a_switch_between_them", func(t *testing.T) {
+		user := planUser("meter", 10<<30)
+		core := startCore(t, bin, server.URL)
+		core.login(user.Email, password)
+		bind(t, core, dedicated.ID) // 1.0x
+		core.carry(20*mib, 80*mib)
+		_, off := core.call("disconnect", 0, nil)
+		if off.State != "ready" || off.Metering.Pending || off.LastError != nil {
+			t.Fatalf("disconnect: %+v %+v", off.State, off.LastError)
+		}
+		sub := usage(user.ID)
+		if sub.UsedUnits != 104_857_600_000 || sub.UploadBytes != 20*mib || sub.DownloadBytes != 80*mib {
+			t.Fatalf("1.0x line: units=%d up=%d down=%d", sub.UsedUnits, sub.UploadBytes, sub.DownloadBytes)
+		}
+		// Switch to the 0.5x line: same login session, cumulative counters continue.
+		snap := core.snapshot()
+		if reply, s := core.call("select_node", core.gen, map[string]string{"node_id": ordinary.ID, "catalog_revision": snap.CatalogRevision}); !reply.OK || s.ActionError != nil {
+			t.Fatalf("switch: %+v", s.ActionError)
+		}
+		if _, c := core.call("connect", core.gen, nil); c.ActionError != nil || c.State != "connected" || c.Metering.RatePermille != 500 {
+			t.Fatalf("connect 0.5x: %+v %+v", c.ActionError, c.Metering)
+		}
+		core.carry(40*mib, 160*mib) // another 20 MiB up + 80 MiB down
+		_, off = core.call("disconnect", 0, nil)
+		sub = usage(user.ID)
+		if sub.UsedUnits != 104_857_600_000+52_428_800_000 || sub.UploadBytes != 40*mib || sub.DownloadBytes != 160*mib {
+			t.Fatalf("after 0.5x: units=%d up=%d down=%d", sub.UsedUnits, sub.UploadBytes, sub.DownloadBytes)
+		}
+		if want := (10<<30)*1000 - sub.UsedUnits; off.Metering.ConfirmedRemainingBytes != want/1000 || off.Metering.EstimatedRemaining != want/1000 {
+			t.Fatalf("balances: %+v want %d", off.Metering, want/1000)
+		}
+		var reports []model.ClientTrafficReport
+		if err := db.Where("session_id IN (?)", db.Model(&model.NativeSession{}).Select("id").Where("user_id = ?", user.ID)).Order("sequence").Find(&reports).Error; err != nil {
+			t.Fatal(err)
+		}
+		var charged int64
+		for i, r := range reports {
+			if r.Sequence != int64(i+1) || r.Source != "client_reported" || (r.RatePermille != 1000 && r.RatePermille != 500) {
+				t.Fatalf("report %d: %+v", i, r)
+			}
+			charged += r.ChargedUnits
+		}
+		if charged != sub.UsedUnits || len(reports) < 4 {
+			t.Fatalf("%d reports charged %d, ledger %d", len(reports), charged, sub.UsedUnits)
+		}
+	})
+
+	t.Run("exhausting_the_quota_closes_the_tunnel_by_itself", func(t *testing.T) {
+		user := planUser("tiny", mib) // 1 MiB of quota
+		core := startCore(t, bin, server.URL)
+		core.login(user.Email, password)
+		bind(t, core, dedicated.ID)
+		core.carry(0, 2*mib)
+		started := time.Now()
+		snap, _ := core.waitSnapshot("quota stop", 8*time.Second, func(s snapshotView) bool {
+			return s.State != "connected" && s.State != "stopping"
+		})
+		t.Logf("tunnel closed %v after the quota ran out (state %s)", time.Since(started), snap.State)
+		if snap.LastError == nil || snap.LastError.Code != "quota_exhausted" || snap.TunnelHealth == "up" {
+			t.Fatalf("%+v", snap.LastError)
+		}
+		if sub := usage(user.ID); sub.DownloadBytes != 2*mib || sub.UsedUnits != 2*mib*1000 {
+			t.Fatalf("tail not settled: %+v", sub)
+		}
+		if _, again := core.call("connect", core.gen, nil); again.ActionError == nil || again.State == "connected" {
+			t.Fatalf("reconnect with no quota: %+v", again.ActionError)
+		}
+	})
+
+	t.Run("expiry_and_revocation_close_a_connected_tunnel", func(t *testing.T) {
+		user := planUser("expiring-live", 10<<30)
+		core := startCore(t, bin, server.URL)
+		core.login(user.Email, password)
+		bind(t, core, dedicated.ID)
+		db.Model(&model.Subscription{}).Where("user_id = ?", user.ID).Update("expires_at", time.Now().Add(-time.Second))
+		started := time.Now()
+		snap, _ := core.waitSnapshot("expiry stop", 10*time.Second, func(s snapshotView) bool {
+			return s.State != "connected" && s.State != "stopping"
+		})
+		t.Logf("tunnel closed %v after the subscription expired (reason %v)", time.Since(started), snap.LastError)
+		if snap.TunnelHealth == "up" || snap.LastError == nil {
+			t.Fatalf("%+v", snap)
+		}
+		if _, again := core.call("connect", core.gen, nil); again.ActionError == nil || again.State == "connected" {
+			t.Fatalf("reconnect on an expired plan: %+v", again.ActionError)
+		}
+
+		second := planUser("revoked-live", 10<<30)
+		other := startCore(t, bin, server.URL)
+		other.login(second.Email, password)
+		bind(t, other, dedicated.ID)
+		db.Model(&model.NativeSession{}).Where("user_id = ?", second.ID).Update("revoked_at", time.Now())
+		other.waitSnapshot("sign-out", 10*time.Second, func(s snapshotView) bool { return s.State == "signed_out" })
+	})
+
+	t.Run("a_failing_tunnel_never_reports_connected", func(t *testing.T) {
+		user := planUser("failing", 10<<30)
+		core := startCore(t, bin, server.URL)
+		core.login(user.Email, password)
+		snap, _ := core.waitSnapshot("catalog", 6*time.Second, func(s snapshotView) bool { return len(s.Nodes) == 2 })
+		core.call("select_node", core.gen, map[string]string{"node_id": dedicated.ID, "catalog_revision": snap.CatalogRevision})
+		if err := os.WriteFile(core.counters+".fail", []byte("verify"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, c := core.call("connect", core.gen, nil)
+		if c.ActionError == nil || c.ActionError.Code != "tunnel_unhealthy" || c.State == "connected" {
+			t.Fatalf("%+v", c.ActionError)
+		}
+	})
+
 	t.Run("admin_edits_reach_the_client_within_five_seconds", func(t *testing.T) {
 		core := startCore(t, bin, server.URL)
 		core.login(basic.Email, password)
@@ -372,16 +543,18 @@ func TestNativeCoreEndToEnd(t *testing.T) {
 		}
 		// The very next connect re-validates against the new version before any engine call.
 		_, again := core.call("connect", core.gen, nil)
-		if again.ActionError == nil || again.ActionError.Code != "tun_unavailable" {
-			t.Fatalf("connect after edit should re-bind and reach the engine boundary: %+v", again.ActionError)
+		if again.ActionError != nil || again.State != "connected" || again.Metering == nil || again.Metering.RatePermille != 1500 {
+			t.Fatalf("connect after edit should re-bind at the new rate: %+v %+v", again.ActionError, again.Metering)
 		}
+		// Disabling the node while connected must close the data path by itself.
 		// Disable the node: it disappears and the selection is cleared.
 		edited.Enabled, edited.Version = false, ordinary.Version
 		changedAt = time.Now()
 		save(ordinary.ID, edited)
 		snap, _ = core.waitSnapshot("disable", 5*time.Second, func(s snapshotView) bool { return len(s.Nodes) == 0 })
 		t.Logf("admin disable observed by the client after %v", time.Since(changedAt))
-		if snap.SelectedNodeID != "" || snap.ConfigReady {
+		snap, _ = core.waitSnapshot("tunnel closed", 5*time.Second, func(s snapshotView) bool { return s.State != "connected" && s.State != "stopping" })
+		if snap.SelectedNodeID != "" || snap.ConfigReady || snap.TunnelHealth == "up" {
 			t.Fatalf("disabled node still selected: %+v", snap)
 		}
 	})

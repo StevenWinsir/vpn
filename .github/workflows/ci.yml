@@ -21,21 +21,28 @@ jobs:
   backend:
     name: Backend / PostgreSQL / race
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
+      # The real Core binary (with the pinned Mihomo submodule) is built for the end-to-end
+      # ledger tests, so the submodule and the Core's module cache are needed here too.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: backend/go.sum
+          cache-dependency-path: |
+            backend/go.sum
+            native/core/go.sum
       - name: Install private PostgreSQL test tools
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql
           echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
       - name: Download locked Go dependencies
-        working-directory: backend
-        run: go mod download
+        run: |
+          (cd backend && go mod download)
+          (cd native/core && go mod download)
       - name: Vet
         working-directory: backend
         run: go vet ./...
@@ -122,11 +129,15 @@ jobs:
       - name: Env contract (Python parser)
         working-directory: scripts
         run: python3 test-native-env.py
-      - name: Core IPC (race) and vet
+      - name: Core IPC, metering, state machine, engine template (race) and vet
         working-directory: native/core
         run: |
           CGO_ENABLED=1 go test -race -count=1 ./...
           go vet ./...
+          # The test-only fake engine (used by the end-to-end ledger tests) must keep compiling.
+          go vet -tags fakeengine ./...
+          # The privileged TUN harness is built here, never run (it changes machine routes).
+          CGO_ENABLED=0 go build -o /tmp/asterlink-tuntest ./cmd/asterlink-tuntest
       - name: Shared policy including pinned Mihomo schema check
         working-directory: shared/nodepolicy
         run: |
@@ -150,6 +161,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
             native/core/go.mod
+            native/core/go.sum
             native/tunpoc/go.sum
       - name: Toolchain versions (recorded, not assumed)
         run: |
