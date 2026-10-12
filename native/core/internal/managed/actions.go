@@ -69,6 +69,14 @@ func (m *Manager) SelectNode(ctx context.Context, nodeID, catalogRevision string
 	if err = m.stopTunnel(ctx, ""); err != nil {
 		return m.Snapshot(), err
 	}
+	m.mu.Lock()
+	nodeMode := m.nodeReportedLocked(nodeID)
+	m.mu.Unlock()
+	if nodeMode {
+		// A node-reported node has no config to fetch: its per-user credential is minted
+		// by a grant when (and only when) the user connects.
+		return m.selectGrantNode(gen, nodeID)
+	}
 	if err = m.bindNode(ctx, gen, client, token, nodeID); err != nil {
 		return m.Snapshot(), err
 	}
@@ -144,6 +152,9 @@ func (m *Manager) bindNode(ctx context.Context, gen uint64, client *apiclient.Cl
 // gateLocked is the authorization verdict as of now ("" means allowed). It is also
 // what Snapshot reports, so the UI button and the real gate can never disagree.
 func (m *Manager) gateLocked() string {
+	if m.client != nil && m.session != nil && m.conn == nil && m.selectedNodeReportedLocked() {
+		return m.grantGateLocked()
+	}
 	switch {
 	case m.client == nil || m.session == nil:
 		return "not_signed_in"

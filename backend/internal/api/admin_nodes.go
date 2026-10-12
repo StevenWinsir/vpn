@@ -65,7 +65,7 @@ func (s *Server) adminNodeList(c *gin.Context) {
 		}
 		result = append(result, adminNode{Node: row.Node, Enabled: row.Enabled, PlanIDs: plans})
 	}
-	c.JSON(200, gin.H{"nodes": result, "supported_protocols": nodepolicy.Supported(), "core_revision": nodepolicy.CoreRevision, "metering_source": "client_reported", "production_ready": false})
+	c.JSON(200, gin.H{"nodes": result, "supported_protocols": nodepolicy.Supported(), "core_revision": nodepolicy.CoreRevision, "metering_source": sessionSourceFor(s.cfg), "production_ready": false})
 }
 
 func (s *Server) adminNodeDetail(c *gin.Context) {

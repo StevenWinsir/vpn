@@ -28,10 +28,15 @@ public struct CoreNode: Codable, Sendable, Equatable, Identifiable {
     public var region: String
     public var lineType: String
     public var ratePermille: Int64
+    /// "node_reported" when a node-side agent governs the line: the node, not this app,
+    /// meters the traffic and issues a per-user credential. Absent for development lines.
+    public var meteringSource: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, region, lineType = "line_type", ratePermille = "rate_permille"
+        case id, name, region, lineType = "line_type", ratePermille = "rate_permille", meteringSource = "metering_source"
     }
+
+    public var isNodeMetered: Bool { meteringSource == "node_reported" }
 
     /// `direct` is the ordinary routed line, NOT a Clash DIRECT bypass.
     public var isDedicated: Bool { lineType == "dedicated" }

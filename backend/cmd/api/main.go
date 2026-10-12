@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"log"
@@ -12,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"gorm.io/gorm"
 	"vpn/backend/internal/api"
 	"vpn/backend/internal/config"
 	"vpn/backend/internal/operations"
@@ -83,8 +87,67 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
+	if c.AgentEnabled() {
+		agentServer, agentErr := newAgentServer(db, c)
+		if agentErr != nil {
+			log.Fatal(agentErr)
+		}
+		go func() {
+			<-ctx.Done()
+			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = agentServer.Shutdown(shutdown)
+		}()
+		go func() {
+			log.Printf("node-agent API (mTLS) listening on %s", c.NodeAgentAddr)
+			if e := agentServer.ListenAndServeTLS("", ""); e != nil && e != http.ErrServerClosed {
+				log.Fatal(e)
+			}
+		}()
+		go reconcileLoop(ctx, db, c)
+	}
 	log.Printf("API listening on http://%s", c.Addr)
 	if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+}
+
+// newAgentServer serves the node-agent API. mTLS is mandatory: a connection without a
+// client certificate chained to NODE_AGENT_CLIENT_CA_FILE never reaches a handler.
+func newAgentServer(db *gorm.DB, c config.Config) (*http.Server, error) {
+	pem, err := os.ReadFile(c.NodeAgentClientCAFile)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("NODE_AGENT_CLIENT_CA_FILE contains no certificate")
+	}
+	cert, err := tls.LoadX509KeyPair(c.NodeAgentCertFile, c.NodeAgentKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Server{
+		Addr: c.NodeAgentAddr, Handler: api.NewAgent(db, c),
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool},
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: c.RequestTimeout + 5*time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
+	}, nil
+}
+
+func reconcileLoop(ctx context.Context, db *gorm.DB, c config.Config) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			released, err := api.ReconcileGrants(ctx, db, c)
+			if err != nil {
+				log.Print("grant reconciliation failed (will retry)")
+			} else if released > 0 {
+				log.Printf("grant reconciliation released %d lapsed grants", released)
+			}
+		}
 	}
 }

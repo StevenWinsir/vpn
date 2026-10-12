@@ -40,3 +40,7 @@ Node details use a read-only repeatable-read transaction so that metadata, optim
 Managed Core presently owns a loopback mixed listener and the client can manage system proxy settings using ownership/journal guards. That does not cover applications bypassing the OS proxy and is not all-device Clash TUN. Native acceptance isolates actual system proxy changes to avoid disrupting the developer's machine. Production requires separately verified TUN privilege/route setup, IPv6/UDP/DNS handling, sleep/wake, network changes, crash cleanup, competing VPNs, and signed/notarized distribution.
 
 Do not publish a development debug bundle, simulate successful payment in production, disable TLS verification, or advertise authoritative quotas based on the current client-reported ledger.
+
+## 阶段 4 更新（节点权威计量）
+
+上文"生产代理交付被阻止"的原因（共享凭据不能按用户撤销、客户端自报不可信）由阶段 4 的节点代理方案解决：已登记并在线的节点由节点代理按用户发放独立凭据、直接读取转发器计数并强制撤销/到期/预算。生产环境仍然拒绝共享凭据与客户端上报，只允许有节点代理的线路。详见 [macos-stage4.md](macos-stage4.md)。`doctor` 现在额外报告 `agents_online`、`authoritative_nodes`、`grants_needing_reconcile`；`node_authoritative` 表示有在线代理，**不等于**该协议的强制控制已在真实节点验收（报告里的 `enforcement_must_be_accepted_per_protocol_on_the_real_node` 警告保留）。

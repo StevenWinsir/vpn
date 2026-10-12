@@ -234,6 +234,11 @@ struct MainView: View {
                     .font(.callout).foregroundStyle(.secondary)
                 Text("预估剩余套餐流量 \(Formatting.bytes(metering.estimatedRemainingBytes))（服务器已确认 \(Formatting.bytes(metering.confirmedRemainingBytes))\(metering.pending ? "，有批次待确认" : "")）")
                     .font(.callout).foregroundStyle(.secondary)
+                if metering.source == "node_reported" {
+                    // The node bills from its own counters; the figures above are only what this Mac measured.
+                    Text("本线路由节点侧独立计量：套餐流量按节点实测的收发字节扣除，本机数值仅供参考。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -279,6 +284,7 @@ struct NodeRow: View {
                 Text(node.lineLabel).font(.caption.bold()).padding(.horizontal, 7).padding(.vertical, 2)
                     .background(node.isDedicated ? Color.orange.opacity(0.2) : Color.blue.opacity(0.15), in: Capsule())
                 Text("流量 \(node.rateLabel)").font(.caption).foregroundStyle(.secondary)
+                if node.isNodeMetered { Image(systemName: "checkmark.shield").foregroundStyle(.secondary).help("节点侧独立计量") }
                 if ready { Image(systemName: "checkmark.seal.fill").foregroundStyle(.green).help("线路配置已校验") }
             }
             .contentShape(Rectangle())

@@ -33,6 +33,11 @@ type ReadinessReport struct {
 	AccountChecked     string    `json:"account_checked,omitempty"`
 	AccountReason      string    `json:"account_reason"`
 	Warnings           []string  `json:"warnings"`
+	// Authoritative metering facts (handoff_app.md 7.3/7.4): agents seen recently with
+	// at least one protocol they claim to enforce, and grants whose usage needs review.
+	AgentsOnline       int   `json:"agents_online"`
+	AuthoritativeNodes int   `json:"authoritative_nodes"`
+	GrantsToReconcile  int64 `json:"grants_needing_reconcile"`
 }
 
 // Inspect uses a PostgreSQL read-only repeatable-read transaction. It cannot
@@ -40,8 +45,8 @@ type ReadinessReport struct {
 func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) (ReadinessReport, error) {
 	report := ReadinessReport{
 		CheckedAt: time.Now().UTC(), MeteringSource: "client_reported",
-		MacOSTransport: "loopback_mixed_and_system_proxy_not_tun",
-		MissingTables:  []string{}, Warnings: []string{"node_side_metering_and_per_user_revocation_not_implemented", "real_payments_and_release_signing_not_verified"},
+		MacOSTransport: "tun_via_managed_core",
+		MissingTables:  []string{}, Warnings: []string{"real_payments_and_release_signing_not_verified", "enforcement_must_be_accepted_per_protocol_on_the_real_node"},
 		CatalogEnabled: cfg.ClientNodeCatalog, EncryptionKeyValid: nodes.ValidateKey(cfg.NodeEncryptionKey),
 		TestAccessEnabled: cfg.Env != "production" && cfg.TestPurchase && cfg.ClientAllowTestEntitlements,
 		AccountReason:     "account_not_checked",
@@ -53,6 +58,9 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 			return report, errors.New("invalid readiness account email")
 		}
 	}
+	if cfg.Env == "production" {
+		report.MeteringSource = "node_reported"
+	}
 	if cfg.SSLMode != "verify-full" {
 		report.Warnings = append(report.Warnings, "database_tls_not_verified")
 	}
@@ -61,7 +69,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -75,6 +83,27 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Model(&model.Node{}).Where("enabled = ?", true).Count(&report.EnabledNodes).Error; err != nil {
 			return err
 		}
+		var agents []model.NodeAgent
+		if err := tx.Where("enabled = ?", true).Find(&agents).Error; err != nil {
+			return err
+		}
+		for _, agent := range agents {
+			var protocols []string
+			_ = json.Unmarshal([]byte(agent.Protocols), &protocols)
+			if agent.LastSeenAt != nil && report.CheckedAt.Sub(*agent.LastSeenAt) <= cfg.AgentStale() {
+				report.AgentsOnline++
+				if len(protocols) > 0 {
+					report.AuthoritativeNodes++
+				}
+			}
+		}
+		if err := tx.Model(&model.ConnectionGrant{}).Where("needs_reconcile = ?", true).Count(&report.GrantsToReconcile).Error; err != nil {
+			return err
+		}
+		// Node-authoritative means a live agent governs a node; it does not certify that
+		// enforcement was accepted on that protocol (the warning above stays).
+		report.NodeAuthoritative = report.AuthoritativeNodes > 0
+		report.ProductionReady = cfg.Env == "production" && report.NodeAuthoritative && cfg.AgentEnabled() && cfg.SSLMode == "verify-full" && report.GrantsToReconcile == 0 && report.Administrators > 0 && report.EncryptionKeyValid
 		if report.AccountChecked == "" {
 			return nil
 		}

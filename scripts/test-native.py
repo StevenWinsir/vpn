@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,8 +33,14 @@ def main() -> None:
             core_bin = directory / "asterlink-core"
             subprocess.run(["go", "build", "-tags", "fakeengine", "-o", str(core_bin), "./cmd/asterlink-core"], cwd=ROOT / "native/core", check=True, env=dict(os.environ, CGO_ENABLED="0"))
             environment["ASTERLINK_CORE_BIN"] = str(core_bin)
+            # The real node agent (reference VLESS forwarder) is run against the real API (TestNodeAgentEndToEnd*).
+            agent_bin = directory / "asterlink-nodeagent"
+            subprocess.run(["go", "build", "-o", str(agent_bin), "./cmd/asterlink-nodeagent"], cwd=ROOT / "native/nodeagent", check=True, env=dict(os.environ, CGO_ENABLED="0"))
+            environment["ASTERLINK_NODEAGENT_BIN"] = str(agent_bin)
             environment.update(NATIVE_TEST_DSN=f"host={socket} user=postgres dbname=postgres sslmode=disable", RUN_DB_TESTS="0", GOPROXY="off", GOTOOLCHAIN="local")
-            subprocess.run(["go", "test", "-race", "-count=1", "-v", "./..."], cwd=ROOT / "backend", env=environment, check=True)
+            # Optional extra `go test` arguments (e.g. -run TestGrant ./internal/api) narrow the run.
+            targets = sys.argv[1:] or ["./..."]
+            subprocess.run(["go", "test", "-race", "-count=1", "-v", *targets], cwd=ROOT / "backend", env=environment, check=True)
         finally:
             if started:
                 subprocess.run(["pg_ctl", "-D", str(data), "-m", "fast", "-w", "stop"], check=True)

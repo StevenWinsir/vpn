@@ -69,6 +69,9 @@ type fakeAPI struct {
 	loseAcks   int // apply the next n batches, then fail the reply (a lost acknowledgement)
 	reports    map[int64]apiclient.Counters
 	bodies     []apiclient.Counters
+
+	// Node-reported mode (grants).
+	grants grantFake
 }
 
 type apiError struct {
@@ -95,6 +98,8 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	mux.HandleFunc("/api/v1/client/nodes", f.nodesHandler)
 	mux.HandleFunc("/api/v1/client/config", f.config)
 	mux.HandleFunc("/api/v1/client/traffic", f.traffic)
+	mux.HandleFunc("/api/v1/client/grants", f.grantCreate)
+	mux.HandleFunc("/api/v1/client/grants/", f.grantByID)
 	mux.HandleFunc("/api/v1/client/logout", func(w http.ResponseWriter, r *http.Request) {
 		f.logoutHits.Add(1)
 		f.auth(w, r)

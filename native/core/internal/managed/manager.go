@@ -50,6 +50,9 @@ type Options struct {
 	Signature func() string
 	// Egress receives the physical interface while a tunnel is up.
 	Egress *network.Egress
+	// GrantTimeout bounds how long Connect waits for a node to confirm a grant;
+	// GrantPoll is the polling interval (node-reported mode).
+	GrantTimeout, GrantPoll time.Duration
 }
 
 type LoginParams struct {
@@ -96,6 +99,13 @@ type Manager struct {
 	conn  *connection
 	// opMu admits one Connect at a time; stopMu serialises every teardown of a segment.
 	opMu, stopMu sync.Mutex
+
+	// Node-reported mode: grant is the credential lease of the live (or starting)
+	// segment, orphan a grant whose revocation could not be delivered yet, and local a
+	// display-only meter (the node, not this process, is the ledger).
+	grant  *grantRef
+	orphan string
+	local  *meter.Meter
 }
 
 type errorInfo struct {
@@ -134,6 +144,12 @@ func New(opts Options) *Manager {
 	}
 	if opts.Egress == nil {
 		opts.Egress = network.Default
+	}
+	if opts.GrantTimeout <= 0 {
+		opts.GrantTimeout = 20 * time.Second
+	}
+	if opts.GrantPoll <= 0 {
+		opts.GrantPoll = 300 * time.Millisecond
 	}
 	return &Manager{opts: opts, state: StateSignedOut}
 }
@@ -243,6 +259,7 @@ func (m *Manager) resetLocked(keepError bool) {
 	m.nodes, m.revision, m.selected, m.profile, m.catalogReady, m.catalogReason = nil, "", "", nil, false, ""
 	m.profileNode = apiclient.NodeChoice{}
 	m.meter = nil
+	m.grant, m.orphan, m.local = nil, "", nil
 	m.state = StateSignedOut
 	if !keepError {
 		m.lastError = nil
@@ -293,12 +310,21 @@ func (m *Manager) applySessionLocked(s apiclient.Session, requestStart time.Time
 		m.profile = nil
 	}
 	if m.state == StateReady || m.state == StateBlocked {
-		if s.CanConnect || s.Reason == "profile_required" || s.Reason == "profile_changed" {
+		if m.readyLocked(s) {
 			m.state = StateReady
 		} else {
 			m.state = StateBlocked
 		}
 	}
+}
+
+// readyLocked: the server's verdict leaves the account able to (re)connect, possibly
+// after selecting a node or minting a new grant.
+func (m *Manager) readyLocked(s apiclient.Session) bool {
+	if s.CanConnect || s.Reason == "profile_required" || s.Reason == "profile_changed" {
+		return true
+	}
+	return s.Reason == "grant_expired" && m.selectedNodeReportedLocked()
 }
 
 // jitter returns d reduced by up to 10% so renewals land early, never late.
@@ -333,12 +359,14 @@ func (m *Manager) keepAlive(ctx context.Context, gen uint64, client *apiclient.C
 		}
 		for {
 			m.mu.Lock()
-			active, ledger := m.conn != nil, m.meter
+			active, ledger := m.conn != nil && m.conn.metered, m.meter
 			m.mu.Unlock()
 			if active {
 				// The meter is the only renewal writer while forwarding (section 5.2).
+				// A node-reported segment has no meter, so this loop keeps renewing.
 				break
 			}
+			m.retryOrphan(ctx, gen, client, token)
 			start := m.opts.Now()
 			var s apiclient.Session
 			var err error

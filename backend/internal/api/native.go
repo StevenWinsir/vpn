@@ -48,6 +48,10 @@ type nativeState struct {
 	LeaseSeconds           int        `json:"lease_seconds"`
 	MeteringSource         string     `json:"metering_source"`
 	RatePermille           int64      `json:"rate_permille"`
+	// Present only for node_reported sessions that hold a grant.
+	GrantID        string     `json:"grant_id,omitempty"`
+	GrantState     string     `json:"grant_state,omitempty"`
+	GrantExpiresAt *time.Time `json:"grant_expires_at,omitempty"`
 }
 
 func (s *Server) nativeLogin(c *gin.Context) {
@@ -212,7 +216,7 @@ func nativeAuthorizationBound(sess model.NativeSession, sub *model.Subscription)
 }
 
 func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time, transactions ...*gorm.DB) nativeState {
-	out := nativeState{ServerTime: now, SessionIdleTimeout: int(s.cfg.IdleTTL() / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: int(s.cfg.ReportInterval() / time.Second), LeaseSeconds: int(s.cfg.Lease() / time.Second), MeteringSource: "client_reported", RatePermille: sessionRate(sess)}
+	out := nativeState{ServerTime: now, SessionIdleTimeout: int(s.cfg.IdleTTL() / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: int(s.cfg.ReportInterval() / time.Second), LeaseSeconds: int(s.cfg.Lease() / time.Second), MeteringSource: sessionSource(sess), RatePermille: sessionRate(sess)}
 	if sub != nil {
 		out.SubscriptionExpiresAt = &sub.ExpiresAt
 		out.TotalBytes, out.UsedUnits, out.PlanName = sub.TrafficLimitBytes, sub.UsedUnits, sub.PlanName
@@ -226,6 +230,12 @@ func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscriptio
 			out.Reason = "profile_required"
 		case !nativeAuthorizationBound(sess, sub):
 			out.Reason = "subscription_changed"
+		case sess.MeteringSource == meteringNode:
+			db := s.db
+			if len(transactions) == 1 {
+				db = transactions[0]
+			}
+			out.Reason = s.grantReason(db, sess, sub, now, &out)
 		default:
 			var data []byte
 			var err error
@@ -303,6 +313,11 @@ func (s *Server) readNativeProfile(planID string) ([]byte, error) {
 }
 
 func (s *Server) nativeConfig(c *gin.Context) {
+	if !s.cfg.DevMetering() {
+		// Shared-credential delivery is development-only; production clients use grants.
+		fail(c, 426, "client_upgrade_required", "此服务端仅支持节点计量的新版客户端，请升级")
+		return
+	}
 	var data []byte
 	var status nativeState
 	var catalog *catalogProfile
@@ -321,6 +336,9 @@ func (s *Server) nativeConfig(c *gin.Context) {
 		}
 		if sess.SubscriptionID != nil && !nativeAuthorizationBound(*sess, sub) {
 			return &apiError{409, "subscription_changed", "套餐周期已变更，请重新登录"}
+		}
+		if sess.MeteringSource == meteringNode {
+			return &apiError{409, "metering_source_mismatch", "此会话已使用节点计量，不能同时使用客户端上报"}
 		}
 		var e error
 		if s.cfg.ClientNodeCatalog {
@@ -349,17 +367,13 @@ func (s *Server) nativeConfig(c *gin.Context) {
 				return e
 			}
 		}
-		var active int64
 		fingerprint := nativeEntitlementFingerprint(sub)
-		if e = tx.Model(&model.NativeSession{}).Where("user_id = ? AND id <> ? AND subscription_id = ? AND subscription_starts_at = ? AND entitlement_fingerprint = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", sess.UserID, sess.ID, sub.ID, sub.StartsAt, fingerprint, now, now.Add(-s.cfg.IdleTTL())).Count(&active).Error; e != nil {
+		if e = s.checkDeviceLimit(tx, sess, sub, fingerprint, now); e != nil {
 			return e
 		}
-		if sub.MaxDevices <= 0 || active >= int64(sub.MaxDevices) {
-			return &apiError{403, "device_limit", "已达到套餐同时在线设备上限，请先退出其他设备"}
-		}
 		sess.SubscriptionID, sess.SubscriptionStartsAt = &sub.ID, &sub.StartsAt
-		sess.EntitlementFingerprint, sess.ProfileVersion = fingerprint, nativeProfileVersion(data)
-		if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion, "node_id": sess.NodeID, "rate_permille": sessionRate(*sess)}).Error; e != nil {
+		sess.EntitlementFingerprint, sess.ProfileVersion, sess.MeteringSource = fingerprint, nativeProfileVersion(data), meteringClient
+		if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion, "node_id": sess.NodeID, "rate_permille": sessionRate(*sess), "metering_source": meteringClient}).Error; e != nil {
 			return e
 		}
 		status = s.nativeSnapshot(*sess, sub, now, tx)
@@ -375,7 +389,30 @@ func (s *Server) nativeConfig(c *gin.Context) {
 	c.JSON(200, response)
 }
 
+// checkDeviceLimit enforces the plan's concurrent-device cap for the session's user.
+func (s *Server) checkDeviceLimit(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, fingerprint string, now time.Time) error {
+	var active int64
+	if e := tx.Model(&model.NativeSession{}).Where("user_id = ? AND id <> ? AND subscription_id = ? AND subscription_starts_at = ? AND entitlement_fingerprint = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", sess.UserID, sess.ID, sub.ID, sub.StartsAt, fingerprint, now, now.Add(-s.cfg.IdleTTL())).Count(&active).Error; e != nil {
+		return e
+	}
+	if sub.MaxDevices <= 0 || active >= int64(sub.MaxDevices) {
+		return &apiError{403, "device_limit", "已达到套餐同时在线设备上限，请先退出其他设备"}
+	}
+	return nil
+}
+
+func sessionSource(sess model.NativeSession) string {
+	if sess.MeteringSource == meteringNode {
+		return meteringNode
+	}
+	return meteringClient
+}
+
 func (s *Server) nativeTraffic(c *gin.Context) {
+	if !s.cfg.DevMetering() {
+		fail(c, 426, "client_upgrade_required", "此服务端仅支持节点计量的新版客户端，请升级")
+		return
+	}
 	var in billing.ClientCounters
 	if !decode(c, &in) {
 		return
@@ -389,6 +426,11 @@ func (s *Server) nativeTraffic(c *gin.Context) {
 	err := s.nativeTransaction(c, func(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, now time.Time) error {
 		if !nativeBound(*sess, sub) {
 			return &apiError{409, "subscription_changed", "套餐或会话配置已变更，请重新登录"}
+		}
+		if sess.MeteringSource == meteringNode {
+			// Node-reported sessions are billed from the forwarder only: accepting a
+			// client report as well would charge the same bytes twice.
+			return &apiError{409, "metering_source_mismatch", "此会话由节点计量，不接受客户端流量上报"}
 		}
 		if in.Sequence <= sess.LastSequence {
 			var report model.ClientTrafficReport

@@ -81,9 +81,7 @@ func (s *Server) readNativeCatalog(c *gin.Context) (nativeCatalog, error) {
 		if e != nil {
 			return e
 		}
-		for _, node := range rows {
-			out.Nodes = append(out.Nodes, nodeChoice{node.ID, node.Name, node.Region, node.LineType, node.RatePermille, node.Version})
-		}
+		out.Nodes = append(out.Nodes, rows...)
 		return nil
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err == nil {

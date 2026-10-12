@@ -4,8 +4,12 @@ import "time"
 
 // Native tokens are opaque, memory-only on the client, and stored only as hashes here.
 type NativeSession struct {
-	NodeID                 string  `gorm:"size:36;not null;default:''"`
-	RatePermille           int64   `gorm:"not null;default:1000"`
+	NodeID       string `gorm:"size:36;not null;default:''"`
+	RatePermille int64  `gorm:"not null;default:1000"`
+	// MeteringSource is "" until the session binds to "client_reported" (development
+	// /config + /traffic) or "node_reported" (grant). The two never mix on one session.
+	MeteringSource         string  `gorm:"size:16;not null;default:''"`
+	GrantID                string  `gorm:"size:36;not null;default:''"`
 	ID                     string  `gorm:"type:uuid;primaryKey"`
 	UserID                 string  `gorm:"type:uuid;not null;index"`
 	User                   User    `gorm:"constraint:OnDelete:CASCADE"`

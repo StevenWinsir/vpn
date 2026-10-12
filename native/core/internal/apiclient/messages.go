@@ -46,6 +46,13 @@ var messages = map[string]string{
 	"already_connected":                 "已处于连接状态",
 	"invalid_api_base":                  "应用的服务器地址配置无效",
 	"invalid_request":                   "请求格式不正确",
+	"grant_expired":                     "连接授权已失效，请重新连接",
+	"grant_timeout":                     "线路节点未能及时就绪，请稍后重试或更换线路",
+	"agent_unavailable":                 "该线路的节点暂不可用，请更换线路或稍后重试",
+	"metering_source_mismatch":          "此登录会话已使用另一种计量方式，请重新登录",
+	"client_upgrade_required":           "应用版本过低，请升级后再连接",
+	"grant_not_found":                   "连接授权不存在，请重新连接",
+	"idempotency_conflict":              "请求标识冲突，请重试",
 }
 
 // Message returns the Chinese text for code, or a generic line for unknown codes.
@@ -60,7 +67,7 @@ func Message(code string) string {
 // and every piece of temporary identity must be dropped.
 func TerminatesSession(code string) bool {
 	switch code {
-	case "native_session_required", "native_session_expired", "subscription_changed", "invalid_credentials":
+	case "native_session_required", "native_session_expired", "subscription_changed", "invalid_credentials", "metering_source_mismatch":
 		return true
 	}
 	return false

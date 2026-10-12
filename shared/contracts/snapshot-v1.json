@@ -54,6 +54,31 @@
       },
       "last_error": null, "core_version": "0.0.0-dev"
     },
+    "connected_node_reported": {
+      "generation": 12, "state": "connected",
+      "user": {"id": "22222222-2222-4222-8222-222222222222", "email": "fixture@example.invalid", "name": "Fixture", "role": "user"},
+      "entitlement": {
+        "plan_name": "VIP", "subscription_expires_at": "2030-01-01T00:10:00Z", "authorization_expires_at": "2030-01-01T00:01:30Z",
+        "lease_remaining_seconds": 75, "account_authorized": true, "can_connect": true, "reason": "", "reason_message": "",
+        "total_bytes": 1073741824, "remaining_bytes": 1073610752, "used_units": 131072000
+      },
+      "nodes": [
+        {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "name": "HK Dedicated", "region": "HK", "line_type": "dedicated", "rate_permille": 500, "metering_source": "node_reported"}
+      ],
+      "selected_node_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "catalog_revision": "191ed7ece6ec8b4ae68e897af41900f7de83ae3cabf80592a1406e97a405547a",
+      "profile_version": "191ed7ece6ec8b4ae68e897af41900f7de83ae3cabf80592a1406e97a405547a",
+      "config_ready": true, "tunnel_health": "up",
+      "metering": {
+        "source": "node_reported", "upload_bytes": 131072, "download_bytes": 131072, "last_sequence": 0,
+        "upload_bytes_per_second": 4096, "download_bytes_per_second": 8192,
+        "confirmed_upload_bytes": 0, "confirmed_download_bytes": 0,
+        "confirmed_remaining_bytes": 1073610752, "estimated_remaining_bytes": 1073610752,
+        "rate_permille": 500, "pending": false,
+        "history": [{"upload": 0, "download": 0}, {"upload": 4096, "download": 8192}]
+      },
+      "last_error": null, "core_version": "0.0.0-dev"
+    },
     "blocked_no_plan": {
       "generation": 9, "state": "blocked",
       "user": {"id": "22222222-2222-4222-8222-222222222222", "email": "test@test.com", "name": "Admin", "role": "admin"},

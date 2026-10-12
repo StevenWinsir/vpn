@@ -14,11 +14,17 @@ import (
 )
 
 type Config struct {
-	ClientNodeCatalog                                                             bool
-	NodeEncryptionKey                                                             string
-	ClientProfileDir                                                              string
-	ClientAllowTestEntitlements                                                   bool
-	ClientReportInterval, ClientLease, ClientIdleTimeout, ClientNodeWatch         time.Duration
+	ClientNodeCatalog                                                     bool
+	NodeEncryptionKey                                                     string
+	ClientProfileDir                                                      string
+	ClientAllowTestEntitlements                                           bool
+	ClientReportInterval, ClientLease, ClientIdleTimeout, ClientNodeWatch time.Duration
+	// Authoritative (node-reported) metering. The agent listener is a separate mTLS
+	// endpoint; production proxy delivery is only possible through it.
+	NodeAgentAddr, NodeAgentCertFile, NodeAgentKeyFile, NodeAgentClientCAFile     string
+	NodeAgentStale, GrantSettleGrace                                              time.Duration
+	GrantBudgetBytes                                                              int64
+	ClientMinAppVersion                                                           string
 	RequestTimeout, MigrationTimeout                                              time.Duration
 	Env, Addr, Host, Port, Database, User, Password, Schema, SSLMode, SSLRootCert string
 	JWTSecret, Issuer, Audience                                                   string
@@ -81,6 +87,34 @@ func Load() (Config, error) {
 		}
 		*x.dest = time.Duration(v) * time.Second
 	}
+	c.NodeAgentAddr = strings.TrimSpace(os.Getenv("NODE_AGENT_ADDR"))
+	c.NodeAgentCertFile = strings.TrimSpace(os.Getenv("NODE_AGENT_TLS_CERT_FILE"))
+	c.NodeAgentKeyFile = strings.TrimSpace(os.Getenv("NODE_AGENT_TLS_KEY_FILE"))
+	c.NodeAgentClientCAFile = strings.TrimSpace(os.Getenv("NODE_AGENT_CLIENT_CA_FILE"))
+	c.ClientMinAppVersion = strings.TrimSpace(os.Getenv("CLIENT_MIN_APP_VERSION"))
+	if c.ClientMinAppVersion != "" && !ValidVersion(c.ClientMinAppVersion) {
+		return c, fmt.Errorf("invalid CLIENT_MIN_APP_VERSION (dotted numeric, e.g. 1.2.0)")
+	}
+	for _, x := range []struct {
+		key      string
+		dest     *time.Duration
+		def, min int
+		max      int
+	}{{"NODE_AGENT_STALE_SECONDS", &c.NodeAgentStale, DefaultAgentStaleSeconds, 5, 300}, {"NODE_AGENT_SETTLE_GRACE_SECONDS", &c.GrantSettleGrace, DefaultSettleGraceSeconds, 10, 3600}} {
+		v, err := strconv.Atoi(env(x.key, strconv.Itoa(x.def)))
+		if err != nil || v < x.min || v > x.max {
+			return c, fmt.Errorf("invalid %s (allowed %d-%d)", x.key, x.min, x.max)
+		}
+		*x.dest = time.Duration(v) * time.Second
+	}
+	budget, err := strconv.ParseInt(env("GRANT_BUDGET_BYTES", strconv.FormatInt(DefaultGrantBudgetBytes, 10)), 10, 64)
+	if err != nil || budget < 1<<20 || budget > 64<<30 {
+		return c, fmt.Errorf("invalid GRANT_BUDGET_BYTES (allowed 1 MiB - 64 GiB)")
+	}
+	c.GrantBudgetBytes = budget
+	if c.NodeAgentAddr != "" && (c.NodeAgentCertFile == "" || c.NodeAgentKeyFile == "" || c.NodeAgentClientCAFile == "") {
+		return c, fmt.Errorf("NODE_AGENT_ADDR requires NODE_AGENT_TLS_CERT_FILE, NODE_AGENT_TLS_KEY_FILE and NODE_AGENT_CLIENT_CA_FILE (mTLS is mandatory)")
+	}
 	// A lease must outlive one report so a healthy client always renews before expiry,
 	// and an idle window must outlive a lease so renewal gaps do not look like abandonment.
 	if c.ClientLease <= c.ClientReportInterval || c.ClientIdleTimeout < c.ClientLease || c.ClientNodeWatch >= c.ClientLease {
@@ -115,8 +149,15 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("invalid APP_ENV")
 	}
 	if c.Env == "production" {
-		if c.ClientNodeCatalog || c.ClientProfileDir != "" {
-			return c, fmt.Errorf("production proxy delivery requires node-side metering and credential revocation; client-reported proxy mode is development-only")
+		// Static plan-wide files are shared credentials and can never be revoked per user.
+		if c.ClientProfileDir != "" {
+			return c, fmt.Errorf("production forbids CLIENT_PROFILE_DIR: shared static proxy files cannot be metered or revoked per user")
+		}
+		// The catalog may be enabled in production only together with the mTLS agent
+		// listener: delivery then goes through per-user grants confirmed by the node.
+		// Client-reported /config and /traffic are refused by code in production.
+		if c.ClientNodeCatalog && c.NodeAgentAddr == "" {
+			return c, fmt.Errorf("production proxy delivery requires node-side metering (NODE_AGENT_ADDR with mTLS); client-reported proxy mode is development-only")
 		}
 		if c.ClientAllowTestEntitlements {
 			return c, fmt.Errorf("production forbids CLIENT_ALLOW_TEST_ENTITLEMENTS")
@@ -139,7 +180,63 @@ const (
 	DefaultLeaseSeconds     = 90
 	DefaultIdleSeconds      = 180
 	DefaultNodeWatchSeconds = 5
+
+	DefaultAgentStaleSeconds  = 30
+	DefaultSettleGraceSeconds = 60
+	DefaultGrantBudgetBytes   = int64(512 << 20)
 )
+
+// ValidVersion accepts dotted numeric versions such as 1, 1.2 or 1.2.3.
+func ValidVersion(v string) bool {
+	return versionPattern.MatchString(v)
+}
+
+var versionPattern = regexp.MustCompile(`^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$`)
+
+// VersionLess reports whether a < b for dotted numeric versions; anything that does
+// not parse is treated as older than every valid version.
+func VersionLess(a, b string) bool {
+	if !ValidVersion(a) {
+		return ValidVersion(b)
+	}
+	if !ValidVersion(b) {
+		return false
+	}
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < max(len(pa), len(pb)); i++ {
+		var x, y int
+		if i < len(pa) {
+			x, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			y, _ = strconv.Atoi(pb[i])
+		}
+		if x != y {
+			return x < y
+		}
+	}
+	return false
+}
+
+// DevMetering reports whether the development client-reported ledger (/config +
+// /traffic with shared node credentials) may be used. Production never allows it.
+func (c Config) DevMetering() bool { return c.Env != "production" }
+
+// AgentEnabled reports whether the mTLS agent API is configured.
+func (c Config) AgentEnabled() bool { return c.NodeAgentAddr != "" }
+
+func (c Config) AgentStale() time.Duration {
+	return orDefault(c.NodeAgentStale, DefaultAgentStaleSeconds)
+}
+func (c Config) SettleGrace() time.Duration {
+	return orDefault(c.GrantSettleGrace, DefaultSettleGraceSeconds)
+}
+func (c Config) GrantBudget() int64 {
+	if c.GrantBudgetBytes <= 0 {
+		return DefaultGrantBudgetBytes
+	}
+	return c.GrantBudgetBytes
+}
 
 func orDefault(value time.Duration, seconds int) time.Duration {
 	if value <= 0 {

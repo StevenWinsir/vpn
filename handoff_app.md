@@ -443,12 +443,12 @@ remaining_bytes = max(0, floor((total_bytes * 1000 - used_units) / 1000))
 **目标：** 用户修改 App、不报流量、拿已提取凭据连接，也不能逃避节点侧授权/计费限制。
 
 **任务：**
-- [ ] 先固定 capability/grant/Agent 契约、计数口径、错误码、迁移与回滚方式，再开发；不让 Swift/App 和后端各猜字段。
-- [ ] 实现选定 NodeAgent 转发器适配，至少在自控 SS 和 VLESS 目标上验证真实用户归属、读取计数、关闭存量 TCP/UDP。
-- [ ] 新增最小 grant/NodeUsage 持久化和 mTLS；只在 Agent 确认安装后返回 ready 凭据；不持 DB 锁等待网络。
-- [ ] 原子预算预留、累计幂等、epoch/检查点、异常重启恢复与待对账状态；倍率按段绑定。
-- [ ] Core 在 `node_reported` 模式消费 grant；本地速率仅展示，后端不再用 `/traffic` 扣这类会话。
-- [ ] 生产节点能力校验替换旧“一律拒绝”的交付路径，但保留对非权威/共享节点的拒绝；测试权益不能进入 production。
+- [x] 先固定 capability/grant/Agent 契约、计数口径、错误码、迁移与回滚方式，再开发；不让 Swift/App 和后端各猜字段。（`shared/contracts/native-v2.json`；API、Core、测试三方读取并逐项比对活跃响应的字段集）
+- [~] 实现选定 NodeAgent 转发器适配，至少在自控 SS 和 VLESS 目标上验证真实用户归属、读取计数、关闭存量 TCP/UDP。（`native/nodeagent` 参考 VLESS 转发器已在回环验证用户归属/计数/踢线/到期；**SS 未实现**：共享端口 AEAD 不能区分用户，需要每 grant 独立端口方案，故不声明、不发 grant；真实商业节点未验证）
+- [x] 新增最小 grant/NodeUsage 持久化和 mTLS；只在 Agent 确认安装后返回 ready 凭据；不持 DB 锁等待网络。（`node_agents`、`subscription_periods`、`connection_grants`、`node_usage_reports`；锁序 user→sub→period→grant）
+- [x] 原子预算预留、累计幂等、epoch/检查点、异常重启恢复与待对账状态；倍率按段绑定。
+- [x] Core 在 `node_reported` 模式消费 grant；本地速率仅展示，后端不再用 `/traffic` 扣这类会话。
+- [x] 生产节点能力校验替换旧“一律拒绝”的交付路径，但保留对非权威/共享节点的拒绝；测试权益不能进入 production。
 
 **验收：** 关闭全部客户端流量上报后仍准确计费；抓取已授权测试凭据交给独立测试程序，撤销/到期后新连接与现有 TCP/UDP 都失效；多设备/节点预算竞争不超分；伪造 Agent、重复/乱序/回退计数、API断网、Agent重启均不能绕过或双扣。任何一个协议没验证其强制控制，不能给它标记“生产可用”。
 
@@ -565,7 +565,7 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 | 1 原生TUN技术验证 | IN_REVIEW（PR 待 CI） | Claude Code 会话 | 分支 `worktree-stage1-native-foundation` | 共享源迁移、骨架、签名/XPC 验证已完成；真实 TUN 实传 BLOCKED（需受控测试节点+root 授权）；Helper 实际 SMAppService 注册待用户在系统设置批准；节点控制能力待用户确认 |
 | 2 账号与节点接入 | IMPLEMENTED（待 PR 合并 / CI） | Claude | 分支 feat/stage2-login-nodes-keychain | Core v1 登录/session/nodes/config/logout、Keychain、SwiftUI 三页、XPC 命令转发、后端时限 env；真实 Core 二进制 ↔ 真实 API/PostgreSQL 端到端通过；未做：TUN（阶段3）、UI 目测（无桌面截图权限）、真实 demo 服务器登录（未持有测试账号密码） |
 | 3 开发计量闭环 | IN_REVIEW（PR 待 CI；真机 TUN 待验收） | Claude | 分支 worktree-stage3-tun-metering-recovery | Core 引擎/计量/状态机/看门狗、Swift 界面、真实 Core↔API↔PostgreSQL 账本端到端通过；**真机 TUN/休眠/20 次循环未执行**（无 root，且用户在公司 VPN 下，Core 会以 vpn_conflict 拒绝）；仍是 client_reported |
-| 4 节点权威收费闭环 | NOT_STARTED | 待分配 | — | 必须具备真实节点管理能力 |
+| 4 节点权威收费闭环 | IN_REVIEW（PR 待 CI；真实商业节点 BLOCKED） | Claude | 分支 worktree-stage4-authoritative-metering | 后端 grant/Agent/预算/契约、`native/nodeagent`（参考 VLESS 转发器）、Core `node_reported`、管理员"节点代理"面板；真实 Core + 真实 Agent + 真实 mTLS + PostgreSQL 回环端到端通过（见 `docs/macos-stage4.md` 第 6 节）；**真实商业节点与真机 TUN 联调未做**；SS 未做 |
 | 5 签名发布与回归 | NOT_STARTED | 待分配 | — | 所有硬门槛及网站外部发布条件 |
 
 每次交接追加：
@@ -624,6 +624,20 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 - 验证（macOS 26 / arm64 / Go 1.26.6）：`go test -race ./...`（native/core）全绿；`python3 scripts/test-native.py`（隔离 PostgreSQL + 真实 Core 二进制）全绿，含 1×/0.5×精确扣量 104,857,600,000 / 52,428,800,000 units、中途换线路、额度耗尽约 1.0s 停连、到期/吊销停连；`--suite unit` 5/5、`--suite bundle` 6/6；`--suite tun` 未授权正确报 BLOCKED。
 - 未完成/限制：① 真机 TUN 全套（T01–T07、B-COUNT、20 次循环）未跑；同一进程内重复 `ApplyConfig`/`Shutdown` 是否干净由 T-CYCLES 判定，若失败则改为每次连接重启 Core 进程；② IPv6 模板（`ipv6: true`）依赖固定内核在有 v6 的主机上自动加 inet6 地址，须 T04 实测；③ 真实休眠/网络切换/Helper 注册（ad-hoc）未验证；④ Core/Helper 被硬杀时依赖 OS 随进程回收 utun 与路由，须真机确认；⑤ 一个 Core 进程内 Mihomo 计数器跨段持续，仅在上一段结清后才允许重新基线；⑥ 共享供应商节点仍只能作开发节点。
 - 下一步：用户断开公司 VPN，按 `docs/macos-stage3.md` 第 3 节跑 `--suite tun`，再用 App 做第 4 节端到端；通过后进入阶段 4（需自控节点）。
+
+阶段 4 交接（2026-10-12）：
+- 改动：
+  - 后端：`internal/api/{grants,agent_api,admin_agents}.go`（grant 生命周期、mTLS Agent 的 `sync`/`usage`、对账清扫、管理员代理登记）、`internal/model/grants.go`、`internal/billing/grant.go`（纯函数：累计游标、预算、整数扣量）、`internal/nodes/credential.go`；`config` 新增 `NODE_AGENT_*`、`GRANT_BUDGET_BYTES`、`CLIENT_MIN_APP_VERSION`；`cmd/api` 起第二个 mTLS 监听与对账循环；`operations/readiness.go` 的 doctor 增加权威节点事实。
+  - `native/nodeagent`（新增，仅标准库）：`forwarder`（参考 VLESS：每用户 UUID、原子字节预算、绝对截止、`Remove` 终结式踢线）、`agent`（持久化游标、epoch、检查点、原样重试、崩溃恢复）、`control`（mTLS 客户端）、`cmd/asterlink-nodeagent`。
+  - Core：`apiclient` 增 `CreateGrant/Grant/RevokeGrant/Capabilities`；`managed/grant.go` 实现 `connectGranted`（授权→grant→节点确认→校验文档→TUN→真实转发探测）、`monitorGranted`、`finishGrant`（先停数据通路再撤销并等节点确认；无法送达则由保活循环重试）。
+  - Swift：线路"节点计量"标记与说明文字；`snapshot-v1.json` 新增 `connected_node_reported`。
+  - 前端：`/admin/nodes` 增"节点代理"面板（登记指纹/启停/在线/协议/在用授权/待对账）。
+- 契约/迁移：`shared/contracts/native-v2.json`（`sync-backend-shared.py` 同步到 `backend/internal/api/testdata/native_v2_contract.json`）；迁移只新增 4 张表与 `native_sessions` 两列（`metering_source`、`grant_id`）；v1 API 响应对无代理线路字节不变（新增字段均 `omitempty`）。
+- 验证（macOS 26 / arm64 / Go 1.26.6，隔离 PostgreSQL，**未触碰你的远程测试库**）：`python3 scripts/test-native.py`（后端全量 `-race`，含新增的 grant/预算/周期/生产保护/契约/管理员代理/三个 Agent 端到端/Core+Agent 全链路）全绿；`native/nodeagent`、`native/core` `go test -race ./...` 全绿；`swift test` 39 项全绿；前端 `tsc`/`eslint`/`next build` 通过。
+- 实测数字：零客户端上报仍计费（约 1.0 s 入账，409,600 字节×0.5=204,800,000 units 精确）；撤销到存量连接被关约 1.0 s；控制面消失后节点按租约约 3.9 s 自停；`kill -9` 后用检查点关账不丢；订阅到期后 Core 与节点同时约 1.4 s 停止。
+- 未完成/限制（详见 `docs/macos-stage4.md` 第 7 节）：① 真实商业节点与真机 TUN+Agent 联调；② SS/Trojan/Reality/XTLS/Mux 无权威适配；③ VLESS UDP 未与 Mihomo 对接；④ 无批量 usage 端点；⑤ 管理员改任一线路仍使所有会话 `profile_changed`（阶段 2 遗留）。
+- 下一步：在你能管理的服务器上部署 Agent 并让节点 YAML 指向它（`docs/macos-stage4.md` 第 3、4 节），断开公司 VPN 后用 App 做真机端到端；通过后进入阶段 5（签名公证与回归）。
+- 回退：见 `docs/macos-stage4.md` 第 8 节。
 
 阶段 3 验收补充（2026-10-12）：
 - 真机 SS TUN 已在 macOS 26 / arm64、root、公司 VPN 断开条件下实测：utun、真实 TCP 转发、出口变化、系统 DNS/任意 :53 劫持、IPv6、物理网卡 API 访问、停止清理和 20 次同进程启停通过。

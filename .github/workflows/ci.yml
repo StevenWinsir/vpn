@@ -138,6 +138,12 @@ jobs:
           go vet -tags fakeengine ./...
           # The privileged TUN harness is built here, never run (it changes machine routes).
           CGO_ENABLED=0 go build -o /tmp/asterlink-tuntest ./cmd/asterlink-tuntest
+      - name: Node agent (reference VLESS forwarder, report cursors, crash recovery) race and vet
+        working-directory: native/nodeagent
+        run: |
+          CGO_ENABLED=1 go test -race -count=1 ./...
+          go vet ./...
+          CGO_ENABLED=0 go build -trimpath -o /tmp/asterlink-nodeagent ./cmd/asterlink-nodeagent
       - name: Shared policy including pinned Mihomo schema check
         working-directory: shared/nodepolicy
         run: |
