@@ -428,9 +428,12 @@ func (v *VLESS) copyCounted(e *entry, dst io.Writer, src io.Reader, srcConn net.
 			if allowed == 0 {
 				return errDenied
 			}
+			// Count before writing: once the bytes leave, the peer may answer and a
+			// reader may observe Usage before a post-write Add would have run.
+			counter.Add(allowed)
 			w, werr := dst.Write(buf[:allowed])
 			e.refund(allowed - int64(w))
-			counter.Add(int64(w))
+			counter.Add(int64(w) - allowed)
 			if werr != nil {
 				return werr
 			}
@@ -482,9 +485,10 @@ func (v *VLESS) udp(e *entry, c net.Conn, br *bufio.Reader, req request) {
 			if !e.live(time.Now()) || e.admit(int64(n)) < int64(n) {
 				return
 			}
+			e.up.Add(int64(n))
 			w, err := pc.Write(payload[:n])
 			e.refund(int64(n - w))
-			e.up.Add(int64(w))
+			e.up.Add(int64(w - n))
 			if err != nil {
 				return
 			}
@@ -504,11 +508,12 @@ func (v *VLESS) udp(e *entry, c net.Conn, br *bufio.Reader, req request) {
 				return
 			}
 			binary.BigEndian.PutUint16(buf[:2], uint16(n))
+			e.down.Add(int64(n))
 			if _, err := c.Write(buf[:2+n]); err != nil {
 				e.refund(int64(n))
+				e.down.Add(-int64(n))
 				return
 			}
-			e.down.Add(int64(n))
 		}
 	}()
 	wg.Wait()
