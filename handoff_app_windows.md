@@ -101,7 +101,7 @@ Mac 上的 Windows ARM64 虚拟机可辅助编辑和部分 x64 用户态界面�
 
 ### 3.3 支持范围与锁定清单
 
-> **第 1 轮已修订：** 联网核对 .NET 10 官方支持表（2026-09-28 更新）后，Windows 10 22H2 不在其中，故产品目标改为 **Windows 11 x64 24H2/25H2**，Windows 10 22H2 仅在启用 ESU 时尽力而为、不作承诺。见 [docs/windows-foundation.md](docs/windows-foundation.md)。下面保留原规划文字供对照。
+> **第 1 轮已修订：** .NET 10 官方支持表（2026-09-28 更新）未列出 Windows 10 22H2（“未列出”指微软不测试，不代表已知不可用）。结论：**同一份 win-x64 程序同时面向 Windows 10 22H2（19045，需更新到最新）与 Windows 11 24H2/25H2**，不使用任何 Windows 11 专属接口，也不为 Windows 10 做牺牲 Windows 11 的写法；编译目标 `net10.0-windows10.0.19041.0` 让越界调用在编译期报错（CA1416）。**任一系统只有在该系统真机跑通对应测试后才对外承诺**，目前尚无任何客户端系统实测通过。见 [docs/windows-foundation.md](docs/windows-foundation.md)。下面保留原规划文字供对照。
 
 原规划建议产品起点为 **Windows 10 22H2（19045）x64 兼容目标 + Windows 11 x64 经测试的具体版本**，不覆盖所有早期 Windows 10，也不承诺尚未测试的未来 Windows。操作系统生命周期、ESU 条件和 .NET 对具体 OS 的支持是第 1 轮核对项；能够启动不等于该系统适合安全商用。若运行时与旧 OS 的支持要求冲突，明确调整发行支持矩阵，不默默采用失去维护的运行时。
 
@@ -548,7 +548,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 
 | 轮次 | 状态（本次） | 下一步与前置条件 |
 | --- | --- | --- |
-| 1 环境与工程 | DONE_WITH_BLOCKERS（见下方第 1 轮记录） | 取得授权的 x64 Windows 11 测试机后才能进入第 2 轮 TUN PoC |
+| 1 环境与工程 | DONE（Windows Server 2025 CI 通过；Windows 10/11 客户端实机 NOT_RUN） | 第 2 轮先在用户的 Windows 10 家庭版 22H2 真机做 TUN PoC；Windows 11 后补 |
 | 2 平台与 TUN PoC | NOT_STARTED | 从已列出的 Unix、platform、DNS/路由耦合开始拆分 |
 | 3 服务与安全 IPC | NOT_STARTED | 确定发布身份/安装位置，完成真实三进程授权链 |
 | 4 UI 与账号节点 | NOT_STARTED | 复用 Snapshot 和登录契约，测试账号具备明确的测试权益 |
@@ -584,13 +584,18 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   macOS arm64：dotnet restore/build（全解决方案，含 WPF 与 Service 的编译）；dotnet test = 69 PASS / 0 FAIL；
   python3 scripts/test-native-windows.py --suite foundation = 8 PASS；
   GOOS=windows go build ./cmd/asterlink-core = 4 个编译错误（预期，基线）；go build ./internal/... = 通过。
-  Windows 实机：W01 PE/启动、窗口、Service probe 的证据由 windows.yml 在 windows-2025 (Windows Server 2025 x64) 上产出；
+  Windows CI（run 38369734130，windows-2025 = Windows Server 2025 Datacenter 10.0.26100，AMD64）：锁定还原/构建/69 测试
+  通过；发布产物 PE32+ x64；GUI --self-test 窗口 rendered=true（1000×680）、.NET 10.0.12、is_native_windows_x64=true；
+  Service --probe 通过。证据为该 run 的 artifact windows-foundation-reports（保留 7 天）。
   Windows 10/11 客户端实机 = NOT_RUN / BLOCKED（无测试机；GitHub 托管 runner 没有 x64 的 Windows 客户端镜像）。
 安装包版本 / OS、架构、Core、驱动版本 / 脱敏证据路径：无安装包；Wintun 0.14.1 仅记录官方哈希，未下载、未验签。
 未解决问题、复现方法与发布限制：
-  1) 决策变更：.NET 10 官方支持表无 Windows 10 22H2 → 目标改为 Windows 11 24H2/25H2，Win10 22H2 仅 ESU 尽力而为。
+  1) 决策变更：同一二进制面向 Windows 10 22H2 与 Windows 11 24H2/25H2；OS 下限 19041 由编译器强制；
+     各系统须真机通过后才承诺。用户已提供一台 Windows 10 家庭版 22H2 真机（无远程桌面宿主、无 Hyper-V），
+     第 2 轮先在其上测试；Windows 11 另需一台机器或 x64 宿主上的虚拟机。
   2) 内部包 compile 通过但 network_other.go 的 !darwin 标签会让 Windows 悄悄链接占位实现——第 2 轮必须改标签并加测试。
-  3) 需要用户提供/确认：x64 Windows 11 测试机（或 x64 宿主上的可回滚虚拟机）、受控 SS/VLESS 测试节点。
+  3) 测试机：已有 Windows 10 家庭版 22H2 真机（测试前建还原点、不连公司 VPN、备第二种上网方式）；
+     Windows 11 机器或 x64 虚拟机仍待提供。SS 测试节点已由用户准备，凭据经环境变量注入，不进仓库。
   4) Inno Setup 商用需购买授权，第 8 轮前决定安装器工具。
 下一位从哪里开始：docs/windows-go-port-baseline.md 的“第 2 轮清单”；先下载并校验 Wintun，再拆 main.go。
 回退与网络恢复方法：本轮不触碰网络、驱动或服务；回退 = 删除 worktree 分支。

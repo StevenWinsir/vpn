@@ -47,11 +47,14 @@
     "verified": "github.com/actions/runner-images, 2026-10-13"
   },
   "os_support": {
-    "target": "Windows 11 x64 (24H2, 25H2)",
-    "best_effort": "Windows 10 22H2 x64 with ESU",
-    "not_supported": ["Windows 10 22H2 without ESU", "Windows on ARM (no ARM64 product)", "32-bit Windows"],
-    "reason": "The official .NET 10 supported-OS list (updated 2026-09-28) names Windows 11 23H2/24H2/25H2/26H1 and only Windows 10 21H2/1809/1607 Enterprise/IoT editions. Windows 10 22H2 is absent, and Windows 10 itself left mainstream support on 2025-10-14. The handoff plan's starting point of 'Windows 10 22H2' therefore changed in round 1.",
+    "build_floor": "Windows 10 2004 (build 19041), enforced at compile time by the net10.0-windows10.0.19041.0 target",
+    "intended_targets": ["Windows 10 22H2 x64 (build 19045, fully updated)", "Windows 11 x64 (24H2, 25H2)"],
+    "promise_rule": "A system is only promised to customers after it passes the Windows suites on a real machine of that system. Until then it is 'intended', not 'supported'.",
+    "tested_so_far": [],
+    "not_supported": ["Windows on ARM (no ARM64 product)", "32-bit Windows", "Windows 10 earlier than 19041"],
+    "same_binary": "One win-x64 binary serves both systems; nothing Windows 11-only is used, and nothing Windows 10-only is used at the cost of Windows 11.",
+    "microsoft_position": "The official .NET 10 supported-OS list (updated 2026-09-28) names Windows 11 23H2/24H2/25H2/26H1 and only Windows 10 21H2/1809/1607 Enterprise/IoT editions; Windows 10 22H2 is not listed and Windows 10 left mainstream support on 2025-10-14. 'Not listed' means Microsoft does not test it, not that it is known to fail; first-hand testing on Windows 10 22H2 decides.",
     "source": "https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md",
-    "verified": "read on 2026-10-13. No Windows machine has been tested yet."
+    "verified": "read on 2026-10-13. CI ran on Windows Server 2025 (build 26100) only; no Windows 10 or Windows 11 client has been tested yet."
   }
 }

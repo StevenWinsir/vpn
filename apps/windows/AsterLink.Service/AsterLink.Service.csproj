@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Same OS floor as the GUI: Windows 10 2004 (19041) and later, including Windows 11. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <RootNamespace>AsterLink.Service</RootNamespace>
     <AssemblyName>AsterLink.Service</AssemblyName>

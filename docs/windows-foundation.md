@@ -34,20 +34,31 @@ macOS and Linux as well as on Windows.
 * `ok=true` plus `action_error` is modelled as a failed action (`SnapshotReply.Succeeded == false`).
 * `env-v1.json`: every case is run against the C# parser, in addition to extra path / fragment / IPv6 / symlink cases.
 
-## Support matrix change (decision made in round 1)
+## Support matrix (decision made in round 1, revised the same day)
 
 The handoff plan proposed "Windows 10 22H2 + Windows 11". The official .NET 10 supported-OS list (updated
 2026-09-28) names Windows 11 23H2/24H2/25H2/26H1 and, for Windows 10, only the 21H2, 1809 and 1607 *Enterprise/IoT*
-editions. Windows 10 22H2 is not on it, and Windows 10 left mainstream support on 2025-10-14.
+editions. Windows 10 22H2 is not on it, and Windows 10 left mainstream support on 2025-10-14. "Not listed" means
+Microsoft does not test it, not that it is known to fail.
 
-| Tier | Systems | Meaning |
+**One binary serves both systems.** WPF and the Win32 services used here (SCM, named pipes, Credential Manager, IP
+Helper, WFP) behave the same on Windows 10 and 11, so staying Windows 10-compatible costs Windows 11 nothing:
+no WinUI 3, no Windows 11-only APIs, and equally no Windows 10-only workaround. (Windows 11 look-and-feel such as
+the Fluent theme can be switched on at run time later without affecting Windows 10.)
+
+| Status | Systems | Meaning |
 | --- | --- | --- |
-| Target | Windows 11 x64, 24H2 and 25H2 | What rounds 2–8 test and what release notes promise |
-| Best effort | Windows 10 22H2 x64 with ESU | May work; not tested by .NET, not promised |
-| Not supported | Windows 10 without ESU, Windows on ARM, 32-bit | No ARM64 product is added to make testing easier |
+| Intended | Windows 10 22H2 x64 (build 19045, fully updated); Windows 11 x64 24H2 / 25H2 | Built and designed for; **promised only after the Windows suites pass on a real machine of that system** |
+| Tested so far | none | CI ran on Windows Server 2025 only |
+| Not supported | Windows on ARM, 32-bit Windows, Windows 10 older than build 19041 | No ARM64 product is added to make testing easier |
 
-Changing the runtime to keep Windows 10 would mean shipping an unsupported runtime or hand-maintaining an older one,
-which is the wrong trade for a paid product.
+The OS floor is enforced by the compiler: the App and Service target `net10.0-windows10.0.19041.0`, so calling an API
+introduced after Windows 10 2004 without a run-time check fails the build with CA1416 (verified with a deliberate
+Windows 11-only call, then removed). Changing to an older runtime to "widen" support was rejected: it would trade away
+a supported runtime for no benefit to Windows 11 users.
+
+Windows 10 Home notes for the test machine: no Remote Desktop host, no Hyper-V / Windows Sandbox, so tests are run
+locally and the JSON report is sent back; create a restore point first; never test with another VPN connected.
 
 ## What CI proves, and what it does not
 

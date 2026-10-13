@@ -45,6 +45,12 @@ def check_lock_file():
     record('lock.runner', 'runs-on: ' + label in workflow and 'windows-latest' not in workflow,
            'workflow pins %s and avoids the moving windows-latest alias' % label)
 
+    floor = 'net10.0-windows10.0.19041.0'
+    missing = [name for name in ('AsterLink.App', 'AsterLink.Service')
+               if floor not in (WINDOWS / name / (name + '.csproj')).read_text()]
+    record('lock.os_floor', not missing and '19041' in lock['os_support']['build_floor'],
+           'App and Service target %s (Windows 10 2004 floor)' % floor if not missing else 'missing in ' + ', '.join(missing))
+
     wintun = lock['wintun']
     record('lock.wintun_hash', bool(re.fullmatch(r'[0-9a-f]{64}', wintun['zip_sha256_published'])),
            'published sha256 recorded; not yet verified against a download (round 2)')
