@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 
+	"golang.org/x/sys/unix"
+
 	"asterlink/core/internal/ipc"
 	"asterlink/core/internal/managed"
 	"asterlink/core/internal/service"
@@ -18,10 +20,28 @@ var (
 	mihomoRevision = "70f0570405c3c2c47bb113b88db95006d239b346"
 )
 
-type stdio struct{}
+type stdio struct{ out *os.File }
 
-func (stdio) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
-func (stdio) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
+func (stdio) Read(p []byte) (int, error)    { return os.Stdin.Read(p) }
+func (s stdio) Write(p []byte) (int, error) { return s.out.Write(p) }
+
+// reserveIPCOutput keeps the Helper's stdout pipe for IPC frames only. The embedded
+// Mihomo logs through logrus to os.Stdout; a single log line on the frame stream makes
+// the Helper read text as a length header and kill the worker ("worker connection
+// lost"). So the pipe is moved to a private descriptor and fd 1 is pointed at stderr,
+// which the Helper discards, before any engine code runs.
+func reserveIPCOutput() (*os.File, error) {
+	fd, err := unix.Dup(1)
+	if err != nil {
+		return nil, err
+	}
+	unix.CloseOnExec(fd)
+	if err := unix.Dup2(2, 1); err != nil {
+		unix.Close(fd)
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "ipc-out"), nil
+}
 
 func main() {
 	if len(os.Args) > 1 {
@@ -32,8 +52,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "asterlink-core accepts no arguments")
 		os.Exit(2)
 	}
+	out, err := reserveIPCOutput()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot reserve ipc output:", err)
+		os.Exit(1)
+	}
 	manager := managed.New(managed.Options{CoreVersion: version, Engine: newEngine()})
-	if err := ipc.ServeWith(stdio{}, ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}, service.New(manager)); err != nil {
+	if err := ipc.ServeWith(stdio{out: out}, ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}, service.New(manager)); err != nil {
 		fmt.Fprintln(os.Stderr, "ipc terminated:", err)
 		os.Exit(1)
 	}
