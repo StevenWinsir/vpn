@@ -59,7 +59,11 @@ function Wait-Until([scriptblock]$Condition, [int]$Seconds) {
 }
 function CoreCount { @(Get-Process -Name asterlink-core -ErrorAction SilentlyContinue).Count }
 function ServiceProcess { Get-CimInstance Win32_Service -Filter "Name='AsterLinkService'" }
-function Probe([string]$Case) { (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Here 'pipe-probe.ps1') -Case $Case) | ConvertFrom-Json }
+function Probe([string]$Case) {
+    $raw = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Here 'pipe-probe.ps1') -Case $Case 2>&1 | Out-String).Trim()
+    try { $o = $raw | ConvertFrom-Json; $o | Add-Member -NotePropertyName raw -NotePropertyValue $raw -Force; $o }
+    catch { [pscustomobject]@{ answered = $null; raw = $raw } }
+}
 
 try {
     # -- clean slate ------------------------------------------------------------------------------
@@ -91,17 +95,17 @@ try {
     $good = GuiCheck 'good'
     $r = $good.Result
     Case 'S-chain-hello-snapshot' (($good.Exit -eq 0) -and $r.connected -and $r.service_version -eq $Version -and $r.core_version -eq $Version -and $r.snapshot_state -ne 'connected') `
-        "exit=$($good.Exit) connected=$($r.connected) service=$($r.service_version) core=$($r.core_version) channel=$($r.channel) snapshot=$($r.snapshot_state) err=$($r.error_code)" $null
+        "exit=$($good.Exit) connected=$($r.connected) service=$($r.service_version) core=$($r.core_version) channel=$($r.channel) snapshot=$($r.snapshot_state) err=$($r.error_code) msg=$($r.error_message)" $null
     Case 'S-core-follows-gui' (Wait-Until { (CoreCount) -eq 0 } 30) "asterlink-core processes after the GUI closed: $(CoreCount)" $null
 
     # -- fakes ------------------------------------------------------------------------------------------
     $fake = Probe 'hello'
-    Case 'S01-fake-gui-refused' ($fake.answered -and -not $fake.ok -and $fake.code -eq 'peer_rejected') "answered=$($fake.answered) code=$($fake.code)" $null
+    Case 'S01-fake-gui-refused' ($fake.answered -and -not $fake.ok -and $fake.code -eq 'peer_rejected') "answered=$($fake.answered) code=$($fake.code) raw=$($fake.raw)" $null
     Case 'S01-fake-gui-starts-no-core' ((CoreCount) -eq 0) "asterlink-core processes after a fake GUI: $(CoreCount)" $null
     $gb = Probe 'garbage'
-    Case 'S03-garbage-frame' ($gb.answered -and $gb.code -eq 'invalid_request') "answered=$($gb.answered) code=$($gb.code)" $null
+    Case 'S03-garbage-frame' ($gb.answered -and $gb.code -eq 'invalid_request') "answered=$($gb.answered) code=$($gb.code) raw=$($gb.raw)" $null
     $unk = Probe 'unknown'
-    Case 'S03-unknown-command' ($unk.answered -and $unk.code -eq 'unknown_command') "answered=$($unk.answered) code=$($unk.code)" $null
+    Case 'S03-unknown-command' ($unk.answered -and $unk.code -eq 'unknown_command') "answered=$($unk.answered) code=$($unk.code) raw=$($unk.raw)" $null
     $big = Probe 'oversize'
     Case 'S03-oversize-frame' ((-not $big.answered) -and $big.closed) "answered=$($big.answered) closed=$($big.closed)" $null
     Case 'S01-remote' $false 'needs a second computer attempting \\host\pipe\AsterLink.Service.v1; the pipe DACL denies NETWORK (unit-tested)' 'NOT_RUN'
@@ -113,7 +117,7 @@ try {
     Case 'S-core-runs-while-gui-connected' $up "asterlink-core processes while a verified GUI holds the pipe: $(CoreCount)" $null
     $marker = (Status).recovery_record_present
     Case 'T09-record-written-before-run' $marker "recovery record present while the Core runs: $marker" $null
-    $held.Process.Kill()
+    try { $held.Process.Kill() } catch { }
     Case 'T09-gui-killed-core-stops' (Wait-Until { (CoreCount) -eq 0 } 40) "asterlink-core processes after the GUI was killed: $(CoreCount)" $null
     Case 'T09-gui-killed-record-cleared' (Wait-Until { -not (Status).recovery_record_present } 20) "recovery record present: $((Status).recovery_record_present)" $null
 

@@ -95,7 +95,7 @@ public sealed class ClientSession(NamedPipeServerStream pipe, ServiceRuntime run
         if (!verdict.Allowed)
         {
             runtime.Logger.LogWarning("Refused a GUI connection from pid {Pid}: {Verdict}", peer.ProcessId, verdict.Verdict);
-            await ReplyAsync(ServiceReplies.Error(hello.RequestId, hello.Generation, ServiceErrors.PeerRejected, "the caller is not the installed AsterLink application"), token).ConfigureAwait(false);
+            await ReplyAsync(ServiceReplies.Error(hello.RequestId, hello.Generation, ServiceErrors.PeerRejected, $"the caller is not the installed AsterLink application ({verdict.Verdict})"), token).ConfigureAwait(false);
             return false;
         }
 

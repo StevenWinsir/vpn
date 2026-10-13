@@ -20,6 +20,7 @@ public sealed class WorkerProcess : IDisposable
     private readonly TaskCompletionSource<uint> exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly RegisteredWaitHandle waitRegistration;
     private readonly ManualResetEvent waitEvent;
+    private readonly object gate = new();
     private bool disposed;
 
     public int ProcessId { get; }
@@ -43,8 +44,13 @@ public sealed class WorkerProcess : IDisposable
         waitEvent = new ManualResetEvent(false) { SafeWaitHandle = new SafeWaitHandle(process.DangerousGetHandle(), ownsHandle: false) };
         waitRegistration = ThreadPool.RegisterWaitForSingleObject(waitEvent, (_, _) =>
         {
-            _ = Native.GetExitCodeProcess(process, out var code);
-            exited.TrySetResult(code);
+            // Runs on a pool thread, possibly after Dispose has closed the handle: take the lock and look.
+            lock (gate)
+            {
+                if (disposed) return;
+                _ = Native.GetExitCodeProcess(process, out var code);
+                exited.TrySetResult(code);
+            }
         }, null, Timeout.Infinite, executeOnlyOnce: true);
     }
 
@@ -220,8 +226,11 @@ public sealed class WorkerProcess : IDisposable
 
     public void Dispose()
     {
-        if (disposed) return;
-        disposed = true;
+        lock (gate)
+        {
+            if (disposed) return;
+            disposed = true;
+        }
         // Closing the job handle (KILL_ON_JOB_CLOSE) is the guarantee; terminating first just makes it prompt.
         _ = Native.TerminateJobObject(job, 1);
         // Report the exit ourselves: the registered wait may not have fired yet when it is unregistered below.
