@@ -52,9 +52,12 @@ sudo -E python3 scripts/test-native-macos.py --suite tun --allow-network-changes
 | B-COUNT | 受控下载的正文字节 vs. Mihomo 代理计数（记录倍数与协议开销） |
 | T03 | 系统解析返回 fake-ip；对任意解析器 :53 的查询被劫持；UDP 回显 |
 | T04 | IPv6：要么经隧道，要么被阻断，不能直连（出口未变 = fail） |
+| T04-ipv6-fallback | 用 IPv6 字面量直连：节点能承载 IPv6 时须拿到真实 HTTP 回包（mode=tunnel）；节点仅 IPv4 时须在握手前 1 秒内被拒（mode=rejected），浏览器才能立即回退 IPv4。握手成功后无回包 = fail（即“已连接但没网”） |
 | T05 | 隧道期间 API 仍经物理网卡可达；空闲 6 秒计数不增长（无自循环） |
 | T07 | 停止后没有遗留 utun / 路由 / DNS 变化 |
 | T-CYCLES | 连续 20 次连接/断开，goroutine、文件描述符、utun 不累积 |
+
+IPv6 策略：引擎在建 TUN 前经所选节点向 IPv6 字面量（`engine.IPv6Probes`）发一次真实 HTTP 请求。拿到回包则 IPv6 照常进隧道；否则在 TUN 起来后加 16 条比 sing-tun IPv6 路由长 1 位的 `-reject` 路由（网关为 utun 自身地址，设备销毁时内核一并删除，Core 被杀也不残留），应用的 IPv6 连接立即得到 EHOSTUNREACH 并回退 IPv4，不经物理网卡外泄。要用 VLESS 等节点测，设置 `ASTERLINK_TUN_PROXY_JSON` 为完整单节点 JSON。
 
 T05-loop 对没有活动流的主机使用 64 KiB/6 秒严格预算；macOS 系统范围 TUN 若有其他应用保持流量，则使用 256 KiB/6 秒的有限背景流量预算，并在报告中记录活动流数量。超过预算仍失败，不能用“有背景流量”掩盖持续自循环。
 
