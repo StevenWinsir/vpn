@@ -6,6 +6,9 @@
         Background="{StaticResource SurfaceBrush}" Foreground="{StaticResource TextBrush}"
         FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="14"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </Window.Resources>
     <Window.DataContext>
         <app:MainViewModel />
     </Window.DataContext>
@@ -15,7 +18,7 @@
 
             <TextBlock Text="AsterLink" FontSize="28" FontWeight="SemiBold"
                        AutomationProperties.AutomationId="Title" />
-            <TextBlock Text="Windows 原生客户端 · 第 1 轮：工程基础与环境验证" Margin="0,4,0,0"
+            <TextBlock Text="Windows 原生客户端 · 第 3 轮：特权服务与受限通信" Margin="0,4,0,0"
                        Foreground="{StaticResource MutedBrush}" />
 
             <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
@@ -25,7 +28,27 @@
                     <TextBlock Text="未提供连接功能" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,0"
                                AutomationProperties.AutomationId="ConnectionState" />
                     <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
-                               Text="此版本只包含工程骨架：尚未实现登录、线路同步、特权服务和 TUN，因此不会显示“已连接”。" />
+                               Text="此版本只有特权服务骨架：尚未实现登录界面、线路同步和 TUN 连接，因此不会显示“已连接”。" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,16,0,0">
+                <StackPanel DataContext="{Binding Service}">
+                    <TextBlock Text="特权服务" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding State}" FontSize="18" FontWeight="SemiBold" Margin="0,8,0,0"
+                               AutomationProperties.AutomationId="ServiceState" />
+                    <TextBlock Text="{Binding Message}" Margin="0,6,0,0" TextWrapping="Wrap"
+                               AutomationProperties.AutomationId="ServiceMessage" />
+                    <TextBlock Text="{Binding Detail}" Margin="0,6,0,0" TextWrapping="Wrap"
+                               Foreground="{StaticResource MutedBrush}" AutomationProperties.AutomationId="ServiceDetail" />
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Content="{Binding ActionLabel}" Command="{Binding ActionCommand}" Padding="14,6"
+                                Visibility="{Binding HasAction, Converter={StaticResource BoolToVisibility}}"
+                                AutomationProperties.AutomationId="ServiceAction" />
+                        <Button Content="重新检测" Command="{Binding RefreshCommand}" Padding="14,6" Margin="8,0,0,0"
+                                AutomationProperties.AutomationId="ServiceRefresh" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

@@ -11,9 +11,11 @@ public sealed record CheckRow(string Name, bool Passed)
     public Brush Brush => (Brush)System.Windows.Application.Current.Resources[Passed ? "PassBrush" : "FailBrush"];
 }
 
-/// <summary>Round 1 view model: read-only facts. The real GUI will render Core snapshots (round 4).</summary>
+/// <summary>Round 3 view model: environment facts plus the privileged-service card. The real GUI will render Core snapshots (round 4).</summary>
 public sealed class MainViewModel
 {
+    public ServicePanel Service { get; } = new();
+
     public PlatformReport Report { get; } = PlatformReport.Capture("AsterLink.App");
     public IReadOnlyList<SelfCheckResult> CheckResults { get; } = FoundationSelfCheck.Run();
 

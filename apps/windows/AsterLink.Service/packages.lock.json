@@ -305,6 +305,12 @@
           "System.Diagnostics.EventLog": "10.0.0"
         }
       },
+      "asterlink.platform": {
+        "type": "Project",
+        "dependencies": {
+          "AsterLink.Shared": "[0.1.0, )"
+        }
+      },
       "asterlink.shared": {
         "type": "Project"
       }

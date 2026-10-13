@@ -1,10 +1,13 @@
 name: Windows client CI
 
 # Scope: the .NET solution builds, its contract tests pass, the GUI and service binaries
-# start, and (round 2) the Go Core and the TUN harness build, vet and pass their tests
-# natively on a real x64 Windows host. This does NOT create a TUN, change routes or DNS,
-# or test UAC/service installation: the runner is Windows Server, not a Windows 10/11
-# client, and a TUN that captures the default route would cut the runner off from GitHub.
+# start, (round 2) the Go Core and the TUN harness build, vet and pass their tests
+# natively on a real x64 Windows host, and (round 3) the Windows-kernel tests run and the INTERNAL
+# stage is installed as a real service and driven GUI -> Service -> Core, then attacked
+# (scripts/windows/e2e-service.ps1). This does NOT create a TUN, change routes or DNS,
+# and does not test the UAC prompt (the runner is non-interactive and already elevated): the runner is
+# Windows Server, not a Windows 10/11 client, and a TUN that captures the default route would cut the
+# runner off from GitHub.
 # The real TUN run (cases T01-T09) is done with asterlink-tuntest.exe on an authorised
 # machine; see docs/windows-tun-poc.md.
 
@@ -15,6 +18,8 @@ on:
       - 'native/core/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
+      - 'scripts/package-native-windows.py'
+      - 'scripts/windows/**'
       - '.github/workflows/windows.yml'
   push:
     branches: [main]
@@ -23,6 +28,8 @@ on:
       - 'native/core/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
+      - 'scripts/package-native-windows.py'
+      - 'scripts/windows/**'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 
@@ -159,6 +166,20 @@ jobs:
           Get-FileHash $core, $harness -Algorithm SHA256 | Format-Table Hash, Path -AutoSize
           exit 0
 
+      - name: Service suite - Windows kernel tests, internal stage, real install, GUI to Service to Core, attacks
+        run: py -3 scripts/test-native-windows.py --suite service --allow-service-install --out artifacts/windows/service --report artifacts/windows/service-suite.json
+
+      - name: Collect the test-machine kit (internal stage + e2e scripts, unsigned)
+        if: always()
+        shell: pwsh
+        run: |
+          $stage = 'artifacts/windows/service/stage'
+          if (Test-Path "$stage/manifest.json") {
+            New-Item -ItemType Directory -Force artifacts/windows/kit | Out-Null
+            Copy-Item $stage artifacts/windows/kit/stage -Recurse
+            Copy-Item scripts/windows artifacts/windows/kit/scripts -Recurse
+          }
+
       - name: Retain reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -171,8 +192,19 @@ jobs:
             artifacts/windows/gui-selftest.json
             artifacts/windows/service-probe.txt
             artifacts/windows/core-suite.json
+            artifacts/windows/service-suite.json
+            artifacts/windows/service/e2e-service.json
             artifacts/windows/wintun-signature.txt
             artifacts/windows/test-results/*.trx
+
+      - name: Retain the internal stage and e2e scripts for the authorised test machine
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-internal-stage
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/windows/kit
 
       - name: Retain the TUN harness build for the authorised test machine
         if: always()

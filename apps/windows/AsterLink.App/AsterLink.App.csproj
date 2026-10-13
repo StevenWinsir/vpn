@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AsterLink.Shared\AsterLink.Shared.csproj" />
+    <ProjectReference Include="..\AsterLink.Platform\AsterLink.Platform.csproj" />
   </ItemGroup>
 
 </Project>
