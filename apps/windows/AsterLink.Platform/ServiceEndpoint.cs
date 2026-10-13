@@ -49,11 +49,7 @@ public static class ServiceEndpoint
         string? impersonated = null;
         try
         {
-            pipe.RunAsClient(() =>
-            {
-                using var identity = WindowsIdentity.GetCurrent(ifImpersonating: true);
-                impersonated = identity?.User?.Value;
-            });
+            pipe.RunAsClient(() => impersonated = ProcessIdentity.ImpersonatedUserSid());
         }
         catch (IOException) { impersonated = null; }
         catch (InvalidOperationException) { impersonated = null; }

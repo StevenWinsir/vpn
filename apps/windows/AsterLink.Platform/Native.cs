@@ -52,6 +52,13 @@ internal static class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetTokenInformation(SafeAccessTokenHandle token, int infoClass, IntPtr buffer, int length, out int returnLength);
 
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool OpenThreadToken(IntPtr thread, uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool openAsSelf, out SafeAccessTokenHandle token);
+
+    [DllImport("kernel32.dll")]
+    internal static extern IntPtr GetCurrentThread();
+
     internal const uint TokenQuery = 0x0008;
     internal const int TokenUser = 1;
     internal const int TokenIntegrityLevel = 25;

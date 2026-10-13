@@ -60,6 +60,23 @@ public static class ProcessIdentity
         }
     }
 
+    /// <summary>
+    /// User SID of the token the calling thread currently impersonates. The token is opened "as self": a
+    /// SYSTEM service reading an Identification-level client token must not have the access check run
+    /// as the (identification-only) client.
+    /// </summary>
+    internal static string? ImpersonatedUserSid()
+    {
+        if (!Native.OpenThreadToken(Native.GetCurrentThread(), Native.TokenQuery, true, out var token)) return null;
+        using (token)
+        {
+            var user = TokenBuffer(token, Native.TokenUser);
+            if (user == IntPtr.Zero) return null;
+            try { return SidToString(Marshal.ReadIntPtr(user)); }
+            finally { Marshal.FreeHGlobal(user); }
+        }
+    }
+
     private static IntPtr TokenBuffer(SafeAccessTokenHandle token, int infoClass)
     {
         _ = Native.GetTokenInformation(token, infoClass, IntPtr.Zero, 0, out var needed);

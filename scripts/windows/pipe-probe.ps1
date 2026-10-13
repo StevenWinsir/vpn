@@ -12,7 +12,7 @@ param([Parameter(Mandatory)][ValidateSet('hello', 'garbage', 'oversize', 'unknow
 $ErrorActionPreference = 'Stop'
 function Send-Frame([System.IO.Stream]$stream, [byte[]]$body) {
     $header = [byte[]]@(($body.Length -shr 24) -band 255, ($body.Length -shr 16) -band 255, ($body.Length -shr 8) -band 255, $body.Length -band 255)
-    $stream.Write($header + $body, 0, 4 + $body.Length); $stream.Flush()
+    $all = [byte[]]($header + $body); $stream.Write($all, 0, $all.Length); $stream.Flush()
 }
 function Read-Exact([System.IO.Stream]$stream, [int]$count) {
     $buffer = New-Object byte[] $count; $got = 0
