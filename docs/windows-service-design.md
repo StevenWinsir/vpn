@@ -1,7 +1,7 @@
 # Windows Service, restricted IPC and install authorisation (round 3)
 
 Status: **implemented; compiled on macOS, unit-tested on macOS (218 tests) and exercised on Windows Server 2025 by CI.**
-Nothing here has run on a Windows 10/11 client yet, and no UAC prompt has been clicked by a human (see section 9).
+Verified by the user on Windows 10 Home 22H2 (section 7); Windows 11 is not tested.
 No tunnel is started anywhere in this round: a Core launched by the service only answers `hello` / `read_snapshot`,
 and the GUI never shows "connected".
 
@@ -109,7 +109,7 @@ Internal channel only. Verbs: `install --stage <dir>`, `uninstall`, `repair`, `s
 | --- | --- |
 | macOS | compile of all 6 projects; 218 policy/contract tests (path, manifest, ACL, peer, command, owner, version, recovery, health) |
 | Windows Server 2025 (CI) | `AsterLink.Tests.Windows` (real pipe DACL, real caller inspection, squatting, ACL/junction/hash checks, recovery with real processes, real Go Core through `WorkerProcess`: hello, snapshot, job kill, EOF stop, suspended-record ordering, handle-less start) and `e2e-service.ps1` |
-| Windows 10 Home 22H2 (user's machine) | NOT_RUN — see section 9 |
+| Windows 10 Home 22H2 build 19045 (user's machine, reported) | `e2e-service.ps1` 32 cases 0 FAIL / 2 NOT_RUN; manual UAC decline + accept + installed-copy launch OK. Found and fixed: standard users cannot open the SYSTEM service process (server check now rests on the SCM binding); uninstall with the GUI open now refused up front |
 
 ## 8. Known limits (also in the handoff record)
 

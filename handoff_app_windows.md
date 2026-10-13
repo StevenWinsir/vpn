@@ -550,7 +550,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | --- | --- | --- |
 | 1 环境与工程 | DONE（Windows Server 2025 CI 通过；Windows 10/11 客户端实机 NOT_RUN） | 第 2 轮先在用户的 Windows 10 家庭版 22H2 真机做 TUN PoC；Windows 11 后补 |
 | 2 平台与 TUN PoC | DONE（PR #21：CI 全绿；Windows 10 家庭版 22H2 真机 SS 实传 0 FAIL；Windows 11 NOT_RUN） | 见第 2 轮记录的未解决项 |
-| 3 服务与安全 IPC | DONE（PR 待合并；CI 见第 3 轮记录；Windows 10/11 客户端机与人工 UAC 点击 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
+| 3 服务与安全 IPC | DONE（PR #22；CI 全绿；Windows 10 家庭版 22H2 真机：e2e 32 例 0 FAIL + 人工 UAC 取消/批准通过；Windows 11 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
 | 4 UI 与账号节点 | NOT_STARTED | 复用 Snapshot 和登录契约，测试账号具备明确的测试权益 |
 | 5 TUN 与开发计量 | NOT_STARTED | 真实可用 SS/VLESS 及受控上传/下载/UDP 目标 |
 | 6 可靠性与网络矩阵 | NOT_STARTED | 可恢复的 Windows x64 测试机、双栈/多网卡/浏览器环境 |
@@ -655,12 +655,16 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   macOS：dotnet build 全解决方案（含 WPF、Platform、Tests.Windows）0 警告；dotnet test AsterLink.Tests = 218 PASS（原 69 + 新 149）；
   scripts/test-native-windows.py --suite foundation = 9 PASS。本地 worktree 未初始化 Clash.Meta 子模块，Go 套件由 CI 执行（Go 代码本轮未改）。
   Windows CI 结果见 PR 的 Windows client CI 运行（以该运行的 artifact windows-foundation-reports / windows-internal-stage 为准）。
-  未能产生的用例：S01-remote（需第二台电脑）、S01-other-user（需第二个交互用户）、人工 UAC 取消/批准点击 —— NOT_RUN。
+  Windows 10 家庭版 22H2（build 19045，用户报告）：e2e-service.ps1 = 32 例 0 FAIL 2 NOT_RUN；人工 UAC 检查（普通用户启动 stage 的 GUI → 取消
+  → 批准 → 打开安装副本 → “特权服务就绪”，服务/内核 0.1.0，internal，signed_out）通过。真机首次测试曾暴露两个 CI 测不到的问题并已修复：
+  普通用户无法 OpenProcess SYSTEM 服务进程导致 server_rejected（现以 SCM 的 PID/路径/账户绑定为必要条件，能打开进程时再加查）；
+  GUI 开着时卸载在锁住的 AsterLink.dll 处半途失败（现安装/卸载前先拒绝）。
+  未能产生的用例：S01-remote（需第二台电脑）、S01-other-user（需第二个交互用户）、Windows 11 —— NOT_RUN。
 安装包版本 / OS、架构、Core、驱动版本 / 脱敏证据路径：
   内部渠道 stage 0.1.0（未签名，不是可信发行）；Core 以 -X main.version=0.1.0 构建；Wintun 未变（内嵌 0.14.1）。
 未解决问题、复现方法与发布限制：
   1) 内部渠道无 Authenticode：信任来自受保护目录 ACL；release 清单被拒绝，直到第 8 轮实现签名校验。
-  2) Windows 10 家庭版 22H2 / Windows 11 真机：需下载 PR 运行的 windows-internal-stage 产物，按 docs/windows-service-design.md 第 9 节运行 e2e。
+  2) Windows 11 真机未测；Windows 10 已通过（见上）。
   3) 注销/切换用户只靠“GUI 进程消失 → 管道关闭 → Core 停止”，未接 SERVICE_CONTROL_SESSIONCHANGE。
   4) 安装器是开发骨架（service 可执行文件的 verb），Inno Setup 授权与正式安装器见第 8 轮。
   5) 卸载不清除各用户的 Credential Manager 项（第 4 轮引入保存密码后，在第 8 轮提供当前用户侧的清除选项）。
