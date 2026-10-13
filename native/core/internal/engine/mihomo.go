@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"runtime"
 	"strings"
@@ -40,6 +41,7 @@ type Mihomo struct {
 	Probes       []string
 	StartTimeout time.Duration
 	ProbeTimeout time.Duration
+	IPv6Timeout  time.Duration
 
 	mu         sync.Mutex
 	running    bool
@@ -47,10 +49,15 @@ type Mihomo struct {
 	configData []byte
 	tunConf    LC.Tun
 	configured bool
+	// ipv6Capable is probed once per applied profile; ipv6Mode/ipv6Gateway describe the
+	// running session so Stop removes exactly the routes this session added.
+	ipv6Capable bool
+	ipv6Mode    string
+	ipv6Gateway netip.Addr
 }
 
 func New() *Mihomo {
-	return &Mihomo{Probes: DefaultProbes, StartTimeout: 15 * time.Second, ProbeTimeout: 8 * time.Second}
+	return &Mihomo{Probes: DefaultProbes, StartTimeout: 15 * time.Second, ProbeTimeout: 8 * time.Second, IPv6Timeout: 5 * time.Second}
 }
 
 var _ managed.Engine = (*Mihomo)(nil)
@@ -119,6 +126,8 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 		e.configData = append(e.configData[:0], data...)
 		e.tunConf = tunConf
 		e.configured = true
+		// Before the TUN exists, so the probe reaches the node over the physical path.
+		e.ipv6Capable = len(tunConf.Inet6Address) > 0 && nodeCarriesIPv6(ctx, e.IPv6Timeout)
 	} else {
 		// ApplyConfig marks the tunnel running. Reconnects that reuse the same
 		// profile need to restore that lifecycle state explicitly after Stop.
@@ -139,6 +148,7 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 			}
 		}
 		if added && network.ViaTunnel() != "" {
+			e.applyIPv6Policy(tunConf)
 			return nil
 		}
 		if ctx.Err() != nil || time.Now().After(deadline) {
@@ -210,10 +220,38 @@ func (e *Mihomo) Stop() error {
 	return nil
 }
 
+// IPv6Mode reports how the running session handles IPv6 (one of the IPv6* constants).
+func (e *Mihomo) IPv6Mode() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.ipv6Mode
+}
+
+func (e *Mihomo) applyIPv6Policy(tunConf LC.Tun) {
+	switch {
+	case len(tunConf.Inet6Address) == 0:
+		e.ipv6Mode = IPv6Absent
+	case e.ipv6Capable:
+		e.ipv6Mode = IPv6Tunnel
+	default:
+		gateway := tunConf.Inet6Address[0].Addr()
+		if err := addIPv6Reject(gateway); err != nil {
+			// Still no leak: IPv6 stays routed into the TUN, it just fails slowly.
+			e.ipv6Mode = IPv6RejectFailed
+			return
+		}
+		e.ipv6Mode, e.ipv6Gateway = IPv6Rejected, gateway
+	}
+}
+
 func (e *Mihomo) stopLocked() {
 	if !e.running {
 		return
 	}
+	if e.ipv6Mode == IPv6Rejected {
+		removeIPv6Reject(e.ipv6Gateway, rejectPrefixes())
+	}
+	e.ipv6Mode, e.ipv6Gateway = "", netip.Addr{}
 	tunnel.OnSuspend()
 	listener.ReCreateTun(LC.Tun{}, tunnel.Tunnel)
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {

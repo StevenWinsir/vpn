@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 VOLUME = 'AsterLink'
@@ -43,6 +44,22 @@ INSTALL_README = """AsterLink 安装
 def run(command, **kwargs):
     print('+', ' '.join(str(c) for c in command), flush=True)
     return subprocess.run(command, check=True, **kwargs)
+
+
+def create_dmg(stage, dmg, attempts=4):
+    """hdiutil create fails intermittently on CI runners ("Resource busy" while the
+    system scans the fresh image), so retry a few times with a growing pause before
+    giving up with the last error. A partial image from a failed attempt is removed."""
+    command = ['hdiutil', 'create', '-volname', VOLUME, '-srcfolder', str(stage), '-ov', '-format', 'UDZO', '-fs', 'HFS+', str(dmg)]
+    for attempt in range(1, attempts + 1):
+        try:
+            return run(command, stdout=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            dmg.unlink(missing_ok=True)
+            print(f'hdiutil create failed (attempt {attempt}/{attempts}); retrying', file=sys.stderr, flush=True)
+            time.sleep(5 * attempt)
 
 
 def capture(command, **kwargs):
@@ -71,8 +88,7 @@ def make_dmg(app: Path, dmg: Path, identity: str, hardened_timestamp: bool):
         uninstall = stage / '卸载 AsterLink.command'
         shutil.copy2(ROOT / 'scripts/uninstall-asterlink.sh', uninstall)
         uninstall.chmod(0o755)
-        run(['hdiutil', 'create', '-volname', VOLUME, '-srcfolder', str(stage), '-ov', '-format', 'UDZO', '-fs', 'HFS+', str(dmg)],
-            stdout=subprocess.DEVNULL)
+        create_dmg(stage, dmg)
     if identity != '-':
         command = ['codesign', '--force', '--sign', identity]
         if hardened_timestamp:

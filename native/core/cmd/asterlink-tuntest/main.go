@@ -135,6 +135,7 @@ func main() {
 	dnsChecks(ctx)
 	udpCheck(ctx, *udpEcho)
 	ipv6Check(ctx, *probe6, baseline6)
+	ipv6FallbackCheck(ctx, eng.IPv6Mode())
 	apiCheck(ctx, *apiHost)
 	idleLoopCheck(ctx, eng)
 
@@ -238,6 +239,34 @@ func ipv6Check(ctx context.Context, probes, baseline6 string) {
 	default:
 		record("T04-ipv6", "IPv6 is carried by the tunnel or blocked, never direct", "IPv6 exit changed ("+hash(exit6)+")", "pass")
 	}
+}
+
+// ipv6FallbackCheck uses an IPv6 literal, so DNS cannot hide the path: an app holding a
+// real AAAA must either be carried by the node or be refused before the handshake, so
+// Happy Eyeballs falls back to IPv4. A handshake that completes and then goes silent
+// is the "connected but no internet" failure and must fail this case.
+func ipv6FallbackCheck(ctx context.Context, mode string) {
+	const id, expected = "T04-ipv6-fallback", "IPv6 is carried by the node, or refused before the handshake"
+	if mode == engine.IPv6Absent {
+		record(id, expected, "mode=absent: this host has no IPv6", "pass")
+		return
+	}
+	target := engine.IPv6Probes[0]
+	started := time.Now()
+	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp6", target)
+	elapsed := time.Since(started).Round(time.Millisecond)
+	if err != nil {
+		ok := mode == engine.IPv6Rejected && elapsed < time.Second
+		record(id, expected, fmt.Sprintf("mode=%s: connect refused after %v (%v)", mode, elapsed, err), verdict(ok))
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
+	_, _ = conn.Write([]byte("GET / HTTP/1.1\r\nHost: " + target + "\r\nConnection: close\r\n\r\n"))
+	head := make([]byte, 5)
+	n, _ := io.ReadFull(conn, head)
+	answered := string(head[:n]) == "HTTP/"
+	record(id, expected, fmt.Sprintf("mode=%s: handshake in %v, HTTP answer %v", mode, elapsed, answered), verdict(mode == engine.IPv6Tunnel && answered))
 }
 
 // apiCheck proves the control plane does not depend on the paid node: a socket bound to

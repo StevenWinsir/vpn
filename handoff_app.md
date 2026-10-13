@@ -688,3 +688,11 @@ App 不接触 PostgreSQL。测试数据库账号不得打包到安装文件。�
 - 修复：`native/core/cmd/asterlink-core/main.go` 启动即把 stdout 管道 dup 到私有描述符专供 IPC，并把 fd 1 指向 stderr（Helper 丢弃），任何库写 stdout 都不再污染帧；`main_test.go` 在子进程里用真实 Mihomo logger 验证管道只含帧（旧代码复现 `frame exceeds limit: 1953066341`）。Swift `SessionController` 收到 Helper 的 `worker_failed` 时停止轮询、回到登录页并提示"内核已意外退出，连接已停止，请重新登录"，重新登录会启动全新 Core，不复用旧授权。
 - 验证：`go test -race ./...`（native/core）、`--suite unit` 7/7（Swift 44）、`--suite bundle` 6/6、`scripts/test-native.py` 全绿；internal 包 `macmini-ipcfix-20261012` 的 `--suite release` 10 pass / 2 blocked（预期）/ 1 fail（R02-UNINSTALL：本机 AsterLink 正在运行，脚本按设计拒绝，非代码问题）。
 - 待用户真机：断开公司 VPN，退出旧 App，安装新 DMG（或在设置页"重新安装特权服务"），登录→选节点→连接。
+
+VLESS 节点"已连接但没网"修复（2026-10-12）
+- 现象：真机上 SS 节点正常；VLESS Reality + `xtls-rprx-vision` 节点（域名服务器、`udp: true`）显示已连接，浏览器无网络。
+- 排查（不经 TUN 的可复现证据）：经固定版 Mihomo VLESS 适配器直拨，HTTP/HTTPS 正常（出口为节点 IPv4）；经 `tunnel.HandleTCPConn` 走完整 Mihomo 转发，Reality 认证、Vision 识别 TLS1.3 并进入 direct 模式、HTTPS 正常；UDP（8.8.8.8/1.1.1.1:53）正常；后端解析/渲染与 Core `ParseProfile` 不改动 VLESS 字段。唯一差异：**该节点没有 IPv6 出口**（IPv6 字面量与 ipv6.icanhazip.com 全部 EOF），而 SS 节点有（阶段 3 T04“出口已变化”）。
+- 根因：模板 `ipv6: true` 无条件把 IPv6 收进 TUN；本机有公网 IPv6；Chrome 在系统 DNS 为 1.1.1.1/8.8.8.8 时自动用 DoH 拿到真实 AAAA、优先 IPv6；macOS system 栈在本地完成 TCP 握手，节点侧随后失败，Happy Eyeballs 不会回退 IPv4。Core 自身探测走被劫持 DNS 只得 IPv4 fake-ip，所以照样判定"已连接"。原 T04 把"IPv6 请求失败"一律记为 pass，没有区分"握手前拒绝"与"握手后假死"。
+- 修复：`native/core/internal/engine/ipv6.go`——建 TUN 前经节点对 IPv6 字面量做一次真实 HTTP 探测（每个已应用配置只测一次）；不通则 TUN 起来后安装比 sing-tun IPv6 路由长 1 位的 16 条 `-reject` 路由（网关为 utun 自身地址，随设备销毁；安装失败整组回滚），停止时删除。能承载 IPv6 的节点（SS）行为不变。`asterlink-tuntest` 新增 `T04-ipv6-fallback`；`docs/macos-stage3.md` 已更新。
+- 验证：`go test -race ./...`（native/core，含前缀覆盖、全有或全无回滚、"拨通后 EOF 不算 IPv6"）、`--suite unit` 7/7；真实 VLESS 节点探测返回 false（2.24s），TUN 有 `fdfe:dcba:9876::1/126`。**真机 TUN 未执行**（无 root、公司 VPN 在线）。
+- 待用户真机：断开公司 VPN，安装新 DMG，VLESS 节点连接后用 Chrome 打开网页；可选 `sudo -E` 跑 `--suite tun` 并设 `ASTERLINK_TUN_PROXY_JSON` 为 VLESS 节点，看 `T04-ipv6-fallback` 应为 `mode=rejected` 且 pass、T07 无遗留路由。
