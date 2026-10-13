@@ -29,8 +29,11 @@
     "zip_sha256_published": "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51",
     "architectures_published": ["amd64", "x86", "arm64", "arm"],
     "product_architecture": "amd64",
-    "license_note": "Source is GPL-2.0; the prebuilt signed DLLs carry a more permissive license that ships inside the ZIP. The project says the signed DLLs are the only supported way to distribute Wintun.",
-    "verified": "version, URL and hash as published on wintun.net on 2026-10-13. NOT downloaded, NOT hash-checked and the Authenticode signature NOT inspected in round 1; round 2 must do all three before the DLL is vendored."
+    "zip_sha256_verified": "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51",
+    "amd64_dll_sha256": "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce",
+    "distribution": "No separate Wintun file is shipped in round 2. The pinned sing-tun (github.com/metacubex/sing-tun v0.4.22, internal/wintun/amd64/wintun.dll) embeds the official DLL byte for byte and loads it from memory, so there is no DLL search path, PATH or current-directory lookup to attack. scripts/test-native-windows.py --suite core fails if that embedded file ever differs from amd64_dll_sha256.",
+    "license_note": "Source is GPL-2.0; the prebuilt signed DLLs carry a more permissive license that ships inside the ZIP. The project says the signed DLLs are the only supported way to distribute Wintun. Clause 3(d) of that license allows redistribution 'alongside other software that uses the Software only via the Permitted API' (wintun.h) and forbids extracting from or modifying the Software: round 8 must have the legal review decide whether the in-memory embedding by sing-tun is acceptable for a commercial installer, or ship the unmodified wintun.dll from the ZIP next to the Core and load it from the protected install directory.",
+    "verified": "2026-10-13 (round 2): ZIP downloaded from wintun.net into an empty directory, SHA-256 equals the published value; amd64/wintun.dll inside it equals the DLL embedded in sing-tun v0.4.22; the DLL's certificate strings name Microsoft Windows Hardware Compatibility Publisher / Microsoft Windows Third Party Component CA 2012. Authenticode validity is checked by Get-AuthenticodeSignature on Windows in .github/workflows/windows.yml (step 'Embedded Wintun DLL is the signed official build')."
   },
   "installer": {
     "tool": "Inno Setup",

@@ -57,8 +57,10 @@ func TestTemplateIsParsedByPinnedCoreAndStaysLocked(t *testing.T) {
 	if _, ok := cfg.Proxies[ProxyName]; !ok {
 		t.Fatal("the node adapter is missing")
 	}
-	if len(cfg.Rules) != 1 || !strings.EqualFold(cfg.Rules[0].RuleType().String(), "MATCH") || cfg.Rules[0].Adapter() != ProxyName {
-		t.Fatalf("routing is not a single MATCH to the node: %d rules, %s -> %s", len(cfg.Rules), cfg.Rules[0].RuleType(), cfg.Rules[0].Adapter())
+	// MATCH to the node, then a final MATCH,REJECT (see TestUDPWithoutSupportIsRejectedNeverDirect).
+	if len(cfg.Rules) != 2 || !strings.EqualFold(cfg.Rules[0].RuleType().String(), "MATCH") || cfg.Rules[0].Adapter() != ProxyName ||
+		!strings.EqualFold(cfg.Rules[1].RuleType().String(), "MATCH") || cfg.Rules[1].Adapter() != "REJECT" {
+		t.Fatalf("routing is not MATCH node then MATCH REJECT: %d rules", len(cfg.Rules))
 	}
 	for name := range cfg.Providers { // only the core-internal "default" holder may exist
 		if name != "default" {

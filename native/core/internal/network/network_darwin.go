@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"net"
+	"net/netip"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -57,6 +58,26 @@ func PhysicalDefault() (Interface, error) {
 		return Interface{}, ErrNoNetwork
 	}
 	return Interface{Name: i.Name, Index: i.Index}, nil
+}
+
+// otherTunnels lists up utun devices that carry an IPv4 address (VPN clients; the
+// address-less utuns the system keeps for iCloud Private Relay and similar do not count).
+func otherTunnels() []string {
+	var found []string
+	interfaces, _ := net.Interfaces()
+	for _, i := range interfaces {
+		if !strings.HasPrefix(i.Name, "utun") || i.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, _ := i.Addrs()
+		for _, a := range addrs {
+			if p, err := netip.ParsePrefix(a.String()); err == nil && p.Addr().Is4() {
+				found = append(found, i.Name)
+				break
+			}
+		}
+	}
+	return found
 }
 
 // ViaTunnel catches VPN clients that split the default route (0/1 + 128/1)

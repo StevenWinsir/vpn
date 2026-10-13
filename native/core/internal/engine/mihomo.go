@@ -6,12 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/netip"
 	"os"
-	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +31,10 @@ var DefaultProbes = []string{
 	"http://www.gstatic.com/generate_204",
 	"http://captive.apple.com/hotspot-detect.html",
 }
+
+// tunConfig is Mihomo's parsed TUN section; platform files adjust it before the device is
+// created.
+type tunConfig = LC.Tun
 
 // Mihomo is the production Engine.
 type Mihomo struct {
@@ -67,9 +68,12 @@ var _ managed.Engine = (*Mihomo)(nil)
 
 // Preflight refuses to stack on another VPN and finds the physical egress that the
 // outer node connection and the Core's own API calls must keep using.
-func (e *Mihomo) Preflight(context.Context) (network.Interface, error) {
-	if runtime.GOOS != "darwin" {
+func (e *Mihomo) Preflight(ctx context.Context) (network.Interface, error) {
+	if !platformSupported() {
 		return network.Interface{}, managed.ErrTunUnavailable
+	}
+	if err := preflightPlatform(ctx); err != nil {
+		return network.Interface{}, err
 	}
 	if len(network.Conflicts()) > 0 {
 		return network.Interface{}, managed.ErrVPNConflict
@@ -81,17 +85,6 @@ func (e *Mihomo) Preflight(context.Context) (network.Interface, error) {
 	return iface, nil
 }
 
-func tunnelDevices() map[string]bool {
-	found := map[string]bool{}
-	interfaces, _ := net.Interfaces()
-	for _, i := range interfaces {
-		if strings.HasPrefix(i.Name, "utun") {
-			found[i.Name] = true
-		}
-	}
-	return found
-}
-
 // Start brings the TUN up and returns once the device and its routes exist. It does
 // not claim the tunnel forwards: Verify does.
 func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
@@ -100,7 +93,7 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 	if e.running {
 		return errors.New("engine already running")
 	}
-	if runtime.GOOS != "darwin" {
+	if !platformSupported() {
 		return managed.ErrTunUnavailable
 	}
 	data, err := BuildConfig(profile)
@@ -139,20 +132,17 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 	before := tunnelDevices()
 	e.home, e.running = home, true
 	// The pinned fork's ApplyConfig leaves listeners alone (docs/macos-tun-poc.md), so
-	// the TUN is created explicitly, and torn down explicitly in Stop.
-	listener.ReCreateTun(tunConf, tunnel.Tunnel)
+	// the TUN is created explicitly, and torn down explicitly in Stop. ReCreateTun only
+	// logs its failure, so the log is watched to turn it into a precise error.
+	failures := watchTunErrors()
+	defer failures.Close()
+	listener.ReCreateTun(e.prepareTunConf(tunConf), tunnel.Tunnel)
 
 	deadline := time.Now().Add(e.StartTimeout)
 	for {
-		added := false
-		for name := range tunnelDevices() {
-			if !before[name] {
-				added = true
-			}
-		}
-		if added && network.ViaTunnel() != "" {
+		if tunReady(before) {
 			e.applyIPv6Policy(tunConf)
-			// Only once the utun answers on TunnelDNS: pointing the resolver there
+			// Only once the TUN answers on TunnelDNS: pointing the resolver there
 			// earlier would black-hole every lookup on the machine.
 			physical, err := network.PhysicalDefault()
 			if err != nil || captureSystemDNS(physical.Name) != nil {
@@ -161,6 +151,10 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 			}
 			e.dnsMode = DNSCaptured
 			return nil
+		}
+		if reason := failures.Err(); reason != "" {
+			e.stopLocked()
+			return fmt.Errorf("%w: %s", managed.ErrTunnelFailed, reason)
 		}
 		if ctx.Err() != nil || time.Now().After(deadline) {
 			e.stopLocked()
@@ -245,23 +239,6 @@ func (e *Mihomo) IPv6Mode() string {
 	return e.ipv6Mode
 }
 
-func (e *Mihomo) applyIPv6Policy(tunConf LC.Tun) {
-	switch {
-	case len(tunConf.Inet6Address) == 0:
-		e.ipv6Mode = IPv6Absent
-	case e.ipv6Capable:
-		e.ipv6Mode = IPv6Tunnel
-	default:
-		gateway := tunConf.Inet6Address[0].Addr()
-		if err := addIPv6Reject(gateway); err != nil {
-			// Still no leak: IPv6 stays routed into the TUN, it just fails slowly.
-			e.ipv6Mode = IPv6RejectFailed
-			return
-		}
-		e.ipv6Mode, e.ipv6Gateway = IPv6Rejected, gateway
-	}
-}
-
 func (e *Mihomo) stopLocked() {
 	if !e.running {
 		return
@@ -272,10 +249,7 @@ func (e *Mihomo) stopLocked() {
 	if err := RestoreSystemDNS(); err == nil {
 		e.dnsMode = ""
 	}
-	if e.ipv6Mode == IPv6Rejected {
-		removeIPv6Reject(e.ipv6Gateway, rejectPrefixes())
-	}
-	e.ipv6Mode, e.ipv6Gateway = "", netip.Addr{}
+	e.releaseIPv6Policy()
 	tunnel.OnSuspend()
 	listener.ReCreateTun(LC.Tun{}, tunnel.Tunnel)
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {

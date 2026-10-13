@@ -23,6 +23,10 @@ var (
 	ErrUnsupported = errors.New("platform not supported")
 )
 
+// TunName is the Windows adapter name of the Core's own TUN (macOS names its device
+// utunN, chosen by the kernel). It lets the Core tell its own adapter from other VPNs.
+const TunName = "AsterLink"
+
 // Interface is the physical egress the tunnel's outer connections must use.
 type Interface struct {
 	Name  string
@@ -143,23 +147,11 @@ func signatureOf(name string) string {
 }
 
 // Conflicts lists other VPNs/tunnels that already own the routes. The first release
-// does not stack on top of them (handoff_app.md section 6.2, "竞争软件").
+// does not stack on top of them (handoff_app.md section 6.2, "竞争软件"). On Windows the
+// Core's own adapter (TunName) is never a competitor.
 func Conflicts() []string {
-	var found []string
-	interfaces, _ := net.Interfaces()
-	for _, i := range interfaces {
-		if !strings.HasPrefix(i.Name, "utun") || i.Flags&net.FlagUp == 0 {
-			continue
-		}
-		addrs, _ := i.Addrs()
-		for _, a := range addrs {
-			if p, err := netip.ParsePrefix(a.String()); err == nil && p.Addr().Is4() {
-				found = append(found, i.Name)
-				break
-			}
-		}
-	}
-	if via := ViaTunnel(); via != "" && !contains(found, via) {
+	found := otherTunnels()
+	if via := ViaTunnel(); via != "" && via != TunName && !contains(found, via) {
 		found = append(found, via)
 	}
 	return found

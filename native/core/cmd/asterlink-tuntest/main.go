@@ -25,13 +25,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -56,7 +53,25 @@ func record(id, expected, observed, result string) {
 	fmt.Printf("%-7s %-7s %s\n", id, strings.ToUpper(result), observed)
 }
 
+// options are the command-line inputs the platform checks need.
+type options struct {
+	probe, probe6 string
+	udpEcho       string
+	apiHost       string
+	ntpHost       string
+	udpReject     bool
+	killTest      bool
+}
+
+// childFlag re-executes the harness as a separate process. On Windows the harness IS the
+// Core process, and sing-tun's Windows Filtering Platform rules exempt the Core's own
+// process; a probe that must behave like an ordinary application therefore runs in a child.
+const childFlag = "--child"
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == childFlag {
+		os.Exit(runChild(os.Args[2:]))
+	}
 	allow := flag.Bool("allow-network-changes", false, "confirm this machine may have its routes/DNS changed")
 	output := flag.String("output", "", "new directory for the redacted JSON report")
 	cycles := flag.Int("cycles", 20, "connect/disconnect cycles for the resource check")
@@ -68,20 +83,27 @@ func main() {
 	downloadBytes := flag.Int64("download-bytes", 0, "exact body size of --download-url")
 	udpEcho := flag.String("udp-echo", "", "controlled UDP echo server host:port reachable from the node")
 	apiHost := flag.String("api-host", "", "host:port of the API (control plane must stay reachable during the tunnel)")
+	ntpHost := flag.String("ntp-host", "time.cloudflare.com:123", "Windows: public SNTP server used as a UDP target (no server of your own needed)")
+	udpReject := flag.Bool("udp-reject-test", false, "Windows: also run a session whose node has udp:false and require UDP to be refused, never sent direct")
+	killTest := flag.Bool("kill-test", false, "Windows: also hard-kill a connected child process and require the adapter, routes and filters to vanish")
+	hold := flag.Bool("hold", false, "internal: connect, print READY, wait to be killed (used by --kill-test)")
 	flag.Parse()
+	opts := options{probe: *probe, probe6: *probe6, udpEcho: *udpEcho, apiHost: *apiHost, ntpHost: *ntpHost, udpReject: *udpReject, killTest: *killTest}
 
 	if !*allow {
 		fail("BLOCKED: pass --allow-network-changes on a machine you control; this changes routes and DNS")
 	}
-	if os.Geteuid() != 0 {
-		fail("BLOCKED: root is required to create a utun device (run with sudo -E)")
+	if !privileged() {
+		fail("BLOCKED: " + privilegeHint)
 	}
 	proxy, hostForReport, err := proxyFromEnv()
-	if err != nil || *output == "" {
+	if err != nil || (*output == "" && !*hold) {
 		fail("usage: --output NEWDIR with a node in the environment: " + fmt.Sprint(err))
 	}
-	if err := os.Mkdir(*output, 0o700); err != nil {
-		fail("output directory must not exist: " + err.Error())
+	if !*hold {
+		if err := os.Mkdir(*output, 0o700); err != nil {
+			fail("output directory must not exist: " + err.Error())
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*maxSeconds)*time.Second)
 	defer cancel()
@@ -95,11 +117,16 @@ func main() {
 	defer func() { _ = eng.Stop(); network.Default.Clear() }()
 
 	iface, err := eng.Preflight(ctx)
+	if *hold {
+		holdSession(ctx, eng, profile, iface, err)
+		return
+	}
 	if err != nil {
-		record("T-PRE", "no competing VPN and a physical default route", err.Error()+" (disconnect other VPNs, e.g. a company VPN, and retry)", "blocked")
+		record("T-PRE", "no competing VPN, administrator rights and a physical default route", err.Error()+" (disconnect other VPNs, e.g. a company VPN, and retry)", "blocked")
 		finish(*output, hostForReport)
 	}
 	before := capture()
+	baselineSnapshot = before
 	baseline := fetch(ctx, *probe, "tcp4")
 	baseline6 := fetch(ctx, *probe6, "tcp6")
 	if baseline == "" {
@@ -114,7 +141,7 @@ func main() {
 		record("T01", "TUN device and routes appear", "start failed: "+err.Error(), "fail")
 		finish(*output, hostForReport)
 	}
-	record("T01a", "utun device and its routes exist", fmt.Sprintf("up in %v; new devices %v", time.Since(started).Round(time.Millisecond), newDevices(before)), "pass")
+	record("T01a", "TUN device and its routes exist", fmt.Sprintf("up in %v; new devices %v", time.Since(started).Round(time.Millisecond), newDevices(before)), "pass")
 	if err = eng.Verify(ctx); err != nil {
 		record("T02", "real handshake and forwarding through the node (not just a parsed YAML)", err.Error(), "fail")
 		finish(*output, hostForReport)
@@ -132,10 +159,7 @@ func main() {
 	}
 
 	reconcile(ctx, eng, *downloadURL, *downloadBytes)
-	dnsChecks(ctx, eng.DNSMode())
-	udpCheck(ctx, *udpEcho)
-	ipv6Check(ctx, *probe6, baseline6)
-	ipv6FallbackCheck(ctx, eng.IPv6Mode())
+	platformChecks(ctx, eng, opts, baseline6)
 	apiCheck(ctx, *apiHost)
 	idleLoopCheck(ctx, eng)
 
@@ -145,9 +169,10 @@ func main() {
 	if left := diff(before, capture()); len(left) > 0 {
 		record("T07", "nothing of this run remains after Stop", strings.Join(left, "; "), "fail")
 	} else {
-		record("T07", "nothing of this run remains after Stop", "no utun, route or DNS change left", "pass")
+		record("T07", "nothing of this run remains after Stop", "no TUN device, route, DNS or proxy-setting change left", "pass")
 	}
 
+	platformExtras(ctx, opts, proxy, before)
 	cycleCheck(ctx, eng, profile, iface, before, *cycles)
 	finish(*output, hostForReport)
 }
@@ -172,116 +197,6 @@ func reconcile(ctx context.Context, eng *engine.Mihomo, url string, size int64) 
 	ok := down >= size && float64(down) <= float64(size)*1.10+65536 && up > 0
 	record("B-COUNT", "download counter covers the body with only protocol overhead",
 		fmt.Sprintf("body=%d counted_down=%d (x%.4f) counted_up=%d", size, down, ratio, up), verdict(ok))
-}
-
-func dnsChecks(ctx context.Context, mode string) {
-	fake := netip.MustParsePrefix("198.18.0.0/16")
-	// The system resolver must point into the tunnel; otherwise a LAN resolver (router,
-	// IPv6 link-local RDNSS) is reached over the on-link route and never hijacked, and a
-	// public one lets browsers auto-upgrade to DoH around the hijack.
-	scutil, _ := exec.Command("/usr/sbin/scutil", "--dns").Output()
-	primary := ""
-	for _, line := range strings.Split(string(scutil), "\n") {
-		if f := strings.Fields(line); len(f) == 3 && f[0] == "nameserver[0]" {
-			primary = f[2]
-			break
-		}
-	}
-	record("T03-dns-capture", "the system default resolver points into the tunnel ("+engine.TunnelDNS+")",
-		fmt.Sprintf("mode=%s primary=%s", mode, primary), verdict(mode == engine.DNSCaptured && primary == engine.TunnelDNS))
-
-	// Through mDNSResponder (Go's default resolver on darwin uses libSystem), with a
-	// fresh name so no cached answer from before the tunnel can satisfy it.
-	addrs, err := net.DefaultResolver.LookupHost(ctx, fmt.Sprintf("al-%d.example.com", time.Now().UnixNano()))
-	system := false
-	for _, a := range addrs {
-		if ip, perr := netip.ParseAddr(a); perr == nil && fake.Contains(ip) {
-			system = true
-		}
-	}
-	record("T03-dns-system", "a system lookup is answered by the tunnel's resolver (fake-ip), not a LAN/ISP resolver",
-		fmt.Sprintf("addrs=%v err=%v", addrs, err), verdict(system))
-
-	// Plain DNS aimed at a public resolver must be hijacked into the tunnel as well.
-	hijacked := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "udp", "9.9.9.9:53")
-	}}
-	addrs, err = hijacked.LookupHost(ctx, "example.org")
-	any53 := false
-	for _, a := range addrs {
-		if ip, perr := netip.ParseAddr(a); perr == nil && fake.Contains(ip) {
-			any53 = true
-		}
-	}
-	record("T03-dns-any53", "port-53 queries to an arbitrary resolver are hijacked", fmt.Sprintf("addrs=%v err=%v", addrs, err), verdict(any53))
-}
-
-func udpCheck(ctx context.Context, target string) {
-	if target == "" {
-		record("T03-udp", "UDP echo round trip through the node", "--udp-echo not provided", "blocked")
-		return
-	}
-	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "udp", target)
-	if err != nil {
-		record("T03-udp", "UDP echo round trip through the node", err.Error(), "fail")
-		return
-	}
-	defer conn.Close()
-	payload := []byte("asterlink-udp-" + strconv.FormatInt(time.Now().UnixNano(), 36))
-	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
-	buffer := make([]byte, 512)
-	for range 3 {
-		if _, err = conn.Write(payload); err != nil {
-			break
-		}
-		if n, rerr := conn.Read(buffer); rerr == nil && string(buffer[:n]) == string(payload) {
-			record("T03-udp", "UDP echo round trip through the node", "echo matched", "pass")
-			return
-		}
-	}
-	record("T03-udp", "UDP echo round trip through the node", "no echo (UDP unsupported by this node or path): must be a controlled refusal, never a direct send", "fail")
-}
-
-func ipv6Check(ctx context.Context, probes, baseline6 string) {
-	exit6 := fetch(ctx, probes, "tcp6")
-	switch {
-	case exit6 == "" && baseline6 == "":
-		record("T04-ipv6", "IPv6 is carried by the tunnel or blocked, never direct", "this network has no IPv6 (nothing to leak)", "pass")
-	case exit6 == "":
-		record("T04-ipv6", "IPv6 is carried by the tunnel or blocked, never direct", "IPv6 requests fail while the tunnel is up (blocked, not leaked)", "pass")
-	case exit6 == baseline6:
-		record("T04-ipv6", "IPv6 is carried by the tunnel or blocked, never direct", "IPv6 exit unchanged: v6 traffic bypasses the tunnel", "fail")
-	default:
-		record("T04-ipv6", "IPv6 is carried by the tunnel or blocked, never direct", "IPv6 exit changed ("+hash(exit6)+")", "pass")
-	}
-}
-
-// ipv6FallbackCheck uses an IPv6 literal, so DNS cannot hide the path: an app holding a
-// real AAAA must either be carried by the node or be refused before the handshake, so
-// Happy Eyeballs falls back to IPv4. A handshake that completes and then goes silent
-// is the "connected but no internet" failure and must fail this case.
-func ipv6FallbackCheck(ctx context.Context, mode string) {
-	const id, expected = "T04-ipv6-fallback", "IPv6 is carried by the node, or refused before the handshake"
-	if mode == engine.IPv6Absent {
-		record(id, expected, "mode=absent: this host has no IPv6", "pass")
-		return
-	}
-	target := engine.IPv6Probes[0]
-	started := time.Now()
-	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp6", target)
-	elapsed := time.Since(started).Round(time.Millisecond)
-	if err != nil {
-		ok := mode == engine.IPv6Rejected && elapsed < time.Second
-		record(id, expected, fmt.Sprintf("mode=%s: connect refused after %v (%v)", mode, elapsed, err), verdict(ok))
-		return
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
-	_, _ = conn.Write([]byte("GET / HTTP/1.1\r\nHost: " + target + "\r\nConnection: close\r\n\r\n"))
-	head := make([]byte, 5)
-	n, _ := io.ReadFull(conn, head)
-	answered := string(head[:n]) == "HTTP/"
-	record(id, expected, fmt.Sprintf("mode=%s: handshake in %v, HTTP answer %v", mode, elapsed, answered), verdict(mode == engine.IPv6Tunnel && answered))
 }
 
 // apiCheck proves the control plane does not depend on the paid node: a socket bound to
@@ -437,95 +352,40 @@ func download(ctx context.Context, url string) (int64, error) {
 	return io.Copy(io.Discard, response.Body)
 }
 
-func openFDs() int {
-	entries, _ := os.ReadDir("/dev/fd")
-	return len(entries)
-}
-
 type snapshot struct {
 	Interfaces []string
 	RoutesV4   []string
 	RoutesV6   []string
 	DNSDigest  string
+	// Proxy is the Windows per-user system proxy setting (WinINET); empty on macOS. The
+	// tunnel must never touch it.
+	Proxy string
+	// Err is set when the state could not be read; a comparison against it is meaningless.
+	Err string
 }
 
-func capture() snapshot {
-	var s snapshot
-	interfaces, _ := net.Interfaces()
-	for _, i := range interfaces {
-		s.Interfaces = append(s.Interfaces, i.Name)
-	}
-	sort.Strings(s.Interfaces)
-	s.RoutesV4 = routeLines("-f", "inet")
-	s.RoutesV6 = routeLines("-f", "inet6")
-	out, _ := exec.Command("/usr/sbin/scutil", "--dns").Output()
-	sum := sha256.Sum256(out)
-	s.DNSDigest = hex.EncodeToString(sum[:])
-	return s
-}
+// baselineSnapshot is the machine state before the tunnel existed.
+var baselineSnapshot snapshot
 
-// routeLines keeps destination/gateway/flags/interface and ignores neighbour-cache and
-// temporary-address entries (flags W/L) that the LAN changes on its own.
-func routeLines(args ...string) []string {
-	out, _ := exec.Command("/usr/sbin/netstat", append([]string{"-rn"}, args...)...).Output()
-	return parseRouteLines(string(out))
-}
-
-// parseRouteLines turns the stable four columns of macOS netstat into a sorted
-// comparison set. The Expire column is deliberately omitted: its countdown is
-// expected to change while a test is running. Entries with W (waiting) or L
-// (link-layer/neighbor cache) flags are also omitted because they are maintained
-// asynchronously by the LAN and are not tunnel-owned routes.
-func parseRouteLines(output string) []string {
-	var lines []string
-	for _, line := range strings.Split(output, "\n") {
-		f := strings.Fields(line)
-		if len(f) < 4 || f[0] == "Destination" || f[0] == "Routing" || f[0] == "Internet" {
-			continue
-		}
-		flags := strings.ToUpper(f[2])
-		if strings.ContainsAny(flags, "WL") {
-			continue
-		}
-		lines = append(lines, strings.Join(f[:4], " "))
+// holdSession connects, announces READY on stdout and waits until it is killed. It is the
+// victim of --kill-test: the parent terminates it without any chance to clean up and then
+// checks that the OS removed everything the session created.
+func holdSession(ctx context.Context, eng *engine.Mihomo, profile managed.Profile, iface network.Interface, preflight error) {
+	if preflight != nil {
+		fmt.Println("PREFLIGHT-FAILED", preflight)
+		os.Exit(3)
 	}
-	sort.Strings(lines)
-	return lines
-}
-
-func newDevices(before snapshot) []string {
-	known := map[string]bool{}
-	for _, n := range before.Interfaces {
-		known[n] = true
+	network.Default.Set(iface)
+	if err := eng.Start(ctx, profile); err != nil {
+		fmt.Println("START-FAILED", err)
+		os.Exit(1)
 	}
-	var added []string
-	interfaces, _ := net.Interfaces()
-	for _, i := range interfaces {
-		if !known[i.Name] && strings.HasPrefix(i.Name, "utun") {
-			added = append(added, i.Name)
-		}
-	}
-	return added
-}
-
-func diff(before, after snapshot) []string {
-	var problems []string
-	if added := newDevices(before); len(added) > 0 {
-		problems = append(problems, "utun still present: "+strings.Join(added, ","))
-	}
-	if strings.Join(before.RoutesV4, "\n") != strings.Join(after.RoutesV4, "\n") {
-		problems = append(problems, "IPv4 route table differs from before the run")
-	}
-	if strings.Join(before.RoutesV6, "\n") != strings.Join(after.RoutesV6, "\n") {
-		problems = append(problems, "IPv6 route table differs from before the run")
-	}
-	if before.DNSDigest != after.DNSDigest {
-		problems = append(problems, "scutil --dns differs from before the run")
-	}
-	return problems
+	fmt.Println("READY")
+	<-ctx.Done()
 }
 
 func finish(output, host string) {
+	platformCleanup()
 	failed, blocked := 0, 0
 	for _, r := range results {
 		switch r.Result {
@@ -537,7 +397,7 @@ func finish(output, host string) {
 	}
 	report := map[string]any{
 		"started": time.Now().UTC().Format(time.RFC3339), "node_host_sha256_prefix": host,
-		"go": runtime.Version(), "cases": results, "failed": failed, "blocked": blocked,
+		"go": runtime.Version(), "machine": machineFacts(), "cases": results, "failed": failed, "blocked": blocked,
 	}
 	data, _ := json.MarshalIndent(report, "", "  ")
 	_ = os.WriteFile(filepath.Join(output, "tun-report.json"), data, 0o600)

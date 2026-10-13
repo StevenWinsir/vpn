@@ -1,5 +1,12 @@
 # Go Core on windows/amd64 — baseline measured in round 1
 
+> **Round 2 update.** Every row of the port list below is done and `GOOS=windows GOARCH=amd64 GOAMD64=v1
+> CGO_ENABLED=0 go build ./cmd/asterlink-core` now produces a PE32+ x64 file without `fakeengine`; the
+> non-darwin placeholder no longer links on Windows (`network_other.go` is `!darwin && !windows`, and
+> `TestWindowsDoesNotLinkThePlaceholder` / `--suite core` fail if that regresses). Design and ownership:
+> [windows-tun-design.md](windows-tun-design.md). How to run the real TUN test:
+> [windows-tun-poc.md](windows-tun-poc.md). What follows is the round-1 baseline, kept for comparison.
+
 Measured on 2026-10-13 from a macOS arm64 host with Go 1.26.6, Mihomo submodule at
 `70f0570405c3c2c47bb113b88db95006d239b346`, no Core code changed:
 
