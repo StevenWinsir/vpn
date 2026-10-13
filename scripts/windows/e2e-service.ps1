@@ -183,6 +183,16 @@ try {
     Case 'T09-repair-archives-record' ($unblocked.Result.connected -and (@(Get-ChildItem (Join-Path $env:ProgramData 'AsterLink') -Filter 'session.corrupt-*.json').Count -eq 1)) `
         "connected=$($unblocked.Result.connected) archived=$(@(Get-ChildItem (Join-Path $env:ProgramData 'AsterLink') -Filter 'session.corrupt-*.json').Count)" $null
 
+    # -- uninstall while the installed GUI is still open: refused up front, nothing half-removed ---------------
+    $open = GuiCheck 'open-during-uninstall' -HoldSeconds 120 -NoWait
+    [void](Wait-Until { (CoreCount) -eq 1 } 60)
+    $refused = Verb @('uninstall')
+    $still = Status
+    Case 'R02-uninstall-refused-while-gui-open' (($refused.Code -ne 0) -and $refused.Json.code -eq 'in_use' -and $still.installed -and $still.integrity_ok) `
+        "exit=$($refused.Code) code=$($refused.Json.code) installed=$($still.installed) integrity_ok=$($still.integrity_ok)" $null
+    try { $open.Process.Kill() } catch { }
+    [void]$open.Process.WaitForExit(10000)
+
     # -- uninstall ---------------------------------------------------------------------------------------------------
     $un = Verb @('uninstall')
     $gone = Status

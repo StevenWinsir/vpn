@@ -58,23 +58,13 @@ public sealed class ServiceConnection : IAsyncDisposable
     /// <summary>Null when the server is the genuine service, otherwise the reason it was rejected.</summary>
     public static string? VerifyServer(NamedPipeClientStream pipe, InstallLayout layout)
     {
-        if (!Native.GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var serverPid) || serverPid == 0)
-            return "cannot identify the pipe server";
+        if (!Native.GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var serverPid)) serverPid = 0;
 
         var scm = ScmClient.Query();
-        if (scm.State != ScmState.Running || scm.ProcessId != (int)serverPid)
-            return "the pipe is not served by the registered AsterLink service process";
-        if (!ScmClient.BinaryPathIs(scm, layout.ServiceExe))
-            return "the registered service does not point at the protected install path";
-        if (!string.Equals(scm.StartName, "LocalSystem", StringComparison.OrdinalIgnoreCase))
-            return "the registered service does not run as LocalSystem";
-
-        var facts = ProcessIdentity.Read((int)serverPid);
-        if (facts is null) return "cannot inspect the pipe server process";
-        if (!WinPath.Equal(facts.ImagePath, layout.ServiceExe)) return "the pipe server is not running from the protected install path";
-        if (!string.Equals(facts.UserSid, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value, StringComparison.Ordinal))
-            return "the pipe server is not running as SYSTEM";
-        return null;
+        // A standard user normally cannot open a SYSTEM process; then the SCM binding alone decides.
+        var facts = serverPid == 0 ? null : ProcessIdentity.Read((int)serverPid);
+        return ServerPolicy.Evaluate(new ServerFacts((int)serverPid, scm.State, scm.ProcessId, scm.BinaryPath, scm.StartName,
+            facts is not null, facts?.ImagePath, facts?.UserSid), layout.ServiceExe);
     }
 
     /// <summary>One request, one response. A reply for another request id is a protocol violation, not data.</summary>

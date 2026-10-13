@@ -21,6 +21,7 @@ public sealed class ServicePanel : INotifyPropertyChanged
     private string detail = "";
     private string actionLabel = "";
     private bool busy;
+    private string actionNote = "";
     private RecommendedAction action = RecommendedAction.None;
 
     public ServicePanel()
@@ -66,9 +67,11 @@ public sealed class ServicePanel : INotifyPropertyChanged
             _ => "特权服务不可用",
         };
         Message = result.Message;
-        Detail = result.Connected
+        var status = result.Connected
             ? $"服务 {result.ServiceVersion} · 内核 {result.CoreVersion} · 渠道 {result.Channel} · 内核状态 {result.SnapshotState}"
-            : result.ErrorCode is null ? "" : $"错误代码：{result.ErrorCode}";
+            : result.ErrorCode is null ? "" : $"错误代码：{result.ErrorCode}" + (string.IsNullOrEmpty(result.ErrorMessage) ? "" : $"（{result.ErrorMessage}）");
+        // The outcome of the last UAC action stays visible next to the fresh status instead of being overwritten.
+        Detail = actionNote.Length == 0 ? status : status.Length == 0 ? actionNote : actionNote + "\n" + status;
         ActionLabel = result.Action switch
         {
             RecommendedAction.InstallFromStage => "安装服务（需要管理员授权）",
@@ -84,6 +87,7 @@ public sealed class ServicePanel : INotifyPropertyChanged
     private async Task RunActionAsync()
     {
         Busy = true;
+        actionNote = "";
         try
         {
             var programFiles = InstallVerifier.ProgramFilesLayout();
@@ -108,13 +112,13 @@ public sealed class ServicePanel : INotifyPropertyChanged
     private async Task ElevateAsync(string executable, IReadOnlyList<string> arguments)
     {
         var result = await Elevation.RunAsync(executable, arguments).ConfigureAwait(true);
-        Detail = result.Outcome switch
+        actionNote = result.Outcome switch
         {
             Elevation.Outcome.Cancelled => "已取消管理员授权，没有做任何更改。需要时可以再次点击。",
             Elevation.Outcome.CouldNotStart => "无法启动安装程序：" + result.Detail,
             _ => result.ExitCode switch
             {
-                ServiceConstants.ExitCodes.Ok => "操作已完成。",
+                ServiceConstants.ExitCodes.Ok => "管理员操作已完成。",
                 ServiceConstants.ExitCodes.IntegrityFailed => "已安装的文件与清单不一致，不能自动修复，请重新安装。",
                 ServiceConstants.ExitCodes.NeedsElevation => "需要管理员权限。",
                 _ => $"操作失败（退出码 {result.ExitCode}）。",

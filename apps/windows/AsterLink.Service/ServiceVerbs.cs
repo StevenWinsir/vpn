@@ -93,6 +93,9 @@ public static class ServiceVerbs
         if (InstallLayout.FromComponentDirectory(AppContext.BaseDirectory) is { } own && own.IsAt(target.Root))
             return Fail(ServiceConstants.ExitCodes.Usage, "bad_origin", "run the installer from the stage, not from the installed copy");
 
+        if (RunningFromRoot(target) is { } busy)
+            return Fail(ServiceConstants.ExitCodes.Failed, "in_use", "close " + busy + " first: it is running from the install directory");
+
         var registered = false;
         try
         {
@@ -133,6 +136,10 @@ public static class ServiceVerbs
         var target = InstallVerifier.ProgramFilesLayout();
         if (InstallLayout.FromComponentDirectory(AppContext.BaseDirectory) is { } own && own.IsAt(target.Root))
             return Fail(ServiceConstants.ExitCodes.Usage, "bad_origin", "a program cannot delete its own files: run uninstall from a copy outside the install directory");
+
+        // Checked before anything is removed, so a refusal never leaves a half-uninstalled product.
+        if (RunningFromRoot(target) is { } busy)
+            return Fail(ServiceConstants.ExitCodes.Failed, "in_use", "close " + busy + " first: it is running from the install directory");
 
         RemoveService();
         RemoveTree(target);
@@ -198,6 +205,25 @@ public static class ServiceVerbs
     }
 
     // ---- shared helpers --------------------------------------------------------------------------
+
+    /// <summary>Name of a running program (other than the service itself) whose image sits in the install root, or null.</summary>
+    private static string? RunningFromRoot(InstallLayout target)
+    {
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                if (process.Id == Environment.ProcessId) continue;
+                string? path;
+                try { path = process.MainModule?.FileName; }
+                catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { continue; }
+                // The registered service is stopped by the verb itself; everything else must be closed by the user.
+                if (path is not null && WinPath.IsUnder(target.Root, path) && !WinPath.Equal(path, target.ServiceExe))
+                    return $"{process.ProcessName} (pid {process.Id})";
+            }
+        }
+        return null;
+    }
 
     private static string Summarise(IEnumerable<string> problems)
     {

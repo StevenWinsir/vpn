@@ -631,3 +631,51 @@ public class ServiceHealthTests
             Assert.False(string.IsNullOrWhiteSpace(ServiceHealthClassifier.Classify(installed, !installed, scm, code).Message));
     }
 }
+
+public class ServerPolicyTests
+{
+    private const string Exe = @"C:\Program Files\AsterLink\service\AsterLink.Service.exe";
+
+    private static ServerFacts Good() => new(1234, ScmState.Running, 1234, "\"" + Exe + "\"", "LocalSystem", true, Exe, "S-1-5-18");
+
+    [Fact]
+    public void The_registered_service_serving_the_pipe_is_accepted() => Assert.Null(ServerPolicy.Evaluate(Good(), Exe));
+
+    [Fact]
+    public void A_standard_user_that_cannot_open_the_system_process_is_still_accepted_on_the_scm_binding() =>
+        Assert.Null(ServerPolicy.Evaluate(Good() with { ProcessInspectable = false, ImagePath = null, UserSid = null }, Exe));
+
+    [Fact]
+    public void A_server_that_is_not_the_scm_process_is_rejected_whether_or_not_it_can_be_inspected()
+    {
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { PipeServerProcessId = 999 }, Exe));
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { PipeServerProcessId = 999, ProcessInspectable = false, ImagePath = null, UserSid = null }, Exe));
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { PipeServerProcessId = 0 }, Exe));
+    }
+
+    [Fact]
+    public void A_stopped_or_missing_service_is_rejected()
+    {
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { ScmState = ScmState.Stopped }, Exe));
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { ScmState = ScmState.NotInstalled }, Exe));
+    }
+
+    [Theory]
+    [InlineData(@"""C:\Users\me\AsterLink.Service.exe""")]
+    [InlineData(@"C:\Program Files\AsterLink\service\AsterLink.Service.exe")]
+    [InlineData(@"""C:\Program Files\AsterLink\service\AsterLink.Service.exe"" --evil")]
+    [InlineData(null)]
+    public void A_registration_that_does_not_point_at_the_protected_binary_is_rejected(string? path) =>
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { ScmBinaryPath = path }, Exe));
+
+    [Fact]
+    public void A_non_system_account_is_rejected() =>
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { ScmStartName = @".\someone" }, Exe));
+
+    [Fact]
+    public void When_the_process_can_be_inspected_it_must_be_the_protected_binary_running_as_system()
+    {
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { ImagePath = @"C:\Temp\evil.exe" }, Exe));
+        Assert.NotNull(ServerPolicy.Evaluate(Good() with { UserSid = "S-1-5-21-1-2-3-1001" }, Exe));
+    }
+}

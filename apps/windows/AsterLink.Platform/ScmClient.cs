@@ -71,13 +71,5 @@ public static class ScmClient
         }
     }
 
-    /// <summary>True when the registered binary is exactly the quoted protected service path, with no arguments.</summary>
-    public static bool BinaryPathIs(ScmInfo info, string expectedExe)
-    {
-        if (info.BinaryPath is null) return false;
-        var path = info.BinaryPath.Trim();
-        if (path.Length < 2 || path[0] != '"') return false;
-        var close = path.IndexOf('"', 1);
-        return close == path.Length - 1 && WinPath.Equal(path[1..close], expectedExe);
-    }
+    public static bool BinaryPathIs(ScmInfo info, string expectedExe) => ServerPolicy.BinaryPathIs(info.BinaryPath, expectedExe);
 }
