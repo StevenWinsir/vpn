@@ -549,7 +549,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 轮次 | 状态（本次） | 下一步与前置条件 |
 | --- | --- | --- |
 | 1 环境与工程 | DONE（Windows Server 2025 CI 通过；Windows 10/11 客户端实机 NOT_RUN） | 第 2 轮先在用户的 Windows 10 家庭版 22H2 真机做 TUN PoC；Windows 11 后补 |
-| 2 平台与 TUN PoC | NOT_STARTED | 从已列出的 Unix、platform、DNS/路由耦合开始拆分 |
+| 2 平台与 TUN PoC | DONE（PR #21：CI 全绿；Windows 10 家庭版 22H2 真机 SS 实传 0 FAIL；Windows 11 NOT_RUN） | 见第 2 轮记录的未解决项 |
 | 3 服务与安全 IPC | NOT_STARTED | 确定发布身份/安装位置，完成真实三进程授权链 |
 | 4 UI 与账号节点 | NOT_STARTED | 复用 Snapshot 和登录契约，测试账号具备明确的测试权益 |
 | 5 TUN 与开发计量 | NOT_STARTED | 真实可用 SS/VLESS 及受控上传/下载/UDP 目标 |
@@ -599,6 +599,44 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   4) Inno Setup 商用需购买授权，第 8 轮前决定安装器工具。
 下一位从哪里开始：docs/windows-go-port-baseline.md 的“第 2 轮清单”；先下载并校验 Wintun，再拆 main.go。
 回退与网络恢复方法：本轮不触碰网络、驱动或服务；回退 = 删除 worktree 分支。
+```
+
+### 第 2 轮记录（2026-10-13，Claude）
+
+```text
+轮次 / 日期 / 执行者：第 2 轮 / 2026-10-13 / Claude (Sonnet 5.5)
+基线 commit / 已有未提交改动：b19d2e8（PR #20 合并点）；PR #21，工作区干净
+实际修改与契约变化（不含秘密）：
+  Go Core 按平台拆分：cmd/asterlink-core（Windows 继承匿名管道句柄 ASTERLINK_IPC_IN/OUT，缺句柄失败退出）、
+  internal/network（IP_UNICAST_IF、GetAdaptersAddresses、竞争 VPN 分类，network_other.go 标签改为 !darwin && !windows）、
+  internal/engine（platform/sysdns/ipv6 的 unix 与 windows 实现；Mihomo 创建 TUN 的失败从日志取出）。
+  运行模板末尾增加 MATCH,REJECT（macOS 同样生效）；Windows 增加 strict-route 与 device=AsterLink。
+  登录 platform 由构建目标决定。asterlink-tuntest 增加 Windows 实现。新增 docs/windows-tun-design.md、docs/windows-tun-poc.md、
+  scripts/test-native-windows.py --suite core、windows.yml 的 Go 步骤。未改后端、网站、共享契约、macOS 工程文件。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
+  CI（PR #21，全部 12 项通过）：Windows Server 2025 原生 Go 测试 134 PASS / 0 FAIL；macOS 本机 136 PASS；
+  windows/amd64 PE 构建 + vet；内嵌 wintun.dll 哈希与签名（Status=Valid，签名者 WireGuard LLC）；
+  Core 无句柄时退出码 1，harness 无 --allow-network-changes 时退出码 3。
+  真机（Windows 10 家庭版 22H2，用户报告；SS 节点 aes-256-gcm，udp:true；公司 VPN 已断开；asterlink-tuntest.exe
+  SHA-256 584291C1…E96B，即 CI 产物）：第一次 --cycles 2：15 例 0 FAIL 1 BLOCKED；
+  第二次 --cycles 5 --udp-reject-test --kill-test：17 例 0 FAIL 1 BLOCKED。BLOCKED 仅为 B-COUNT（本轮未提供受控下载地址，计量属第 5 轮）。
+  PASS：T01a T02 T01 T01-noproxy T03-dns-adapter T03-dns-system T03-dns-any53 T02-udp T04-ipv6 T04-ipv6-fallback T05 T05-loop
+  T07 T02-udp-reject T09-kill T-CYCLES（两次 T-CYCLES：goroutine 11→13 / 12→16，句柄 456→457 / 450→452）。
+安装包版本 / OS、架构、Core、驱动版本 / 脱敏证据路径：
+  无安装包。Wintun 0.14.1（sing-tun v0.4.22 内嵌，amd64 DLL SHA-256 e5da8447…dafce）。证据为用户粘贴的控制台输出，
+  未随仓库保存；tun-report.json 未回传。机器事实（winver 构建号）未回传，OS 版本以用户报告为准。
+未解决问题、复现方法与发布限制：
+  1) 未测：Windows 11；浏览器/DoH、DHCP 与手工 DNS、多网卡、WebRTC、睡眠/休眠、断电（均为第 6 轮）；计量（第 5 轮）。
+  2) T04：节点可承载 IPv6（mode=tunnel），IPv6 字面量 HTTP 经节点成功，但按主机名的 tcp6 请求在隧道内失败（本机基线有 IPv6）。
+     没有外泄，应用回退 IPv4；原因疑为 fake-ip 未配置 IPv6 地址池导致 AAAA 无有效应答，需第 6 轮确认，并据此决定是否声称“IPv6 完整代理”。
+  3) T09-kill 通过，说明本轮“无持久状态、无恢复记录”的假设在该机成立；仍需在 Service 场景（第 3 轮）和 Windows 11 重复。
+  4) 启动时日志有 “dial node mihomo --> 1.1.1.1:53 ... operation was canceled”：DNS 双上游竞速后败者被取消，无功能影响。
+  5) 该机器 WinINET 残留 ProxyServer=127.0.0.1:7890（ProxyEnable=0，来自旧代理软件）；Core 前后未改动。
+  6) 许可与杀软：内存加载 Wintun 的许可与误报风险留给第 8 轮；本次未报告 Defender/SmartScreen 拦截。
+  7) 测试用节点密码出现在对话记录中，需由节点方更换；未写入仓库。
+下一位从哪里开始：第 3 轮，docs/windows-tun-design.md 第 10 节与第 8 节（私有句柄协议由 Service 创建管道并启动 Core）；
+  Core 的可执行路径即 WFP 放行路径，Service 只能从受保护目录启动它。
+回退与网络恢复方法：docs/windows-tun-poc.md 末节；Core 被杀后适配器、路由、DNS、过滤器由系统清除（T09-kill 已在 Windows 10 家庭版证实）。
 ```
 
 ## 附录 A. 源码核验索引

@@ -5,7 +5,6 @@ import (
 	"context"
 	"net"
 	"net/netip"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -37,33 +36,6 @@ const (
 	IPv6RejectFailed = "reject_failed" // refusal routes could not be installed (no leak: v6 stays in the TUN)
 	IPv6Absent       = "absent"        // the host has no IPv6 to handle
 )
-
-// singTunIPv6Ranges mirrors the darwin auto-route ranges of the pinned sing-tun
-// (tun_rules.go, autoRouteUseSubRanges). Each reject route is one bit longer than one
-// of these, so it wins the longest-prefix match while the pair covers the same space.
-var singTunIPv6Ranges = []netip.Prefix{
-	netip.MustParsePrefix("100::/8"),
-	netip.MustParsePrefix("200::/7"),
-	netip.MustParsePrefix("400::/6"),
-	netip.MustParsePrefix("800::/5"),
-	netip.MustParsePrefix("1000::/4"),
-	netip.MustParsePrefix("2000::/3"),
-	netip.MustParsePrefix("4000::/2"),
-	netip.MustParsePrefix("8000::/1"),
-}
-
-// rejectPrefixes splits every TUN IPv6 range into its two halves.
-func rejectPrefixes() []netip.Prefix {
-	out := make([]netip.Prefix, 0, 2*len(singTunIPv6Ranges))
-	for _, p := range singTunIPv6Ranges {
-		bits := p.Bits() + 1
-		low := netip.PrefixFrom(p.Addr(), bits)
-		raw := p.Addr().As16()
-		raw[(bits-1)/8] |= 0x80 >> ((bits - 1) % 8)
-		out = append(out, low, netip.PrefixFrom(netip.AddrFrom16(raw), bits))
-	}
-	return out
-}
 
 // nodeCarriesIPv6 asks the configured node for a real HTTP answer from an IPv6
 // literal. A VLESS/SS dial "succeeds" before the server connects anywhere, so only
@@ -121,29 +93,4 @@ func httpAnswers(ctx context.Context, dial dialFunc, addr netip.AddrPort) bool {
 		}
 	}
 	return bytes.Equal(head[:read], []byte("HTTP/"))
-}
-
-// route runs /sbin/route with a fixed argument vector (no shell).
-var route = func(args ...string) error {
-	return exec.Command("/sbin/route", append([]string{"-n"}, args...)...).Run()
-}
-
-// addIPv6Reject installs the refusal routes via the utun gateway; on any failure the
-// ones already added are removed again so the result is all or nothing.
-func addIPv6Reject(gateway netip.Addr) error {
-	var added []netip.Prefix
-	for _, p := range rejectPrefixes() {
-		if err := route("add", "-inet6", "-net", p.String(), gateway.String(), "-reject"); err != nil {
-			removeIPv6Reject(gateway, added)
-			return err
-		}
-		added = append(added, p)
-	}
-	return nil
-}
-
-func removeIPv6Reject(gateway netip.Addr, prefixes []netip.Prefix) {
-	for _, p := range prefixes {
-		_ = route("delete", "-inet6", "-net", p.String(), gateway.String())
-	}
 }

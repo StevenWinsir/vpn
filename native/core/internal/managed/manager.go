@@ -184,7 +184,7 @@ func (m *Manager) Login(ctx context.Context, p LoginParams) (Snapshot, error) {
 	m.mu.Unlock()
 
 	start := m.opts.Now()
-	response, err := client.Login(ctx, apiclient.LoginRequest{Email: p.Email, Password: p.Password, DeviceID: p.DeviceID, Platform: "macos", AppVersion: p.AppVersion})
+	response, err := client.Login(ctx, apiclient.LoginRequest{Email: p.Email, Password: p.Password, DeviceID: p.DeviceID, Platform: ClientPlatform(), AppVersion: p.AppVersion})
 
 	m.mu.Lock()
 	if m.generation != gen {

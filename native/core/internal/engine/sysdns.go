@@ -1,3 +1,5 @@
+//go:build !windows
+
 package engine
 
 import (
@@ -33,21 +35,10 @@ import (
 // worker exit) and the uninstaller restore from it, and only services still pointing
 // at TunnelDNS are restored, so a change the user made meanwhile is never overwritten.
 
-// TunnelDNS is inside the utun's 198.18.0.1/30 and below the fake-ip pool, which starts
-// at 198.18.0.4, so it is never handed out as a fake address.
-const TunnelDNS = "198.18.0.2"
+// TunnelDNS, DNSCaptured and ErrDNSCapture are shared with Windows: sysdns_common.go.
 
 // SystemDNSRecord is root-owned like the worker store. A variable only for tests.
 var SystemDNSRecord = "/Library/Application Support/AsterLink/dns-override.json"
-
-// System DNS modes reported for diagnostics and the privileged acceptance harness.
-const (
-	DNSCaptured = "captured" // system resolver points into the tunnel
-)
-
-// ErrDNSCapture means the physical service's resolver could not be pointed into the
-// tunnel; connecting anyway would leak every lookup, so Start fails instead.
-var ErrDNSCapture = errors.New("system dns could not be captured")
 
 type dnsService struct {
 	Name string `json:"name"`

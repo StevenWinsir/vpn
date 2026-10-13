@@ -1,22 +1,27 @@
 name: Windows client CI
 
-# Round-1 scope: the .NET solution builds, its contract tests pass, and the GUI and
-# service binaries actually start on a real x64 Windows host. This does NOT test TUN,
-# routes, DNS, UAC or service installation, and the runner is Windows Server, not a
-# Windows 10/11 client, so client compatibility is still UNVERIFIED.
+# Scope: the .NET solution builds, its contract tests pass, the GUI and service binaries
+# start, and (round 2) the Go Core and the TUN harness build, vet and pass their tests
+# natively on a real x64 Windows host. This does NOT create a TUN, change routes or DNS,
+# or test UAC/service installation: the runner is Windows Server, not a Windows 10/11
+# client, and a TUN that captures the default route would cut the runner off from GitHub.
+# The real TUN run (cases T01-T09) is done with asterlink-tuntest.exe on an authorised
+# machine; see docs/windows-tun-poc.md.
 
 on:
   pull_request:
     paths:
       - 'apps/windows/**'
-      - 'shared/contracts/**'
+      - 'native/core/**'
+      - 'shared/**'
       - 'scripts/test-native-windows.py'
       - '.github/workflows/windows.yml'
   push:
     branches: [main]
     paths:
       - 'apps/windows/**'
-      - 'shared/contracts/**'
+      - 'native/core/**'
+      - 'shared/**'
       - 'scripts/test-native-windows.py'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
@@ -33,14 +38,17 @@ env:
   DOTNET_NOLOGO: '1'
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
   SOLUTION: apps/windows/AsterLink.sln
+  GO_VERSION: '1.26.6'
 
 jobs:
   windows-x64:
     name: Windows x64 build / test / start
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -115,6 +123,42 @@ jobs:
           $out | Tee-Object artifacts/windows/service-probe.txt
           if (-not ($out -match '"is_native_windows_x64": true')) { throw 'service did not run as native Windows x64' }
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: native/core/go.sum
+
+      - name: Go Core and TUN harness - split, PE build, vet, embedded Wintun, native tests
+        run: py -3 scripts/test-native-windows.py --suite core --out artifacts/windows/core --report artifacts/windows/core-suite.json
+
+      - name: Embedded Wintun DLL is the signed official build
+        shell: pwsh
+        run: |
+          Push-Location native/core
+          $dir = (go list -m -f '{{.Dir}}' github.com/metacubex/sing-tun)
+          Pop-Location
+          $dll = Join-Path $dir 'internal/wintun/amd64/wintun.dll'
+          $sig = Get-AuthenticodeSignature $dll
+          $sig | Format-List Status, StatusMessage
+          $sig.SignerCertificate | Format-List Subject, Issuer, NotAfter | Tee-Object artifacts/windows/wintun-signature.txt
+          if ($sig.Status -ne 'Valid') { throw "wintun.dll signature is $($sig.Status)" }
+
+      - name: Core and harness refuse to run unsafely (no network change is attempted)
+        shell: pwsh
+        run: |
+          $core = 'artifacts/windows/core/asterlink-core.exe'
+          & $core --version
+          if ($LASTEXITCODE -ne 0) { throw '--version failed' }
+          # Started by hand there are no IPC handles: it must fail closed, not fall back to stdout.
+          & $core 2> $null
+          if ($LASTEXITCODE -ne 1) { throw "Core without IPC handles exited $LASTEXITCODE, expected 1" }
+          $harness = 'artifacts/windows/core/asterlink-tuntest.exe'
+          & $harness
+          if ($LASTEXITCODE -ne 3) { throw "harness without --allow-network-changes exited $LASTEXITCODE, expected 3 (BLOCKED)" }
+          # pwsh ends the step with the last native exit code (3 here); the checks above are the verdict.
+          Get-FileHash $core, $harness -Algorithm SHA256 | Format-Table Hash, Path -AutoSize
+          exit 0
+
       - name: Retain reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -126,7 +170,20 @@ jobs:
             artifacts/windows/machine.json
             artifacts/windows/gui-selftest.json
             artifacts/windows/service-probe.txt
+            artifacts/windows/core-suite.json
+            artifacts/windows/wintun-signature.txt
             artifacts/windows/test-results/*.trx
+
+      - name: Retain the TUN harness build for the authorised test machine
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-core-poc
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/windows/core/asterlink-core.exe
+            artifacts/windows/core/asterlink-tuntest.exe
 
   contracts-portable:
     name: Foundation suite on Linux (lock file, env parsers, C# contracts)
@@ -134,8 +191,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: apps/windows/global.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: native/core/go.sum
       - name: Lock file, Python env parser and C# contract tests
         run: python3 scripts/test-native-windows.py --suite foundation
+      - name: Cross-build the Windows Core from Linux, vet it, check the platform split and the Wintun hash
+        run: python3 scripts/test-native-windows.py --suite core --out "$RUNNER_TEMP/windows-core"

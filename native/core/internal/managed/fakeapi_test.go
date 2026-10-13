@@ -153,7 +153,7 @@ func (f *fakeAPI) login(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if in.Password != f.password || in.Platform != "macos" || in.DeviceID != deviceUID {
+	if in.Password != f.password || in.Platform != ClientPlatform() || in.DeviceID != deviceUID {
 		writeError(w, apiError{401, "invalid_credentials"})
 		return
 	}
