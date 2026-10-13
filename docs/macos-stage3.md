@@ -50,7 +50,8 @@ sudo -E python3 scripts/test-native-macos.py --suite tun --allow-network-changes
 | --- | --- |
 | T01 / T01a / T02 | utun 与路由出现；不设代理的请求出口改变；经节点真实转发（不是仅解析 YAML） |
 | B-COUNT | 受控下载的正文字节 vs. Mihomo 代理计数（记录倍数与协议开销） |
-| T03 | 系统解析返回 fake-ip；对任意解析器 :53 的查询被劫持；UDP 回显 |
+| T03-dns-capture | 连接期间系统默认解析器（`scutil --dns` 的 resolver #1）为 `198.18.0.2`，引擎报告 `mode=captured` |
+| T03 | 经 mDNSResponder 的系统解析（随机新域名，避开缓存）返回 fake-ip；对任意解析器 :53 的查询被劫持；UDP 回显 |
 | T04 | IPv6：要么经隧道，要么被阻断，不能直连（出口未变 = fail） |
 | T04-ipv6-fallback | 用 IPv6 字面量直连：节点能承载 IPv6 时须拿到真实 HTTP 回包（mode=tunnel）；节点仅 IPv4 时须在握手前 1 秒内被拒（mode=rejected），浏览器才能立即回退 IPv4。握手成功后无回包 = fail（即“已连接但没网”） |
 | T05 | 隧道期间 API 仍经物理网卡可达；空闲 6 秒计数不增长（无自循环） |
@@ -58,6 +59,17 @@ sudo -E python3 scripts/test-native-macos.py --suite tun --allow-network-changes
 | T-CYCLES | 连续 20 次连接/断开，goroutine、文件描述符、utun 不累积 |
 
 IPv6 策略：引擎在建 TUN 前经所选节点向 IPv6 字面量（`engine.IPv6Probes`）发一次真实 HTTP 请求。拿到回包则 IPv6 照常进隧道；否则在 TUN 起来后加 16 条比 sing-tun IPv6 路由长 1 位的 `-reject` 路由（网关为 utun 自身地址，设备销毁时内核一并删除，Core 被杀也不残留），应用的 IPv6 连接立即得到 EHOSTUNREACH 并回退 IPv4，不经物理网卡外泄。要用 VLESS 等节点测，设置 `ASTERLINK_TUN_PROXY_JSON` 为完整单节点 JSON。
+
+系统 DNS 策略：固定版 sing-tun 在 macOS 上只加路由、**不改系统 DNS**，`dns-hijack any:53` 只能拦到真正进入 utun 的包。
+两种常见设置因此会绕过隧道：① DHCP 下发路由器（如 192.168.1.1）或 IPv6 链路本地 DNS——本地直连子网路由比 TUN 分段路由更具体，
+查询直接从 Wi-Fi/以太网发出，DNS 泄漏测试显示本地运营商；② 手动 1.1.1.1/8.8.8.8——Chrome 识别出公共解析器后自动升级为 DoH（TCP 443），
+劫持看不到，泄漏测试显示 Cloudflare/Google。所以 TUN 起来后，引擎（`engine/sysdns.go`）用 `networksetup` 把所有启用的硬件网络服务的 DNS
+设为 utun /30 内的 `198.18.0.2`（低于 fake-ip 池起点 198.18.0.4），所有系统解析都由 fake-ip 解析器应答、真实域名由节点解析；
+Mihomo 自己的上游（fake-ip 不能本地应答的记录类型）也改为 `tcp://…#node` 经节点。修改前先把原值写入
+`/Library/Application Support/AsterLink/dns-override.json`（0600）；Stop、下次 Core 启动、Helper 在 worker 异常退出后
+（`asterlink-core --recover-network`）以及卸载脚本都会据此恢复，且只恢复**当前仍是 198.18.0.2** 的服务，用户期间自己改过的不覆盖。
+物理网卡对应的服务改不了则整体回滚并连接失败（`tunnel_failed`），不在会泄漏的状态下显示“已连接”。Core 的控制面查询仍经物理网卡发往改之前的解析器（bootstrap 例外）。
+如果机器在连接中断电，重启后 DNS 会停在 198.18.0.2，直到下次打开 AsterLink（Helper 启动 Core 即恢复）；也可在系统设置 → 网络 → DNS 中手动删掉。
 
 T05-loop 对没有活动流的主机使用 64 KiB/6 秒严格预算；macOS 系统范围 TUN 若有其他应用保持流量，则使用 256 KiB/6 秒的有限背景流量预算，并在报告中记录活动流数量。超过预算仍失败，不能用“有背景流量”掩盖持续自循环。
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -54,6 +55,8 @@ type Mihomo struct {
 	ipv6Capable bool
 	ipv6Mode    string
 	ipv6Gateway netip.Addr
+	// dnsMode is DNSCaptured while the system resolver points into the tunnel.
+	dnsMode string
 }
 
 func New() *Mihomo {
@@ -149,6 +152,14 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 		}
 		if added && network.ViaTunnel() != "" {
 			e.applyIPv6Policy(tunConf)
+			// Only once the utun answers on TunnelDNS: pointing the resolver there
+			// earlier would black-hole every lookup on the machine.
+			physical, err := network.PhysicalDefault()
+			if err != nil || captureSystemDNS(physical.Name) != nil {
+				e.stopLocked()
+				return fmt.Errorf("%w: %w", managed.ErrTunnelFailed, ErrDNSCapture)
+			}
+			e.dnsMode = DNSCaptured
 			return nil
 		}
 		if ctx.Err() != nil || time.Now().After(deadline) {
@@ -220,6 +231,13 @@ func (e *Mihomo) Stop() error {
 	return nil
 }
 
+// DNSMode reports whether the running session captured the system resolver.
+func (e *Mihomo) DNSMode() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.dnsMode
+}
+
 // IPv6Mode reports how the running session handles IPv6 (one of the IPv6* constants).
 func (e *Mihomo) IPv6Mode() string {
 	e.mu.Lock()
@@ -247,6 +265,12 @@ func (e *Mihomo) applyIPv6Policy(tunConf LC.Tun) {
 func (e *Mihomo) stopLocked() {
 	if !e.running {
 		return
+	}
+	// The resolver goes back first, while the tunnel still answers on TunnelDNS, so no
+	// lookup in between is sent to an address that no longer exists. A failed restore
+	// keeps its record for the next Core start or the Helper.
+	if err := RestoreSystemDNS(); err == nil {
+		e.dnsMode = ""
 	}
 	if e.ipv6Mode == IPv6Rejected {
 		removeIPv6Reject(e.ipv6Gateway, rejectPrefixes())
