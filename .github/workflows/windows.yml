@@ -77,10 +77,10 @@ jobs:
       - name: Unit and contract tests
         run: dotnet test apps/windows/AsterLink.Tests -c Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory artifacts/windows/test-results
 
-      - name: Publish self-contained win-x64 (no trimming, no AOT, no single-file)
+      - name: Publish self-contained win-x64 (the RID comes from the csproj; no trimming, AOT or single-file)
         run: |
-          dotnet publish apps/windows/AsterLink.App -c Release -r win-x64 --self-contained true -o artifacts/windows/publish/app
-          dotnet publish apps/windows/AsterLink.Service -c Release -r win-x64 --self-contained true -o artifacts/windows/publish/service
+          dotnet publish apps/windows/AsterLink.App -c Release --self-contained true -p:RestoreLockedMode=true -o artifacts/windows/publish/app
+          dotnet publish apps/windows/AsterLink.Service -c Release --self-contained true -p:RestoreLockedMode=true -o artifacts/windows/publish/service
 
       - name: Published binaries are 64-bit x64 PE files
         shell: pwsh
