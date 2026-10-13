@@ -1,0 +1,27 @@
+{
+  "contract": "asterlink-windows-fixture",
+  "note": "Windows-only fixtures for behaviours the shared contracts do not pin yet. Numbers above 2^53 are written as exact integers on purpose.",
+  "action_failed": {
+    "request_id": "c1", "protocol_version": 1, "generation": 12, "ok": true,
+    "result": {
+      "generation": 12, "state": "ready", "user": null,
+      "entitlement": {"plan_name": "VIP", "total_bytes": 9007199254740993, "remaining_bytes": 9007199254740993, "used_units": 9223372036854775807},
+      "nodes": [], "selected_node_id": "", "catalog_revision": "", "profile_version": "", "config_ready": false,
+      "tunnel_health": "idle", "metering": null, "last_error": null, "core_version": "0.0.0-dev",
+      "action_error": {"code": "plan_expired", "message": "套餐已到期"}
+    }
+  },
+  "action_ok": {
+    "request_id": "c2", "protocol_version": 1, "generation": 13, "ok": true,
+    "result": {
+      "generation": 13, "state": "connected", "user": null, "entitlement": null,
+      "nodes": [], "selected_node_id": "", "catalog_revision": "", "profile_version": "", "config_ready": true,
+      "tunnel_health": "up", "metering": null, "last_error": null, "core_version": "0.0.0-dev",
+      "action_error": null
+    }
+  },
+  "transport_failed": {
+    "request_id": "c3", "protocol_version": 1, "generation": 0, "ok": false,
+    "error": {"code": "unknown_command", "message": "unknown command"}
+  }
+}

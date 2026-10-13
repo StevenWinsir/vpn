@@ -1,0 +1,141 @@
+name: Windows client CI
+
+# Round-1 scope: the .NET solution builds, its contract tests pass, and the GUI and
+# service binaries actually start on a real x64 Windows host. This does NOT test TUN,
+# routes, DNS, UAC or service installation, and the runner is Windows Server, not a
+# Windows 10/11 client, so client compatibility is still UNVERIFIED.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/windows/**'
+      - 'shared/contracts/**'
+      - 'scripts/test-native-windows.py'
+      - '.github/workflows/windows.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/windows/**'
+      - 'shared/contracts/**'
+      - 'scripts/test-native-windows.py'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vpn-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  SOLUTION: apps/windows/AsterLink.sln
+
+jobs:
+  windows-x64:
+    name: Windows x64 build / test / start
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: apps/windows/global.json
+
+      - name: Record the real machine (OS, architecture, toolchain)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/windows | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $machine = [ordered]@{
+            os_caption       = $os.Caption
+            os_version       = $os.Version
+            os_build         = $os.BuildNumber
+            os_architecture  = $os.OSArchitecture
+            os_is_client     = ($os.ProductType -eq 1)
+            cpu              = $cpu.Name
+            processor_arch   = $env:PROCESSOR_ARCHITECTURE
+            dotnet_sdk       = (dotnet --version)
+            runner_image     = $env:ImageOS + ' ' + $env:ImageVersion
+          }
+          $machine | ConvertTo-Json | Tee-Object artifacts/windows/machine.json
+          if ($os.OSArchitecture -notlike '64-bit*' -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
+            throw 'This job must run on a native x64 Windows host'
+          }
+
+      - name: Restore (locked dependencies)
+        run: dotnet restore $env:SOLUTION --locked-mode
+
+      - name: Build (warnings are errors)
+        run: dotnet build $env:SOLUTION -c Release --no-restore
+
+      - name: Unit and contract tests
+        run: dotnet test apps/windows/AsterLink.Tests -c Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory artifacts/windows/test-results
+
+      - name: Publish self-contained win-x64 (the RID comes from the csproj; no trimming, AOT or single-file)
+        run: |
+          dotnet publish apps/windows/AsterLink.App -c Release --self-contained true -p:RestoreLockedMode=true -o artifacts/windows/publish/app
+          dotnet publish apps/windows/AsterLink.Service -c Release --self-contained true -p:RestoreLockedMode=true -o artifacts/windows/publish/service
+
+      - name: Published binaries are 64-bit x64 PE files
+        shell: pwsh
+        run: |
+          foreach ($exe in 'artifacts/windows/publish/app/AsterLink.exe', 'artifacts/windows/publish/service/AsterLink.Service.exe') {
+            $bytes = [IO.File]::ReadAllBytes((Resolve-Path $exe))
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            $magic = [BitConverter]::ToUInt16($bytes, $peOffset + 24)
+            "{0}: machine=0x{1:X4} optional_magic=0x{2:X4}" -f $exe, $machine, $magic
+            if ($machine -ne 0x8664 -or $magic -ne 0x20B) { throw "$exe is not an x64 PE32+ image" }
+          }
+
+      - name: GUI opens its window on a real desktop (self-test)
+        shell: pwsh
+        run: |
+          $report = 'artifacts/windows/gui-selftest.json'
+          $p = Start-Process -FilePath 'artifacts/windows/publish/app/AsterLink.exe' -ArgumentList '--self-test', $report -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'GUI did not finish its self-test within 60 s' }
+          if (-not (Test-Path $report)) { throw "GUI exited with code $($p.ExitCode) and wrote no report" }
+          Get-Content $report
+          if ($p.ExitCode -ne 0) { throw "GUI self-test failed with exit code $($p.ExitCode)" }
+          $json = Get-Content $report -Raw | ConvertFrom-Json
+          if (-not $json.window.rendered) { throw 'window was not rendered' }
+          if (-not $json.platform.is_native_windows_x64) { throw 'GUI did not run as native Windows x64' }
+
+      - name: Service binary starts and reports (probe, not installed as a service)
+        shell: pwsh
+        run: |
+          $out = & 'artifacts/windows/publish/service/AsterLink.Service.exe' --probe
+          if ($LASTEXITCODE -ne 0) { throw "service probe failed with exit code $LASTEXITCODE" }
+          $out | Tee-Object artifacts/windows/service-probe.txt
+          if (-not ($out -match '"is_native_windows_x64": true')) { throw 'service did not run as native Windows x64' }
+
+      - name: Retain reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-foundation-reports
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/windows/machine.json
+            artifacts/windows/gui-selftest.json
+            artifacts/windows/service-probe.txt
+            artifacts/windows/test-results/*.trx
+
+  contracts-portable:
+    name: Foundation suite on Linux (lock file, env parsers, C# contracts)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: apps/windows/global.json
+      - name: Lock file, Python env parser and C# contract tests
+        run: python3 scripts/test-native-windows.py --suite foundation

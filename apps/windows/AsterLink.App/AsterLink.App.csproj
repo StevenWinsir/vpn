@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- The platform version is the OS floor: Windows 10 2004 (19041). Windows 10 22H2 (19045) and
+         Windows 11 are both above it. Calling an API newer than the floor without a runtime check
+         fails the build (CA1416), so nothing Windows 11-only can slip in by accident. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>AsterLink.App</RootNamespace>
+    <AssemblyName>AsterLink</AssemblyName>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <SelfContained>false</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+    <PublishSingleFile>false</PublishSingleFile>
+    <!-- The GUI always runs as the interactive user (asInvoker); privilege lives in the service. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AsterLink.Shared\AsterLink.Shared.csproj" />
+  </ItemGroup>
+
+</Project>
