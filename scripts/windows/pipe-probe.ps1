@@ -11,7 +11,7 @@ param([Parameter(Mandatory)][ValidateSet('hello', 'garbage', 'oversize', 'unknow
 
 $ErrorActionPreference = 'Stop'
 function Send-Frame([System.IO.Stream]$stream, [byte[]]$body) {
-    $header = [byte[]]@(($body.Length -shr 24) -band 255, ($body.Length -shr 16) -band 255, ($body.Length -shr 8) -band 255, $body.Length -band 255)
+    $header = [BitConverter]::GetBytes([uint32]$body.Length); [Array]::Reverse($header)
     $all = [byte[]]($header + $body); $stream.Write($all, 0, $all.Length); $stream.Flush()
 }
 function Read-Exact([System.IO.Stream]$stream, [int]$count) {
@@ -32,7 +32,7 @@ try {
     }
     $header = Read-Exact $pipe 4
     if ($null -eq $header) { @{ answered = $false; closed = $true } | ConvertTo-Json -Compress; exit 0 }
-    $size = ($header[0] -shl 24) -bor ($header[1] -shl 16) -bor ($header[2] -shl 8) -bor $header[3]
+    $size = [int](([uint32]$header[0] * 16777216) + ([uint32]$header[1] * 65536) + ([uint32]$header[2] * 256) + [uint32]$header[3])
     $body = Read-Exact $pipe $size
     $response = [Text.Encoding]::UTF8.GetString($body) | ConvertFrom-Json
     @{ answered = $true; ok = $response.ok; code = $response.error.code } | ConvertTo-Json -Compress

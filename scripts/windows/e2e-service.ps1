@@ -60,6 +60,7 @@ function Wait-Until([scriptblock]$Condition, [int]$Seconds) {
 function CoreCount { @(Get-Process -Name asterlink-core -ErrorAction SilentlyContinue).Count }
 function ServiceProcess { Get-CimInstance Win32_Service -Filter "Name='AsterLinkService'" }
 function Probe([string]$Case) {
+    $ErrorActionPreference = 'Continue'
     $raw = (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Here 'pipe-probe.ps1') -Case $Case 2>&1 | Out-String).Trim()
     try { $o = $raw | ConvertFrom-Json; $o | Add-Member -NotePropertyName raw -NotePropertyValue $raw -Force; $o }
     catch { [pscustomobject]@{ answered = $null; raw = $raw } }
