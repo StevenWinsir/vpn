@@ -704,3 +704,8 @@ DNS 泄漏修复：系统 DNS 不经隧道（2026-10-12）
 - 验证：`go test -race ./...`（native/core，含接管/恢复/用户改动不覆盖/失败回滚/崩溃残留恢复/坏记录不猜）、`--suite unit` 7/7、`--suite bundle` 6/6、`scripts/test-native.py` 全绿；internal 包 `macmini-dnsfix-20261012` 的 `--suite release` 11 pass / 2 blocked（预期）。**真机 TUN 未执行**（公司 VPN 在线）。
 - 已知限制：连接中断电/强制关机后重启，DNS 停在 198.18.0.2，直到下次打开 AsterLink（Core 启动即恢复）或手动删除；Helper 为按需启动的 launchd 服务，不在开机时运行。
 - 待用户真机：断开公司 VPN，退出旧 App，安装新 DMG（设置页“重新安装特权服务”），连接后跑 DNS 泄漏测试（Wi-Fi 手动 1.1.1.1 与自动两种都测）；断开后确认 系统设置 → 网络 → DNS 恢复原样。可选 `sudo -E` 跑 `--suite tun` 看 T03-dns-capture / T03-dns-system / T07。
+首次使用引导与钥匙串弹窗（2026-10-13）
+- 现象：新装 DMG 首次打开，登录页提示"需要先启用特权服务"，点"启用""刷新"没有反应，需要自己去系统设置打开开关后才能登录；之后有时弹出钥匙串授权（`com.asterlink.vpn.credentials`），要点"始终允许"。
+- 根因 ①（真 bug）：`HelperClient` 是 `ObservableObject`，但视图以普通 `let helper` 持有、未用 `@ObservedObject`，SwiftUI 不随注册状态刷新——按钮其实执行了，界面不变；注册错误也只在设置页显示。② macOS 对任何 `SMAppService.daemon` 都要求用户在"登录项与扩展"批准一次，Developer ID 也一样，只能引导。③ 钥匙串弹窗：临时签名条目的分区 ID 是 `cdhash`，每个新构建都变；Developer ID 为 `teamid`，跨版本稳定，正式版不会出现。
+- 修复：`HelperClient` 改为 `@Observable`；"启用"注册后若为待批准状态，直接打开登录项设置页并显示引导（待批准的 "Operation not permitted" 不再当错误）；`watchRegistration` 每秒检测批准，变为已启用后 `SessionController.serviceBecameAvailable()` 自动重走启动（含记住密码自动登录）；登录页用"首次使用"三步卡片替代原提示，未启用时禁用登录按钮；App 在 DMG/AppTranslocation 中运行时提示先拖到"应用程序"。`docs/macos-release.md` 第 3 节已更新。
+- 验证：`swift test` 46 项全绿（新增批准后自动续登/无问题时不重复两项）。真机首装流程待用户验证。
