@@ -84,7 +84,7 @@ internal static class Stage
             return new ManifestFile { Path = c.Path, Sha256 = ReleaseManifest.HashFile(full), Size = new FileInfo(full).Length, Role = c.Role };
         }).ToList();
         var manifest = new ReleaseManifest { FormatVersion = 1, Version = BuildVersion.Current, Channel = "internal", ProtocolVersion = 1, Files = files };
-        File.WriteAllText(System.IO.Path.Combine(root, ServiceConstants.ManifestFile), manifest.ToJson(), Encoding.UTF8);
+        File.WriteAllText(System.IO.Path.Combine(root, ServiceConstants.ManifestFile), manifest.ToJson(), new UTF8Encoding(false));
         return new InstallLayout(root);
     }
 }

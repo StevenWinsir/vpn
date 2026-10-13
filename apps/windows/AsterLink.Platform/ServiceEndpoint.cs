@@ -58,6 +58,7 @@ public static class ServiceEndpoint
         catch (IOException) { impersonated = null; }
         catch (InvalidOperationException) { impersonated = null; }
         catch (UnauthorizedAccessException) { impersonated = null; }
+        catch (System.Security.SecurityException) { impersonated = null; } // an anonymous token cannot be opened for query
 
         return new PipePeer((int)pid, (int)session, pid == 0 ? null : ProcessIdentity.Read((int)pid), impersonated);
     }

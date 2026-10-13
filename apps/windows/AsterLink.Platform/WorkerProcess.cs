@@ -224,6 +224,10 @@ public sealed class WorkerProcess : IDisposable
         disposed = true;
         // Closing the job handle (KILL_ON_JOB_CLOSE) is the guarantee; terminating first just makes it prompt.
         _ = Native.TerminateJobObject(job, 1);
+        // Report the exit ourselves: the registered wait may not have fired yet when it is unregistered below.
+        _ = Native.WaitForSingleObject(process, 5000);
+        _ = Native.GetExitCodeProcess(process, out var code);
+        exited.TrySetResult(code);
         waitRegistration.Unregister(null);
         waitEvent.Dispose();
         commands.Dispose();
