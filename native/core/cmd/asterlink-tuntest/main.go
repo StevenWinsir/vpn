@@ -132,7 +132,7 @@ func main() {
 	}
 
 	reconcile(ctx, eng, *downloadURL, *downloadBytes)
-	dnsChecks(ctx)
+	dnsChecks(ctx, eng.DNSMode())
 	udpCheck(ctx, *udpEcho)
 	ipv6Check(ctx, *probe6, baseline6)
 	ipv6FallbackCheck(ctx, eng.IPv6Mode())
@@ -174,10 +174,25 @@ func reconcile(ctx context.Context, eng *engine.Mihomo, url string, size int64) 
 		fmt.Sprintf("body=%d counted_down=%d (x%.4f) counted_up=%d", size, down, ratio, up), verdict(ok))
 }
 
-func dnsChecks(ctx context.Context) {
+func dnsChecks(ctx context.Context, mode string) {
 	fake := netip.MustParsePrefix("198.18.0.0/16")
-	resolver := &net.Resolver{PreferGo: true}
-	addrs, err := resolver.LookupHost(ctx, "example.com")
+	// The system resolver must point into the tunnel; otherwise a LAN resolver (router,
+	// IPv6 link-local RDNSS) is reached over the on-link route and never hijacked, and a
+	// public one lets browsers auto-upgrade to DoH around the hijack.
+	scutil, _ := exec.Command("/usr/sbin/scutil", "--dns").Output()
+	primary := ""
+	for _, line := range strings.Split(string(scutil), "\n") {
+		if f := strings.Fields(line); len(f) == 3 && f[0] == "nameserver[0]" {
+			primary = f[2]
+			break
+		}
+	}
+	record("T03-dns-capture", "the system default resolver points into the tunnel ("+engine.TunnelDNS+")",
+		fmt.Sprintf("mode=%s primary=%s", mode, primary), verdict(mode == engine.DNSCaptured && primary == engine.TunnelDNS))
+
+	// Through mDNSResponder (Go's default resolver on darwin uses libSystem), with a
+	// fresh name so no cached answer from before the tunnel can satisfy it.
+	addrs, err := net.DefaultResolver.LookupHost(ctx, fmt.Sprintf("al-%d.example.com", time.Now().UnixNano()))
 	system := false
 	for _, a := range addrs {
 		if ip, perr := netip.ParseAddr(a); perr == nil && fake.Contains(ip) {

@@ -4,7 +4,9 @@
 #   ./uninstall-asterlink.sh            # dry run: prints what would be removed
 #   ./uninstall-asterlink.sh --apply    # removes it; asks for sudo only for the system-level items
 #
-# Never touches other VPNs, routes, DNS, or network settings. Quit AsterLink first (the app's
+# Never touches other VPNs, routes, DNS, or network settings; the only network change it can
+# make is undoing AsterLink's own system DNS capture left by a killed worker
+# (dns-override.json, see native/core/internal/engine/sysdns.go). Quit AsterLink first (the app's
 # Settings -> "移除特权服务" is the cleanest way to unregister the privileged service).
 set -euo pipefail
 
@@ -21,6 +23,8 @@ user_paths=(
   "$HOME/Library/HTTPStorages/$APP_ID"
   "$HOME/Library/Saved Application State/$APP_ID.savedState"
 )
+dns_record="$SYSROOT/Library/Application Support/AsterLink/dns-override.json"
+core_bin="$SYSROOT/Applications/AsterLink.app/Contents/Resources/asterlink-core"
 system_paths=(
   "$SYSROOT/Applications/AsterLink.app"
   "$SYSROOT/Library/Application Support/AsterLink"
@@ -37,6 +41,7 @@ for p in "${user_paths[@]}" "${system_paths[@]}"; do
 done
 echo "  钥匙串条目  ${APP_ID}.credentials、${APP_ID}.device（记住的密码与设备 ID）"
 echo "  launchd 服务 system/${HELPER_LABEL}（如仍已注册）"
+[[ -e "$dns_record" ]] && echo "  恢复 AsterLink 遗留的系统 DNS 接管（$dns_record）"
 
 if [[ $APPLY -ne 1 ]]; then
   echo "（这是预演，未做任何改动；加 --apply 才会执行。）"
@@ -48,6 +53,16 @@ for p in "${user_paths[@]}"; do rm -rf -- "$p"; done
 if [[ -z "$SYSROOT" ]] && launchctl print "system/${HELPER_LABEL}" >/dev/null 2>&1; then
   echo "注销特权服务 ${HELPER_LABEL}（需要管理员密码）"
   sudo launchctl bootout "system/${HELPER_LABEL}" || echo "  bootout 失败；请在 App 设置中点击“移除特权服务”或在系统设置的登录项中关闭" >&2
+fi
+
+# Before the record and the binary that understands it are deleted.
+if [[ -z "$SYSROOT" && -e "$dns_record" ]]; then
+  echo "恢复 AsterLink 遗留的系统 DNS 设置（需要管理员密码）"
+  if [[ -x "$core_bin" ]]; then
+    sudo "$core_bin" --recover-network || echo "  恢复失败；请在系统设置 → 网络 → DNS 中检查是否仍为 198.18.0.2" >&2
+  else
+    echo "  找不到 $core_bin；请在系统设置 → 网络 → DNS 中删除 198.18.0.2" >&2
+  fi
 fi
 
 for p in "${system_paths[@]}"; do

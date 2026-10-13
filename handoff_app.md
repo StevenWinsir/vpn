@@ -697,6 +697,13 @@ VLESS 节点"已连接但没网"修复（2026-10-12）
 - 验证：`go test -race ./...`（native/core，含前缀覆盖、全有或全无回滚、"拨通后 EOF 不算 IPv6"）、`--suite unit` 7/7；真实 VLESS 节点探测返回 false（2.24s），TUN 有 `fdfe:dcba:9876::1/126`。**真机 TUN 未执行**（无 root、公司 VPN 在线）。
 - 待用户真机：断开公司 VPN，安装新 DMG，VLESS 节点连接后用 Chrome 打开网页；可选 `sudo -E` 跑 `--suite tun` 并设 `ASTERLINK_TUN_PROXY_JSON` 为 VLESS 节点，看 `T04-ipv6-fallback` 应为 `mode=rejected` 且 pass、T07 无遗留路由。
 
+DNS 泄漏修复：系统 DNS 不经隧道（2026-10-12）
+- 现象：真机连接正常、能上网；DNS 泄漏测试中，Wi-Fi 手动设 1.1.1.1 时显示 Cloudflare，删掉手动 DNS（DHCP）后显示本地运营商，与节点地区不一致。
+- 根因：固定版 sing-tun 在 macOS 上 `auto-route` 只加分段路由、从不修改系统 DNS，`dns-hijack any:53` 只能拦到真正进入 utun 的包。① DHCP 下发的路由器 DNS（或 IPv6 链路本地 RDNSS）位于本地直连子网，直连路由比 TUN 分段路由更具体，mDNSResponder 的查询直接从物理网卡发出；② 手动 1.1.1.1/8.8.8.8 时 Chrome 自动升级为 DoH（TCP 443），劫持看不到。另外 Mihomo 上游 `nameserver` 是直连，fake-ip 不本地应答的记录类型会从物理地址发出。原 T03-dns-system 用 Go 纯解析器读 `/etc/resolv.conf`（本机恰为公共 DNS），没有经过 mDNSResponder，也没覆盖 LAN DNS，所以此前“通过”。
+- 修复：`native/core/internal/engine/sysdns.go`——TUN 起来后用 `networksetup` 把所有启用的硬件网络服务 DNS 设为 `198.18.0.2`（utun /30 内、低于 fake-ip 池起点），原值先写入 `/Library/Application Support/AsterLink/dns-override.json`；Stop / Core 启动 / SIGTERM / Helper 在 worker 异常退出后运行 `asterlink-core --recover-network` / 卸载脚本据此恢复，只恢复仍为 198.18.0.2 的服务。物理网卡对应服务接管失败则回滚并 `tunnel_failed`。控制面解析经物理网卡发往接管前的解析器（`network.Egress.SetResolvers`）。模板上游改为 `tcp://1.1.1.1#node`、`tcp://8.8.8.8#node`。`asterlink-tuntest` 新增 T03-dns-capture，T03-dns-system 改走 mDNSResponder + 随机域名。
+- 验证：`go test -race ./...`（native/core，含接管/恢复/用户改动不覆盖/失败回滚/崩溃残留恢复/坏记录不猜）、`--suite unit` 7/7、`--suite bundle` 6/6、`scripts/test-native.py` 全绿；internal 包 `macmini-dnsfix-20261012` 的 `--suite release` 11 pass / 2 blocked（预期）。**真机 TUN 未执行**（公司 VPN 在线）。
+- 已知限制：连接中断电/强制关机后重启，DNS 停在 198.18.0.2，直到下次打开 AsterLink（Core 启动即恢复）或手动删除；Helper 为按需启动的 launchd 服务，不在开机时运行。
+- 待用户真机：断开公司 VPN，退出旧 App，安装新 DMG（设置页“重新安装特权服务”），连接后跑 DNS 泄漏测试（Wi-Fi 手动 1.1.1.1 与自动两种都测）；断开后确认 系统设置 → 网络 → DNS 恢复原样。可选 `sudo -E` 跑 `--suite tun` 看 T03-dns-capture / T03-dns-system / T07。
 首次使用引导与钥匙串弹窗（2026-10-13）
 - 现象：新装 DMG 首次打开，登录页提示"需要先启用特权服务"，点"启用""刷新"没有反应，需要自己去系统设置打开开关后才能登录；之后有时弹出钥匙串授权（`com.asterlink.vpn.credentials`），要点"始终允许"。
 - 根因 ①（真 bug）：`HelperClient` 是 `ObservableObject`，但视图以普通 `let helper` 持有、未用 `@ObservedObject`，SwiftUI 不随注册状态刷新——按钮其实执行了，界面不变；注册错误也只在设置页显示。② macOS 对任何 `SMAppService.daemon` 都要求用户在"登录项与扩展"批准一次，Developer ID 也一样，只能引导。③ 钥匙串弹窗：临时签名条目的分区 ID 是 `cdhash`，每个新构建都变；Developer ID 为 `teamid`，跨版本稳定，正式版不会出现。

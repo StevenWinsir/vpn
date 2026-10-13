@@ -26,11 +26,15 @@ final class WorkerSupervisor {
     private let store: WorkerStore
     private let policy: SigningPolicy
     private let bundleResources: URL
+    /// Must match `SystemDNSRecord` in native/core/internal/engine/sysdns.go.
+    static let dnsRecord = URL(fileURLWithPath: "/Library/Application Support/AsterLink/dns-override.json")
+    private let dnsRecord: URL
 
-    init(store: WorkerStore, policy: SigningPolicy, bundleResources: URL) {
+    init(store: WorkerStore, policy: SigningPolicy, bundleResources: URL, dnsRecord: URL = WorkerSupervisor.dnsRecord) {
         self.store = store
         self.policy = policy
         self.bundleResources = bundleResources
+        self.dnsRecord = dnsRecord
     }
 
     var isRunning: Bool {
@@ -120,8 +124,28 @@ final class WorkerSupervisor {
             if process.isRunning { process.terminate() }
             process.waitUntilExit()
         }
+        if let process { recoverNetworkLocked(using: process.executableURL) }
         process = nil; input = nil; output = nil
         publish(nil)
+    }
+
+    /// A worker that was killed (timeout, crash) cannot restore the system resolver it
+    /// pointed into its tunnel. Its record survives, and the same verified binary is run
+    /// once in recovery mode, so DNS does not stay broken until the next connect.
+    private func recoverNetworkLocked(using executable: URL?) {
+        guard let executable, FileManager.default.fileExists(atPath: dnsRecord.path) else { return }
+        let recovery = Process()
+        recovery.executableURL = executable
+        recovery.arguments = ["--recover-network"]
+        recovery.environment = [:]
+        recovery.standardInput = FileHandle.nullDevice
+        recovery.standardOutput = FileHandle.nullDevice
+        recovery.standardError = FileHandle.nullDevice
+        guard (try? recovery.run()) != nil else { return }
+        let deadline = Date().addingTimeInterval(10)
+        while recovery.isRunning && Date() < deadline { usleep(20_000) }
+        if recovery.isRunning { recovery.terminate() }
+        recovery.waitUntilExit()
     }
 
     /// One request/one reply with a hard deadline; a worker that does not answer is killed.

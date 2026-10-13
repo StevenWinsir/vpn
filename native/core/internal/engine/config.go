@@ -20,7 +20,12 @@ const ProxyName = "node"
 // Fixed TUN/DNS template (handoff_app.md section 6.1/6.2). It is the stage 1 template
 // proven on hardware (system stack, auto-route, auto-detect-interface, fake-ip DNS with
 // any:53 hijack) with IPv6 enabled so v6 traffic is captured by the tunnel instead of
-// silently leaving through the physical interface. The administrator's YAML contributes
+// silently leaving through the physical interface. Upstream lookups the fake-ip
+// resolver cannot answer locally (anything but A/AAAA/HTTPS/SVCB) go over TCP through
+// the node, so neither the ISP nor a public resolver sees them from the physical
+// address; only the node's own hostname is resolved directly (default/proxy-server
+// nameserver), the bootstrap exception of section 6.2. The system resolver itself is
+// pointed into the tunnel by sysdns.go. The administrator's YAML contributes
 // exactly one proxy definition and nothing else: no listeners, no controller, no
 // providers, no scripts, no rules.
 func BuildConfig(profile managed.Profile) ([]byte, error) {
@@ -46,7 +51,7 @@ func BuildConfig(profile managed.Profile) ([]byte, error) {
 			"ipv6":                    true,
 			"enhanced-mode":           "fake-ip",
 			"fake-ip-range":           "198.18.0.1/16",
-			"nameserver":              []string{"1.1.1.1", "8.8.8.8"},
+			"nameserver":              []string{"tcp://1.1.1.1#" + ProxyName, "tcp://8.8.8.8#" + ProxyName},
 			"default-nameserver":      []string{"1.1.1.1"},
 			"proxy-server-nameserver": []string{"1.1.1.1"},
 		},
