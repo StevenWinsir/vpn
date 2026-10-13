@@ -1,0 +1,57 @@
+{
+  "contract": "asterlink-windows-toolchain-lock",
+  "locked_on": "2026-10-13",
+  "round": 1,
+  "note": "Versions are pinned here so a build never silently upgrades. 'verified' says how the fact was established; anything not 'verified' must be re-checked before it is relied on.",
+  "dotnet": {
+    "sdk": "10.0.401",
+    "runtime": "10.0.12",
+    "channel": "10.0 LTS",
+    "released": "2026-09-08",
+    "support_until": "2028-11",
+    "source": "https://github.com/dotnet/core/blob/main/release-notes/10.0/releases.json",
+    "verified": "read from the official release feed on 2026-10-13; SDK 10.0.401 installed and used for the local macOS build/test run"
+  },
+  "go": {
+    "version": "1.26.6",
+    "target": {"GOOS": "windows", "GOARCH": "amd64", "GOAMD64": "v1", "CGO_ENABLED": "0"},
+    "verified": "version is the one already used by ci.yml and the dev machine; the windows/amd64 Core build is NOT possible yet (round 2)"
+  },
+  "mihomo": {
+    "commit": "70f0570405c3c2c47bb113b88db95006d239b346",
+    "submodule": "native/third_party/Clash.Meta",
+    "sing_tun": "v0.4.22",
+    "verified": "taken from .gitmodules / native/core/go.mod; unchanged in round 1"
+  },
+  "wintun": {
+    "version": "0.14.1",
+    "download": "https://www.wintun.net/builds/wintun-0.14.1.zip",
+    "zip_sha256_published": "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51",
+    "architectures_published": ["amd64", "x86", "arm64", "arm"],
+    "product_architecture": "amd64",
+    "license_note": "Source is GPL-2.0; the prebuilt signed DLLs carry a more permissive license that ships inside the ZIP. The project says the signed DLLs are the only supported way to distribute Wintun.",
+    "verified": "version, URL and hash as published on wintun.net on 2026-10-13. NOT downloaded, NOT hash-checked and the Authenticode signature NOT inspected in round 1; round 2 must do all three before the DLL is vendored."
+  },
+  "installer": {
+    "tool": "Inno Setup",
+    "candidates": {"7.x": "7.1.0 (2026-08-12)", "6.x": "6.7.3 (2026-05-26)"},
+    "decision": "open - choose in round 8",
+    "license_note": "The vendor asks commercial users to purchase a license. Budget for it before the release round.",
+    "verified": "read from jrsoftware.org on 2026-10-13"
+  },
+  "ci": {
+    "runner_label": "windows-2025",
+    "runner_os": "Windows Server 2025 x64",
+    "is_windows_client": false,
+    "note": "GitHub-hosted runners offer no x64 Windows 10/11 client image (only Arm64 Windows 11). CI proves build, unit tests and that the binaries start on a real x64 Windows host. It does NOT prove Windows 10/11 client compatibility, UAC, SCM install, Wintun or networking.",
+    "verified": "github.com/actions/runner-images, 2026-10-13"
+  },
+  "os_support": {
+    "target": "Windows 11 x64 (24H2, 25H2)",
+    "best_effort": "Windows 10 22H2 x64 with ESU",
+    "not_supported": ["Windows 10 22H2 without ESU", "Windows on ARM (no ARM64 product)", "32-bit Windows"],
+    "reason": "The official .NET 10 supported-OS list (updated 2026-09-28) names Windows 11 23H2/24H2/25H2/26H1 and only Windows 10 21H2/1809/1607 Enterprise/IoT editions. Windows 10 22H2 is absent, and Windows 10 itself left mainstream support on 2025-10-14. The handoff plan's starting point of 'Windows 10 22H2' therefore changed in round 1.",
+    "source": "https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md",
+    "verified": "read on 2026-10-13. No Windows machine has been tested yet."
+  }
+}
