@@ -1,15 +1,22 @@
 import AsterLinkShared
 import Foundation
+import Observation
 import ServiceManagement
 
 /// Settings-side view of the Helper: registration state and the stage-1 diagnostics.
+/// `@Observable` (like SessionController) so every view reading it re-renders when the
+/// registration changes; as an unobserved ObservableObject "启用"/"刷新" looked dead.
 @MainActor
-final class HelperClient: ObservableObject {
-    @Published private(set) var registration: HelperRegistration = .unknown
-    @Published private(set) var lastReply: HelperReply?
-    @Published private(set) var lastError: String?
-    @Published private(set) var busy = false
-    @Published private(set) var versionWarning: String?
+@Observable
+final class HelperClient {
+    private(set) var registration: HelperRegistration = .unknown
+    private(set) var lastReply: HelperReply?
+    private(set) var lastError: String?
+    private(set) var busy = false
+    private(set) var versionWarning: String?
+    /// The App runs from the DMG or a translocated copy: launchd cannot use a daemon
+    /// from there, so the user must move it to /Applications first.
+    let installProblem: String? = HelperClient.installLocationProblem(Bundle.main.bundlePath)
 
     private let connection: HelperConnection
 
@@ -18,17 +25,56 @@ final class HelperClient: ObservableObject {
         refreshRegistration()
     }
 
-    func refreshRegistration() { registration = HelperConnection.registration }
+    func refreshRegistration() {
+        let current = HelperConnection.registration
+        if current != registration { registration = current }
+        if current == .enabled, lastError == Self.approvalHint { lastError = nil }
+    }
 
-    /// Explicit user action only. macOS shows its own approval UI; we never ask for a password.
+    static let approvalHint = "请在打开的“系统设置 › 通用 › 登录项与扩展”中，打开“允许在后台”里 AsterLink 的开关；完成后本窗口会自动继续。"
+
+    /// Explicit user action only, and the only one first-run needs: registers the daemon and,
+    /// since macOS always requires the user to allow a new background service, opens the
+    /// exact System Settings page at once. `watchRegistration` then notices the approval.
+    /// We never ask for a password.
     func register() {
-        do {
-            try HelperConnection.service.register()
-            lastError = nil
-        } catch {
-            lastError = "注册失败：\(error.localizedDescription)"
+        if let installProblem {
+            lastError = installProblem
+            return
+        }
+        var failure: Error?
+        if registration != .requiresApproval {
+            do { try HelperConnection.service.register() } catch { failure = error }
         }
         refreshRegistration()
+        switch registration {
+        case .enabled:
+            lastError = nil
+        case .requiresApproval:
+            // register() reports "Operation not permitted" here; that is the normal
+            // pending-approval state, not an error worth showing.
+            lastError = Self.approvalHint
+            openSystemSettings()
+        default:
+            lastError = "启用失败：\(failure?.localizedDescription ?? registration.summary)"
+        }
+    }
+
+    /// Polls the registration while the window is open and the service is not enabled
+    /// yet. SMAppService posts no change notification, and the approval happens in
+    /// another app, so without this the user would have to come back and press 刷新.
+    func watchRegistration() async {
+        while !Task.isCancelled {
+            refreshRegistration()
+            try? await Task.sleep(for: registration == .enabled ? .seconds(5) : .seconds(1))
+        }
+    }
+
+    nonisolated static func installLocationProblem(_ path: String) -> String? {
+        if path.hasPrefix("/Volumes/") || path.contains("/AppTranslocation/") {
+            return "请先把 AsterLink 拖到“应用程序”文件夹，从那里重新打开（不能直接在安装盘里运行）。"
+        }
+        return nil
     }
 
     /// Asks the Helper to stop its Core, drops the connection, then removes the launchd

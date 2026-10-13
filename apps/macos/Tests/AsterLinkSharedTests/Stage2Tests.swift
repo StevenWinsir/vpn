@@ -318,6 +318,40 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertFalse(transport.commands.contains("login"))
     }
 
+    // First run: the Helper is approved in System Settings after launch already failed.
+    // The App resumes on its own, including the remembered-password sign-in.
+    func testApprovalAfterLaunchResumesWithoutUserAction() async throws {
+        let store = InMemoryCredentialStore()
+        try store.save(account: account, password: "saved")
+        let prefs = MemoryPreferences()
+        prefs.rememberedEmail = "fixture@example.invalid"
+        let transport = loginTransport()
+        transport.startError = HelperUnavailable("特权服务尚未启用，请先在设置中启用")
+        let controller = makeController(transport, store: store, preferences: prefs)
+        await controller.launch()
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertNotNil(controller.serviceProblem)
+
+        transport.startError = nil
+        await controller.serviceBecameAvailable()
+        XCTAssertNil(controller.serviceProblem)
+        XCTAssertEqual(controller.phase, .signedIn)
+        XCTAssertEqual(transport.commands.filter { $0 == "login" }.count, 1)
+
+        await controller.serviceBecameAvailable() // already running: nothing repeats
+        XCTAssertEqual(transport.commands.filter { $0 == "login" }.count, 1)
+    }
+
+    func testServiceAvailableIsANoOpWithoutAPriorProblem() async {
+        let transport = loginTransport()
+        let controller = makeController(transport)
+        await controller.launch()
+        let before = transport.commands
+        await controller.serviceBecameAvailable()
+        XCTAssertEqual(transport.commands, before)
+        XCTAssertEqual(controller.phase, .signedOut)
+    }
+
     func testHelperUnavailableIsReportedNotHidden() async {
         let transport = loginTransport()
         transport.startError = HelperUnavailable("特权服务尚未启用，请先在设置中启用")

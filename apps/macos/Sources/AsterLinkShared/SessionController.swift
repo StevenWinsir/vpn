@@ -72,6 +72,17 @@ public final class SessionController {
         }
     }
 
+    /// The Helper was just approved (first run) after `launch` found it unreachable:
+    /// retry the start-up once, including the remembered-password sign-in, so the user
+    /// does not have to press anything else. A deliberate sign-in in progress wins.
+    public func serviceBecameAvailable() async {
+        guard phase == .signedOut, serviceProblem != nil, !busy else { return }
+        serviceProblem = nil
+        message = nil
+        phase = .starting
+        await launch()
+    }
+
     // MARK: sign in / out
 
     public func signIn(email rawEmail: String, password: String, remember: Bool, automatic: Bool = false) async {

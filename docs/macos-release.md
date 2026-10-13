@@ -51,8 +51,11 @@ python3 scripts/test-native-macos.py --suite release
 1. 用上面的命令生成 DMG，或直接用本机构建的 `AsterLink.app`。**本机构建的文件没有"隔离"属性，不会被 Gatekeeper 拦截**，无需任何绕过。
 2. 如果 DMG 是从别处下载/AirDrop 来的，首次打开会被拦：到 *系统设置 › 隐私与安全性* 点"仍要打开"。**不要**全局关闭 Gatekeeper/SIP，也**不要**用 `xattr -d com.apple.quarantine` 来冒充发布验收。
 3. 把 `AsterLink.app` 拖到 `/应用程序`（SMAppService 守护进程要求 App 在固定位置）。
-4. 打开 App → 设置 → "启用"特权服务 → 在 *系统设置 › 通用 › 登录项与扩展* 批准 AsterLink。
-5. **未验证项**：临时签名的 App 能否通过 `SMAppService.daemon` 注册，本机没有实测（需要你在系统设置里手动批准，我无法代点）。若"启用"后状态一直不是"已启用"，那是临时签名的限制，需要 Developer ID 重测——请把设置页显示的状态文字告诉我。
+4. 打开 App，登录页的"首次使用"卡片上点"启用"：App 注册守护进程并直接打开 *系统设置 › 通用 › 登录项与扩展*；在"允许在后台"里打开 AsterLink 的开关，回到 App 即自动继续（每秒检测一次批准状态；有记住的密码会自动登录），无需再点"刷新"。
+   - 这一步批准是 macOS 对**任何**新后台服务（`SMAppService.daemon`）的强制要求，Developer ID 签名、公证后依然存在，只能引导、不能跳过；只有 MDM 管理的设备可以预先批准。
+   - 若 App 是直接在 DMG 里或被"App 转移"（`/AppTranslocation/`）运行，卡片会提示先拖到"应用程序"，因为 launchd 不能使用那里的守护进程。
+5. 已实测：临时签名的 App 可以通过 `SMAppService.daemon` 注册并在批准后正常工作。
+6. 钥匙串授权弹窗（"AsterLink 想要使用…com.asterlink.vpn.credentials"）：钥匙串条目记录创建它的 App 的分区 ID。临时签名的分区是 `cdhash:<哈希>`，**每装一个新构建，哈希就变**，系统把它当成另一个 App，于是每个新版本首次读取"记住的密码"和"设备 ID"时各问一次；点"始终允许"后，这个版本就不再问。Developer ID 签名的分区是 `teamid:<Team ID>`，跨版本升级不变，正式版不会出现这个弹窗。这是临时签名的特性，不要为绕过它改用明文保存或关闭钥匙串访问控制。
 
 ## 4. 有了 Apple 开发者账号之后（逐项做，每项留证据）
 

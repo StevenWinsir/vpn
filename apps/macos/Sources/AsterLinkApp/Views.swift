@@ -24,7 +24,13 @@ struct RootView: View {
             SettingsView(session: session, helper: helper, diagnostics: diagnostics)
         }
         .task { await session.launch() }
+        .task { await helper.watchRegistration() }
+        .onChange(of: helper.registration) { _, now in
+            // Approved in System Settings: continue the start-up that failed without it.
+            if now == .enabled { Task { await session.serviceBecameAvailable() } }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            helper.refreshRegistration()
             Task { await session.refresh() }
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
@@ -63,20 +69,11 @@ struct LoginView: View {
             }
             .buttonStyle(.borderedProminent).controlSize(.large).frame(maxWidth: 320)
             .keyboardShortcut(.defaultAction)
-            .disabled(session.phase == .signingIn || session.email.isEmpty || password.isEmpty)
+            .disabled(session.phase == .signingIn || session.email.isEmpty || password.isEmpty || helper.registration != .enabled)
 
             if helper.registration != .enabled {
-                VStack(spacing: 6) {
-                    Label("需要先启用特权服务", systemImage: "lock.shield").foregroundStyle(.orange)
-                    Text(helper.registration.summary).font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        Button("启用") { helper.register() }
-                        Button("打开系统设置") { helper.openSystemSettings() }
-                        Button("刷新") { helper.refreshRegistration() }
-                    }
-                }
-            }
-            if let problem = session.message ?? session.serviceProblem {
+                HelperSetupCard(helper: helper)
+            } else if let problem = session.message ?? session.serviceProblem {
                 Text(problem).foregroundStyle(.red).multilineTextAlignment(.center).textSelection(.enabled)
             }
             if let warning = session.warning { Text(warning).foregroundStyle(.orange).font(.callout) }
@@ -291,6 +288,51 @@ struct NodeRow: View {
             .padding(.horizontal, 8).padding(.vertical, 6)
             .background(selected ? Color.accentColor.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain)
+    }
+}
+
+// MARK: - First-run setup
+
+/// macOS requires the user to allow a new background service once (any signature,
+/// Developer ID included); the App cannot do that for them. This card reduces it to one
+/// button plus one switch: 启用 registers and opens the exact Settings page, and the
+/// App notices the approval by itself (HelperClient.watchRegistration).
+struct HelperSetupCard: View {
+    let helper: HelperClient
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("首次使用：允许 AsterLink 的网络服务", systemImage: "lock.shield").font(.headline).foregroundStyle(.orange)
+            if let problem = helper.installProblem {
+                Text(problem).font(.callout)
+            } else {
+                step(1, "点击下方“启用”", done: helper.registration == .requiresApproval)
+                step(2, "在自动打开的“系统设置 › 登录项与扩展”中，打开“允许在后台”里 AsterLink 的开关（可能需要输入本机密码或指纹）", done: false)
+                step(3, "回到这里，会自动继续，无需其他操作", done: false)
+                HStack {
+                    Button(helper.registration == .requiresApproval ? "再次打开系统设置" : "启用") { helper.register() }
+                        .buttonStyle(.borderedProminent)
+                    if helper.registration == .requiresApproval {
+                        ProgressView().controlSize(.small)
+                        Text("等待批准…").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let error = helper.lastError, error != HelperClient.approvalHint {
+                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 360, alignment: .leading)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func step(_ n: Int, _ text: String, done: Bool) -> some View {
+        Label {
+            Text(text).font(.callout).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: done ? "checkmark.circle.fill" : "\(n).circle").foregroundStyle(done ? .green : .secondary)
+        }
     }
 }
 

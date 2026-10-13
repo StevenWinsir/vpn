@@ -696,3 +696,9 @@ VLESS 节点"已连接但没网"修复（2026-10-12）
 - 修复：`native/core/internal/engine/ipv6.go`——建 TUN 前经节点对 IPv6 字面量做一次真实 HTTP 探测（每个已应用配置只测一次）；不通则 TUN 起来后安装比 sing-tun IPv6 路由长 1 位的 16 条 `-reject` 路由（网关为 utun 自身地址，随设备销毁；安装失败整组回滚），停止时删除。能承载 IPv6 的节点（SS）行为不变。`asterlink-tuntest` 新增 `T04-ipv6-fallback`；`docs/macos-stage3.md` 已更新。
 - 验证：`go test -race ./...`（native/core，含前缀覆盖、全有或全无回滚、"拨通后 EOF 不算 IPv6"）、`--suite unit` 7/7；真实 VLESS 节点探测返回 false（2.24s），TUN 有 `fdfe:dcba:9876::1/126`。**真机 TUN 未执行**（无 root、公司 VPN 在线）。
 - 待用户真机：断开公司 VPN，安装新 DMG，VLESS 节点连接后用 Chrome 打开网页；可选 `sudo -E` 跑 `--suite tun` 并设 `ASTERLINK_TUN_PROXY_JSON` 为 VLESS 节点，看 `T04-ipv6-fallback` 应为 `mode=rejected` 且 pass、T07 无遗留路由。
+
+首次使用引导与钥匙串弹窗（2026-10-13）
+- 现象：新装 DMG 首次打开，登录页提示"需要先启用特权服务"，点"启用""刷新"没有反应，需要自己去系统设置打开开关后才能登录；之后有时弹出钥匙串授权（`com.asterlink.vpn.credentials`），要点"始终允许"。
+- 根因 ①（真 bug）：`HelperClient` 是 `ObservableObject`，但视图以普通 `let helper` 持有、未用 `@ObservedObject`，SwiftUI 不随注册状态刷新——按钮其实执行了，界面不变；注册错误也只在设置页显示。② macOS 对任何 `SMAppService.daemon` 都要求用户在"登录项与扩展"批准一次，Developer ID 也一样，只能引导。③ 钥匙串弹窗：临时签名条目的分区 ID 是 `cdhash`，每个新构建都变；Developer ID 为 `teamid`，跨版本稳定，正式版不会出现。
+- 修复：`HelperClient` 改为 `@Observable`；"启用"注册后若为待批准状态，直接打开登录项设置页并显示引导（待批准的 "Operation not permitted" 不再当错误）；`watchRegistration` 每秒检测批准，变为已启用后 `SessionController.serviceBecameAvailable()` 自动重走启动（含记住密码自动登录）；登录页用"首次使用"三步卡片替代原提示，未启用时禁用登录按钮；App 在 DMG/AppTranslocation 中运行时提示先拖到"应用程序"。`docs/macos-release.md` 第 3 节已更新。
+- 验证：`swift test` 46 项全绿（新增批准后自动续登/无问题时不重复两项）。真机首装流程待用户验证。
