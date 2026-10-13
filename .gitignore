@@ -17,6 +17,7 @@ scripts/*
 !scripts/*.sh
 !scripts/*.py
 !scripts/*.json
+!scripts/windows/
 **/__pycache__/
 FlClClash/
 frontend/playwright-report/

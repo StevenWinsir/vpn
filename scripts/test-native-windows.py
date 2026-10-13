@@ -13,6 +13,13 @@ Implemented suites:
     * the Wintun DLL embedded in the pinned sing-tun is byte-identical to the locked official build
     * the Core's Go test suite runs natively, with a non-zero test count
 
+  service (round 3, needs a real Windows x64 host and an elevated shell)
+    * AsterLink.Tests.Windows: real named pipes, tokens, ACLs, Job Objects, recovery and the real Go Core
+      launcher (zero skipped tests allowed)
+    * the INTERNAL stage tree is built (scripts/package-native-windows.py) and scripts/windows/e2e-service.ps1
+      installs it as a real service and drives GUI -> Service -> Core, then attacks it. It installs and removes
+      AsterLinkService, so it only runs with --allow-service-install. It changes no route, DNS or adapter.
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 Suites that need a real Windows host (unit/service/tun/...) arrive in later rounds and refuse
 to run here instead of reporting a pass.
@@ -220,10 +227,78 @@ def run_dotnet_tests():
         print(output[-3000:])
 
 
+def is_windows_admin():
+    if sys.platform != 'win32':
+        return False
+    import ctypes
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+
+def run_service_suite(args):
+    if sys.platform != 'win32':
+        record('service.host', False, 'the service suite needs a real Windows x64 host; nothing was tested', status='BLOCKED')
+        return
+    if not is_windows_admin():
+        record('service.elevation', False, 'needs an elevated shell (pipes, ACLs and the SCM are exercised); nothing was tested', status='BLOCKED')
+        return
+    dotnet = dotnet_command()
+    if not dotnet or not shutil.which('go'):
+        record('service.toolchain', False, 'dotnet and go are both required', status='BLOCKED')
+        return
+
+    out = Path(args.out).resolve() if args.out else ROOT / 'artifacts' / 'native-windows' / 'service'
+    core_dir = out / 'core'
+    check_cross_build(core_dir)
+    core = core_dir / 'asterlink-core.exe'
+    if not core.is_file():
+        record('service.core', False, 'the Core could not be built')
+        return
+
+    env = dict(os.environ, ASTERLINK_TEST_CORE=str(core))
+    process = subprocess.run([dotnet, 'test', str(WINDOWS / 'AsterLink.Tests.Windows'), '-c', 'Release', '--nologo', '--verbosity', 'minimal'],
+                             cwd=WINDOWS, capture_output=True, text=True, env=env)
+    text = process.stdout + process.stderr
+    summary = re.search(r'Failed:\s*(\d+), Passed:\s*(\d+), Skipped:\s*(\d+), Total:\s*(\d+)', text)
+    if not summary:
+        record('windows.kernel_tests', False, 'no test summary in output:\n' + text[-1500:])
+    else:
+        failed, passed, skipped, total = map(int, summary.groups())
+        ok = process.returncode == 0 and failed == 0 and skipped == 0 and total > 0
+        record('windows.kernel_tests', ok, 'passed=%d failed=%d skipped=%d total=%d (skipped must be 0 on an elevated Windows host)' % (passed, failed, skipped, total))
+        if not ok:
+            print(text[-3000:])
+
+    if not args.allow_service_install:
+        record('service.e2e', False, 'refusing to install a Windows service without --allow-service-install', status='BLOCKED')
+        return
+    stage = out / 'stage'
+    packaged = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'package-native-windows.py'), '--channel', 'internal', '--stage', str(stage)],
+                              capture_output=True, text=True)
+    if packaged.returncode != 0:
+        record('service.package', False, (packaged.stdout + packaged.stderr)[-1500:])
+        return
+    record('service.package', True, 'internal stage built at %s' % stage)
+
+    report = out / 'e2e-service.json'
+    e2e = subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'scripts' / 'windows' / 'e2e-service.ps1'),
+                          '-Stage', str(stage), '-Report', str(report)], capture_output=True, text=True)
+    print(e2e.stdout[-6000:])
+    if not report.is_file():
+        record('service.e2e', False, 'the harness wrote no report:\n' + e2e.stderr[-1500:])
+        return
+    cases = json.loads(report.read_text(encoding='utf-8-sig'))
+    if isinstance(cases, dict):
+        cases = [cases]
+    for case in cases:
+        results.append(case)
+    record('service.e2e', e2e.returncode == 0 and bool(cases), '%d cases from the harness, exit code %d' % (len(cases), e2e.returncode))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--suite', required=True)
     parser.add_argument('--report', help='write a JSON report here')
+    parser.add_argument('--allow-service-install', action='store_true', help='service suite: permit installing and removing AsterLinkService on this machine')
     parser.add_argument('--out', help='core suite: directory for the built PE files (default artifacts/native-windows/core)')
     args = parser.parse_args()
 
@@ -239,6 +314,8 @@ def main():
             check_cross_build(Path(args.out).resolve() if args.out else ROOT / 'artifacts' / 'native-windows' / 'core')
             check_embedded_wintun()
             run_core_tests()
+    elif args.suite == 'service':
+        run_service_suite(args)
     else:
         print('suite %r needs a Windows x64 host and is implemented in a later round' % args.suite)
         return EXIT_BLOCKED

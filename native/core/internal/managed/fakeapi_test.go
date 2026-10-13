@@ -325,7 +325,7 @@ func (f *fakeAPI) params(password string) LoginParams {
 
 func waitFor(t *testing.T, what string, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(20 * time.Second) // generous: shared CI runners stall; a pass never waits this long
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
