@@ -37,9 +37,8 @@ func TestWindowsTemplateAddsStrictRouteAndDeviceOnly(t *testing.T) {
 		len(w.DNSHijack) != len(d.DNSHijack) || len(w.Inet4Address) != len(d.Inet4Address) || len(w.Inet6Address) != len(d.Inet6Address) {
 		t.Fatalf("platform templates diverged beyond strict-route/device:\nwindows %+v\ndarwin  %+v", w, d)
 	}
-	if len(w.Inet6Address) == 0 {
-		t.Fatal("the template must offer IPv6; the Windows engine drops it only for IPv4-only nodes")
-	}
+	// The pinned core clears the TUN's IPv6 address itself on a host without IPv6 (parseIPV6 /
+	// verifyIP6), so presence is host-dependent; the engine reports that as IPv6Absent.
 }
 
 // walk mirrors the pinned tunnel.match for a MATCH-only rule list (Clash.Meta/tunnel/tunnel.go):

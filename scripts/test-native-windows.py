@@ -236,7 +236,7 @@ def main():
             record('go.toolchain', False, 'go not found; nothing was tested', status='BLOCKED')
         else:
             check_platform_split()
-            check_cross_build(Path(args.out) if args.out else ROOT / 'artifacts' / 'native-windows' / 'core')
+            check_cross_build(Path(args.out).resolve() if args.out else ROOT / 'artifacts' / 'native-windows' / 'core')
             check_embedded_wintun()
             run_core_tests()
     else:
