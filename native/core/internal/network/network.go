@@ -36,6 +36,10 @@ type Interface struct {
 type Egress struct {
 	mu    sync.RWMutex
 	iface Interface
+	// resolvers are the machine's own DNS servers from before the tunnel pointed the
+	// system resolver at itself. While set, control-plane lookups go to them (over
+	// the bound interface) instead of the tunnel address /etc/resolv.conf now names.
+	resolvers []string
 }
 
 // Default is the process-wide egress shared by the engine and the API client.
@@ -44,6 +48,21 @@ var Default = &Egress{}
 func (e *Egress) Set(i Interface) { e.mu.Lock(); e.iface = i; e.mu.Unlock() }
 func (e *Egress) Clear()          { e.mu.Lock(); e.iface = Interface{}; e.mu.Unlock() }
 func (e *Egress) Get() Interface  { e.mu.RLock(); defer e.mu.RUnlock(); return e.iface }
+
+// SetResolvers records the bootstrap DNS servers (bare IPs) the control plane keeps
+// using while the system resolver points into the tunnel; nil restores the default.
+func (e *Egress) SetResolvers(servers []string) {
+	e.mu.Lock()
+	e.resolvers = append([]string(nil), servers...)
+	e.mu.Unlock()
+}
+
+// Resolvers returns the recorded bootstrap DNS servers, nil when none are set.
+func (e *Egress) Resolvers() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.resolvers
+}
 
 // control binds a new socket to the egress interface, except for loopback targets
 // (test servers, local services) which never leave the machine.
@@ -66,13 +85,31 @@ func (e *Egress) Dialer() *net.Dialer {
 }
 
 // DialContext resolves names through the same bound path, so DNS lookups for the
-// API host cannot be hijacked into the tunnel either.
+// API host cannot be hijacked into the tunnel either. While the system resolver points
+// into the tunnel, /etc/resolv.conf names the tunnel address, which is unreachable
+// over the physical interface, so lookups go to the recorded bootstrap servers.
 func (e *Egress) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	d := e.Dialer()
 	d.Resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-		return e.Dialer().DialContext(ctx, network, address)
+		return e.dialResolver(ctx, network, address)
 	}}
 	return d.DialContext(ctx, network, address)
+}
+
+func (e *Egress) dialResolver(ctx context.Context, network, address string) (net.Conn, error) {
+	servers := e.Resolvers()
+	if len(servers) == 0 {
+		return e.Dialer().DialContext(ctx, network, address)
+	}
+	var last error
+	for _, server := range servers {
+		conn, err := e.Dialer().DialContext(ctx, network, net.JoinHostPort(server, "53"))
+		if err == nil {
+			return conn, nil
+		}
+		last = err
+	}
+	return nil, last
 }
 
 // Signature identifies the current physical connection: default interface plus its

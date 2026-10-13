@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -69,6 +70,23 @@ func TestTemplateIsParsedByPinnedCoreAndStaysLocked(t *testing.T) {
 	}
 	if strings.Contains(string(data), "DIRECT") {
 		t.Fatal("the document must not reference DIRECT")
+	}
+	if len(cfg.DNS.NameServer) == 0 {
+		t.Fatal("no upstream nameserver")
+	}
+	for _, ns := range cfg.DNS.NameServer { // business lookups never leave from the physical address
+		if ns.ProxyName != ProxyName || ns.Net != "tcp" {
+			t.Fatalf("upstream %s/%s does not go over TCP through the node (proxy %q)", ns.Net, ns.Addr, ns.ProxyName)
+		}
+	}
+	// The address the system resolver is pointed at must be routed into the utun and
+	// must never be handed out as a fake address (the pool starts at network+4).
+	tunDNS := netip.MustParseAddr(TunnelDNS)
+	if len(general.Tun.Inet4Address) != 1 || !general.Tun.Inet4Address[0].Contains(tunDNS) || general.Tun.Inet4Address[0].Addr() == tunDNS {
+		t.Fatalf("%s is not a peer address inside the TUN subnet %v", TunnelDNS, general.Tun.Inet4Address)
+	}
+	if !cfg.DNS.FakeIPRange.Contains(tunDNS) || !tunDNS.Less(cfg.DNS.FakeIPRange.Masked().Addr().Next().Next().Next().Next()) {
+		t.Fatalf("%s may collide with the fake-ip pool %v", TunnelDNS, cfg.DNS.FakeIPRange)
 	}
 }
 

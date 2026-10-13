@@ -6,9 +6,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 
+	"asterlink/core/internal/engine"
 	"asterlink/core/internal/ipc"
 	"asterlink/core/internal/managed"
 	"asterlink/core/internal/service"
@@ -49,6 +52,15 @@ func main() {
 			fmt.Println(version, mihomoRevision)
 			return
 		}
+		// Run by the Helper after an abnormal worker exit and by the uninstaller: puts
+		// back a system DNS capture a killed Core left behind (engine/sysdns.go).
+		if len(os.Args) == 2 && os.Args[1] == "--recover-network" {
+			if err := engine.RestoreSystemDNS(); err != nil {
+				fmt.Fprintln(os.Stderr, "network recovery failed:", err)
+				os.Exit(1)
+			}
+			return
+		}
 		fmt.Fprintln(os.Stderr, "asterlink-core accepts no arguments")
 		os.Exit(2)
 	}
@@ -57,6 +69,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cannot reserve ipc output:", err)
 		os.Exit(1)
 	}
+	// A previous Core killed while connected may have left the system resolver pointing
+	// into a tunnel that no longer exists.
+	if err := engine.RestoreSystemDNS(); err != nil {
+		fmt.Fprintln(os.Stderr, "network recovery failed:", err)
+	}
+	// The Helper's terminate() and a logout send signals that would otherwise exit
+	// without Stop; the resolver must not stay pointed at a vanished tunnel.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		<-signals
+		_ = engine.RestoreSystemDNS()
+		os.Exit(1)
+	}()
 	manager := managed.New(managed.Options{CoreVersion: version, Engine: newEngine()})
 	if err := ipc.ServeWith(stdio{out: out}, ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}, service.New(manager)); err != nil {
 		fmt.Fprintln(os.Stderr, "ipc terminated:", err)
