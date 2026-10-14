@@ -85,6 +85,13 @@ func New(base *url.URL) *Client {
 
 func (c *Client) CloseIdle() { c.http.CloseIdleConnections() }
 
+// WrapTransport interposes on this client's HTTP round trips. Only in-process acceptance
+// harnesses (cmd/asterlink-billtest, which drops one /traffic acknowledgement on a real
+// server) call it; the shipped Core never does.
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	c.http.Transport = wrap(c.http.Transport)
+}
+
 func (c *Client) do(ctx context.Context, timeout time.Duration, method, path string, query url.Values, token string, in, out any) error {
 	return c.doWith(ctx, timeout, method, path, query, token, nil, in, out)
 }

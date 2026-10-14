@@ -20,6 +20,12 @@ Implemented suites:
       installs it as a real service and drives GUI -> Service -> Core, then attacks it. It installs and removes
       AsterLinkService, so it only runs with --allow-service-install. It changes no route, DNS or adapter.
 
+  billing (round 5)
+    * unit: ledger formulas, lost-acknowledgement retry and the harness itself, with -race and a non-zero test count
+    * windows/amd64 builds of asterlink-billtest and asterlink-trafficsink, plus a linux/amd64 sink for the server
+    * live (elevated Windows host, --allow-network-changes, ASTERLINK_BILL_* in the environment): real login -> TUN ->
+      controlled bytes -> disconnect -> ledger compared to the formula. Otherwise BLOCKED, never PASS.
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 Suites that need a real Windows host (unit/service/tun/...) arrive in later rounds and refuse
 to run here instead of reporting a pass.
@@ -141,10 +147,10 @@ def check_platform_split():
            'non-Windows CI hosts still use the test placeholder: %s' % got)
 
 
-def check_cross_build(out_dir):
+def check_cross_build(out_dir, names=('asterlink-core', 'asterlink-tuntest', 'asterlink-billtest', 'asterlink-trafficsink')):
     out_dir.mkdir(parents=True, exist_ok=True)
     env = go_env(GOOS='windows', GOARCH='amd64', GOAMD64='v1')
-    for name in ('asterlink-core', 'asterlink-tuntest'):
+    for name in names:
         target = out_dir / (name + '.exe')
         process = go_run(['build', '-trimpath', '-o', str(target), './cmd/' + name], env=env)
         if process.returncode != 0:
@@ -197,6 +203,51 @@ def run_core_tests():
     ok = process.returncode == 0 and failed == 0 and passed > 0
     record('go.core_tests', ok, 'native %s: passed=%d failed=%d skipped=%d%s' % (
         sys.platform, passed, failed, skipped, '' if ok else ' FAILED: ' + ', '.join(failures[:10]) + process.stderr[-500:]))
+
+
+def run_billing_suite(args):
+    """Round 5. The unit part (ledger formulas, ack loss, harness logic against a faithful fake API) runs anywhere
+    Go does. The live part drives the production state machine and a real TUN against the real API, so it runs only on an
+    elevated Windows host with --allow-network-changes and the ASTERLINK_BILL_* environment; otherwise it is BLOCKED."""
+    if not shutil.which('go'):
+        record('go.toolchain', False, 'go not found; nothing was tested', status='BLOCKED')
+        return
+    out_dir = Path(args.out).resolve() if args.out else ROOT / 'artifacts' / 'native-windows' / 'core'
+    packages = ['./internal/meter', './internal/managed', './internal/apiclient', './cmd/asterlink-billtest', './cmd/asterlink-trafficsink']
+    race = [] if sys.platform == 'win32' else ['-race']  # the race detector needs cgo, which the Windows runner does not guarantee
+    process = subprocess.run(['go', 'test', '-count=1', *race, '-json', *packages], cwd=CORE, capture_output=True, text=True, env=dict(os.environ))
+    passed = failed = 0
+    failures = []
+    for line in process.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get('Test') and event.get('Action') == 'pass':
+            passed += 1
+        elif event.get('Test') and event.get('Action') == 'fail':
+            failed += 1
+            failures.append(event['Test'])
+    record('billing.unit', process.returncode == 0 and failed == 0 and passed > 0,
+           'ledger, ack-loss and harness tests%s: passed=%d failed=%d %s' % (' (race)' if race else '', passed, failed, ', '.join(failures[:8])))
+    check_cross_build(out_dir)
+    sink = out_dir / 'asterlink-trafficsink-linux-amd64'
+    built = go_run(['build', '-trimpath', '-o', str(sink), './cmd/asterlink-trafficsink'], env=go_env(GOOS='linux', GOARCH='amd64'))
+    record('build.trafficsink_linux', built.returncode == 0, '%s (%d bytes)' % (sink.name, sink.stat().st_size) if built.returncode == 0 else built.stderr[-800:])
+
+    needed = ['ASTERLINK_BILL_API_BASE', 'ASTERLINK_BILL_EMAIL', 'ASTERLINK_BILL_PASSWORD', 'ASTERLINK_BILL_SINK', 'ASTERLINK_BILL_SINK_TOKEN']
+    missing = [name for name in needed if not os.environ.get(name)]
+    if sys.platform != 'win32' or not args.allow_network_changes or missing or not is_windows_admin():
+        why = 'needs an elevated Windows x64 host, --allow-network-changes' + (' and ' + ', '.join(missing) if missing else '')
+        record('billing.live', False, 'live billing run not executed: ' + why, status='BLOCKED')
+        return
+    report = ROOT / 'artifacts' / 'native-windows' / 'billing-report'
+    if report.exists():
+        shutil.rmtree(report)
+    live = subprocess.run([str(out_dir / 'asterlink-billtest.exe'), '--allow-network-changes', '--ack-loss', '--output', str(report)], capture_output=True, text=True)
+    print(live.stdout)
+    status = {0: 'PASS', 3: 'BLOCKED'}.get(live.returncode, 'FAIL')
+    record('billing.live', status == 'PASS', 'asterlink-billtest exit %d; report %s' % (live.returncode, report / 'billing-report.json'), status=status)
 
 
 def dotnet_command():
@@ -299,6 +350,7 @@ def main():
     parser.add_argument('--suite', required=True)
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--allow-service-install', action='store_true', help='service suite: permit installing and removing AsterLinkService on this machine')
+    parser.add_argument('--allow-network-changes', action='store_true', help='billing suite: permit the live run (changes routes/DNS, spends test-account quota)')
     parser.add_argument('--out', help='core suite: directory for the built PE files (default artifacts/native-windows/core)')
     args = parser.parse_args()
 
@@ -316,6 +368,8 @@ def main():
             run_core_tests()
     elif args.suite == 'service':
         run_service_suite(args)
+    elif args.suite == 'billing':
+        run_billing_suite(args)
     else:
         print('suite %r needs a Windows x64 host and is implemented in a later round' % args.suite)
         return EXIT_BLOCKED

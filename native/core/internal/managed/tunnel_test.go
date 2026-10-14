@@ -277,6 +277,37 @@ func TestAuthorizationLossStopsTheTunnel(t *testing.T) {
 			t.Fatalf("%+v", s)
 		}
 	})
+	// A04 on a live tunnel: the operator disables/deletes the node, or the plan stops
+	// covering it. Whatever reason the user sees, the data path must close, the flow
+	// already carried must be charged at the OLD rate, and the node must not stay selected.
+	for name, change := range map[string]func(h *harness){
+		"admin deletes or disables the node": func(h *harness) { h.f.mutate(func() { h.f.nodes = h.f.nodes[1:] }) },
+		"the plan no longer covers the node": func(h *harness) { h.f.mutate(func() { h.f.catalogRsn = "subscription_expired" }) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, 1000)
+			h.connect(t)
+			h.engine.down.Store(7 * mib)
+			change(h)
+			waitFor(t, "the tunnel to close", func() bool {
+				s := h.m.Snapshot()
+				return s.State != StateConnected && s.State != StateStopping
+			})
+			if h.engine.stops.Load() == 0 {
+				t.Fatal("engine never stopped")
+			}
+			waitFor(t, "the tail to be acknowledged", func() bool { _, _, down, _ := h.ledger(); return down == 7*mib })
+			if units, _, _, _ := h.ledger(); units != 7*mib*1000 {
+				t.Fatalf("tail charged %d units, want %d", units, 7*mib*1000)
+			}
+			if s := h.m.Snapshot(); s.LastError == nil || s.LastError.Code == "" || (s.Metering != nil && s.Metering.Pending) {
+				t.Fatalf("no reason or unsettled tail: %+v", s)
+			}
+			if _, err := h.m.Connect(t.Context()); err == nil {
+				t.Fatal("connect allowed after the node left the plan")
+			}
+		})
+	}
 }
 
 // T06: sleeping or changing the network closes the data path before anything else.

@@ -153,6 +153,14 @@ jobs:
       - name: Go Core and TUN harness - split, PE build, vet, embedded Wintun, native tests
         run: py -3 scripts/test-native-windows.py --suite core --out artifacts/windows/core --report artifacts/windows/core-suite.json
 
+      - name: Billing suite - ledger, ack-loss and harness tests, billtest and sink builds (the live run is BLOCKED here by design)
+        shell: pwsh
+        run: |
+          py -3 scripts/test-native-windows.py --suite billing --out artifacts/windows/billing --report artifacts/windows/billing-suite.json
+          # 0 would mean the live part ran on a hosted runner; 3 is the only expected result (nothing else FAILed).
+          if ($LASTEXITCODE -ne 3) { throw "billing suite exited $LASTEXITCODE, expected 3 (live part BLOCKED, everything else PASS)" }
+          exit 0
+
       - name: Embedded Wintun DLL is the signed official build
         shell: pwsh
         run: |
@@ -207,6 +215,7 @@ jobs:
             artifacts/windows/gui-selftest.json
             artifacts/windows/service-probe.txt
             artifacts/windows/core-suite.json
+            artifacts/windows/billing-suite.json
             artifacts/windows/service-suite.json
             artifacts/windows/service/e2e-service.json
             artifacts/windows/wintun-signature.txt
@@ -240,6 +249,9 @@ jobs:
           path: |
             artifacts/windows/core/asterlink-core.exe
             artifacts/windows/core/asterlink-tuntest.exe
+            artifacts/windows/billing/asterlink-billtest.exe
+            artifacts/windows/billing/asterlink-trafficsink.exe
+            artifacts/windows/billing/asterlink-trafficsink-linux-amd64
 
   contracts-portable:
     name: Foundation suite on Linux (lock file, env parsers, C# contracts)
