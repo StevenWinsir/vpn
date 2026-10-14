@@ -63,6 +63,9 @@ type options struct {
 	killTest      bool
 }
 
+// Reference values taken before the tunnel exists, used by the round-6 cases.
+var baselineExit, baselineSignature string
+
 // childFlag re-executes the harness as a separate process. On Windows the harness IS the
 // Core process, and sing-tun's Windows Filtering Platform rules exempt the Core's own
 // process; a probe that must behave like an ordinary application therefore runs in a child.
@@ -85,6 +88,8 @@ func main() {
 	apiHost := flag.String("api-host", "", "host:port of the API (control plane must stay reachable during the tunnel)")
 	ntpHost := flag.String("ntp-host", "time.cloudflare.com:123", "Windows: public SNTP server used as a UDP target (no server of your own needed)")
 	udpReject := flag.Bool("udp-reject-test", false, "Windows: also run a session whose node has udp:false and require UDP to be refused, never sent direct")
+	soakSeconds := flag.Int("soak-seconds", 0, "hold one connected tunnel this long, sampling CPU/memory/handles/threads and probing the exit (round 6; 0 = off)")
+	soakInterval := flag.Int("soak-interval", 30, "seconds between soak samples")
 	killTest := flag.Bool("kill-test", false, "Windows: also hard-kill a connected child process and require the adapter, routes and filters to vanish")
 	hold := flag.Bool("hold", false, "internal: connect, print READY, wait to be killed (used by --kill-test)")
 	flag.Parse()
@@ -129,6 +134,7 @@ func main() {
 	baselineSnapshot = before
 	baseline := fetch(ctx, *probe, "tcp4")
 	baseline6 := fetch(ctx, *probe6, "tcp6")
+	baselineExit, baselineSignature = baseline, network.Signature()
 	if baseline == "" {
 		record("T-PRE", "baseline connectivity", "baseline probe failed: check connectivity before testing the tunnel", "blocked")
 		finish(*output, hostForReport)
@@ -162,6 +168,9 @@ func main() {
 	platformChecks(ctx, eng, opts, baseline6)
 	apiCheck(ctx, *apiHost)
 	idleLoopCheck(ctx, eng)
+	if *soakSeconds > 0 {
+		soakCheck(ctx, eng, *probe, baseline, time.Duration(*soakSeconds)*time.Second, time.Duration(max(*soakInterval, 1))*time.Second, *output)
+	}
 
 	_ = eng.Stop()
 	network.Default.Clear()

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"asterlink/core/internal/engine"
@@ -27,6 +28,15 @@ const privilegeHint = "root is required to create a utun device (run with sudo -
 
 // machineFacts is recorded in the report next to every case.
 func machineFacts() map[string]any { return map[string]any{"os": "unix"} }
+
+// cpuSeconds is this process's user+system CPU time.
+func cpuSeconds() float64 {
+	var u syscall.Rusage
+	if syscall.Getrusage(syscall.RUSAGE_SELF, &u) != nil {
+		return 0
+	}
+	return float64(u.Utime.Sec+u.Stime.Sec) + float64(u.Utime.Usec+u.Stime.Usec)/1e6
+}
 
 // platformChecks runs the macOS cases in-process: the harness is root and the system
 // resolver is mDNSResponder, so there is no exempt-process distinction to account for.

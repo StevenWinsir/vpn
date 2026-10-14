@@ -191,6 +191,19 @@ func openFDs() int {
 	return int(count)
 }
 
+// cpuSeconds is this process's kernel+user CPU time.
+func cpuSeconds() float64 {
+	var created, exited, kernel, user windows.Filetime
+	handle, _ := windows.GetCurrentProcess()
+	if windows.GetProcessTimes(handle, &created, &exited, &kernel, &user) != nil {
+		return 0
+	}
+	ticks := func(f windows.Filetime) float64 {
+		return float64(uint64(f.HighDateTime)<<32|uint64(f.LowDateTime)) / 1e7
+	}
+	return ticks(kernel) + ticks(user)
+}
+
 // ---- child probes (stand-ins for ordinary applications) -----------------------------------
 
 var (
@@ -280,6 +293,11 @@ func runChild(args []string) int {
 		head := make([]byte, 5)
 		n, _ := io.ReadFull(conn, head)
 		fmt.Printf("connected %d http=%v\n", elapsed, string(head[:n]) == "HTTP/")
+	case "bind": // bind <ipv4> <url,url>: HTTP GET with the socket bound to the physical adapter's address
+		if len(args) != 3 {
+			return 2
+		}
+		fmt.Println(bindFetch(ctx, args[1], args[2]))
 	case "ntp": // ntp host:port
 		fmt.Println(ntpQuery(ctx, args[1]))
 	default:
@@ -400,6 +418,8 @@ func platformChecks(ctx context.Context, eng *engine.Mihomo, o options, baseline
 	default:
 		record(id, expected, fmt.Sprintf("mode=%s: %s", mode, out), verdict(mode == engine.IPv6Tunnel && strings.Contains(out, "http=true")))
 	}
+
+	reliabilityChecks(ctx, o)
 }
 
 // platformExtras: the UDP-refusal session and the hard-kill session, both optional because

@@ -553,7 +553,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 3 服务与安全 IPC | DONE（PR #22；CI 全绿；Windows 10 家庭版 22H2 真机：e2e 32 例 0 FAIL + 人工 UAC 取消/批准通过；Windows 11 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
 | 4 UI 与账号节点 | DONE（PR #23；CI 10 项全绿；Windows 10 家庭版真机：安装服务、登录、记住密码、选线、连接、上网、DNS、WebRTC 正常（用户报告）；Windows 11 NOT_RUN） | 第 5 轮；A02 的设备上限/0 额度/到期、A04 的后台改动同步未逐项记录，第 5 轮继续核对 |
 | 5 TUN 与开发计量 | DONE（PR #24；CI 全绿；Windows 10 家庭版真机：B01 1× 逐单位精确、B02 丢 ACK 同批重试只扣一次、A04 改倍率/套餐到期/停用节点/额度耗尽均自动停连；0.5× 倍率、VLESS、受控 UDP、Windows 11 NOT_RUN） | 第 6 轮；若有 0.5× 线路补测 B01；client_reported 仍为开发计量 |
-| 6 可靠性与网络矩阵 | NOT_STARTED | 可恢复的 Windows x64 测试机、双栈/多网卡/浏览器环境 |
+| 6 可靠性与网络矩阵 | 代码与测试工具 DONE（PR 待合并；CI 结果见 PR）；**Windows 真机矩阵 NOT_RUN，待用户在测试机执行** | 用户在隔离测试机按 docs/windows-reliability.md 第 2 节跑 harness 与 reliability-check.ps1，结果回填本轮记录 |
 | 7 节点权威计量 | NOT_STARTED | 自控或合格供应商节点，真实 grant/TUN 联调 |
 | 8 签名安装发布 | NOT_STARTED | 签名身份、干净机、许可材料与所有硬门槛证据 |
 
@@ -741,6 +741,30 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   4) client_reported 节点仍是开发计量，不解除生产保护；硬杀前未确认尾账不能追回（第 7 轮 node_reported 解决）。
 下一位从哪里开始：第 6 轮（网络可靠性）。docs/windows-billing-acceptance.md 可随时重跑回归。
 回退与网络恢复方法：工具退出（含 Ctrl+C）时关闭隧道并结账；被硬杀时适配器/路由/DNS/过滤器随进程消失（第 2 轮 T09-kill）。
+```
+
+### 第 6 轮记录（2026-10-13，Claude）
+
+```text
+轮次 / 日期 / 执行者：第 6 轮 / 2026-10-13 / Claude (Sonnet 5.5)
+基线 commit / 已有未提交改动：0dc89f1（PR #24 合并点）；新 worktree worktree-windows-round6-reliability，工作区干净
+实际修改与契约变化（不含秘密）：
+  Core：clockWatch 增加“看门狗停摆 >10 s 即视为挂起”判据（Windows 的单调时钟被认为包含睡眠，原“墙钟 vs 单调钟”判据在 Windows 上
+  可能永不触发，休眠恢复后隧道不会被重新确认）；network.Signature 对 IPv6 只取 /64 前缀（隐私临时地址轮换不再造成长连接中途 network_changed）。
+  asterlink-tuntest：新增 T03-lan-dns（对每块网卡配置的 DNS 发 53 端口查询，必须被拦截/劫持）、T05-bind（绑定物理网卡源地址的套接字
+  不得直连；结果决定是否需要 WFP 策略）、T07-signature、--soak-seconds/--soak-interval（R03 长时采样，输出 soak.csv）。
+  scripts/windows/reliability-check.ps1（Kill Core/Gui/Service 与睡眠/休眠/断电后的 Verify）、soak-sampler.ps1（已安装产品的 8 小时采样）；
+  windows.yml 增加 PowerShell 语法检查与空闲 Verify 步骤。docs/windows-reliability.md（矩阵、决策、限制）。
+  未改后端、网站、共享契约、macOS 工程、C# 代码。未新增 WFP 策略（无 T05-bind 实测证据，决策规则见文档第 5 节）。
+结论性发现：round 2 的“主机名 tcp6 在隧道内失败”不是缺陷——固定内核在 fake-ip 且无 fake-ip-range6 时对所有 AAAA 返回空，应用走 A 记录经 IPv4；
+  IPv6 字面量仍按节点能力代理/快速拒绝。产品口径：暂不支持“仅 IPv6 的站点按域名访问”。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
+  macOS：native/core go test ./...（含新增挂起检测、签名、soak 判定、DNS 分类用例）通过；GOOS=windows go vet 通过。
+  Windows 真机（Windows 10/11）：全部 NOT_RUN；PowerShell 脚本在本机无法运行，仅由 CI 的 Windows runner 做语法检查与空闲 Verify。
+安装包版本 / OS、架构、Core、驱动版本 / 脱敏证据路径：内部渠道 0.1.0；Wintun 未变。无真机证据。
+未解决问题、复现方法与发布限制：docs/windows-reliability.md 第 4 节。20 次启停、10 次睡眠/网络切换、8 小时采样均未执行。
+下一位从哪里开始：真机跑 docs/windows-reliability.md 第 2 节的命令并回填；T05-bind 若 FAIL，按第 5 节做最小 WFP；通过后进入第 7 轮。
+回退与网络恢复方法：新增工具不改网络（harness 需 --allow-network-changes，退出即清理）；回退 = 删除 worktree 分支。
 ```
 
 ## 附录 A. 源码核验索引
