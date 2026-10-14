@@ -128,22 +128,48 @@ func Signature() string {
 }
 
 func signatureOf(name string) string {
-	parts := []string{name}
-	if i, err := net.InterfaceByName(name); err == nil {
-		if i.Flags&net.FlagUp == 0 {
-			return name + "|down"
-		}
-		addrs, _ := i.Addrs()
-		var list []string
-		for _, a := range addrs {
-			if p, err := netip.ParsePrefix(a.String()); err == nil && !p.Addr().IsLinkLocalUnicast() {
-				list = append(list, p.Addr().String())
-			}
-		}
-		sort.Strings(list)
-		parts = append(parts, list...)
+	i, err := net.InterfaceByName(name)
+	if err != nil {
+		return name
 	}
-	return strings.Join(parts, "|")
+	if i.Flags&net.FlagUp == 0 {
+		return name + "|down"
+	}
+	addrs, _ := i.Addrs()
+	var ips []netip.Addr
+	for _, a := range addrs {
+		if p, err := netip.ParsePrefix(a.String()); err == nil {
+			ips = append(ips, p.Addr())
+		}
+	}
+	return signatureFrom(name, ips)
+}
+
+// signatureFrom builds the signature from an adapter's addresses. IPv4 addresses count
+// individually. IPv6 counts only as the /64 prefix: SLAAC privacy (temporary) addresses
+// are regenerated about daily and a DHCPv6/RA renewal may add or drop addresses with the
+// same prefix; keying on the full address would disconnect a healthy tunnel in the
+// middle of a long session ("network_changed") although nothing moved. A different
+// prefix is a different network and still changes the signature.
+func signatureFrom(name string, addrs []netip.Addr) string {
+	seen := map[string]bool{}
+	var list []string
+	for _, a := range addrs {
+		a = a.Unmap()
+		if a.IsLinkLocalUnicast() || a.IsLoopback() || a.IsUnspecified() {
+			continue
+		}
+		key := a.String()
+		if a.Is6() {
+			key = netip.PrefixFrom(a, 64).Masked().String()
+		}
+		if !seen[key] {
+			seen[key] = true
+			list = append(list, key)
+		}
+	}
+	sort.Strings(list)
+	return strings.Join(append([]string{name}, list...), "|")
 }
 
 // Conflicts lists other VPNs/tunnels that already own the routes. The first release

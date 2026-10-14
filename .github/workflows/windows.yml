@@ -189,6 +189,27 @@ jobs:
           Get-FileHash $core, $harness -Algorithm SHA256 | Format-Table Hash, Path -AutoSize
           exit 0
 
+      - name: PowerShell test scripts parse (syntax) and the recovery verifier runs its post-condition checks on an idle runner
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem scripts/windows -Filter *.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors)
+            if ($errors.Count -gt 0) { $bad++; $errors | ForEach-Object { Write-Host "$($f.Name): $($_.Message) (line $($_.Extent.StartLineNumber))" } }
+            else { Write-Host "parsed $($f.Name)" }
+          }
+          if ($bad -gt 0) { throw "$bad script(s) have syntax errors" }
+          # Verify mode changes nothing. On the runner nothing is connected, so the tunnel post-conditions must
+          # hold; the runner's own resolver reachability is environment-dependent and is reported, not gated.
+          New-Item -ItemType Directory -Force artifacts/windows | Out-Null
+          & scripts/windows/reliability-check.ps1 -Mode Verify -Report artifacts/windows/reliability-verify.json -WaitSeconds 5
+          Write-Host "reliability-check exit code: $LASTEXITCODE"
+          $r = Get-Content artifacts/windows/reliability-verify.json -Raw | ConvertFrom-Json
+          $hard = @($r.results | Where-Object { $_.status -eq 'FAIL' -and $_.case_id -in @('T09-tunnel-closed','T08-no-auto-reconnect','T01-noproxy') })
+          if ($hard.Count -gt 0) { throw "post-condition failed on an idle runner: $($hard.case_id -join ', ')" }
+          exit 0
+
       - name: Service suite - Windows kernel tests, internal stage, real install, GUI to Service to Core, attacks
         run: py -3 scripts/test-native-windows.py --suite service --allow-service-install --out artifacts/windows/service --report artifacts/windows/service-suite.json
 
@@ -218,6 +239,7 @@ jobs:
             artifacts/windows/billing-suite.json
             artifacts/windows/service-suite.json
             artifacts/windows/service/e2e-service.json
+            artifacts/windows/reliability-verify.json
             artifacts/windows/wintun-signature.txt
             artifacts/windows/test-results/*.trx
 

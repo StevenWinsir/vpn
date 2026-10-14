@@ -240,7 +240,12 @@ func TestAuthorizationLossStopsTheTunnel(t *testing.T) {
 		h.f.mu.Lock()
 		h.f.trafficErr = &apiError{503, "client_service_unavailable"}
 		h.f.mu.Unlock()
-		h.clock.pass(91 * time.Second)
+		// Time must advance in watchdog-sized steps: one 91 s leap is, by design, a
+		// suspended machine (stallLimit) and stops with a different reason.
+		for range 11 {
+			h.clock.pass(9 * time.Second)
+			time.Sleep(60 * time.Millisecond)
+		}
 		snap := h.waitStopped(t, "lease_expired")
 		if snap.State == StateConnected {
 			t.Fatal("still connected on an expired lease")
@@ -316,6 +321,12 @@ func TestLifecycleGuards(t *testing.T) {
 		h := newHarness(t, 1000)
 		h.connect(t)
 		h.clock.sleep(60 * time.Second)
+		h.waitStopped(t, "lifecycle_reconfirmation_required")
+	})
+	t.Run("resume when the monotonic clock counts sleep (Windows)", func(t *testing.T) {
+		h := newHarness(t, 1000)
+		h.connect(t)
+		h.clock.pass(45 * time.Second) // wall and monotonic both advance across the suspend
 		h.waitStopped(t, "lifecycle_reconfirmation_required")
 	})
 	t.Run("clock set back", func(t *testing.T) {
@@ -460,5 +471,22 @@ func TestClockWatch(t *testing.T) {
 	}
 	if !w.jumped(wall.Add(-100*time.Second), 3*time.Second) {
 		t.Fatal("clock set back not detected")
+	}
+}
+
+// Windows: the monotonic clock keeps counting through sleep, so wall and monotonic move
+// together. The stalled watchdog must still be recognised.
+func TestClockWatchDetectsSuspendWhenMonotonicCountsSleep(t *testing.T) {
+	var w clockWatch
+	wall := time.Unix(1_700_000_000, 0)
+	w.jumped(wall, 0)
+	if w.jumped(wall.Add(3*time.Second), 3*time.Second) {
+		t.Fatal("a slow tick (3 s) must not be treated as a suspend")
+	}
+	if !w.jumped(wall.Add(3*time.Second+30*time.Minute), 3*time.Second+30*time.Minute) {
+		t.Fatal("a 30 minute stall with a sleep-inclusive monotonic clock went unnoticed")
+	}
+	if w.jumped(wall.Add(3*time.Second+30*time.Minute+time.Second), 3*time.Second+30*time.Minute+time.Second) {
+		t.Fatal("the watch must re-arm after reporting")
 	}
 }

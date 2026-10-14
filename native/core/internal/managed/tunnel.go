@@ -368,21 +368,37 @@ func (m *Manager) requestStop(gen uint64, reason string) {
 	}()
 }
 
-// clockWatch detects sleep and clock changes. Go's monotonic clock pauses while the
-// machine sleeps, the wall clock does not, so their divergence is the signal. Either
-// direction (a long sleep, a clock set back) invalidates the lease reasoning.
+// clockWatch detects sleep and clock changes. Two independent signals:
+//   - the wall clock and the monotonic clock diverge (macOS/Linux: the monotonic clock
+//     pauses while the machine sleeps; any platform: the wall clock was set);
+//   - the watchdog itself was not scheduled for far longer than its tick (stallLimit).
+//     This one does not depend on any clock's sleep semantics. It exists because Go's
+//     monotonic clock on Windows is believed to keep counting through sleep and
+//     hibernation (it is based on the system interrupt time), so the first signal alone
+//     may never fire there and a resumed machine would keep a tunnel
+//     whose network and authorization were never re-checked (handoff plan 7.4, T08).
+//
+// Either direction (a long sleep, a clock set back) invalidates the lease reasoning.
 type clockWatch struct {
 	wall time.Time
 	mono time.Duration
 	set  bool
 }
 
-const clockJumpLimit = 5 * time.Second
+const (
+	clockJumpLimit = 5 * time.Second
+	// stallLimit is far above the 1 s watchdog tick plus scheduler/GC noise and far
+	// below any real sleep a user would notice.
+	stallLimit = 10 * time.Second
+)
 
 func (c *clockWatch) jumped(wall time.Time, mono time.Duration) bool {
 	defer func() { c.wall, c.mono, c.set = wall, mono, true }()
 	if !c.set {
 		return false
+	}
+	if wall.Sub(c.wall) > stallLimit {
+		return true
 	}
 	diff := wall.Sub(c.wall) - (mono - c.mono)
 	return diff > clockJumpLimit || diff < -clockJumpLimit
