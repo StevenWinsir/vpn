@@ -121,6 +121,21 @@ jobs:
           $json = Get-Content $report -Raw | ConvertFrom-Json
           if (-not $json.window.rendered) { throw 'window was not rendered' }
           if (-not $json.platform.is_native_windows_x64) { throw 'GUI did not run as native Windows x64' }
+          foreach ($page in 'login', 'connect', 'nodes', 'settings') {
+            if (-not $json.pages.$page) { throw "page '$page' did not load and lay out" }
+          }
+
+      - name: GUI design preview - every page, empty state, error, dark and 200 percent rendered to PNG (scripted Core, no service)
+        shell: pwsh
+        run: |
+          $dir = 'artifacts/windows/ui-preview'
+          $p = Start-Process -FilePath 'artifacts/windows/publish/app/AsterLink.exe' -ArgumentList '--preview', $dir -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'GUI preview did not finish within 120 s' }
+          if (Test-Path "$dir/preview-error.txt") { Get-Content "$dir/preview-error.txt"; throw 'GUI preview failed' }
+          if ($p.ExitCode -ne 0) { throw "GUI preview failed with exit code $($p.ExitCode)" }
+          $index = Get-Content "$dir/index.json" -Raw | ConvertFrom-Json
+          "$($index.count) pages rendered"
+          if ($index.count -lt 20) { throw 'GUI preview rendered fewer pages than expected' }
 
       - name: Service binary starts and reports (probe, not installed as a service)
         shell: pwsh
@@ -196,6 +211,15 @@ jobs:
             artifacts/windows/service/e2e-service.json
             artifacts/windows/wintun-signature.txt
             artifacts/windows/test-results/*.trx
+
+      - name: Retain the GUI design preview (PNG per page and state)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ui-preview
+          if-no-files-found: ignore
+          retention-days: 14
+          path: artifacts/windows/ui-preview
 
       - name: Retain the internal stage and e2e scripts for the authorised test machine
         if: always()
