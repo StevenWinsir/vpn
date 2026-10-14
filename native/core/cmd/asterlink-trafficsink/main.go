@@ -104,7 +104,7 @@ func main() {
 	flag.Parse()
 	token := os.Getenv("ASTERLINK_SINK_TOKEN")
 	if len(token) < 16 {
-		fmt.Fprintln(os.Stderr, "set ASTERLINK_SINK_TOKEN to a random secret of at least 16 characters")
+		fmt.Fprintln(os.Stderr, "the sink needs its access environment variable (see the file header): a random value of at least 16 characters")
 		os.Exit(3)
 	}
 	server := &http.Server{Addr: *listen, Handler: newSink(token, *maxMiB<<20).handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
