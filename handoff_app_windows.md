@@ -552,7 +552,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 2 平台与 TUN PoC | DONE（PR #21：CI 全绿；Windows 10 家庭版 22H2 真机 SS 实传 0 FAIL；Windows 11 NOT_RUN） | 见第 2 轮记录的未解决项 |
 | 3 服务与安全 IPC | DONE（PR #22；CI 全绿；Windows 10 家庭版 22H2 真机：e2e 32 例 0 FAIL + 人工 UAC 取消/批准通过；Windows 11 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
 | 4 UI 与账号节点 | DONE（PR #23；CI 10 项全绿；Windows 10 家庭版真机：安装服务、登录、记住密码、选线、连接、上网、DNS、WebRTC 正常（用户报告）；Windows 11 NOT_RUN） | 第 5 轮；A02 的设备上限/0 额度/到期、A04 的后台改动同步未逐项记录，第 5 轮继续核对 |
-| 5 TUN 与开发计量 | 真机大部分通过（PR #24；Windows 10 家庭版：B01 1× 精确、B02 丢 ACK 重试只扣一次、A04 改倍率/套餐到期/停用节点均自动停连）；额度耗尽停连与 0.5× 倍率尚无真机证据 | 重跑 watch-4（余额约 20 MB、240 秒）；有 0.5× 线路时再测 B01；VLESS 与受控 UDP 仍待提供 |
+| 5 TUN 与开发计量 | DONE（PR #24；CI 全绿；Windows 10 家庭版真机：B01 1× 逐单位精确、B02 丢 ACK 同批重试只扣一次、A04 改倍率/套餐到期/停用节点/额度耗尽均自动停连；0.5× 倍率、VLESS、受控 UDP、Windows 11 NOT_RUN） | 第 6 轮；若有 0.5× 线路补测 B01；client_reported 仍为开发计量 |
 | 6 可靠性与网络矩阵 | NOT_STARTED | 可恢复的 Windows x64 测试机、双栈/多网卡/浏览器环境 |
 | 7 节点权威计量 | NOT_STARTED | 自控或合格供应商节点，真实 grant/TUN 联调 |
 | 8 签名安装发布 | NOT_STARTED | 签名身份、干净机、许可材料与所有硬门槛证据 |
@@ -730,13 +730,16 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
       已有中文提示）属稳定码，已加入期望并修正文档，隧道行为本身正确。
     watch-4（额度耗尽）：FAIL，3 分钟后仍连接。该线路约 0.4 MiB/s，余额 72 MB 3 分钟内几乎用不完；当时 harness 不记录已驱动字节数，
       不能证明产品缺陷也不能证明正常。已给 harness 加上进度与诊断，待重跑。
+    watch-4 重测（余额约 78 MB，--watch-drive）：驱动约 15 MB 后进度正常递减，1 分 10 秒时自动停连，reason=quota_exhausted，
+      尾账已结清（pending=false），重连被拒。注意：停连时本地预估余额仍约 58 MB，说明触发者是服务器侧裁决（可能期间改了后台额度或同账号
+      有其它用量），而非本地预估耗尽；两条路径的原因码相同，本地预估路径由 managed 单元测试覆盖，真机未单独区分。
     未测：0.5× 倍率（本账号 3 条线路倍率相同）。Windows 11：NOT_RUN。
 未解决问题、复现方法与发布限制：
   1) 真机报告尚无；B01 误差口径：计数器=经节点的负载含 HTTP 帧，与文件正文不相等，报告会写出实测差异。
   2) 受控 UDP 目标与 VLESS(TLS/Reality) 组合未验证；SS 仍是唯一有真机证据的协议。
   3) 工具以 sink 令牌 + 测试账号密码环境变量运行；测试账号将消耗套餐额度；sink 须放在测试机之外、节点可达的服务器，用完即停。
   4) client_reported 节点仍是开发计量，不解除生产保护；硬杀前未确认尾账不能追回（第 7 轮 node_reported 解决）。
-下一位从哪里开始：在 Windows 10 真机按 docs/windows-billing-acceptance.md 运行并回传 billing-report.json；失败项在本轮修复；通过后把本轮标 DONE，进入第 6 轮。
+下一位从哪里开始：第 6 轮（网络可靠性）。docs/windows-billing-acceptance.md 可随时重跑回归。
 回退与网络恢复方法：工具退出（含 Ctrl+C）时关闭隧道并结账；被硬杀时适配器/路由/DNS/过滤器随进程消失（第 2 轮 T09-kill）。
 ```
 
