@@ -32,6 +32,14 @@ public sealed class ServicePanel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    /// <summary>Raised when the service turns from not-ready to ready (after install, repair or start), so the app can carry on with start-up by itself.</summary>
+    public event Action? BecameReady;
+
+    /// <summary>True while the GUI's own pipe session is live. A second connection would make the service end that session, so no probe is made then.</summary>
+    public Func<bool>? SessionActive { get; set; }
+
+    public bool IsReady { get; private set; }
+
     public string State { get => state; private set => Set(ref state, value); }
     public string Message { get => message; private set => Set(ref message, value); }
     public string Detail { get => detail; private set => Set(ref detail, value); }
@@ -48,14 +56,42 @@ public sealed class ServicePanel : INotifyPropertyChanged
 
     public async Task RefreshAsync()
     {
+        if (SessionActive?.Invoke() == true)
+        {
+            ApplyInUse();
+            return;
+        }
         Busy = true;
         try { Apply(await ServiceDiagnostics.ProbeAsync(layout).ConfigureAwait(true)); }
         finally { Busy = false; }
     }
 
+    private void ApplyInUse()
+    {
+        action = RecommendedAction.None;
+        SetReady(true);
+        State = "特权服务就绪";
+        Message = "服务正在为当前登录使用。修复或重新安装需要先退出登录。";
+        Detail = "";
+        ActionLabel = "";
+        Raise(nameof(HasAction));
+        ActionCommand.Raise();
+    }
+
+    private void SetReady(bool ready)
+    {
+        var was = IsReady;
+        IsReady = ready;
+        if (was != ready) Raise(nameof(IsReady));
+        if (ready && !was) BecameReady?.Invoke();
+    }
+
+    internal void ApplyPreview(ServiceProbeResult result) => Apply(result);
+
     private void Apply(ServiceProbeResult result)
     {
         action = result.Action;
+        SetReady(result.Connected && result.Health == ServiceHealthState.Ready);
         State = result.Health switch
         {
             ServiceHealthState.Ready => "特权服务就绪",

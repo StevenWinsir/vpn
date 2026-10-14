@@ -7,6 +7,8 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
+    <!-- WinForms only for NotifyIcon (the notification-area icon); WPF has none of its own. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>AsterLink.App</RootNamespace>
     <AssemblyName>AsterLink</AssemblyName>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -18,6 +20,13 @@
     <!-- The GUI always runs as the interactive user (asInvoker); privilege lives in the service. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Both UI stacks define Application, Button, MessageBox...: keep them out of the implicit usings so every name means the WPF one. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Net.Http" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\AsterLink.Shared\AsterLink.Shared.csproj" />

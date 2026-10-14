@@ -551,7 +551,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 1 环境与工程 | DONE（Windows Server 2025 CI 通过；Windows 10/11 客户端实机 NOT_RUN） | 第 2 轮先在用户的 Windows 10 家庭版 22H2 真机做 TUN PoC；Windows 11 后补 |
 | 2 平台与 TUN PoC | DONE（PR #21：CI 全绿；Windows 10 家庭版 22H2 真机 SS 实传 0 FAIL；Windows 11 NOT_RUN） | 见第 2 轮记录的未解决项 |
 | 3 服务与安全 IPC | DONE（PR #22；CI 全绿；Windows 10 家庭版 22H2 真机：e2e 32 例 0 FAIL + 人工 UAC 取消/批准通过；Windows 11 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
-| 4 UI 与账号节点 | NOT_STARTED | 复用 Snapshot 和登录契约，测试账号具备明确的测试权益 |
+| 4 UI 与账号节点 | DONE（PR #23；CI 10 项全绿；Windows 10 家庭版真机：安装服务、登录、记住密码、选线、连接、上网、DNS、WebRTC 正常（用户报告）；Windows 11 NOT_RUN） | 第 5 轮；A02 的设备上限/0 额度/到期、A04 的后台改动同步未逐项记录，第 5 轮继续核对 |
 | 5 TUN 与开发计量 | NOT_STARTED | 真实可用 SS/VLESS 及受控上传/下载/UDP 目标 |
 | 6 可靠性与网络矩阵 | NOT_STARTED | 可恢复的 Windows x64 测试机、双栈/多网卡/浏览器环境 |
 | 7 节点权威计量 | NOT_STARTED | 自控或合格供应商节点，真实 grant/TUN 联调 |
@@ -672,6 +672,33 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   CommandPolicy 已强制）；Snapshot 与 action_error 的处理见 IpcJson.ParseSnapshotReply。
 回退与网络恢复方法：本轮不触碰路由/DNS/网卡。回退 = 以管理员运行 stage 目录中的 `AsterLink.Service.exe uninstall`
   （或 e2e 脚本的 finally 已自动卸载）；PR 未合并时删除 worktree 分支即可。
+```
+
+### 第 4 轮记录（2026-10-13，Claude）
+
+```text
+轮次 / 日期 / 执行者：第 4 轮 / 2026-10-13 / Claude (Sonnet 5.5)
+基线 commit / 已有未提交改动：90157db（PR #22 合并点）；新 worktree worktree-windows-round4-ui-login-sync，工作区干净
+实际修改与契约变化（不含秘密）：
+  AsterLink.Shared/Client（SessionController、CoreClient、ConnectionView/NodeList/ErrorText/DiagnosticsReport、Formatting、
+  凭据/偏好/设备 ID 抽象与文件实现）；AsterLink.Platform（CredentialManagerStore、ServiceCoreTransport）；
+  AsterLink.App 重写为登录页 + 连接/线路/账户与设置三页 + 托盘 + 单实例 + 浅/深色主题 + --preview 设计预览；
+  --self-test 增加四页加载检查；windows.yml 增加预览步骤与 windows-ui-preview 产物；docs/windows-client-ui.md。
+  未改 Go Core、后端、网站、共享契约、macOS 工程。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
+  macOS：dotnet build 全解决方案 Debug/Release 0 警告；dotnet test AsterLink.Tests = 303 PASS（原 218 + 新 85）；
+  scripts/test-native-windows.py --suite foundation = 9 PASS。WPF 界面在 macOS 上只能编译，不能运行。
+  Windows CI 与预览截图：见 PR 的 Windows client CI 运行。
+  Windows 10 家庭版 22H2 真机（用户报告，无逐项记录/截图）：首次安装服务、登录、记住密码、选择节点、连接成功、正常上网、DNS 与 WebRTC 正常。
+  未逐项验证：设备上限、0 额度、到期、后台改名/倍率/停用/删除的同步、Windows 11 —— NOT_RUN。
+安装包版本 / OS、架构、Core、驱动版本 / 脱敏证据路径：内部渠道 stage 0.1.0（未签名）；Core、Wintun 未变。
+未解决问题、复现方法与发布限制：
+  1) “连接”已接到真实 Core 与第 2 轮 TUN 引擎，真机点击会真的创建 TUN（路由/DNS 被修改）；计量闭环属第 5 轮。
+  2) 取消连接 = 结束会话（需重新登录），因为命令已在 Core 内。
+  3) A01 与主路径已由真机确认；A02/A04 的边界场景、键盘与 125%/150% DPI 仍待测。
+  4) CredentialManagerStore 使用 CRED_PERSIST_LOCAL_MACHINE（本机、不漫游、按 Windows 用户隔离）；卸载时清除各用户保存密码仍是第 8 轮。
+下一位从哪里开始：真机跑 A01–A04（docs/windows-client-ui.md 第 5 节）；通过后进入第 5 轮（TUN 接入共享状态机与唯一 Meter）。
+回退与网络恢复方法：本轮 GUI 不修改网络；真机若点了“连接”，退出 AsterLink 即停止 Core，路由/DNS 由系统随 Core 退出清除（第 2 轮 T09-kill 已证实）。
 ```
 
 ## 附录 A. 源码核验索引

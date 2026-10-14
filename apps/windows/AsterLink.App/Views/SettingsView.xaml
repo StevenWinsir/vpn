@@ -1,0 +1,93 @@
+<UserControl x:Class="AsterLink.App.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel>
+        <TextBlock Text="账户与设置" Style="{StaticResource PageTitle}" />
+
+        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+            <StackPanel>
+                <TextBlock Text="账户" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{Binding AccountSummary}" Margin="0,8,0,0" AutomationProperties.AutomationId="AccountSummary" />
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <Button Content="购买 / 续费套餐" Style="{StaticResource PrimaryButton}" Command="{Binding OpenPlansCommand}" />
+                    <Button Content="控制台" Margin="8,0,0,0" Command="{Binding OpenDashboardCommand}" />
+                    <Button Content="订单" Margin="8,0,0,0" Command="{Binding OpenOrdersCommand}" />
+                </StackPanel>
+                <TextBlock Text="支付、套餐和订单都在网站完成，客户端不处理付款。" Style="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+            <StackPanel>
+                <TextBlock Text="外观" Style="{StaticResource SectionTitle}" />
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <RadioButton Content="跟随系统" Style="{StaticResource Segment}" GroupName="theme" IsChecked="{Binding ThemeSystem}" />
+                    <RadioButton Content="浅色" Style="{StaticResource Segment}" GroupName="theme" IsChecked="{Binding ThemeLight}" />
+                    <RadioButton Content="深色" Style="{StaticResource Segment}" GroupName="theme" IsChecked="{Binding ThemeDark}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+            <StackPanel DataContext="{Binding Service}">
+                <TextBlock Text="特权服务" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{Binding State}" FontWeight="SemiBold" Margin="0,8,0,0" AutomationProperties.AutomationId="ServiceState" />
+                <TextBlock Text="{Binding Message}" Margin="0,6,0,0" AutomationProperties.AutomationId="ServiceMessage" />
+                <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}" Margin="0,6,0,0" AutomationProperties.AutomationId="ServiceDetail" />
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <Button Content="{Binding ActionLabel}" Command="{Binding ActionCommand}" Style="{StaticResource PrimaryButton}"
+                            Visibility="{Binding HasAction, Converter={StaticResource BoolToVisibility}}"
+                            AutomationProperties.AutomationId="ServiceAction" />
+                    <Button Content="重新检测" Command="{Binding RefreshCommand}" Margin="8,0,0,0" AutomationProperties.AutomationId="ServiceRefresh" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+            <StackPanel>
+                <TextBlock Text="版本与诊断" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{Binding VersionText}" Margin="0,8,0,0" AutomationProperties.AutomationId="Version" />
+                <TextBlock Text="{Binding ServerText}" Style="{StaticResource Muted}" />
+                <ItemsControl ItemsSource="{Binding Facts}" Margin="0,8,0,0" AutomationProperties.AutomationId="Facts">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,2,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Label}" Style="{StaticResource Muted}" />
+                                <TextBlock Grid.Column="1" Text="{Binding Value}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <ItemsControl ItemsSource="{Binding Checks}" Margin="0,8,0,0" AutomationProperties.AutomationId="Checks">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                <!-- Status is text as well as colour, never colour alone. -->
+                                <TextBlock Text="{Binding Mark}" Foreground="{Binding Brush}" FontWeight="SemiBold" Width="48" />
+                                <TextBlock Text="{Binding Name}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Content="复制脱敏诊断信息" Command="{Binding CopyDiagnosticsCommand}" HorizontalAlignment="Left" Margin="0,12,0,0"
+                        AutomationProperties.AutomationId="CopyDiagnostics" />
+                <TextBlock Text="诊断信息不含密码、令牌、线路地址或配置内容。" Style="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+            <StackPanel>
+                <TextBlock Text="会话" Style="{StaticResource SectionTitle}" />
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <Button Content="退出登录并清除已保存的密码" Command="{Binding SignOutCommand}" AutomationProperties.AutomationId="SignOut" />
+                    <Button Content="退出 AsterLink（停止代理）" Margin="8,0,0,0" Command="{Binding ExitCommand}" AutomationProperties.AutomationId="Exit" />
+                </StackPanel>
+                <TextBlock Text="关闭窗口只会隐藏到通知区域，连接保持；“退出”才会断开并结算流量。" Style="{StaticResource Muted}" FontSize="12" Margin="0,8,0,0" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>
