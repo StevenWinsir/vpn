@@ -552,7 +552,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 2 平台与 TUN PoC | DONE（PR #21：CI 全绿；Windows 10 家庭版 22H2 真机 SS 实传 0 FAIL；Windows 11 NOT_RUN） | 见第 2 轮记录的未解决项 |
 | 3 服务与安全 IPC | DONE（PR #22；CI 全绿；Windows 10 家庭版 22H2 真机：e2e 32 例 0 FAIL + 人工 UAC 取消/批准通过；Windows 11 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
 | 4 UI 与账号节点 | DONE（PR #23；CI 10 项全绿；Windows 10 家庭版真机：安装服务、登录、记住密码、选线、连接、上网、DNS、WebRTC 正常（用户报告）；Windows 11 NOT_RUN） | 第 5 轮；A02 的设备上限/0 额度/到期、A04 的后台改动同步未逐项记录，第 5 轮继续核对 |
-| 5 TUN 与开发计量 | NOT_STARTED | 真实可用 SS/VLESS 及受控上传/下载/UDP 目标 |
+| 5 TUN 与开发计量 | CODE DONE，真机 NOT_RUN（本 PR：计量验收工具 + CI；Windows 10 真机的 `asterlink-billtest` 报告待回传，之前不得标 DONE） | 在断开公司 VPN 的 Windows 10 真机按 docs/windows-billing-acceptance.md 运行 B01/B02/A04；VLESS 组合与受控 UDP 目标仍待提供 |
 | 6 可靠性与网络矩阵 | NOT_STARTED | 可恢复的 Windows x64 测试机、双栈/多网卡/浏览器环境 |
 | 7 节点权威计量 | NOT_STARTED | 自控或合格供应商节点，真实 grant/TUN 联调 |
 | 8 签名安装发布 | NOT_STARTED | 签名身份、干净机、许可材料与所有硬门槛证据 |
@@ -699,6 +699,36 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   4) CredentialManagerStore 使用 CRED_PERSIST_LOCAL_MACHINE（本机、不漫游、按 Windows 用户隔离）；卸载时清除各用户保存密码仍是第 8 轮。
 下一位从哪里开始：真机跑 A01–A04（docs/windows-client-ui.md 第 5 节）；通过后进入第 5 轮（TUN 接入共享状态机与唯一 Meter）。
 回退与网络恢复方法：本轮 GUI 不修改网络；真机若点了“连接”，退出 AsterLink 即停止 Core，路由/DNS 由系统随 Core 退出清除（第 2 轮 T09-kill 已证实）。
+```
+
+### 第 5 轮记录（2026-10-13，Claude）
+
+```text
+轮次 / 日期 / 执行者：第 5 轮 / 2026-10-13 / Claude (Sonnet 5.5)
+基线 commit / 已有未提交改动：8c9d304（PR #23 合并点）；新 worktree worktree-windows-round5-tun-metering，工作区干净
+核查结论（重要）：TUN→共享状态机→唯一 Meter 在 Core 里早已是同一条路径（managed.Manager + engine.Mihomo + meter.Meter，macOS 与 Windows 共用；
+  第 4 轮 GUI 经 Service/IPC 调用的就是它）。GUI 已展示速率、曲线、确认/估算余额与 pending。因此本轮没有再造第二套计量，
+  缺口是“真实引擎对真实账本”的证据：tuntest 的 B-COUNT 一直 BLOCKED，倍率/ACK 丢失/管理员改动只有假引擎+假 API 的测试。
+实际修改与契约变化（不含秘密）：
+  新增 native/core/cmd/asterlink-trafficsink（受控目标：精确长度下载/上传，令牌常量时间比较，计数）；
+  新增 native/core/cmd/asterlink-billtest（用生产 Manager+Mihomo 对真实 API：登录→选线→连接→子进程受控传输→断开结账→
+  按公式逐单位核对；--ack-loss 在真实服务器上丢弃一次 /traffic 回包并核对同批重试且只扣一次；--watch-stop-seconds 观察管理员改节点/
+  套餐/额度后自动停连；Windows 下传输子进程使用 exe 副本以免被 TUN 防火墙豁免）；apiclient 增加 WrapTransport（仅验收工具使用）；
+  managed 增加“管理员删除/停用节点、套餐不再覆盖节点”时连接中停流并按旧倍率结清尾账的测试；
+  scripts/test-native-windows.py 增加 --suite billing；windows.yml 增加 billing 步骤并保留 billtest/sink 产物；
+  docs/windows-billing-acceptance.md。未改后端、网站、共享契约、macOS 工程、C# 代码。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
+  macOS：native/core go test ./... 全部通过；billing 单元部分（meter/managed/apiclient/billtest/trafficsink，-race）108 PASS 0 FAIL；
+  windows/amd64 PE 构建（core/tuntest/billtest/trafficsink）与 go vet 通过；billing.live = BLOCKED（需要 VPN-free 的提权 Windows 主机）。
+  本机公司 VPN 在线，未尝试真实 TUN；未连接远端数据库、未消耗任何账号额度。Windows CI 结果见 PR。
+  Windows 10 真机：NOT_RUN（B01/B02/A04 全部待跑）。Windows 11：NOT_RUN。
+未解决问题、复现方法与发布限制：
+  1) 真机报告尚无；B01 误差口径：计数器=经节点的负载含 HTTP 帧，与文件正文不相等，报告会写出实测差异。
+  2) 受控 UDP 目标与 VLESS(TLS/Reality) 组合未验证；SS 仍是唯一有真机证据的协议。
+  3) 工具以 sink 令牌 + 测试账号密码环境变量运行；测试账号将消耗套餐额度；sink 须放在测试机之外、节点可达的服务器，用完即停。
+  4) client_reported 节点仍是开发计量，不解除生产保护；硬杀前未确认尾账不能追回（第 7 轮 node_reported 解决）。
+下一位从哪里开始：在 Windows 10 真机按 docs/windows-billing-acceptance.md 运行并回传 billing-report.json；失败项在本轮修复；通过后把本轮标 DONE，进入第 6 轮。
+回退与网络恢复方法：工具退出（含 Ctrl+C）时关闭隧道并结账；被硬杀时适配器/路由/DNS/过滤器随进程消失（第 2 轮 T09-kill）。
 ```
 
 ## 附录 A. 源码核验索引
