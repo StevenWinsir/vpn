@@ -553,7 +553,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 3 服务与安全 IPC | DONE（PR #22；CI 全绿；Windows 10 家庭版 22H2 真机：e2e 32 例 0 FAIL + 人工 UAC 取消/批准通过；Windows 11 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
 | 4 UI 与账号节点 | DONE（PR #23；CI 10 项全绿；Windows 10 家庭版真机：安装服务、登录、记住密码、选线、连接、上网、DNS、WebRTC 正常（用户报告）；Windows 11 NOT_RUN） | 第 5 轮；A02 的设备上限/0 额度/到期、A04 的后台改动同步未逐项记录，第 5 轮继续核对 |
 | 5 TUN 与开发计量 | DONE（PR #24；CI 全绿；Windows 10 家庭版真机：B01 1× 逐单位精确、B02 丢 ACK 同批重试只扣一次、A04 改倍率/套餐到期/停用节点/额度耗尽均自动停连；0.5× 倍率、VLESS、受控 UDP、Windows 11 NOT_RUN） | 第 6 轮；若有 0.5× 线路补测 B01；client_reported 仍为开发计量 |
-| 6 可靠性与网络矩阵 | 代码与测试工具 DONE（PR 待合并；CI 结果见 PR）；**Windows 真机矩阵 NOT_RUN，待用户在测试机执行** | 用户在隔离测试机按 docs/windows-reliability.md 第 2 节跑 harness 与 reliability-check.ps1，结果回填本轮记录 |
+| 6 可靠性与网络矩阵 | DONE（PR #25；CI 全绿；Windows 10 家庭版真机：harness 20 例 0 FAIL、T05-bind 通过（无需 WFP）、硬杀 Core/GUI/Service 恢复通过、一次睡眠恢复通过；**8 小时采样、休眠、10 次睡眠/切网、断电、浏览器页面、Windows 11 均 NOT_RUN**） | 第 7 轮；8 小时采样等可随时用 docs/windows-reliability.md 补测 |
 | 7 节点权威计量 | NOT_STARTED | 自控或合格供应商节点，真实 grant/TUN 联调 |
 | 8 签名安装发布 | NOT_STARTED | 签名身份、干净机、许可材料与所有硬门槛证据 |
 
@@ -760,7 +760,13 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   IPv6 字面量仍按节点能力代理/快速拒绝。产品口径：暂不支持“仅 IPv6 的站点按域名访问”。
 执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
   macOS：native/core go test ./...（含新增挂起检测、签名、soak 判定、DNS 分类用例）通过；GOOS=windows go vet 通过。
-  Windows 真机（Windows 10/11）：全部 NOT_RUN；PowerShell 脚本在本机无法运行，仅由 CI 的 Windows runner 做语法检查与空闲 Verify。
+  Windows 10 家庭版 22H2（build 19045，用户 2026-10-14 运行，公司 VPN 已断开，节点 SS udp:true）：harness --cycles 20 --udp-reject-test --kill-test
+  = 20 例 0 FAIL 1 BLOCKED（B-COUNT 未提供下载地址）；新增 T03-lan-dns（1 个解析器被拦截）、T05-bind（绑定物理网卡地址的套接字被阻断，
+  本机无需 WFP）、T07-signature 均 PASS；T-CYCLES 20 次 goroutine 12->31、句柄 460->460。reliability-check：Kill Core/Gui/Service 各 PASS
+  （无孤儿 Core、适配器与路由消失、DNS 与直连恢复、Service 自动回到 Running、不自动重连）；一次睡眠恢复后 Verify PASS。
+  未执行：Windows 11、8 小时采样、休眠、10 次睡眠/切网、有线/Wi-Fi 切换、断电、浏览器 DoH/WebRTC 页面（均 NOT_RUN）。
+  睡眠只验证了结束状态，没有记录窗口是否出现“系统休眠”提示，因此不能证明是新的停摆检测而不是网络签名检查关闭了隧道。
+  观察：硬杀 Core 后下一次启动出现一次 “create adapter: Cannot create a file when that file already exists [retrying 1/3]”，重试成功、无残留。
 安装包版本 / OS、架构、Core、驱动版本 / 脱敏证据路径：内部渠道 0.1.0；Wintun 未变。无真机证据。
 未解决问题、复现方法与发布限制：docs/windows-reliability.md 第 4 节。20 次启停、10 次睡眠/网络切换、8 小时采样均未执行。
 下一位从哪里开始：真机跑 docs/windows-reliability.md 第 2 节的命令并回填；T05-bind 若 FAIL，按第 5 节做最小 WFP；通过后进入第 7 轮。
