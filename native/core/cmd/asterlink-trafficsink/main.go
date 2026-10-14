@@ -135,7 +135,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("UDP echo on %s (token-gated)", *udpListen)
+		log.Printf("UDP echo on %s (access-gated)", *udpListen)
 		go s.serveUDP(pc)
 	}
 	server := &http.Server{Addr: *listen, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
