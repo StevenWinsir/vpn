@@ -552,7 +552,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 2 平台与 TUN PoC | DONE（PR #21：CI 全绿；Windows 10 家庭版 22H2 真机 SS 实传 0 FAIL；Windows 11 NOT_RUN） | 见第 2 轮记录的未解决项 |
 | 3 服务与安全 IPC | DONE（PR #22；CI 全绿；Windows 10 家庭版 22H2 真机：e2e 32 例 0 FAIL + 人工 UAC 取消/批准通过；Windows 11 NOT_RUN） | 见第 3 轮记录的未解决项；第 4 轮可在此链路上做真实登录界面 |
 | 4 UI 与账号节点 | DONE（PR #23；CI 10 项全绿；Windows 10 家庭版真机：安装服务、登录、记住密码、选线、连接、上网、DNS、WebRTC 正常（用户报告）；Windows 11 NOT_RUN） | 第 5 轮；A02 的设备上限/0 额度/到期、A04 的后台改动同步未逐项记录，第 5 轮继续核对 |
-| 5 TUN 与开发计量 | CODE DONE，真机 NOT_RUN（本 PR：计量验收工具 + CI；Windows 10 真机的 `asterlink-billtest` 报告待回传，之前不得标 DONE） | 在断开公司 VPN 的 Windows 10 真机按 docs/windows-billing-acceptance.md 运行 B01/B02/A04；VLESS 组合与受控 UDP 目标仍待提供 |
+| 5 TUN 与开发计量 | 真机大部分通过（PR #24；Windows 10 家庭版：B01 1× 精确、B02 丢 ACK 重试只扣一次、A04 改倍率/套餐到期/停用节点均自动停连）；额度耗尽停连与 0.5× 倍率尚无真机证据 | 重跑 watch-4（余额约 20 MB、240 秒）；有 0.5× 线路时再测 B01；VLESS 与受控 UDP 仍待提供 |
 | 6 可靠性与网络矩阵 | NOT_STARTED | 可恢复的 Windows x64 测试机、双栈/多网卡/浏览器环境 |
 | 7 节点权威计量 | NOT_STARTED | 自控或合格供应商节点，真实 grant/TUN 联调 |
 | 8 签名安装发布 | NOT_STARTED | 签名身份、干净机、许可材料与所有硬门槛证据 |
@@ -721,7 +721,16 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   macOS：native/core go test ./... 全部通过；billing 单元部分（meter/managed/apiclient/billtest/trafficsink，-race）108 PASS 0 FAIL；
   windows/amd64 PE 构建（core/tuntest/billtest/trafficsink）与 go vet 通过；billing.live = BLOCKED（需要 VPN-free 的提权 Windows 主机）。
   本机公司 VPN 在线，未尝试真实 TUN；未连接远端数据库、未消耗任何账号额度。Windows CI 结果见 PR。
-  Windows 10 真机：NOT_RUN（B01/B02/A04 全部待跑）。Windows 11：NOT_RUN。
+  Windows 10 真机（用户运行 asterlink-billtest，build 19045，管理员，公司 VPN 已断开，节点 SS，账号“轻量计划”）：
+    bill-1：15 例 0 FAIL。B01 倍率 1000‰：上传 20 MiB + 下载 80 MiB，sink 确认收发精确一致；计数 上 21,368,464 + 下 84,151,298 =
+      105,519,762 字节 → 扣 105,519,762,000 单位，与公式逐单位一致，余额公式一致；计数比正文多 上 +1.89%、下 +0.32%（协议帧+背景流量）。
+      B02：真实服务器丢弃一次 /traffic 回包，重试批次 {sequence 11, 上 25,716,607, 下 92,734,490} 原样重发，只扣一次。
+    watch-2：改倍率 → 7 秒内停连（profile_changed），重连绑定新倍率 PASS。watch-3：套餐到期 → 25 秒内停连（subscription_expired），重连被拒 PASS。
+    watch-1：停用节点 → 约 9 秒内停连，重连被拒；FAIL 仅因期望码列表过窄，实际原因码 client_config_unavailable（服务器无可用配置，
+      已有中文提示）属稳定码，已加入期望并修正文档，隧道行为本身正确。
+    watch-4（额度耗尽）：FAIL，3 分钟后仍连接。该线路约 0.4 MiB/s，余额 72 MB 3 分钟内几乎用不完；当时 harness 不记录已驱动字节数，
+      不能证明产品缺陷也不能证明正常。已给 harness 加上进度与诊断，待重跑。
+    未测：0.5× 倍率（本账号 3 条线路倍率相同）。Windows 11：NOT_RUN。
 未解决问题、复现方法与发布限制：
   1) 真机报告尚无；B01 误差口径：计数器=经节点的负载含 HTTP 帧，与文件正文不相等，报告会写出实测差异。
   2) 受控 UDP 目标与 VLESS(TLS/Reality) 组合未验证；SS 仍是唯一有真机证据的协议。

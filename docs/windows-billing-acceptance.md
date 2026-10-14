@@ -88,10 +88,11 @@ Live admin-change check (A04/B03) — run once per cause and set the matching `-
 
 ```powershell
 # in another window you will, after CONNECTED is printed, disable the node in the admin panel
-.\asterlink-billtest.exe --allow-network-changes --output .\watch-node-off --watch-stop-seconds 120 --expect-stop profile_required,node_unavailable
+.\asterlink-billtest.exe --allow-network-changes --output .\watch-node-off --watch-stop-seconds 120 --expect-stop profile_required,node_unavailable,client_config_unavailable
 # edit the rate of the node             -> --expect-stop profile_changed   (and A04-rebind proves the new rate binds)
 # end/expire the plan                   -> --expect-stop subscription_expired
-# set a tiny quota, then:  --watch-drive --expect-stop quota_exhausted
+# set remaining quota to ~20 MB (a slow line moves ~0.4 MiB/s; round-5 run: 72 MB was not used up in 3 min), then:
+#   --watch-stop-seconds 240 --watch-drive --expect-stop quota_exhausted   (prints progress every 15 s)
 ```
 
 `--expect-stop` takes a comma-separated list of acceptable reason codes. Exit code `0` = all passed, `1` = a case failed, `3` = `BLOCKED` (nothing was proven). The report is

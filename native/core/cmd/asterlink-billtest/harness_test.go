@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -343,6 +344,36 @@ func TestWatchStopFailsWhenNothingStopsTheTunnel(t *testing.T) {
 	if got := r.results(t); got["A04-watch"] != "fail" {
 		t.Fatalf("%v", got)
 	}
+}
+
+func TestWatchDriveExhaustsASmallQuotaAndStopsTheTunnel(t *testing.T) {
+	r := newRig(t, 10<<20)
+	r.h.cfg.watchStop, r.h.cfg.watchDrive, r.h.cfg.expectStop = 30*time.Second, true, "quota_exhausted"
+	r.h.cfg.nodes = []string{nodeDedicated}
+	r.h.run(t.Context())
+	requirePass(t, r.results(t), "A04-watch")
+}
+
+func TestWatchDriveReportsWhatItDroveWhenNothingStops(t *testing.T) {
+	r := newRig(t, 10<<30)
+	r.h.cfg.watchStop, r.h.cfg.watchDrive = 600*time.Millisecond, true
+	r.h.cfg.nodes = []string{nodeDedicated}
+	fast := r.h.xfer
+	r.h.xfer = func(ctx context.Context, up, down int64) (transferResult, error) { // a line is not instantaneous
+		time.Sleep(100 * time.Millisecond)
+		return fast(ctx, up, down)
+	}
+	r.h.run(t.Context())
+	r.results(t)
+	for _, c := range r.h.rec.cases {
+		if c.ID == "A04-watch" {
+			if c.Result != "fail" || !strings.Contains(c.Observed, "drove ") || !strings.Contains(c.Observed, "estimated remaining") {
+				t.Fatalf("%+v", c)
+			}
+			return
+		}
+	}
+	t.Fatal("no A04-watch case")
 }
 
 func TestLoginFailureIsBlockedNotFailed(t *testing.T) {

@@ -316,20 +316,49 @@ func (h *harness) watchStop(ctx context.Context, snap managed.Snapshot) {
 	began := time.Now()
 	deadline := began.Add(h.cfg.watchStop)
 	var stopped managed.Snapshot
+	var driven, transfers, transferErrors int64
+	firstError, lastNote := "", time.Now()
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		if h.cfg.watchDrive {
-			_, _ = h.xfer(ctx, 0, 8<<20)
+			// Small chunks, so the state is looked at often even on a slow line.
+			result, err := h.xfer(ctx, 0, 2<<20)
+			transfers++
+			driven += result.Download
+			if err != nil {
+				transferErrors++
+				if firstError == "" {
+					firstError = err.Error()
+				}
+			}
 		}
 		snap := h.m.Snapshot()
 		if snap.State != managed.StateConnected {
 			stopped = snap
 			break
 		}
-		time.Sleep(time.Second)
+		if time.Since(lastNote) >= 15*time.Second && snap.Metering != nil {
+			lastNote = time.Now()
+			fmt.Printf("  ... %v: driven %d bytes, estimated remaining %d bytes\n", time.Since(began).Round(time.Second), driven, snap.Metering.EstimatedRemainingBytes)
+		}
+		if !h.cfg.watchDrive {
+			time.Sleep(time.Second)
+		}
 	}
 	if stopped.State == "" {
+		last := h.m.Snapshot()
 		_ = h.m.Disconnect(ctx)
-		h.rec.record("A04-watch", "the tunnel closes by itself after the server-side change", fmt.Sprintf("still connected after %v", h.cfg.watchStop), "fail")
+		detail := fmt.Sprintf("still connected after %v", h.cfg.watchStop)
+		if h.cfg.watchDrive {
+			detail += fmt.Sprintf("; drove %d bytes in %d transfers (%d failed", driven, transfers, transferErrors)
+			if firstError != "" {
+				detail += ": " + firstError
+			}
+			detail += ")"
+		}
+		if last.Metering != nil {
+			detail += fmt.Sprintf("; estimated remaining %d, confirmed remaining %d, rate %d permille", last.Metering.EstimatedRemainingBytes, last.Metering.ConfirmedRemainingBytes, last.Metering.RatePermille)
+		}
+		h.rec.record("A04-watch", "the tunnel closes by itself after the server-side change", detail, "fail")
 		return
 	}
 	// Wait for the settlement the stop path performs, then read the final state.
