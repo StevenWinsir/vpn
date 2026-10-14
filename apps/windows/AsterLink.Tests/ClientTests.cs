@@ -216,6 +216,15 @@ public class PresentationTests
         Assert.Equal("套餐流量已用完", view.Detail);
     }
 
+    [Theory]
+    [InlineData("node_reported", "计量：节点实测，由服务器强制执行")]
+    [InlineData("", "计量：客户端上报（内部测试线路）")]
+    [InlineData("client_reported", "计量：客户端上报（内部测试线路）")]
+    public void A_line_says_who_keeps_its_books(string source, string label)
+    {
+        Assert.Equal(label, NodeRow.MeteringLabelOf(source));
+    }
+
     [Fact]
     public void Node_search_and_filter_use_only_visible_metadata_and_keep_server_order()
     {

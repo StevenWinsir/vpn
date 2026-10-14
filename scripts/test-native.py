@@ -37,6 +37,11 @@ def main() -> None:
             agent_bin = directory / "asterlink-nodeagent"
             subprocess.run(["go", "build", "-o", str(agent_bin), "./cmd/asterlink-nodeagent"], cwd=ROOT / "native/nodeagent", check=True, env=dict(os.environ, CGO_ENABLED="0"))
             environment["ASTERLINK_NODEAGENT_BIN"] = str(agent_bin)
+            # The round-7 acceptance tool and its controlled traffic target run against that same real agent (TestBilltestGrants*).
+            for variable, command in (("ASTERLINK_BILLTEST_BIN", "asterlink-billtest"), ("ASTERLINK_TRAFFICSINK_BIN", "asterlink-trafficsink")):
+                binary = directory / command
+                subprocess.run(["go", "build", "-o", str(binary), f"./cmd/{command}"], cwd=ROOT / "native/core", check=True, env=dict(os.environ, CGO_ENABLED="0"))
+                environment[variable] = str(binary)
             environment.update(NATIVE_TEST_DSN=f"host={socket} user=postgres dbname=postgres sslmode=disable", RUN_DB_TESTS="0", GOPROXY="off", GOTOOLCHAIN="local")
             # Optional extra `go test` arguments (e.g. -run TestGrant ./internal/api) narrow the run.
             targets = sys.argv[1:] or ["./..."]

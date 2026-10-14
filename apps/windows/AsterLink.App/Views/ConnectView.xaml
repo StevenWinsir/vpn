@@ -24,6 +24,8 @@
                         <TextBlock Text="{Binding SelectedNodeText}" FontWeight="SemiBold" Margin="0,2,0,0"
                                    AutomationProperties.AutomationId="SelectedNode" />
                         <TextBlock Text="{Binding SelectedNodeRegion}" Style="{StaticResource Muted}" />
+                        <TextBlock Text="{Binding SelectedNodeMetering}" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0"
+                                   AutomationProperties.AutomationId="SelectedNodeMetering" />
                     </StackPanel>
                 </Border>
 

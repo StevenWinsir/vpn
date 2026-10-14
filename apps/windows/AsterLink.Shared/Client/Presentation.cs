@@ -65,6 +65,10 @@ public sealed record NodeRow(string Id, string Name, string Region, string LineL
 
     /// <summary><c>direct</c> is the ordinary routed line, NOT a Clash DIRECT bypass.</summary>
     public static string LineLabelOf(string lineType) => lineType == "dedicated" ? "专线" : "普通线路";
+
+    /// <summary>Who keeps the books for a line. A node-governed line is billed by the node itself; any other is the client-reported development ledger, which is not a commercial guarantee.</summary>
+    public static string MeteringLabelOf(string meteringSource) =>
+        meteringSource == "node_reported" ? "计量：节点实测，由服务器强制执行" : "计量：客户端上报（内部测试线路）";
 }
 
 public static class NodeList

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -33,7 +34,7 @@ type sink struct {
 	token    string
 	maxBytes int64
 
-	downSent, upReceived, requests atomic.Int64
+	downSent, upReceived, requests, udpEchoed atomic.Int64
 }
 
 func newSink(token string, maxBytes int64) *sink { return &sink{token: token, maxBytes: maxBytes} }
@@ -93,13 +94,34 @@ func (s *sink) handler() http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int64{"down_sent": s.downSent.Load(), "up_received": s.upReceived.Load(), "requests": s.requests.Load()})
+		_ = json.NewEncoder(w).Encode(map[string]int64{"down_sent": s.downSent.Load(), "up_received": s.upReceived.Load(), "requests": s.requests.Load(), "udp_echoed": s.udpEchoed.Load()})
 	})
 	return mux
 }
 
+// serveUDP echoes a datagram back to its sender, but only when it starts with "t=<token>;". It exists so the
+// round-7 acceptance can hold a real UDP flow open through the managed node; an unauthenticated datagram is
+// dropped without an answer, which also keeps the port from being a free reflector.
+func (s *sink) serveUDP(pc net.PacketConn) {
+	prefix := []byte("t=" + s.token + ";")
+	buf := make([]byte, 2048)
+	for {
+		n, from, err := pc.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		if n < len(prefix) || subtle.ConstantTimeCompare(buf[:len(prefix)], prefix) != 1 {
+			continue
+		}
+		if _, err = pc.WriteTo(buf[:n], from); err == nil {
+			s.udpEchoed.Add(1)
+		}
+	}
+}
+
 func main() {
 	listen := flag.String("listen", ":8088", "address to listen on")
+	udpListen := flag.String("udp-listen", "", "also run the token-gated UDP echo on this address (round 7, e.g. :8089)")
 	maxMiB := flag.Int64("max-mib", 512, "largest single download or upload accepted, in MiB")
 	flag.Parse()
 	token := os.Getenv("ASTERLINK_SINK_TOKEN")
@@ -107,7 +129,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "the sink needs its access environment variable (see the file header): a random value of at least 16 characters")
 		os.Exit(3)
 	}
-	server := &http.Server{Addr: *listen, Handler: newSink(token, *maxMiB<<20).handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	s := newSink(token, *maxMiB<<20)
+	if *udpListen != "" {
+		pc, err := net.ListenPacket("udp", *udpListen)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("UDP echo on %s (token-gated)", *udpListen)
+		go s.serveUDP(pc)
+	}
+	server := &http.Server{Addr: *listen, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 	log.Printf("asterlink-trafficsink listening on %s (max %d MiB per request)", *listen, *maxMiB)
 	log.Fatal(server.ListenAndServe())
 }

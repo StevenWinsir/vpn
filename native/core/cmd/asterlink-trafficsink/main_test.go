@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const token = "0123456789abcdef-token"
@@ -81,5 +83,39 @@ func TestTokenAndLimitsAreEnforced(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode == http.StatusOK {
 		t.Fatal("a short token was accepted")
+	}
+}
+
+func TestUDPEchoAnswersOnlyTheTokenHolder(t *testing.T) {
+	s := newSink(token, 1<<20)
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	go s.serveUDP(pc)
+	client, err := net.Dial("udp", pc.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	ask := func(payload string) (string, bool) {
+		_, _ = client.Write([]byte(payload))
+		_ = client.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
+		buf := make([]byte, 128)
+		n, err := client.Read(buf)
+		return string(buf[:n]), err == nil
+	}
+	if back, ok := ask("t=" + token + ";hello"); !ok || back != "t="+token+";hello" {
+		t.Fatalf("token holder got %q, %v", back, ok)
+	}
+	if _, ok := ask("hello"); ok {
+		t.Fatal("a datagram without the token was answered")
+	}
+	if _, ok := ask("t=wrong-token-wrong-token;hello"); ok {
+		t.Fatal("a datagram with the wrong token was answered")
+	}
+	if s.udpEchoed.Load() != 1 {
+		t.Fatalf("echo counter %d", s.udpEchoed.Load())
 	}
 }

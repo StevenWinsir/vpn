@@ -63,12 +63,29 @@ func main() {
 	watchDrive := flag.Bool("watch-drive", false, "with --watch-stop-seconds: keep downloading so a low quota is exhausted")
 	expectStop := flag.String("expect-stop", "", "with --watch-stop-seconds: the stable reason code expected (e.g. node_unavailable, profile_changed, subscription_expired, quota_exhausted)")
 	maxSeconds := flag.Int("max-seconds", 1800, "hard upper bound for the whole run")
+	grants := flag.Bool("grants", false, "round 7 instead of B01: verify the node enforces billing, revocation and expiry with an independent client (no client report)")
+	spend := flag.Bool("spend-test-quota", false, "with --grants: confirm the test account's quota may be spent and device slots used")
+	tun := flag.Bool("tun", false, "with --grants: also run B04 through the production Manager and the real TUN (elevated Windows; needs --allow-network-changes)")
+	cutWithin := flag.Int("cut-within-seconds", 15, "with --grants: a revoked grant must close established flows within this long")
+	holdSeconds := flag.Int("hold-seconds", 0, "with --grants: open flows and wait this long for YOU to end the plan / lower the quota / disable the node / stop the API; the node must cut them")
+	holdCase := flag.String("hold-case", "B05-admin", "with --hold-seconds: the case id to record (B05-expire, B05-quota, B07-outage, ...)")
+	holdDrive := flag.Bool("hold-drive", false, "with --hold-seconds: keep downloading so a low quota is exhausted")
+	idleExpiry := flag.Bool("idle-expiry", false, "with --grants: let a grant lapse with no client activity and require the node to end it by itself")
+	idleWait := flag.Int("idle-wait-seconds", 0, "with --idle-expiry: upper bound (default: session idle timeout + 90 s)")
+	raceN := flag.Int("race-sessions", 0, "with --grants: B06, this many devices ask for a grant at once (needs spare device slots)")
+	raceAt := flag.String("race-at", "", "with --race-sessions: RFC 3339 start time, to line up several machines (e.g. 2026-10-14T20:30:00+08:00)")
+	raceMax := flag.Int64("race-max-mib", 2048, "with --race-sessions: refuse (BLOCKED) when the account has more quota than this left")
+	udpSink := flag.String("udp-sink", "", "with --grants: host:port of the sink's UDP echo (asterlink-trafficsink --udp-listen); empty = TCP flows only")
 	flag.Parse()
 
-	if !*allow {
+	needTUN := !*grants || *tun
+	if *grants && !*spend {
+		fail("BLOCKED: --grants spends the test account's quota; pass --spend-test-quota to confirm")
+	}
+	if needTUN && !*allow {
 		fail("BLOCKED: pass --allow-network-changes on a machine you control; this changes routes and DNS and spends plan quota")
 	}
-	if !privileged() {
+	if needTUN && !privileged() {
 		fail("BLOCKED: " + privilegeHint)
 	}
 	if *output == "" {
@@ -101,6 +118,13 @@ func main() {
 
 	lossy := newLossy()
 	eng := engine.New()
+	if *grants {
+		code := runGrants(ctx, cfg, grantOptions{
+			tun: *tun, cutWithin: time.Duration(*cutWithin) * time.Second, holdFor: time.Duration(*holdSeconds) * time.Second, holdCase: *holdCase, holdDrive: *holdDrive,
+			idleExpiry: *idleExpiry, idleWait: time.Duration(*idleWait) * time.Second, raceN: *raceN, raceMaxByte: *raceMax << 20, udpSink: *udpSink,
+		}, *raceAt, *output, lossy, eng)
+		os.Exit(code)
+	}
 	manager := managed.New(managed.Options{
 		CoreVersion: "billtest", Engine: eng,
 		NewClient: func(base *url.URL) *apiclient.Client {
