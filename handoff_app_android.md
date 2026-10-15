@@ -526,7 +526,7 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 | 轮次 | 状态 | 下一步与前置条件 |
 | --- | --- | --- |
 | 1 环境与骨架 | DONE（PR StevenWinsir/vpn#28 已合并） | 本机 API 36 arm64 模拟器 5/5 PASS；16 KB/API 29/API 26 镜像留到第 6 轮安装 |
-| 2 真实 TUN PoC | IN_REVIEW（worktree-android-round2-tun） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；真实节点需用户断开公司 VPN 后用环境变量注入 |
+| 2 真实 TUN PoC | DONE（PR #29 已合并） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；每次连接的 NAT goroutine 泄漏已在下方独立维护轮修复；VLESS UDP/XUDP 仍待处理 |
 | 3 账号与 UI | NOT_STARTED | 本地隔离后端；demo 手工确认需要用户输入测试账号密码 |
 | 4 连接与计量 | NOT_STARTED | 公网 sink 部署位置（节点可达的服务器）由用户确认 |
 | 5 生命周期与可靠性 | NOT_STARTED | 无 |
@@ -632,7 +632,7 @@ APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
 未解决问题、复现方法与发布限制：
   ① 每次 TUN 启动泄漏 1 个 goroutine（三端共有，上游）：固定 Mihomo 以 context.TODO() 创建 TUN 监听器，sing-tun
      的 TCP NAT 超时循环只随该 context 结束；20 次循环 +19，其它不增长，fd 持平。需在固定内核中按监听器传可取消
-     context，三端回归——单独一轮处理。
+     context，三端回归——已在下方“共享 TUN 生命周期修复”维护轮处理；此处保留 PR #29 原始发现与测量。
   ② NodeAgent VLESS 参考转发器不支持 XUDP，而固定 Mihomo 的 VLESS 客户端 UDP 总是 XUDP：受管 VLESS 节点上的 UDP
      在所有客户端都不通（billtest 用自带客户端所以未暴露）——需在转发器侧支持 XUDP。
   ③ 公网不存在的域名：fake-ip 本地答 A、AAAA 转发上游得 NXDOMAIN，Android 随后拒绝整个域名；真实域名不受影响。
@@ -643,6 +643,51 @@ APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
   第 3 轮从 apps/android/.../vpn/TunnelSession.kt（CoreTunnelSession）与 core/CoreClient.kt 开始接登录与快照；
   回退：撤销本 PR（桌面端仅多了直通的 attachTun/releaseTun 与 Verify 错误原因，行为不变）。
 ```
+
+### 独立维护轮：共享 TUN 生命周期修复（第 2 轮之后）
+
+基线为 PR #29 合并点 `08ab441c8a3b91481ab826d57749b0b08671523b`；全部修改位于新 worktree
+`.claude/worktrees/sing-tun-context-cleanup`，分支 `fix/sing-tun-context-cleanup`，没有编辑 main。
+本轮只修复每次连接泄漏 `TCPNat.loopCheckTimeout` 的问题，不改受管 VLESS UDP/XUDP 协议。
+
+**修复与可复现性：** 保持 Mihomo gitlink `70f0570405c3c2c47bb113b88db95006d239b346` 与 sing-tun
+`v0.4.22` 不变；采用 `native/third_party/patches/0001-sing-tun-listener-context.patch`，其 SHA-256 为
+`d425c1a0541c4c78559d7ee9c33e08e2860f54fd6f22636342f0024b53860be7`。
+`manifest.json` 固定原始和补丁后文件哈希；`scripts/prepare_mihomo.py` 幂等应用并拒绝错误 pin、未知改动和半应用状态。
+监听器独立持有 `WithCancel(Background())`，关闭其它资源前 cancel；构造失败关闭捕获的监听器，避免具名返回值
+被 `return nil, err` 覆盖；`tunStack.Start()` 前移交关闭所有权。不是用连接请求的超时控制已连接的 VPN。
+
+三端构建与验收脚本接入准备步骤，裸 Go 构建未准备补丁会因缺少编译标记而失败。
+Android AAR 记录补丁身份，Python 自动重建旧 AAR，Gradle 也拒绝缺失/不匹配身份的缓存。
+发布源码仍为原始 Mihomo archive + 包含补丁的项目 archive；无 Git 的解包目录也可经哈希校验恢复补丁。
+详细构建、测试和回退方法见 `native/third_party/patches/README.md`。
+
+**硬门禁：** Android `TunAcceptanceTest.cycles()` 与 macOS/Windows 共用 `asterlink-tuntest cycleCheck`
+均在首次连接前取 NAT worker 基线，任何正增长立即失败，不再从总 goroutine 增长扣除“已知泄漏”；
+循环未完成、少于 2 轮或相关剖面不可解析也不能通过。保留其它 goroutine/fd 的原有调度噪声容差。
+
+**本机实测（2026-10-15，macOS arm64；沿用 API 36 arm64-v8a 模拟器，页大小 4096）：**
+
+| 验证 | 结果与证据 |
+| --- | --- |
+| `test-native-android.py --suite tun --allow-network-changes --keep-emulator --cycles 20`（重新构建 hooks AAR + APK） | 26 PASS / 0 FAIL / 2 BLOCKED；`T-CYCLES` 20/20，goroutine **10→10**，fd **104→104**，已知 NAT 循环 **+0**；before/first/last 三份剖面中的 NAT worker 均为 0 |
+| `native/core: go test ./...` | 14 包全部 PASS；新增聚合剖面解析与零泄漏判定回归 |
+| `scripts/test-native.py` | PASS，171 个 PASS（含子用例）；隔离 PostgreSQL + race，不访问远程测试数据库 |
+| `scripts/test-native-macos.py --suite unit` | 8/8 PASS；Core 245、policy 5、nodeagent 18、Swift 46 个 PASS；Go vet、日志检查、Python env 和补丁回归通过 |
+| `scripts/test-mihomo-patches.py` | 6 个准备器测试通过；真实 NAT 20 轮退出、Close 返回错误仍 cancel 两项通过；构造失败的 auto-redirect 用例仅 Linux 执行，本机 SKIP |
+| 两个 Go overlay 负向对照（不改工作区源码） | 移除 cancel 时真实 NAT 生命周期测试失败；恢复原始未补丁的 server.go 时 Core 编译失败；均符合预期 |
+
+两个 BLOCKED 仍是 `tun.T04-ipv6`（模拟器无 IPv6 上游）和 `tun.T02-real`（未注入真实节点），**不能记作 PASS**。
+驱动默认因 BLOCKED 返回 3；需要在同样环境把这两个不可执行项显式列入
+`--expect-blocked tun.T04-ipv6,tun.T02-real` 才可返回 0，报告仍保留 BLOCKED。
+CI 中 Windows 原生 x64、Linux/macOS 与 Android KVM 结果由本分支 PR 的 checks 记录；不把交叉编译
+或 Windows Server CI 描述为 Windows 10/11 真机 TUN 验收，也没有改变本机 macOS 路由运行特权 TUN 套件。
+
+证据位于本 worktree 的 `artifacts/native-android/tun/tun-report.json`（记录 patch 身份）、
+`goroutines-before.txt` / `goroutines-first.txt` / `goroutines-last.txt`，以及
+`artifacts/sing-tun-leak/` 的 backend/macOS 日志和两个负向对照。节点配置不提交，节点主机仅用哈希标识。
+现有模拟器保留运行。已经安装的 macOS/Windows/Android 程序不会因源码修改自动更新，必须分别重新构建安装。
+VLESS UDP/XUDP 不匹配、IPv6 上游验收、真实节点与 Android 第 3–6 轮仍按原计划处理。
 
 ## 附录 A. 源码核验索引
 

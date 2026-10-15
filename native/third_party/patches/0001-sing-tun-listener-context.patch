@@ -1,0 +1,178 @@
+--- a/listener/sing_tun/server.go
++++ b/listener/sing_tun/server.go
+@@ -39,7 +39,11 @@
+ var InterfaceName = "Meta"
+ var EnforceBindInterface = false
+ 
++// AsterLinkContextPatchVersion is a build-time guard against an unpatched checkout.
++const AsterLinkContextPatchVersion = 1
++
+ type Listener struct {
++	cancel  context.CancelFunc
+ 	closed  bool
+ 	options LC.Tun
+ 	handler *ListenerHandler
+@@ -140,7 +144,6 @@
+ 			inbound.WithSpecialRules(""),
+ 		}
+ 	}
+-	ctx := context.TODO()
+ 	rpTunnel := tunnel.(P.Tunnel)
+ 	if options.GSOMaxSize == 0 {
+ 		options.GSOMaxSize = 65536
+@@ -317,18 +320,24 @@
+ 		Inet6Address:          options.Inet6Address,
+ 		DisableICMPForwarding: options.DisableICMPForwarding,
+ 	}
++	// The listener, not the short-lived connect request, owns this context. In
++	// sing-tun v0.4.22 TCPNat.loopCheckTimeout only exits when it is cancelled.
++	ctx, cancel := context.WithCancel(context.Background())
+ 	l = &Listener{
++		cancel:  cancel,
+ 		closed:  false,
+ 		options: options,
+ 		handler: handler,
+ 		tunName: tunName,
+ 	}
+-	defer func() {
+-		if err != nil {
+-			l.Close()
++	// Capture the allocated listener: an explicit `return nil, err` overwrites
++	// the named result before this defer runs.
++	defer func(created *Listener) {
++		if err != nil {
++			_ = created.Close()
+ 			l = nil
+ 		}
+-	}()
++	}(l)
+ 
+ 	interfaceFinder := DefaultInterfaceFinder
+ 
+@@ -499,11 +508,12 @@
+ 		return
+ 	}
+ 
++	// Start may fail after opening part of the stack. Close must own it already.
++	l.tunStack = tunStack
+ 	err = tunStack.Start()
+ 	if err != nil {
+ 		return
+ 	}
+-	l.tunStack = tunStack
+ 
+ 	if l.autoRedirect != nil {
+ 		if len(l.options.RouteAddressSet) > 0 && len(l.routeAddressSet) == 0 {
+@@ -660,6 +670,10 @@
+ }
+ 
+ func (l *Listener) Close() error {
++	// Cancel before any closer: cancellation must not depend on close success.
++	if l.cancel != nil {
++		l.cancel()
++	}
+ 	l.closed = true
+ 	resolver.RemoveSystemDnsBlacklist(l.dnsServerIp...)
+ 	if l.autoRedirectOutputMark != 0 {
+--- /dev/null
++++ b/listener/sing_tun/asterlink_context_test.go
+@@ -0,0 +1,99 @@
++package sing_tun
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"runtime/pprof"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	LC "github.com/metacubex/mihomo/listener/config"
++	"github.com/metacubex/mihomo/tunnel"
++	tun "github.com/metacubex/sing-tun"
++)
++
++func natLoops() int {
++	var profile bytes.Buffer
++	_ = pprof.Lookup("goroutine").WriteTo(&profile, 1)
++	total := 0
++	for _, block := range strings.Split(profile.String(), "\n\n") {
++		if !strings.Contains(block, "TCPNat).loopCheckTimeout") {
++			continue
++		}
++		for _, line := range strings.Split(block, "\n") {
++			if count, _, ok := strings.Cut(line, " @ "); ok {
++				n, _ := strconv.Atoi(count)
++				total += n
++			}
++		}
++	}
++	return total
++}
++
++func waitNAT(t *testing.T, want int) {
++	t.Helper()
++	deadline := time.Now().Add(2 * time.Second)
++	for time.Now().Before(deadline) {
++		if natLoops() == want {
++			return
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++	t.Fatalf("TCPNat.loopCheckTimeout: got %d, want %d", natLoops(), want)
++}
++
++// Real pinned sing-tun NAT workers, not goroutines manufactured by this test.
++// No TUN device, route, driver or privileged operation is needed on any OS.
++func TestAsterLinkListenerCloseStopsNAT(t *testing.T) {
++	baseline := natLoops()
++	for cycle := 0; cycle < 20; cycle++ {
++		ctx, cancel := context.WithCancel(context.Background())
++		t.Cleanup(cancel)
++		l := &Listener{cancel: cancel}
++		_ = tun.NewNat(ctx, time.Hour)
++		waitNAT(t, baseline+1)
++		if err := l.Close(); err != nil {
++			t.Fatal(err)
++		}
++		waitNAT(t, baseline)
++	}
++}
++
++type contextCloser struct {
++	ctx context.Context
++	err error
++}
++
++func (c *contextCloser) Start() error { return nil }
++func (c *contextCloser) Close() error {
++	if c.ctx.Err() != context.Canceled {
++		panic("listener must cancel before stack Close")
++	}
++	return c.err
++}
++
++func TestAsterLinkCancelEvenWhenCloseFails(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	want := errors.New("stack close failed")
++	l := &Listener{cancel: cancel, tunStack: &contextCloser{ctx: ctx, err: want}}
++	if err := l.Close(); !errors.Is(err, want) {
++		t.Fatalf("Close error = %v, want %v", err, want)
++	}
++	_ = l.Close()
++}
++
++// This post-allocation error uses an explicit nil return. The defer must close
++// the allocated listener, not dereference the overwritten named return value.
++func TestAsterLinkNewFailureClosesAllocatedListener(t *testing.T) {
++	if !supportRedirect {
++		t.Skip("auto-redirect validation exists only on Linux")
++	}
++	l, err := New(LC.Tun{AutoRedirect: true, Device: "asterlink-unit"}, tunnel.Tunnel)
++	if err == nil || l != nil {
++		t.Fatalf("New = %v, %v; want nil listener and error", l, err)
++	}
++}

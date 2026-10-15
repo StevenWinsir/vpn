@@ -169,15 +169,21 @@ def write_notices(out):
 
 
 def write_source_notice(out, commit, mihomo_commit, dirty):
+    import prepare_mihomo
+    patch = prepare_mihomo.prepare(check=True)
     (out / 'SOURCE.txt').write_text(
         'AsterLink for Windows x64 - corresponding source\n\n'
         'asterlink-core.exe embeds Mihomo (Clash.Meta fork, GNU GPL v3).\n'
         'This repository commit:  %s%s\nMihomo commit:           %s\n\n'
         'The two tar.gz archives next to this file are `git archive` outputs of exactly these commits.\n'
-        'To rebuild the Core:  unpack both, place the mihomo tree at native/third_party/Clash.Meta, then in native/core run\n'
+        'The Mihomo archive is the unchanged upstream base; the AsterLink archive includes the reviewed patch.\n'
+        'Mihomo patch: %s (SHA-256 %s).\n'
+        'To rebuild: unpack both, place the mihomo tree at native/third_party/Clash.Meta, then at repository root run\n'
+        '  python3 scripts/prepare_mihomo.py\n'
+        'Then in native/core run\n'
         '  GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=<version>" ./cmd/asterlink-core\n'
         'The Go toolchain and dependency versions are pinned in apps/windows/toolchain.lock.json and native/core/go.sum.\n'
-        % (commit, ' (WORKING TREE HAD UNCOMMITTED CHANGES)' if dirty else '', mihomo_commit), encoding='utf-8')
+        % (commit, ' (WORKING TREE HAD UNCOMMITTED CHANGES)' if dirty else '', mihomo_commit, patch['id'], patch['patch_sha256']), encoding='utf-8')
 
 
 def source_archives(out, commit):
@@ -196,7 +202,9 @@ def source_archives(out, commit):
 
 def source_state():
     commit = capture(['git', 'rev-parse', 'HEAD'], cwd=ROOT)
-    dirty = bool(capture(['git', 'status', '--porcelain'], cwd=ROOT))
+    import prepare_mihomo
+    prepare_mihomo.prepare()
+    dirty = prepare_mihomo.source_dirty()
     return commit, dirty
 
 

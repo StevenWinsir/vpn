@@ -1,0 +1,17 @@
+{
+  "id": "asterlink-sing-tun-context-v1",
+  "base_commit": "70f0570405c3c2c47bb113b88db95006d239b346",
+  "sing_tun_version": "v0.4.22",
+  "patch": "0001-sing-tun-listener-context.patch",
+  "patch_sha256": "d425c1a0541c4c78559d7ee9c33e08e2860f54fd6f22636342f0024b53860be7",
+  "files": {
+    "listener/sing_tun/server.go": {
+      "original_sha256": "3365b3013b17dc742f6c0c53af546ce10084d4a91dd43e90561edd8014caa0b1",
+      "patched_sha256": "3fdf4d5dc85858fe476f594e5ed34d8f8bdf80043b0442fb10792430c2437178"
+    },
+    "listener/sing_tun/asterlink_context_test.go": {
+      "original_sha256": null,
+      "patched_sha256": "2c0e797b0f8e10df7d55ebf9672edb5f24a640e03838f14cbdb91957100f4b8d"
+    }
+  }
+}

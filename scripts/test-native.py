@@ -7,10 +7,13 @@ import subprocess
 import sys
 import tempfile
 
+import prepare_mihomo
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> None:
+    prepare_mihomo.prepare()
     os.environ["LC_ALL"] = "C"
     os.environ["LANG"] = "C"
     for binary in ("initdb", "pg_ctl", "go"):

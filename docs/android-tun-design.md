@@ -114,13 +114,18 @@ not supported (`SUPPORTS_ALWAYS_ON=false`, and a start without our action stops 
 - **libgojni.so size.** Round 1 recorded 25.1 MiB for arm64 because `platformSupported()` was a constant `false` and the
   linker dropped the whole unreachable TUN/listener stack. With the real TUN the arm64 `.so` is 44.4 MiB and the Debug APK
   ~56 MiB. This is the real baseline for round 6.
-- **One goroutine leaks per TUN start (all platforms, upstream).** The pinned Mihomo creates the TUN listener with
-  `context.TODO()` (`listener/sing_tun/server.go`), and sing-tun's system stack starts its TCP NAT timeout loop with that
-  context (`stack_system_nat.go`: `NewNat` → `loopCheckTimeout`, which only returns on `ctx.Done()`), so every
-  connect leaves one goroutine and its (self-expiring) NAT map behind. Measured: +19 over 20 cycles, nothing else grows,
-  descriptors flat. Harmless for a desktop session; a phone that reconnects on every network change accumulates them.
-  T-CYCLES counts this stack separately and fails on any other growth. Fix belongs in the pinned core (a cancellable
-  context per listener, cancelled in `Listener.Close`) and needs three-platform regression; not changed here.
+- **Per-start TCP NAT goroutine leak — fixed in the shared listener.** PR #29 measured +19 workers over 20 cycles,
+  with flat descriptors: the original `context.TODO()` never ended sing-tun v0.4.22's `TCPNat.loopCheckTimeout`.
+  The Mihomo gitlink remains `70f0570405c3c2c47bb113b88db95006d239b346`. The reviewed, hash-locked patch in
+  `native/third_party/patches/` gives each listener its own cancellable context, cancels before other closers,
+  captures the allocated listener for constructor-error cleanup, and owns the stack before `Start` can fail.
+  Build scripts prepare and verify the patch; an unpatched shared Core does not compile. Android also rejects a
+  cached AAR without the current patch identity. This fixes the common lifecycle, not three platform-specific wrappers.
+  Android `cycles()` and desktop `cycleCheck` now require **zero** `TCPNat).loopCheckTimeout` growth, sampled before
+  the first connect; no subtraction or per-cycle exemption remains. Incomplete cycles fail. The unprivileged patch
+  regression starts/stops real NAT workers twenty times, checks cancellation even when close fails, and tests Linux
+  constructor cleanup. See `native/third_party/patches/README.md` for reproducible builds, source archives and rollback;
+  the maintenance record in `handoff_app_android.md` records actual acceptance results and limitations.
 - **Names that do not exist publicly.** Fake-ip answers A locally but the template forwards AAAA upstream (through the
   node). For a name with no public records that AAAA comes back NXDOMAIN, and Android's resolver then refuses the whole
   name (also from its cache). Real names are unaffected; names that exist only in a private DNS (intranet) cannot work

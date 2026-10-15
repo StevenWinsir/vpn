@@ -88,6 +88,8 @@ val verifyCoreAar = tasks.register("verifyCoreAar") {
     val aar = coreAar
     val record = coreRecord
     val wantHooks = tunTest
+    val patchManifest = rootDir.resolve("../../native/third_party/patches/manifest.json")
+    inputs.file(patchManifest)
     inputs.files(aar, record).optional()
     inputs.property("tunTest", wantHooks)
     doLast {
@@ -102,6 +104,12 @@ val verifyCoreAar = tasks.register("verifyCoreAar") {
         val recorded = Regex("\"aar_sha256\"\\s*:\\s*\"([0-9a-f]{64})\"").find(recordFile.readText())?.groupValues?.get(1)
         if (recorded != digest) {
             throw GradleException("Core AAR does not match core-build.json (sha256 $digest, recorded $recorded); rebuild it")
+        }
+        val patchHash = Regex("\"patch_sha256\"\\s*:\\s*\"([0-9a-f]{64})\"")
+        val requiredPatch = patchHash.find(patchManifest.readText())?.groupValues?.get(1)
+        val recordedPatch = patchHash.find(recordFile.readText())?.groupValues?.get(1)
+        if (requiredPatch == null || recordedPatch != requiredPatch) {
+            throw GradleException("Core AAR lacks the current Mihomo lifecycle patch; rebuild it with --rebuild-core")
         }
         val hooks = Regex("\"tuntest_hooks\"\\s*:\\s*true").containsMatchIn(recordFile.readText())
         if (hooks != wantHooks) {

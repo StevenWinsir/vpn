@@ -18,6 +18,9 @@ on:
     paths:
       - 'apps/windows/**'
       - 'native/core/**'
+      - 'native/third_party/**'
+      - 'scripts/prepare_mihomo.py'
+      - 'scripts/test-mihomo-patches.py'
       - 'native/nodeagent/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
@@ -30,6 +33,9 @@ on:
     paths:
       - 'apps/windows/**'
       - 'native/core/**'
+      - 'native/third_party/**'
+      - 'scripts/prepare_mihomo.py'
+      - 'scripts/test-mihomo-patches.py'
       - 'native/nodeagent/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
