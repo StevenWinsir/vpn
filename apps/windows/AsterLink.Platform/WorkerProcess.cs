@@ -152,11 +152,12 @@ public sealed class WorkerProcess : IDisposable
         catch
         {
             // A suspended Core that never ran must not be left behind, whichever step failed.
-            if (processHandle is not null) { _ = Native.TerminateProcess(processHandle, 1); processHandle.Dispose(); }
+            // TerminateProcess only starts the termination: wait, so the caller never sees it alive.
+            if (processHandle is not null) { TerminateAndWait(processHandle); processHandle.Dispose(); }
             else if (created && processInfo.Process != IntPtr.Zero)
             {
                 using var raw = new SafeProcessHandle(processInfo.Process, ownsHandle: true);
-                _ = Native.TerminateProcess(raw, 1);
+                TerminateAndWait(raw);
                 processInfo.Process = IntPtr.Zero;
             }
             commands.Dispose();
@@ -178,6 +179,12 @@ public sealed class WorkerProcess : IDisposable
     {
         if (!Native.SetHandleInformation(handle, Native.HandleFlagInherit, 0))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "SetHandleInformation");
+    }
+
+    private static void TerminateAndWait(SafeProcessHandle process)
+    {
+        _ = Native.TerminateProcess(process, 1);
+        _ = Native.WaitForSingleObject(process, 5000);
     }
 
     private static SafeJobHandle CreateKillOnCloseJob()
