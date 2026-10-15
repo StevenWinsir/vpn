@@ -497,7 +497,7 @@ def run_release_suite(args):
 
     report = out / 'release-check.json'
     expect = 'none' if sign_mode == 'none' else 'test' if sign_mode == 'test' else 'release'
-    ps_cmd = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'scripts' / 'windows' / 'release-check.ps1'),
+    ps_cmd = [shutil.which('pwsh') or 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'scripts' / 'windows' / 'release-check.ps1'),
               '-ReleaseDir', str(release_dir), '-ExpectSignature', expect, '-Report', str(report)]
     if args.allow_service_install and is_windows_admin():
         ps_cmd.append('-Install')
