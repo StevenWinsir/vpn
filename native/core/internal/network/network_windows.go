@@ -181,3 +181,6 @@ func OwnTunnelUp() bool {
 	i, err := net.InterfaceByName(TunName)
 	return err == nil && i.Flags&net.FlagUp != 0
 }
+
+// platformSignature: the signature is read from the interface itself (network.go).
+func platformSignature() (string, bool) { return "", false }

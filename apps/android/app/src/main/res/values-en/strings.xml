@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AsterLink</string>
+    <string name="foundation_subtitle">Android client round 1: the Go Core is linked into this app through gomobile.</string>
+    <string name="core_starting">Starting the core…</string>
+    <string name="core_ready">Core ready</string>
+    <string name="core_failed">The core could not start</string>
+    <string name="label_core_version">Core version</string>
+    <string name="label_mihomo">Mihomo commit</string>
+    <string name="label_protocol">IPC protocol</string>
+    <string name="label_app_version">App version</string>
+    <string name="label_channel">Build channel</string>
+    <string name="label_api_host">API server</string>
+    <string name="label_network">Network</string>
+    <string name="network_none">No network</string>
+    <string name="env_from_example">Built from the public .env.example values (Debug only)</string>
+    <string name="next_round_hint">Next round: VpnService and a real TUN. This build makes no proxy connection.</string>
+</resources>

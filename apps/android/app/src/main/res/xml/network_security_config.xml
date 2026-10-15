@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Applies to the app's Java/Kotlin network stacks (website links opened in Custom Tabs are
+  the browser's). No cleartext anywhere and only the system CA store; user-installed CAs
+  are not trusted. The Go Core's API client enforces its own rules (HTTPS, http only to
+  loopback in development, TLS 1.2+).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

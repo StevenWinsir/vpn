@@ -120,6 +120,10 @@ func (e *Egress) dialResolver(ctx context.Context, network, address string) (net
 // non-link-local addresses. A change means Wi-Fi/Ethernet/IP moved underneath a
 // running tunnel and the old authorization must be re-verified.
 func Signature() string {
+	// A mobile host reports its network itself (network_android.go).
+	if signature, ok := platformSignature(); ok {
+		return signature
+	}
 	iface, err := PhysicalDefault()
 	if err != nil {
 		return "none"

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors ui/theme/Theme.kt for the window background and the launcher icon. -->
+    <color name="background">#F6F8FB</color>
+    <color name="icon_background">#2F6FEB</color>
+</resources>

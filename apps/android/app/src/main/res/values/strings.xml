@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simplified Chinese is the default language (handoff_app_android.md 9.3). -->
+<resources>
+    <string name="app_name">AsterLink</string>
+    <string name="foundation_subtitle">Android 客户端第 1 轮：Go Core 已通过 gomobile 链接进本应用。</string>
+    <string name="core_starting">正在启动内核…</string>
+    <string name="core_ready">内核已就绪</string>
+    <string name="core_failed">内核启动失败</string>
+    <string name="label_core_version">内核版本</string>
+    <string name="label_mihomo">Mihomo 提交</string>
+    <string name="label_protocol">IPC 协议版本</string>
+    <string name="label_app_version">应用版本</string>
+    <string name="label_channel">构建渠道</string>
+    <string name="label_api_host">API 服务器</string>
+    <string name="label_network">当前网络</string>
+    <string name="network_none">无网络</string>
+    <string name="env_from_example">使用 .env.example 的公开示例值构建（仅限 Debug）</string>
+    <string name="next_round_hint">下一轮：VpnService 与真实 TUN。当前版本不会建立任何代理连接。</string>
+</resources>

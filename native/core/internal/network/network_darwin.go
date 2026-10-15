@@ -90,3 +90,6 @@ func ViaTunnel() string {
 	}
 	return ""
 }
+
+// platformSignature: the signature is read from the interface itself (network.go).
+func platformSignature() (string, bool) { return "", false }

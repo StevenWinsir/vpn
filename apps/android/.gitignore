@@ -1,0 +1,17 @@
+# Build outputs, including the Core AAR that scripts/build-native-android.py writes to
+# build/core/ (generated, never committed). Anchored on purpose: an unanchored "build/"
+# also hid the Kotlin package directory build-logic/src/.../com/asterlink/build/.
+/build/
+/app/build/
+/build-logic/build/
+.gradle/
+.kotlin/
+local.properties
+captures/
+*.apk
+*.aab
+*.aar
+*.jks
+*.keystore
+.idea/
+*.iml
