@@ -447,7 +447,6 @@ def run_release_suite(args):
         'DefaultDirName={autopf}\\{#AppName}': 'the one directory the service accepts',
         'install --stage': 'files are installed by the verifying service verb, not copied by Inno',
         'runasoriginaluser': 'the app never starts with the administrator token',
-        'ExecAsOriginalUser': 'per-user cleanup runs as the invoking user',
         'REMOVEUSERDATA': 'explicit choice for saved data',
     }
     for needle, why in required.items():
@@ -458,6 +457,12 @@ def run_release_suite(args):
     # The verb must run before Inno writes unins000.exe / the Add/Remove Programs entry: at ssPostInstall its root
     # rename removed the fresh uninstaller, and Inno swallows an Abort raised there (Setup still exits 0).
     code = iss.split('[Code]')[1]
+    # Inno refuses ExecAsOriginalUser in the uninstaller (fatal, uninstall exits 1); the cleanup uses Exec.
+    record('release.iss_no_original_user_exec_in_uninstall', 'ExecAsOriginalUser(' not in code and "Exec(Gui, '--cleanup-user-data" in code,
+           'per-user cleanup started with Exec (the uninstaller has no original-user token)')
+    uninstall_code = code.split('procedure CurUninstallStepChanged')[1]
+    record('release.iss_failed_uninstall_verb_aborts', 'Abort;' in uninstall_code,
+           'a refused uninstall verb stops before Inno drops its entry and unins000.exe')
     record('release.iss_verb_before_inno_records',
            'dontcopy' in files_section and 'if CurStep <> ssInstall then Exit;' in code and "ExtractTemporaryFiles('{tmp}\\stage\\*')" in code,
            'stage unpacked and verb run at ssInstall, before the uninstaller exists')

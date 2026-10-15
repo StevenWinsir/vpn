@@ -190,13 +190,15 @@ var
 begin
   if CurUninstallStep <> usUninstall then Exit;
 
-  // 1. The current user's saved passwords / preferences, only if chosen, by the installed GUI as the ORIGINAL (non-elevated) user.
-  //    The elevated uninstaller never reaches into any user's vault; other Windows users clean up their own.
+  // 1. Saved passwords / preferences, only if chosen, by the installed GUI (no window). Inno's uninstaller has no
+  //    "original user" (ExecAsOriginalUser is refused there), so this runs as the account that approved the uninstall:
+  //    the same user in the usual admin-approval case. Only that account's AsterLink/ items and folder are touched;
+  //    other Windows users clean up their own.
   if ForgetRequested() then
   begin
     Gui := ExpandConstant('{app}\app\AsterLink.exe');
     if FileExists(Gui) then
-      if not ExecAsOriginalUser(Gui, '--cleanup-user-data --passwords --preferences', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) or (ExitCode <> 0) then
+      if not Exec(Gui, '--cleanup-user-data --passwords --preferences', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) or (ExitCode <> 0) then
         Log('per-user cleanup did not complete (exit ' + IntToStr(ExitCode) + ')');
   end;
 
@@ -210,6 +212,8 @@ begin
     Answer := VerbMessage(Log1);
     Log('uninstall verb exit code ' + IntToStr(ExitCode) + ': ' + Answer);
     SuppressibleMsgBox(FmtMessage(CustomMessage('UninstallFailed'), [IntToStr(ExitCode) + ' ' + Answer]), mbCriticalError, MB_OK, IDOK);
+    // Raised at usUninstall this stops before Inno removes its entry and unins000.exe, so the user can run it again.
+    Abort;
   end
   else
     Log('uninstall verb: ' + VerbMessage(Log1));

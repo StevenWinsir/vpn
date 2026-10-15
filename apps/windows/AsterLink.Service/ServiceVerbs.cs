@@ -316,7 +316,10 @@ public static class ServiceVerbs
                 try { path = process.MainModule?.FileName; }
                 catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { continue; }
                 // The registered service is stopped by the verb itself; everything else must be closed by the user.
-                if (path is not null && WinPath.IsUnder(target.Root, path) && !WinPath.Equal(path, target.ServiceExe))
+                // Inno's unins000.exe (the first phase) stays alive in <root>\setup while it runs this verb, and the
+                // verbs never delete that folder, so it is not "in use".
+                if (path is not null && WinPath.IsUnder(target.Root, path) && !WinPath.Equal(path, target.ServiceExe)
+                    && !WinPath.IsUnder(target.Join(InstallLayout.UninstallerDirectory), path))
                     return $"{process.ProcessName} (pid {process.Id})";
             }
         }

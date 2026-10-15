@@ -846,6 +846,12 @@ CI 修复（2026-10-15，PR #27 Windows job 的 2 个 FAIL）：
      release-check 新增 I01-uninstaller-registered，I03/I05 也检查卸载器。
   2) R04 许可缺失：收集脚本写死 darwin/arm64（漏了 Windows 独有的 go-ole）；现在按 windows/amd64 收集，识别 LICENSE.gpl 这类变体，
      metacubex/chacha v0.1.5 用 scripts/third_party_licenses/ 中注明来源的上游 MIT 文本。go-lzo 为 GPL-2.0，需法务确认与 GPL-3.0 组合。
+  3) 修复 1/2 后 CI 跑到卸载阶段，又暴露两处（均以 Inno 6.7.1 源码核实）：
+     U01 卸载器 exit 0 但服务/目录/ProgramData 仍在：Inno 第一阶段 {app}\setup\unins000.exe 在 usUninstall 期间一直存活，uninstall 动词的
+     “安装目录内有进程在运行”检查把它当成占用而拒绝，静默模式下错误框被抑制，Inno 照常删掉自己的记录。动词现在忽略 <root>\setup 下的进程；
+     动词失败时 setup.iss 调 Abort，在 Inno 删除卸载入口前停止，可重试。
+     U02 exit 1：卸载器里不允许 ExecAsOriginalUser（Inno 直接报致命错误）。改用 Exec：以批准卸载的账户运行清理，常见的管理员审批模式下就是同一用户；
+     标准用户输入另一管理员密码时清理的是该管理员的 AsterLink 项（已写入 docs/windows-release.md 第 3 节）。
 ```
 
 ## 附录 A. 源码核验索引

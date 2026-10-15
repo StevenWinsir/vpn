@@ -33,7 +33,7 @@ public partial class App : Application
             return;
         }
 
-        // Uninstaller helper: forget what the user chose to forget, as the ordinary user, with no window.
+        // Uninstaller helper: forget what the user chose to forget, for the account running it, with no window.
         if (Array.IndexOf(e.Args, "--cleanup-user-data") >= 0)
         {
             Shutdown(RunUserCleanup(e.Args));

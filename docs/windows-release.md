@@ -49,11 +49,14 @@ Apps & features → AsterLink → Uninstall (or `unins000.exe`). The uninstaller
 1. refuses while AsterLink is open;
 2. asks, default **No**: "also remove the saved passwords and preferences of the Windows user running this uninstall?" Silent:
    `/REMOVEUSERDATA=1` (remove) or `0`/absent (keep). If yes, the installed GUI runs `--cleanup-user-data --passwords --preferences`
-   **as the original non-elevated user**: it removes that user's `AsterLink/*` Credential Manager items (only that prefix, other
+   **as the account that approved the uninstall** (Inno's uninstaller has no original-user token; with a normal admin-approval
+   prompt that is the same user. A standard user who types another administrator's password gets that administrator's AsterLink
+   items cleaned instead and keeps their own): it removes that account's `AsterLink/*` Credential Manager items (only that prefix, other
    applications' items are never touched) and `%LocalAppData%\AsterLink` (settings **and the device id**: a reinstall registers as a
    new device and may use a device slot until the server side releases the old one);
 3. runs the service's `uninstall` verb from a **copy outside the install folder** (a program cannot delete itself): removes the service,
    the product's own folders, the leftover upgrade folder and `%ProgramData%\AsterLink`. Unrelated files in the folder are left.
+   If the verb refuses (for example the Core is still running) the uninstall stops before Inno removes its entry, so it can be run again.
    It removes no shared driver: Wintun is embedded in the Core and loaded from memory, nothing is installed system-wide.
 
 The elevated uninstaller never walks other Windows users' vaults; **other users' saved passwords stay in their own vaults** until

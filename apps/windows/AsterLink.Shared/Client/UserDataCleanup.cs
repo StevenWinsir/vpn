@@ -4,8 +4,9 @@ public sealed record UserCleanupResult(int PasswordsRemoved, bool PreferencesRem
 
 /// <summary>
 /// The per-user half of uninstalling: saved passwords (Credential Manager) and the preference folder under
-/// %LocalAppData%. It runs as the ordinary user (the uninstaller starts it with <c>--cleanup-user-data</c> as the
-/// original, non-elevated user), because an elevated uninstaller cannot and must not reach other users' vaults.
+/// %LocalAppData%. The uninstaller starts it with <c>--cleanup-user-data</c> as the account that approved the uninstall
+/// (Inno has no original-user token there; in the usual admin-approval case it is the same user). It only ever touches
+/// that account's own vault and folder, never other users'.
 /// Nothing here is automatic: the caller passes exactly what the user chose.
 /// </summary>
 public static class UserDataCleanup
