@@ -33,6 +33,13 @@ public partial class App : Application
             return;
         }
 
+        // Uninstaller helper: forget what the user chose to forget, as the ordinary user, with no window.
+        if (Array.IndexOf(e.Args, "--cleanup-user-data") >= 0)
+        {
+            Shutdown(RunUserCleanup(e.Args));
+            return;
+        }
+
         // Design preview: render every page to PNG with a scripted Core (no service, no vault, no network).
         if (OptionValue(e.Args, "--preview") is { } previewDir)
         {
@@ -180,6 +187,30 @@ public partial class App : Application
             File.WriteAllText(Path.Combine(directory, "preview-error.txt"), error.ToString());
         }
         Shutdown(code);
+    }
+
+    /// <summary><c>--cleanup-user-data [--passwords] [--preferences] [--report file]</c>; exit 0 only if everything asked for was done.</summary>
+    private static int RunUserCleanup(string[] args)
+    {
+        var result = AsterLink.Shared.Client.UserDataCleanup.Run(
+            passwords: Array.IndexOf(args, "--passwords") >= 0,
+            preferences: Array.IndexOf(args, "--preferences") >= 0,
+            deletePasswords: () => new AsterLink.Platform.CredentialManagerStore().DeleteAllProductItems(),
+            preferencesDirectory: AsterLink.Shared.Client.UserDataCleanup.DefaultPreferencesDirectory());
+        if (OptionValue(args, "--report") is { } report)
+        {
+            try
+            {
+                File.WriteAllText(report, JsonSerializer.Serialize(new
+                {
+                    passwords_removed = result.PasswordsRemoved,
+                    preferences_removed = result.PreferencesRemoved,
+                    error = result.Error,
+                }));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { /* the exit code still tells */ }
+        }
+        return result.Error is null ? 0 : 1;
     }
 
     private static string? OptionValue(string[] args, string name)

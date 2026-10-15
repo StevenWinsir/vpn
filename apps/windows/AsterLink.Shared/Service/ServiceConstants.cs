@@ -38,6 +38,8 @@ public static class ServiceConstants
         public const int NeedsElevation = 5;
         /// <summary>Installed files do not match the manifest; a repair cannot trust them.</summary>
         public const int IntegrityFailed = 6;
+        /// <summary>The stage is older than what is installed and <c>--allow-downgrade</c> was not given.</summary>
+        public const int DowngradeRefused = 7;
         /// <summary>The user declined the UAC prompt (GUI side).</summary>
         public const int ElevationCancelled = 1223;
     }

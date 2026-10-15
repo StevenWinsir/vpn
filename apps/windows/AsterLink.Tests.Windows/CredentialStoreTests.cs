@@ -48,6 +48,26 @@ public class CredentialStoreTests
     }
 
     [WindowsFact]
+    public void Forgetting_all_product_items_removes_ours_and_only_ours()
+    {
+        var store = new CredentialManagerStore();
+        var a = Account();
+        var b = Account();
+        // A neighbour application's item must survive: it lives under a different target prefix.
+        var other = "OtherApp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            store.Save(a, "alpha");
+            store.Save(b, "beta");
+            Assert.True(store.DeleteAllProductItems() >= 2);
+            Assert.Null(store.Read(a));
+            Assert.Null(store.Read(b));
+            Assert.Equal(0, store.DeleteAllProductItems());
+        }
+        finally { store.Delete(a); store.Delete(b); _ = other; }
+    }
+
+    [WindowsFact]
     public void Empty_input_and_oversize_passwords_are_refused()
     {
         var store = new CredentialManagerStore();

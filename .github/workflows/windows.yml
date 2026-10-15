@@ -8,6 +8,8 @@ name: Windows client CI
 # and does not test the UAC prompt (the runner is non-interactive and already elevated): the runner is
 # Windows Server, not a Windows 10/11 client, and a TUN that captures the default route would cut the
 # runner off from GitHub.
+# Round 8 adds a TEST-signed (self-signed) Inno Setup installer that is installed, reinstalled, refused, rolled back,
+# downgrade-refused and uninstalled for real. It is signed with a throw-away certificate nobody trusts; no trusted signature exists.
 # The real TUN run (cases T01-T09) is done with asterlink-tuntest.exe on an authorised
 # machine; see docs/windows-tun-poc.md.
 
@@ -20,6 +22,7 @@ on:
       - 'shared/**'
       - 'scripts/test-native-windows.py'
       - 'scripts/package-native-windows.py'
+      - 'scripts/windows_release.py'
       - 'scripts/windows/**'
       - '.github/workflows/windows.yml'
   push:
@@ -31,6 +34,7 @@ on:
       - 'shared/**'
       - 'scripts/test-native-windows.py'
       - 'scripts/package-native-windows.py'
+      - 'scripts/windows_release.py'
       - 'scripts/windows/**'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
@@ -48,6 +52,8 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
   SOLUTION: apps/windows/AsterLink.sln
   GO_VERSION: '1.26.6'
+  INNO_VERSION: '6.7.3'
+  ASTERLINK_INNO_VERSION: '6.7.3'
 
 jobs:
   windows-x64:
@@ -223,6 +229,18 @@ jobs:
       - name: Service suite - Windows kernel tests, internal stage, real install, GUI to Service to Core, attacks
         run: py -3 scripts/test-native-windows.py --suite service --allow-service-install --out artifacts/windows/service --report artifacts/windows/service-suite.json
 
+      - name: Install Inno Setup (pinned; the installer compiler, not shipped)
+        shell: pwsh
+        run: |
+          choco install innosetup --version=$env:INNO_VERSION -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup $env:INNO_VERSION could not be installed" }
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe not found after install' }
+          & $iscc /? | Select-Object -First 2
+
+      - name: Release suite - TEST-signed installer, real silent install / reinstall / refused upgrade / rollback / downgrade / uninstall (self-signed certificate, NOT a trusted release)
+        run: py -3 scripts/test-native-windows.py --suite release --allow-service-install --sign test --out artifacts/windows/release --report artifacts/windows/release-suite.json
+
       - name: Collect the test-machine kit (internal stage + e2e scripts, unsigned)
         if: always()
         shell: pwsh
@@ -249,6 +267,8 @@ jobs:
             artifacts/windows/billing-suite.json
             artifacts/windows/grants-suite.json
             artifacts/windows/service-suite.json
+            artifacts/windows/release-suite.json
+            artifacts/windows/release/release-check.json
             artifacts/windows/service/e2e-service.json
             artifacts/windows/reliability-verify.json
             artifacts/windows/wintun-signature.txt
@@ -271,6 +291,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: artifacts/windows/kit
+
+      - name: Retain the TEST-signed installer folder (internal channel, self-signed, for the authorised test machine)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-test-signed
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/windows/release/installer
 
       - name: Retain the TUN harness build for the authorised test machine
         if: always()
@@ -308,3 +337,9 @@ jobs:
         run: python3 scripts/test-native-windows.py --suite foundation
       - name: Cross-build the Windows Core from Linux, vet it, check the platform split and the Wintun hash
         run: python3 scripts/test-native-windows.py --suite core --out "$RUNNER_TEMP/windows-core"
+      - name: Release suite, portable part (checksums, installer script contract, PowerShell syntax; the installer itself is BLOCKED off Windows by design)
+        run: |
+          set +e
+          python3 scripts/test-native-windows.py --suite release
+          code=$?
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then exit "$code"; fi

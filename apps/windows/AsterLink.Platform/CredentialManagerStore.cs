@@ -114,6 +114,46 @@ public sealed class CredentialManagerStore : ICredentialStore
         if (error != ErrorNotFound) throw new CredentialStoreException("CredDelete failed: " + new Win32Exception(error).Message, error);
     }
 
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CredEnumerateW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CredEnumerate(string filter, uint flags, out uint count, out IntPtr credentials);
+
+    /// <summary>
+    /// Removes every saved password this product keeps in the current user's vault (all API bases and
+    /// accounts) and returns how many were removed. Used by the uninstaller's explicit "forget my saved
+    /// passwords" choice; it can only ever see the vault of the user it runs as.
+    /// </summary>
+    public int DeleteAllProductItems()
+    {
+        if (!CredEnumerate(CredentialAccount.TargetPrefix + "*", 0, out var count, out var array))
+        {
+            var error = Marshal.GetLastWin32Error();
+            if (error == ErrorNotFound) return 0;
+            throw new CredentialStoreException("CredEnumerate failed: " + new Win32Exception(error).Message, error);
+        }
+        var targets = new List<string>();
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var item = Marshal.PtrToStructure<Credential>(Marshal.ReadIntPtr(array, i * IntPtr.Size));
+                if (item.Type == TypeGeneric && Marshal.PtrToStringUni(item.TargetName) is { } name
+                    && name.StartsWith(CredentialAccount.TargetPrefix, StringComparison.Ordinal))
+                    targets.Add(name);
+            }
+        }
+        finally { CredFree(array); }
+
+        var removed = 0;
+        foreach (var name in targets)
+        {
+            if (CredDelete(name, TypeGeneric, 0)) { removed++; continue; }
+            var error = Marshal.GetLastWin32Error();
+            if (error != ErrorNotFound) throw new CredentialStoreException("CredDelete failed: " + new Win32Exception(error).Message, error);
+        }
+        return removed;
+    }
+
     private static CredentialStoreException Failure(string api)
     {
         var error = Marshal.GetLastWin32Error();

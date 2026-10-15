@@ -86,6 +86,8 @@ def check_lock_file():
            and bool(re.fullmatch(r'[0-9a-f]{64}', wintun['amd64_dll_sha256'])),
            'ZIP hash verified against a download in round 2; DLL hash recorded')
 
+    record('lock.installer', ("INNO_VERSION: '%s'" % lock['installer']['version']) in workflow, 'lock=%s windows.yml' % lock['installer']['version'])
+
     go_version = lock['go']['version']
     ci = (ROOT / '.github' / 'workflows' / 'ci.yml').read_text()
     record('lock.go', "GO_VERSION: '%s'" % go_version in ci, 'lock=%s ci.yml' % go_version)
@@ -419,6 +421,100 @@ def run_service_suite(args):
     record('service.e2e', e2e.returncode == 0 and bool(cases), '%d cases from the harness, exit code %d' % (len(cases), e2e.returncode))
 
 
+def run_release_suite(args):
+    """Round 8: the portable checks always run; the installer build and the real install/upgrade/uninstall need Windows + Inno Setup."""
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import tempfile
+    import windows_release
+
+    # -- portable: checksum writer/reader, the Inno script's contract, the refusal of a fake release channel ----------
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        (folder / 'a.bin').write_bytes(b'one')
+        (folder / 'b.txt').write_text('two')
+        windows_release.write_checksums(folder)
+        record('release.sha256sums_roundtrip', windows_release.verify_checksums(folder) == [], 'SHA256SUMS written and read back clean')
+        (folder / 'a.bin').write_bytes(b'changed')
+        (folder / 'c.txt').write_text('unlisted')
+        problems = windows_release.verify_checksums(folder)
+        record('release.sha256sums_detect_tamper', any('mismatch' in p for p in problems) and any('not listed' in p for p in problems), 'problems: %s' % problems)
+
+    iss = (WINDOWS / 'Packaging' / 'setup.iss').read_text(encoding='utf-8')
+    required = {
+        'PrivilegesRequired=admin': 'installer runs elevated by design (one UAC prompt)',
+        'ArchitecturesAllowed=x64os': 'x64 only, not ARM64',
+        'MinVersion=10.0.19041': 'Windows 10 2004 floor',
+        'DefaultDirName={autopf}\\{#AppName}': 'the one directory the service accepts',
+        'install --stage': 'files are installed by the verifying service verb, not copied by Inno',
+        'runasoriginaluser': 'the app never starts with the administrator token',
+        'ExecAsOriginalUser': 'per-user cleanup runs as the invoking user',
+        'REMOVEUSERDATA': 'explicit choice for saved data',
+    }
+    for needle, why in required.items():
+        record('release.iss[%s]' % needle, needle in iss, why)
+    # Inno must never copy product files into Program Files itself, and the stage must stay out of {app}.
+    files_section = iss.split('[Files]')[1].split('[Icons]')[0]
+    record('release.iss_files_only_to_tmp', '{tmp}' in files_section and '{app}' not in files_section, 'payload goes to Setup temp, never straight to {app}')
+
+    refused = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'package-native-windows.py'), '--channel', 'release'], capture_output=True, text=True)
+    record('release.channel_release_refused', refused.returncode != 0 and 'release manifest' in (refused.stdout + refused.stderr), 'a "release" channel stays refused until the service verifies Authenticode')
+
+    ps = shutil.which('pwsh') or shutil.which('powershell')
+    if ps:
+        for name in ('sign-files.ps1', 'release-check.ps1'):
+            script = ROOT / 'scripts' / 'windows' / name
+            parse = subprocess.run([ps, '-NoProfile', '-Command',
+                                    "$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('%s',[ref]$null,[ref]$e);if($e.Count){$e|%%{$_.Message};exit 1}" % script],
+                                   capture_output=True, text=True)
+            record('release.ps_syntax[%s]' % name, parse.returncode == 0, (parse.stdout + parse.stderr).strip()[:300] or 'parses')
+    else:
+        record('release.ps_syntax', False, 'no PowerShell on this host; syntax not checked', status='NOT_RUN')
+
+    # -- Windows + Inno Setup: the real thing -----------------------------------------------------------------------
+    if sys.platform != 'win32':
+        record('release.installer', False, 'building and running the installer needs a Windows x64 host; nothing was tested', status='BLOCKED')
+        return
+    try:
+        windows_release.find_iscc()
+    except SystemExit as error:
+        record('release.installer', False, str(error), status='BLOCKED')
+        return
+    out = Path(args.out).resolve() if args.out else ROOT / 'artifacts' / 'native-windows' / 'release'
+    stage = out / 'stage'
+    release_dir = out / 'installer'
+    sign_mode = args.sign
+    cmd = [sys.executable, str(ROOT / 'scripts' / 'package-native-windows.py'), '--channel', 'internal', '--stage', str(stage),
+           '--installer', '--release-dir', str(release_dir), '--sign', sign_mode]
+    if args.skip_source_archives:
+        cmd.append('--skip-source-archives')
+    packaged = subprocess.run(cmd, capture_output=True, text=True)
+    print(packaged.stdout[-3000:])
+    if packaged.returncode != 0:
+        record('release.package', False, (packaged.stdout + packaged.stderr)[-1500:])
+        return
+    record('release.package', True, 'installer built at %s (signing=%s)' % (release_dir, sign_mode))
+
+    report = out / 'release-check.json'
+    expect = 'none' if sign_mode == 'none' else 'test' if sign_mode == 'test' else 'release'
+    ps_cmd = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'scripts' / 'windows' / 'release-check.ps1'),
+              '-ReleaseDir', str(release_dir), '-ExpectSignature', expect, '-Report', str(report)]
+    if args.allow_service_install and is_windows_admin():
+        ps_cmd.append('-Install')
+    else:
+        record('release.install', False, 'installing and uninstalling the product needs --allow-service-install and an elevated shell; only the file checks ran', status='BLOCKED')
+    check = subprocess.run(ps_cmd, capture_output=True, text=True)
+    print(check.stdout[-8000:])
+    if not report.is_file():
+        record('release.check', False, 'the harness wrote no report:\n' + check.stderr[-1500:])
+        return
+    cases = json.loads(report.read_text(encoding='utf-8-sig'))
+    if isinstance(cases, dict):
+        cases = [cases]
+    for case in cases:
+        results.append(case)
+    record('release.check', check.returncode == 0 and bool(cases), '%d cases from the harness, exit code %d' % (len(cases), check.returncode))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--suite', required=True)
@@ -427,6 +523,8 @@ def main():
     parser.add_argument('--allow-network-changes', action='store_true', help='billing suite: permit the live run (changes routes/DNS, spends test-account quota)')
     parser.add_argument('--spend-test-quota', action='store_true', help='grants suite: permit the live run (spends test-account quota and device slots; changes no network setting unless --allow-network-changes adds the TUN case)')
     parser.add_argument('--out', help='core suite: directory for the built PE files (default artifacts/native-windows/core)')
+    parser.add_argument('--sign', choices=('none', 'test', 'thumbprint', 'pfx'), default='test', help='release suite: signing mode used for the installer build (default: a self-signed TEST certificate)')
+    parser.add_argument('--skip-source-archives', action='store_true', help='release suite: faster local run')
     args = parser.parse_args()
 
     if args.suite == 'foundation':
@@ -447,6 +545,8 @@ def main():
         run_billing_suite(args)
     elif args.suite == 'grants':
         run_grants_suite(args)
+    elif args.suite == 'release':
+        run_release_suite(args)
     else:
         print('suite %r needs a Windows x64 host and is implemented in a later round' % args.suite)
         return EXIT_BLOCKED

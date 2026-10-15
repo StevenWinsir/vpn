@@ -555,7 +555,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 5 TUN 与开发计量 | DONE（PR #24；CI 全绿；Windows 10 家庭版真机：B01 1× 逐单位精确、B02 丢 ACK 同批重试只扣一次、A04 改倍率/套餐到期/停用节点/额度耗尽均自动停连；0.5× 倍率、VLESS、受控 UDP、Windows 11 NOT_RUN） | 第 6 轮；若有 0.5× 线路补测 B01；client_reported 仍为开发计量 |
 | 6 可靠性与网络矩阵 | DONE（PR #25；CI 全绿；Windows 10 家庭版真机：harness 20 例 0 FAIL、T05-bind 通过（无需 WFP）、硬杀 Core/GUI/Service 恢复通过、一次睡眠恢复通过；**8 小时采样、休眠、10 次睡眠/切网、断电、浏览器页面、Windows 11 均 NOT_RUN**） | 第 7 轮；8 小时采样等可随时用 docs/windows-reliability.md 补测 |
 | 7 节点权威计量 | CODE_DONE / 商业验收 BLOCKED（本 PR；验收工具与 UI 来源标识完成；macOS 回环用真实后端+PostgreSQL+mTLS+真实 NodeAgent 二进制+真实 sink 跑通 B04/B05/B06；**没有受管节点，demo.hyshentou.cn 未测；Windows 真机 B04-tun、跨机 B06、Mihomo VLESS-UDP、Windows 11 均 NOT_RUN**） | 在自控服务器部署 NodeAgent（带 TLS）并登记，然后按 docs/windows-grants-acceptance.md 在 Windows 真机跑 `--grants`、`--tun`；通过后进入第 8 轮 |
-| 8 签名安装发布 | NOT_STARTED | 签名身份、干净机、许可材料与所有硬门槛证据 |
+| 8 签名安装发布 | CODE_DONE / 发布 BLOCKED（本 PR；Inno Setup 安装器、升级回退、卸载、测试签名流水线、发布资料齐备；**无可信证书、无干净机 R01/R02、无受管节点；仅内部渠道**） | 取得代码签名证书后 `--sign thumbprint\|pfx`，并实现服务/GUI 侧 Authenticode 校验；在干净 Windows 10/11 机器按 docs/windows-release.md 第 8 节验收；Wintun 再分发法务复核 |
 
 每轮交接追加以下一段即可：
 
@@ -807,6 +807,38 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   5) B06 在真实栈中表现为“首个 grant 预留全部剩余预算，其余被拒”，即不超卖但也不会让多设备分享尾量；是否符合产品预期请业务确认。
 下一位从哪里开始：部署带 TLS 的 NodeAgent → 按 docs/windows-grants-acceptance.md 跑 --grants（可在 Windows 或 macOS），再在无 VPN 的 Windows 真机跑 --tun；通过后进入第 8 轮。
 回退与网络恢复方法：独立客户端用例不改网络；--tun 同第 5 轮（退出即关闭隧道并结账，硬杀后适配器/路由/DNS 随进程消失）；回退 = 删除 worktree 分支。
+```
+
+### 第 8 轮记录（2026-10-14，Claude）
+
+```text
+轮次 / 日期 / 执行者：第 8 轮 / 2026-10-14 / Claude (Sonnet 5.5)
+基线 commit / 已有未提交改动：ed773bf（PR #26 合并点）；新 worktree worktree-windows-round8-release，工作区干净
+实际修改与契约变化（不含秘密）：
+  安装器：apps/windows/Packaging/setup.iss（Inno Setup 6.7.3，x64os、Windows 10 2004+、一次 UAC）。Inno 只做载体和界面：把 stage 解到自己的临时目录，调用
+    服务的 install --stage 验证式动词；不直接往 Program Files 拷文件。GUI 运行时安装/卸载被拒绝（静默模式直接失败）；安装后可选以“原始非提权用户”启动。
+  升级/回退（ServiceVerbs.Install）：降级默认拒绝（exit 7，--allow-downgrade 才放行，UpgradePolicy 数值比较）；旧目录改名为 AsterLink.previous，
+    新版验证并运行后才删除；任一步失败即恢复并重新验证旧版、重启其服务（RollBack），不恢复登录；中断留下的 .previous 在下次安装时恢复或清理。
+  卸载：卸载器先询问（默认“否”；静默用 /REMOVEUSERDATA=1）是否删除“当前用户”的保存密码与偏好，由已安装 GUI 以原始非提权用户执行
+    --cleanup-user-data（CredEnumerate 仅限 AsterLink/ 前缀，不碰其他应用；偏好目录含 device id）；随后从安装目录外的副本运行 uninstall 动词。
+    提权卸载器不遍历其他 Windows 用户的凭据库。
+  签名：scripts/windows/sign-files.ps1（none/test/thumbprint/pfx；密钥只从环境变量读，真实模式强制时间戳且要求 Valid）；顺序=签自有二进制→写 manifest→
+    Inno SignTool 签 Setup 与卸载器。test 模式是自签名证书，只验证流水线，任何机器都不信任。manifest 渠道仍为 internal，--channel release 仍被拒绝：
+    服务端尚不校验 Authenticode，测试签名不会被误当发布。
+  发布资料：package-native-windows.py --installer --release-dir → Setup、SHA256SUMS、release-info.json（trusted_signature=false、open_gates）、manifest、
+    依赖清单（CycloneDX 形，无第三方 NuGet）、第三方许可、SOURCE.txt 与两份 GPL 源码归档。docs/windows-release.md 为升级/卸载/回退/限制说明。
+  测试：AsterLink.Tests +升级分类/清理选择单测；Tests.Windows +CredentialManager 清理；scripts/windows/release-check.ps1 与 test-native-windows.py --suite release；
+    windows.yml 安装 Inno 并真实静默安装/重装/被拒绝/回退/降级拒绝/卸载（保留与删除用户数据），上传测试签名安装包。toolchain.lock.json 记录 Inno 6.7.3 决定。
+  未改后端、网站、共享契约、macOS 工程、Core。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
+  macOS：dotnet build 全解决方案 0 警告 0 错误；AsterLink.Tests 318 例 0 FAIL；test-native-windows.py --suite release（可移植部分）与 --suite foundation 通过，
+    安装器构建/真实安装 = BLOCKED（非 Windows）。公司 VPN 在线对本轮无影响：安装/升级/卸载不改路由、DNS、网卡。
+  Windows Server 2025 CI：见 PR（结果以 CI 为准）。Windows 10/11 真机：R01/R02 均 NOT_RUN。
+安装包版本 / OS、架构、Core、驱动版本 / 脱敏证据路径：内部渠道 0.1.0；Wintun 0.14.1 内嵌；artifact windows-installer-test-signed（自签名，仅测试）。
+未解决问题、复现方法与发布限制：docs/windows-release.md 第 6、7 节。要点：无可信证书与时间戳；服务/GUI 尚不校验 Authenticode；R01（干净机、真实 UAC、默认安全设置）、
+  R02（其他用户凭据、真实旧版本升级、断电中断）NOT_RUN；Wintun 预编译二进制再分发条款和 Inno 商业许可需法务/采购确认；round 7 受管节点仍缺失；Windows 11 NOT_RUN。
+下一位从哪里开始：拿到证书后 sign-files.ps1 的 thumbprint/pfx 模式；实现 PeerPolicy/InstallVerifier 的 Authenticode 校验并放开 release 渠道；在干净 Windows 10/11 跑 release-check.ps1 -Install 与手工 R01。
+回退与网络恢复方法：本轮不改网络；升级失败自动回到旧版；回退本 PR = 删除 worktree 分支，或卸载后安装旧版 Setup。
 ```
 
 ## 附录 A. 源码核验索引
