@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A four-point star inside the 72 dp safe zone of the 108 dp adaptive canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 C56,44 64,52 80,54 C64,56 56,64 54,80 C52,64 44,56 28,54 C44,52 52,44 54,28 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M72,32 C72.6,36.6 75.4,39.4 80,40 C75.4,40.6 72.6,43.4 72,48 C71.4,43.4 68.6,40.6 64,40 C68.6,39.4 71.4,36.6 72,32 Z" />
+</vector>

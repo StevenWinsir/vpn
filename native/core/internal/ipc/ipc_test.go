@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -146,6 +147,29 @@ func TestFramingFailuresTerminateSession(t *testing.T) {
 func TestCleanEOFIsNotAnError(t *testing.T) {
 	if err := Serve(&duplex{in: bytes.NewReader(nil)}, BuildInfo{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The in-process binding has no stream to abandon, so what the framing layer refuses
+// is answered with a stable error instead.
+func TestHandleOneAnswersWhatFramingWouldRefuse(t *testing.T) {
+	for name, c := range map[string]struct {
+		frame []byte
+		code  string
+	}{
+		"empty":    {nil, CodeInvalidRequest},
+		"oversize": {bytes.Repeat([]byte("a"), MaxFrame+1), CodePayloadTooLarge},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response, shutdown := HandleOne(context.Background(), c.frame, BuildInfo{}, nil)
+			if shutdown || response.OK || response.Error == nil || response.Error.Code != c.code {
+				t.Fatalf("%+v shutdown=%v", response, shutdown)
+			}
+		})
+	}
+	response, shutdown := HandleOne(context.Background(), []byte(`{"request_id":"s","protocol_version":1,"generation":3,"command":"shutdown"}`), BuildInfo{}, nil)
+	if !shutdown || !response.OK || response.RequestID != "s" || response.Generation != 3 {
+		t.Fatalf("shutdown: %+v %v", response, shutdown)
 	}
 }
 

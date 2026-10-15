@@ -1,0 +1,138 @@
+name: Android client CI
+
+# Scope (round 1, handoff_app_android.md 10): the toolchain lock agrees with the build, the Go
+# Core's Android platform split is right, gomobile binds the Core + pinned Mihomo into an AAR
+# whose libgojni.so is ELF for its ABI, 16 KB aligned and reproducible, the Debug APK builds
+# with the .so stored uncompressed, the env-v1 parser and JVM tests pass, and on a KVM x86_64
+# emulator the app starts the real Core, shows its version and the instrumented binding test
+# passes. Nothing here creates a VPN or touches the runner's network; the VpnService/TUN
+# suites arrive in round 2 and run against an emulator only.
+# x86_64 is built only so the Linux runner can run the app; the product ABI is arm64-v8a.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/android/**'
+      - 'native/core/**'
+      - 'shared/**'
+      - 'scripts/build-native-android.py'
+      - 'scripts/test-native-android.py'
+      - 'scripts/native_env.py'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/android/**'
+      - 'native/core/**'
+      - 'shared/**'
+      - 'scripts/build-native-android.py'
+      - 'scripts/test-native-android.py'
+      - 'scripts/native_env.py'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vpn-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.26.6'
+  JAVA_VERSION: '17'
+  ANDROID_NDK_VERSION: '28.2.13676358'
+  ANDROID_PLATFORM: 'platforms;android-37.0'
+  EMULATOR_IMAGE: 'system-images;android-36;google_apis;x86_64'
+
+jobs:
+  build:
+    name: Android build / AAR / APK / unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: native/core/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      - name: Toolchain versions (recorded, not assumed)
+        run: |
+          go version
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+      - name: Android SDK packages from the lock (the runner's single SDK)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" > /dev/null
+      - name: Foundation suite (lock, env, Go platform split, manifest baseline)
+        run: python3 scripts/test-native-android.py --suite foundation --report artifacts/native-android/foundation-report.json
+      - name: Core AAR (gomobile, arm64-v8a + x86_64, bound twice to prove the .so is reproducible)
+        run: python3 scripts/build-native-android.py --target aar --abi arm64-v8a --abi x86_64 --check-reproducible
+      - name: Debug APK (uncompressed .so, zipalign -P 16)
+        run: python3 scripts/build-native-android.py --target apk --abi arm64-v8a --abi x86_64
+      - name: Unit suite (Go binding/IPC/network/managed, env-v1 parser, app JVM tests)
+        run: python3 scripts/test-native-android.py --suite unit --report artifacts/native-android/unit-report.json
+      - name: Retain the Core AAR for the emulator job
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-core-aar
+          path: apps/android/build/core/
+          retention-days: 3
+      - name: Retain the Debug APK and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug
+          path: |
+            apps/android/app/build/outputs/apk/debug/app-debug.apk
+            artifacts/native-android/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  emulator:
+    name: Android emulator (API 36 x86_64, KVM)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: native/core/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      - name: Allow the emulator to use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator, system image and the NDK (the Go binding tests are cross-compiled for the device)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-core-aar
+          path: apps/android/build/core/
+      - name: Debug APK from the tested Core AAR
+        run: python3 scripts/build-native-android.py --target apk --abi arm64-v8a --abi x86_64
+      - name: Emulator suite (real AAR in the app process; no VPN, no host network change)
+        run: python3 scripts/test-native-android.py --suite emulator --api 36 --abi x86_64 --report artifacts/native-android/emulator-report.json
+      - name: Retain emulator evidence (screenshot, device facts, report)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-evidence
+          path: artifacts/native-android/
+          retention-days: 14
+          if-no-files-found: ignore

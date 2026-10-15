@@ -31,13 +31,6 @@ func ServeWith(rw io.ReadWriter, info BuildInfo, handler Handler) error {
 	if handler != nil {
 		defer handler.Close()
 	}
-	reply := func(response Response) error {
-		body, err := json.Marshal(response)
-		if err != nil {
-			return err
-		}
-		return WriteFrame(rw, body)
-	}
 	for {
 		frame, err := ReadFrame(rw, MaxFrame)
 		if err != nil {
@@ -46,37 +39,62 @@ func ServeWith(rw io.ReadWriter, info BuildInfo, handler Handler) error {
 			}
 			return err
 		}
-		request, bad := DecodeRequest(frame)
-		response := Response{RequestID: request.RequestID, ProtocolVersion: ProtocolVersion, Generation: request.Generation}
-		switch {
-		case bad != nil:
-			response.Error = bad
-		case request.ProtocolVersion != ProtocolVersion:
-			response.Error = &Error{CodeProtocolUnsupported, "protocol version not supported"}
-		case request.Command == CmdHello:
-			result, _ := json.Marshal(HelloResult{
-				Component: "asterlink-core", CoreVersion: info.CoreVersion,
-				ProtocolVersion: ProtocolVersion, MinProtocolVersion: ProtocolVersion, MaxProtocolVersion: ProtocolVersion,
-				MihomoRevision: info.MihomoRevision,
-			})
-			response.OK, response.Result = true, result
-		case request.Command == CmdShutdown:
-			response.OK = true
-			return reply(response)
-		case handler != nil:
-			result, failure := handler.Handle(context.Background(), request)
-			if failure != nil {
-				response.Error = failure
-			} else if encoded, err := json.Marshal(result); err != nil {
-				response.Error = &Error{CodeInvalidRequest, "internal encoding error"}
-			} else {
-				response.OK, response.Result = true, encoded
-			}
-		default:
-			response.Error = &Error{CodeNotImplemented, "command not implemented in this build"}
-		}
-		if err := reply(response); err != nil {
+		response, shutdown := HandleOne(context.Background(), frame, info, handler)
+		body, err := json.Marshal(response)
+		if err != nil {
 			return err
 		}
+		if err := WriteFrame(rw, body); err != nil {
+			return err
+		}
+		if shutdown {
+			return nil
+		}
 	}
+}
+
+// HandleOne answers one request body. It is the single place a request is decoded and
+// dispatched: the framed pipe (ServeWith) and the in-process mobile binding
+// (native/core/mobile) both call it, so strict decoding, the protocol version check,
+// the per-command limits and the generation echo cannot drift between them. shutdown
+// reports that the caller must end the session after delivering the response. A body
+// the framing layer would have refused (empty or over MaxFrame) is answered with an
+// error here, because an in-process caller has no stream to abandon.
+func HandleOne(ctx context.Context, frame []byte, info BuildInfo, handler Handler) (response Response, shutdown bool) {
+	if len(frame) == 0 {
+		return Response{ProtocolVersion: ProtocolVersion, Error: &Error{CodeInvalidRequest, "empty request"}}, false
+	}
+	if len(frame) > MaxFrame {
+		return Response{ProtocolVersion: ProtocolVersion, Error: &Error{CodePayloadTooLarge, "request exceeds the frame limit"}}, false
+	}
+	request, bad := DecodeRequest(frame)
+	response = Response{RequestID: request.RequestID, ProtocolVersion: ProtocolVersion, Generation: request.Generation}
+	switch {
+	case bad != nil:
+		response.Error = bad
+	case request.ProtocolVersion != ProtocolVersion:
+		response.Error = &Error{CodeProtocolUnsupported, "protocol version not supported"}
+	case request.Command == CmdHello:
+		result, _ := json.Marshal(HelloResult{
+			Component: "asterlink-core", CoreVersion: info.CoreVersion,
+			ProtocolVersion: ProtocolVersion, MinProtocolVersion: ProtocolVersion, MaxProtocolVersion: ProtocolVersion,
+			MihomoRevision: info.MihomoRevision,
+		})
+		response.OK, response.Result = true, result
+	case request.Command == CmdShutdown:
+		response.OK = true
+		return response, true
+	case handler != nil:
+		result, failure := handler.Handle(ctx, request)
+		if failure != nil {
+			response.Error = failure
+		} else if encoded, err := json.Marshal(result); err != nil {
+			response.Error = &Error{CodeInvalidRequest, "internal encoding error"}
+		} else {
+			response.OK, response.Result = true, encoded
+		}
+	default:
+		response.Error = &Error{CodeNotImplemented, "command not implemented in this build"}
+	}
+	return response, false
 }
