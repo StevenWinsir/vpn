@@ -88,7 +88,7 @@ def build_installer(stage, out, version, sign_mode):
     cmd = [find_iscc(), '/Qp']
     if sign_mode != 'none':
         # Inno substitutes $f with the quoted file name; the setup and the uninstaller are both signed this way.
-        tool = '%s -NoProfile -ExecutionPolicy Bypass -File "%s" -Mode %s -Files $f' % (powershell(), SIGN_SCRIPT, sign_mode)
+        tool = '"%s" -NoProfile -ExecutionPolicy Bypass -File "%s" -Mode %s -Files $f' % (powershell(), SIGN_SCRIPT, sign_mode)
         cmd += ['/DSign=1', '/Sasterlink=' + tool]
     cmd.append(str(SETUP_SCRIPT))
     run(cmd, env=env)
