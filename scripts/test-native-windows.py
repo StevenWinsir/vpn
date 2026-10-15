@@ -26,6 +26,15 @@ Implemented suites:
     * live (elevated Windows host, --allow-network-changes, ASTERLINK_BILL_* in the environment): real login -> TUN ->
       controlled bytes -> disconnect -> ledger compared to the formula. Otherwise BLOCKED, never PASS.
 
+  grants (round 7)
+    * unit: the independent-client harness judged against a fake managed node in both directions (a faithful node
+      passes; one that skips a duty - billing, cutting revoked flows, refusing /traffic, holding the quota - fails),
+      the Core's grant state machine, the contract fixtures, the sink's UDP echo, and the node agent module's own
+      tests; non-zero test counts required
+    * builds of asterlink-billtest for windows/amd64, darwin/arm64 (the macOS side of the B06 race) and linux/amd64
+    * live (ASTERLINK_BILL_* plus --spend-test-quota): the node-enforcement cases against the real API and a real
+      managed node. Without a node-governed line on the test account the live part is BLOCKED, never PASS.
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 Suites that need a real Windows host (unit/service/tun/...) arrive in later rounds and refuse
 to run here instead of reporting a pass.
@@ -250,6 +259,71 @@ def run_billing_suite(args):
     record('billing.live', status == 'PASS', 'asterlink-billtest exit %d; report %s' % (live.returncode, report / 'billing-report.json'), status=status)
 
 
+def count_go_tests(cwd, packages, extra=()):
+    process = subprocess.run(['go', 'test', '-count=1', '-json', *extra, *packages], cwd=cwd, capture_output=True, text=True, env=dict(os.environ))
+    passed = failed = 0
+    failures = []
+    for line in process.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get('Test') and event.get('Action') == 'pass':
+            passed += 1
+        elif event.get('Test') and event.get('Action') == 'fail':
+            failed += 1
+            failures.append(event['Test'])
+    return process, passed, failed, failures
+
+
+def run_grants_suite(args):
+    """Round 7. Whether the NODE enforces billing, revocation and expiry. The unit part runs anywhere Go does; the live part
+    needs the real API plus a node governed by a node agent, and without one it is BLOCKED (never a pass)."""
+    if not shutil.which('go'):
+        record('go.toolchain', False, 'go not found; nothing was tested', status='BLOCKED')
+        return
+    out_dir = Path(args.out).resolve() if args.out else ROOT / 'artifacts' / 'native-windows' / 'core'
+    race = [] if sys.platform == 'win32' else ['-race']
+    process, passed, failed, failures = count_go_tests(CORE, ['./cmd/asterlink-billtest', './cmd/asterlink-trafficsink', './internal/managed', './internal/apiclient'], race)
+    record('grants.unit', process.returncode == 0 and failed == 0 and passed > 0,
+           'harness, sink, grant state machine, contract fixtures%s: passed=%d failed=%d %s' % (' (race)' if race else '', passed, failed, ', '.join(failures[:8])))
+    if sys.platform == 'win32':
+        # The node agent is server software (Linux nodes); its tests belong to the Linux/macOS CI, not to a Windows client check.
+        record('grants.nodeagent', False, 'not run on Windows: the node agent is server software, tested by the Linux/macOS jobs', status='BLOCKED')
+    else:
+        process, passed, failed, failures = count_go_tests(ROOT / 'native' / 'nodeagent', ['./...'], race)
+        record('grants.nodeagent', process.returncode == 0 and failed == 0 and passed > 0,
+               'node agent and reference forwarder tests%s: passed=%d failed=%d %s' % (' (race)' if race else '', passed, failed, ', '.join(failures[:8])))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for goos, goarch, suffix in (('windows', 'amd64', '.exe'), ('darwin', 'arm64', ''), ('linux', 'amd64', '')):
+        target = out_dir / ('asterlink-billtest-%s-%s%s' % (goos, goarch, suffix))
+        built = go_run(['build', '-trimpath', '-o', str(target), './cmd/asterlink-billtest'], env=go_env(GOOS=goos, GOARCH=goarch, GOAMD64='v1', CGO_ENABLED='0'))
+        record('build.billtest_%s_%s' % (goos, goarch), built.returncode == 0, '%s (%d bytes)' % (target.name, target.stat().st_size) if built.returncode == 0 else built.stderr[-800:])
+
+    needed = ['ASTERLINK_BILL_API_BASE', 'ASTERLINK_BILL_EMAIL', 'ASTERLINK_BILL_PASSWORD', 'ASTERLINK_BILL_SINK', 'ASTERLINK_BILL_SINK_TOKEN']
+    missing = [name for name in needed if not os.environ.get(name)]
+    if not args.spend_test_quota or missing:
+        record('grants.live', False, 'live enforcement run not executed: needs --spend-test-quota' + (' and ' + ', '.join(missing) if missing else ''), status='BLOCKED')
+        return
+    exe = out_dir / 'asterlink-billtest-host.exe' if sys.platform == 'win32' else out_dir / 'asterlink-billtest-host'
+    host = go_run(['build', '-trimpath', '-o', str(exe), './cmd/asterlink-billtest'], env=go_env(CGO_ENABLED='0'))
+    if host.returncode != 0:
+        record('grants.live', False, 'host build failed: ' + host.stderr[-500:])
+        return
+    report = ROOT / 'artifacts' / 'native-windows' / 'grants-report'
+    if report.exists():
+        shutil.rmtree(report)
+    command = [str(exe), '--grants', '--spend-test-quota', '--idle-expiry', '--output', str(report)]
+    if os.environ.get('ASTERLINK_BILL_UDP_SINK'):
+        command += ['--udp-sink', os.environ['ASTERLINK_BILL_UDP_SINK']]
+    if args.allow_network_changes:
+        command += ['--tun', '--allow-network-changes']
+    live = subprocess.run(command, capture_output=True, text=True)
+    print(live.stdout)
+    status = {0: 'PASS', 3: 'BLOCKED'}.get(live.returncode, 'FAIL')
+    record('grants.live', status == 'PASS', 'asterlink-billtest --grants exit %d; report %s' % (live.returncode, report / 'billing-report.json'), status=status)
+
+
 def dotnet_command():
     path = shutil.which('dotnet')
     if path:
@@ -351,6 +425,7 @@ def main():
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--allow-service-install', action='store_true', help='service suite: permit installing and removing AsterLinkService on this machine')
     parser.add_argument('--allow-network-changes', action='store_true', help='billing suite: permit the live run (changes routes/DNS, spends test-account quota)')
+    parser.add_argument('--spend-test-quota', action='store_true', help='grants suite: permit the live run (spends test-account quota and device slots; changes no network setting unless --allow-network-changes adds the TUN case)')
     parser.add_argument('--out', help='core suite: directory for the built PE files (default artifacts/native-windows/core)')
     args = parser.parse_args()
 
@@ -370,6 +445,8 @@ def main():
         run_service_suite(args)
     elif args.suite == 'billing':
         run_billing_suite(args)
+    elif args.suite == 'grants':
+        run_grants_suite(args)
     else:
         print('suite %r needs a Windows x64 host and is implemented in a later round' % args.suite)
         return EXIT_BLOCKED

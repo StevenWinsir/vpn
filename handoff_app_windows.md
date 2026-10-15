@@ -554,7 +554,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 | 4 UI 与账号节点 | DONE（PR #23；CI 10 项全绿；Windows 10 家庭版真机：安装服务、登录、记住密码、选线、连接、上网、DNS、WebRTC 正常（用户报告）；Windows 11 NOT_RUN） | 第 5 轮；A02 的设备上限/0 额度/到期、A04 的后台改动同步未逐项记录，第 5 轮继续核对 |
 | 5 TUN 与开发计量 | DONE（PR #24；CI 全绿；Windows 10 家庭版真机：B01 1× 逐单位精确、B02 丢 ACK 同批重试只扣一次、A04 改倍率/套餐到期/停用节点/额度耗尽均自动停连；0.5× 倍率、VLESS、受控 UDP、Windows 11 NOT_RUN） | 第 6 轮；若有 0.5× 线路补测 B01；client_reported 仍为开发计量 |
 | 6 可靠性与网络矩阵 | DONE（PR #25；CI 全绿；Windows 10 家庭版真机：harness 20 例 0 FAIL、T05-bind 通过（无需 WFP）、硬杀 Core/GUI/Service 恢复通过、一次睡眠恢复通过；**8 小时采样、休眠、10 次睡眠/切网、断电、浏览器页面、Windows 11 均 NOT_RUN**） | 第 7 轮；8 小时采样等可随时用 docs/windows-reliability.md 补测 |
-| 7 节点权威计量 | NOT_STARTED | 自控或合格供应商节点，真实 grant/TUN 联调 |
+| 7 节点权威计量 | CODE_DONE / 商业验收 BLOCKED（本 PR；验收工具与 UI 来源标识完成；macOS 回环用真实后端+PostgreSQL+mTLS+真实 NodeAgent 二进制+真实 sink 跑通 B04/B05/B06；**没有受管节点，demo.hyshentou.cn 未测；Windows 真机 B04-tun、跨机 B06、Mihomo VLESS-UDP、Windows 11 均 NOT_RUN**） | 在自控服务器部署 NodeAgent（带 TLS）并登记，然后按 docs/windows-grants-acceptance.md 在 Windows 真机跑 `--grants`、`--tun`；通过后进入第 8 轮 |
 | 8 签名安装发布 | NOT_STARTED | 签名身份、干净机、许可材料与所有硬门槛证据 |
 
 每轮交接追加以下一段即可：
@@ -771,6 +771,42 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 未解决问题、复现方法与发布限制：docs/windows-reliability.md 第 4 节。20 次启停、10 次睡眠/网络切换、8 小时采样均未执行。
 下一位从哪里开始：真机跑 docs/windows-reliability.md 第 2 节的命令并回填；T05-bind 若 FAIL，按第 5 节做最小 WFP；通过后进入第 7 轮。
 回退与网络恢复方法：新增工具不改网络（harness 需 --allow-network-changes，退出即清理）；回退 = 删除 worktree 分支。
+```
+
+### 第 7 轮记录（2026-10-14，Claude）
+
+```text
+轮次 / 日期 / 执行者：第 7 轮 / 2026-10-14 / Claude (Sonnet 5.5)
+基线 commit / 已有未提交改动：5b6757b（PR #25 合并点）；新 worktree worktree-windows-round7-grant-enforcement，工作区干净
+核查结论（重要）：connectGranted、能力协商、ready grant、撤销、节点确认余额在共享 Core 里早已完整（macOS 阶段 4），Windows 经 Service/IPC 原样消费；
+  后端 /traffic 对 node_reported 会话返回 409 metering_source_mismatch，NodeAgent 参考 VLESS 转发器（TCP+UDP，可选 TLS）已有撤销/到期/预算强制。
+  因此本轮没有重写任何 grant 逻辑或 NodeAgent，缺口是“用户不配合时节点是否真的强制”的验收证据与 UI 来源标识。
+实际修改与契约变化（不含秘密）：
+  asterlink-billtest 新增 --grants：独立 VLESS 客户端（只用 grant 凭据，无 Core/TUN/上报），用例 G-CAPS、G-NODES、B04-reject（/traffic、/config 被拒且账本不动）、
+    B04-node-bills（无任何上报，节点仍按 sink 实测负载×倍率计费，并核对剩余额公式）、B05-revoke（TCP+UDP 在限定秒数内被切断，凭据随后被拒）、
+    B05-idle-expiry（无任何 API 流量，节点自行到期）、--hold-seconds（运营者在后台结束套餐/停用节点/压低额度/停 API/杀 Agent，节点必须切断）、
+    B06-race（N 设备同刻抢最后额度，不得超卖；--race-at 对齐 Windows+macOS）、--tun（B04 经生产 Manager+真实 TUN，Core 零 /traffic）。
+  asterlink-trafficsink 新增 --udp-listen（凭 token 回显）；release 后等节点确认再申请下一个 grant（预算在节点结清后才归还）。
+  scripts/test-native-windows.py 新增 --suite grants；windows.yml 新增 grants 步骤（live 部分在托管 runner 上按设计 BLOCKED）并上传 billtest 三平台构建；
+  scripts/test-native.py 额外构建 billtest/sink，backend/internal/api/billtest_e2e_test.go 用真实 Agent 回环验证工具本身。
+  UI：连接页“当前线路”卡片与线路页标明计量来源（节点实测/客户端上报·内部测试线路）；NodeRow.MeteringLabelOf + 单测。
+  docs/windows-grants-acceptance.md：用例、运行方法、生产模式能力矩阵。未改后端、网站、共享契约、macOS 工程、Service。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
+  macOS：scripts/test-native-windows.py --suite grants：Go 114 例（-race）0 FAIL，NodeAgent 模块 18 例 0 FAIL，billtest 三平台构建通过；live = BLOCKED（无受管节点）。
+  macOS 回环（真实后端+PostgreSQL+mTLS+NodeAgent+sink+billtest --grants，scripts/test-native.py -run TestBilltest）：
+    G-CAPS、G-NODES、B04-reject、B04-node-bills（12,582,914 B → +6,292,218,500 单位 @500‰，仅比正文多 0.01%）、B05-revoke（TCP+UDP 约 1 s 内切断）、
+    B05-idle-expiry（最后一次 API 后 14 s 切断=空闲超时）、B05-expire（套餐结束后约 4 s 切断，凭据被拒）、B06-race（3 设备/6 MiB：1 获授权、2 被拒 quota_exhausted，
+    已用恰为 6,291,456,000/6,291,456,000 单位）全部 PASS。假节点对照：不计费/不切撤销流/接受 /traffic/超卖 均被判 FAIL。
+  C# 未在本机编译（本机无 dotnet）；以 CI 为准。Windows 真机：未执行任何 round-7 用例（NOT_RUN）。
+  本机公司 VPN 在线：未尝试真实 TUN；独立客户端用例不改路由/DNS，真机时仍建议无 VPN 网络。
+未解决问题、复现方法与发布限制：
+  1) 商业验收 BLOCKED：当前测试账号下没有由 NodeAgent 管理的节点（G-NODES 会如实报 BLOCKED）；需自控服务器部署 Agent（TLS）并登记。
+  2) 能力矩阵：只有“VLESS(TCP/UDP)+TLS 参考转发器”是权威；SS/Reality/XTLS/Mux/Trojan/WireGuard 均无节点侧强制，不得进入收费套餐承诺（见 docs/windows-grants-acceptance.md）。
+  3) Mihomo 发起的 VLESS-UDP 经参考转发器的端到端未验证；B04-tun 用 TCP 受控目标，尚无受控 UDP 目标。
+  4) Windows 10/11 真机 B04-tun、Windows+macOS 跨机 B06、真实公网 TLS 节点、控制面/Agent 故障的真节点演练均 NOT_RUN。
+  5) B06 在真实栈中表现为“首个 grant 预留全部剩余预算，其余被拒”，即不超卖但也不会让多设备分享尾量；是否符合产品预期请业务确认。
+下一位从哪里开始：部署带 TLS 的 NodeAgent → 按 docs/windows-grants-acceptance.md 跑 --grants（可在 Windows 或 macOS），再在无 VPN 的 Windows 真机跑 --tun；通过后进入第 8 轮。
+回退与网络恢复方法：独立客户端用例不改网络；--tun 同第 5 轮（退出即关闭隧道并结账，硬杀后适配器/路由/DNS 随进程消失）；回退 = 删除 worktree 分支。
 ```
 
 ## 附录 A. 源码核验索引

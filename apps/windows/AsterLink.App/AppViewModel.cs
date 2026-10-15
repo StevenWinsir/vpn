@@ -319,6 +319,7 @@ public sealed class AppViewModel : INotifyPropertyChanged
     }
 
     public string SelectedNodeRegion => Snap.Nodes.FirstOrDefault(n => n.Id == Snap.SelectedNodeId)?.Region ?? "";
+    public string SelectedNodeMetering => Snap.Nodes.FirstOrDefault(n => n.Id == Snap.SelectedNodeId) is { } node ? NodeRow.MeteringLabelOf(node.MeteringSource) : "";
 
     // plan card
     public bool HasPlan => Snap.Entitlement?.AccountAuthorized == true;

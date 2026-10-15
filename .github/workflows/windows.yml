@@ -16,6 +16,7 @@ on:
     paths:
       - 'apps/windows/**'
       - 'native/core/**'
+      - 'native/nodeagent/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
       - 'scripts/package-native-windows.py'
@@ -26,6 +27,7 @@ on:
     paths:
       - 'apps/windows/**'
       - 'native/core/**'
+      - 'native/nodeagent/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
       - 'scripts/package-native-windows.py'
@@ -161,6 +163,14 @@ jobs:
           if ($LASTEXITCODE -ne 3) { throw "billing suite exited $LASTEXITCODE, expected 3 (live part BLOCKED, everything else PASS)" }
           exit 0
 
+      - name: Grants suite - node-enforcement harness vs a fake managed node, grant state machine, builds for Windows/macOS/Linux (the live run is BLOCKED here by design)
+        shell: pwsh
+        run: |
+          py -3 scripts/test-native-windows.py --suite grants --out artifacts/windows/grants --report artifacts/windows/grants-suite.json
+          # 3 = only the live part and the Linux-only node agent tests are BLOCKED; anything else is a real result.
+          if ($LASTEXITCODE -ne 3) { throw "grants suite exited $LASTEXITCODE, expected 3 (live part BLOCKED, everything else PASS)" }
+          exit 0
+
       - name: Embedded Wintun DLL is the signed official build
         shell: pwsh
         run: |
@@ -237,6 +247,7 @@ jobs:
             artifacts/windows/service-probe.txt
             artifacts/windows/core-suite.json
             artifacts/windows/billing-suite.json
+            artifacts/windows/grants-suite.json
             artifacts/windows/service-suite.json
             artifacts/windows/service/e2e-service.json
             artifacts/windows/reliability-verify.json
@@ -274,6 +285,9 @@ jobs:
             artifacts/windows/billing/asterlink-billtest.exe
             artifacts/windows/billing/asterlink-trafficsink.exe
             artifacts/windows/billing/asterlink-trafficsink-linux-amd64
+            artifacts/windows/grants/asterlink-billtest-windows-amd64.exe
+            artifacts/windows/grants/asterlink-billtest-darwin-arm64
+            artifacts/windows/grants/asterlink-billtest-linux-amd64
 
   contracts-portable:
     name: Foundation suite on Linux (lock file, env parsers, C# contracts)
