@@ -525,7 +525,7 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 
 | 轮次 | 状态 | 下一步与前置条件 |
 | --- | --- | --- |
-| 1 环境与骨架 | IN_REVIEW（PR 见第 1 轮记录） | 本机 arm64 模拟器验收待系统镜像下载完成后补记；16 KB/API 29/API 26 镜像留到第 2、6 轮 |
+| 1 环境与骨架 | IN_REVIEW（PR StevenWinsir/vpn#28） | 本机 API 36 arm64 模拟器 5/5 PASS；16 KB/API 29/API 26 镜像留到第 2、6 轮安装 |
 | 2 真实 TUN PoC | NOT_STARTED | 本地 NodeAgent 即可开始；真实 SS/VLESS 节点凭据由用户经安全方式提供 |
 | 3 账号与 UI | NOT_STARTED | 本地隔离后端；demo 手工确认需要用户输入测试账号密码 |
 | 4 连接与计量 | NOT_STARTED | 公网 sink 部署位置（节点可达的服务器）由用户确认 |
@@ -572,7 +572,11 @@ APK/AAR 版本 / 模拟器镜像(API、ABI、页大小) / Core 与 Mihomo 版本
   build-native-android.py --target apk：PASS（.so 未压缩，zipalign -P 16 通过）；lint 0 错误
   回归：native/core go test -race ./...（12 包）、go vet（含 fakeengine、windows/amd64、linux/amd64）、
     test-native.py、test-native-macos.py --suite unit（7/7，Swift 46、Go 210）全部 PASS
-  emulator 套件：本机 API 36 arm64 镜像下载中，见下方补记；CI 模拟器作业结果以 PR 为准
+  test-native-android.py --suite emulator --api 36（本机 AVD asterlink-api36，arm64-v8a，页大小 4096）：5 PASS
+    （CoreBindingTest 用真实 AAR 跑 ipc-v1 全部案例与 start/hello/read_snapshot/stop；App 界面显示 Core 0.1.0 与
+    Mihomo 70f0570405c3；Go 绑定测试交叉编译到设备运行 5/5，登录请求体 platform=android）
+  CI：android.yml 构建作业、ci.yml、windows.yml 均 PASS；模拟器作业首跑暴露 AVD 目录不一致（avdmanager 走
+    XDG_CONFIG_HOME），已改为显式 ANDROID_AVD_HOME
 APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
   0.1.0；Core 0.1.0；Mihomo 70f0570405c3c2c47bb113b88db95006d239b346；
   libgojni.so arm64 25.1 MiB（4 个 LOAD 段均 0x4000），AAR 8.8 MiB，Debug APK 36.5 MiB；

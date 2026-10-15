@@ -355,6 +355,11 @@ def run_emulator_suite(args):
         record('emulator.abi', False, 'the Core AAR has %s, the emulator needs %s (--abi %s)' % (sorted(core_record['abis']), abi, abi), status='BLOCKED')
         return
     name = args.avd or 'asterlink-api%s' % args.api
+    # avdmanager and the emulator must agree on where AVDs live; on the CI runner avdmanager
+    # follows XDG_CONFIG_HOME while the emulator looks in ~/.android/avd.
+    avd_home = Path(os.environ.get('ANDROID_AVD_HOME') or Path.home() / '.android' / 'avd')
+    avd_home.mkdir(parents=True, exist_ok=True)
+    os.environ['ANDROID_AVD_HOME'] = str(avd_home)
     ensure_avd(sdk, name, image)
     out_dir = Path(args.out or ROOT / 'artifacts' / 'native-android' / 'emulator')
     out_dir.mkdir(parents=True, exist_ok=True)
