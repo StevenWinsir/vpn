@@ -45,7 +45,7 @@ public static class ServiceVerbs
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: AsterLink.Service.exe install --stage <dir> | uninstall | repair | status");
+        Console.Error.WriteLine("usage: AsterLink.Service.exe install --stage <dir> [--allow-downgrade] | uninstall | repair | status");
         return ServiceConstants.ExitCodes.Usage;
     }
 
@@ -69,7 +69,8 @@ public static class ServiceVerbs
     private static int Install(string[] args)
     {
         var stageIndex = Array.IndexOf(args, "--stage");
-        if (args.Length != 3 || stageIndex != 1) return Usage();
+        var allowDowngrade = args.Length == 4 && args[3] == "--allow-downgrade";
+        if (stageIndex != 1 || (args.Length != 3 && !allowDowngrade)) return Usage();
         if (!ProtectedFiles.IsElevated()) return NeedElevation();
 
         var stageRoot = Path.GetFullPath(args[2]).TrimEnd('\\');
@@ -96,15 +97,37 @@ public static class ServiceVerbs
         if (RunningFromRoot(target) is { } busy)
             return Fail(ServiceConstants.ExitCodes.Failed, "in_use", "close " + busy + " first: it is running from the install directory");
 
+        // A copy left by an upgrade that was interrupted (power loss, killed installer) is put back or dropped first.
+        var backup = PreviousRoot(target);
+        SettleInterruptedUpgrade(target, backup);
+
+        var installedVersion = ReadInstalledVersion(target);
+        var kind = UpgradePolicy.Classify(installedVersion, manifest.Version);
+        if (!UpgradePolicy.Allowed(kind, allowDowngrade))
+            return Fail(ServiceConstants.ExitCodes.DowngradeRefused, "downgrade_refused", $"{installedVersion} is installed and this installer is {manifest.Version}; install the newer version, or uninstall first");
+
+        var hadOld = Directory.Exists(target.Root);
+        var hadService = ScmClient.Query().State != ScmState.NotInstalled;
+        var movedOld = false;
         var registered = false;
         try
         {
+            // Stopping the service makes the Core settle and close the session; nothing connected survives this.
             RemoveService();
-            RemoveTree(target);
+            if (hadOld)
+            {
+                if (IsLink(target.Root)) throw new InvalidOperationException("the install directory is a reparse point; it is left untouched");
+                // A rename, not a copy: the old version stays whole and verifiable until the new one is proven.
+                Directory.Move(target.Root, backup);
+                movedOld = true;
+            }
 
             Directory.CreateDirectory(target.Root);
             ProtectedFiles.Protect(target.Root, usersMayRead: true);
             PrepareProgramData();
+            // Inno's uninstaller lives in the root but is not ours to drop: Add/Remove Programs points at it. Copied,
+            // not moved, so a rollback still puts the previous tree back whole.
+            if (movedOld) CopyUninstaller(backup, target);
 
             foreach (var name in InstallLayout.ManagedDirectories) CopyTree(stage.Join(name), target.Join(name));
             File.Copy(stage.BuildConfig, target.BuildConfig);
@@ -118,14 +141,88 @@ public static class ServiceVerbs
             registered = true;
             StartAndWait();
         }
-        catch
+        catch (Exception failure)
         {
-            // An install that did not finish must not leave a runnable service or a half-written tree.
-            if (registered || ScmClient.Query().State != ScmState.NotInstalled) RemoveService();
-            RemoveTree(target);
-            throw;
+            // An install that did not finish must not leave a runnable half-new service or tree. With a previous
+            // version present, that version is put back and must verify again; no login is restored.
+            var outcome = RollBack(target, backup, hadOld, movedOld, hadService, registered);
+            throw new InvalidOperationException(failure.Message + " | " + outcome, failure);
         }
-        return Emit(new { ok = true, action = "install", version = manifest.Version, channel = manifest.Channel, service = ScmClient.Query().State.ToString() });
+        TryDeleteTree(backup);
+        return Emit(new
+        {
+            ok = true, action = "install", version = manifest.Version, channel = manifest.Channel,
+            previous_version = installedVersion, change = kind.ToString().ToLowerInvariant(),
+            service = ScmClient.Query().State.ToString(),
+        });
+    }
+
+    private static string PreviousRoot(InstallLayout target) => target.Root + ".previous";
+
+    private static string? ReadInstalledVersion(InstallLayout target)
+    {
+        try { return ReleaseManifest.Parse(File.ReadAllBytes(target.Manifest)).Version; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ManifestException) { return null; }
+    }
+
+    private static void SettleInterruptedUpgrade(InstallLayout target, string backup)
+    {
+        if (!Directory.Exists(backup)) return;
+        if (IsLink(backup)) throw new InvalidOperationException("the previous-version directory is a reparse point; remove it by hand");
+        if (!Directory.Exists(target.Root))
+        {
+            // The new tree never got as far as existing: the old one is the product.
+            Directory.Move(backup, target.Root);
+            return;
+        }
+        Directory.Delete(backup, recursive: true);
+    }
+
+    private static void CopyUninstaller(string previousRoot, InstallLayout target)
+    {
+        var source = Path.Combine(previousRoot, InstallLayout.UninstallerDirectory);
+        if (!Directory.Exists(source)) return;
+        if (IsLink(source)) throw new InvalidOperationException("the uninstaller directory is a reparse point; it is left untouched");
+        CopyTree(source, target.Join(InstallLayout.UninstallerDirectory));
+    }
+
+    private static void TryDeleteTree(string path)
+    {
+        try { if (Directory.Exists(path) && !IsLink(path)) Directory.Delete(path, recursive: true); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { /* removed by the next install */ }
+    }
+
+    /// <summary>Returns a one-line description of what state the machine was left in.</summary>
+    private static string RollBack(InstallLayout target, string backup, bool hadOld, bool movedOld, bool hadService, bool registered)
+    {
+        try
+        {
+            if (registered || ScmClient.Query().State != ScmState.NotInstalled) RemoveService();
+            if (movedOld)
+            {
+                if (Directory.Exists(target.Root)) Directory.Delete(target.Root, recursive: true);
+                Directory.Move(backup, target.Root);
+            }
+            else if (!hadOld)
+            {
+                RemoveTree(target);
+                return "rolled back: nothing is installed";
+            }
+            if (!hadOld) return "rolled back: nothing is installed";
+            // hadOld: the previous tree is back (or was never moved).
+            var report = InstallVerifier.Verify(target);
+            if (!report.Trusted) return "rolled back, but the previous version does not verify (" + Summarise(report.Problems) + "): reinstall";
+            if (hadService)
+            {
+                CreateService(target);
+                StartAndWait();
+            }
+            return "rolled back: the previous version is installed and verified";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return "ROLLBACK FAILED (" + error.Message + "): run the installer again";
+        }
     }
 
     // ---- uninstall -------------------------------------------------------------------------------
@@ -143,6 +240,7 @@ public static class ServiceVerbs
 
         RemoveService();
         RemoveTree(target);
+        TryDeleteTree(PreviousRoot(target));
         var data = RecoveryStore.DefaultDirectory;
         if (Directory.Exists(data) && !IsLink(data)) Directory.Delete(data, recursive: true);
         return Emit(new { ok = true, action = "uninstall", service = ScmClient.Query().State.ToString(), root_exists = Directory.Exists(target.Root) });
@@ -218,7 +316,10 @@ public static class ServiceVerbs
                 try { path = process.MainModule?.FileName; }
                 catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { continue; }
                 // The registered service is stopped by the verb itself; everything else must be closed by the user.
-                if (path is not null && WinPath.IsUnder(target.Root, path) && !WinPath.Equal(path, target.ServiceExe))
+                // Inno's unins000.exe (the first phase) stays alive in <root>\setup while it runs this verb, and the
+                // verbs never delete that folder, so it is not "in use".
+                if (path is not null && WinPath.IsUnder(target.Root, path) && !WinPath.Equal(path, target.ServiceExe)
+                    && !WinPath.IsUnder(target.Join(InstallLayout.UninstallerDirectory), path))
                     return $"{process.ProcessName} (pid {process.Id})";
             }
         }

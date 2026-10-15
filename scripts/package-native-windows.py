@@ -11,8 +11,18 @@ The stage has the same layout as the installed product (apps/windows/AsterLink.S
     build-config.json   the three public build keys from apps/windows/.env (or .env.example)
     manifest.json       SHA-256 of every file above, channel "internal"
 
-Nothing here is code-signed: the internal channel is a development installer, not a trusted release
-(handoff_app_windows.md round 3). `--channel release` is refused until Authenticode signing exists (round 8).
+Round 8 adds, on top of the stage:
+
+    --sign none|test|thumbprint|pfx   Authenticode-sign our own binaries BEFORE the manifest is written (so the manifest
+                                      hashes the signed files). "test" uses a self-signed certificate: it proves the pipeline,
+                                      it is trusted by nobody. thumbprint/pfx need the secrets from the environment
+                                      (scripts/windows/sign-files.ps1); signing needs Windows.
+    --installer                       build AsterLink-Setup-x64-<version>.exe with Inno Setup (apps/windows/Packaging/setup.iss)
+    --release-dir <dir>               collect Setup.exe, SHA256SUMS, release-info.json, dependency inventory, third-party
+                                      notices, SOURCE.txt and the GPL source archives
+
+The channel is always "internal": the service refuses a "release" manifest until it verifies Authenticode itself, and a
+test signature must never be mistaken for one. `--channel release` is therefore still refused.
 The .NET publish needs Windows; --no-dotnet and --no-core exist so each half can be tested on its own.
 """
 import argparse
@@ -30,6 +40,7 @@ WINDOWS = ROOT / 'apps' / 'windows'
 CORE = ROOT / 'native' / 'core'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_env  # noqa: E402
+import windows_release  # noqa: E402
 
 PROTOCOL_VERSION = 1
 ROLES = {
@@ -109,10 +120,16 @@ def main():
     parser.add_argument('--stage', default=str(ROOT / 'artifacts' / 'native-windows' / 'stage'))
     parser.add_argument('--no-dotnet', action='store_true', help='keep an existing app/ and service/')
     parser.add_argument('--no-core', action='store_true', help='keep an existing core/')
+    parser.add_argument('--sign', choices=windows_release.SIGN_MODES, default='none')
+    parser.add_argument('--installer', action='store_true')
+    parser.add_argument('--release-dir', help='collect the distributable files here (needs --installer)')
+    parser.add_argument('--skip-source-archives', action='store_true', help='faster local iteration; never for a published release')
     args = parser.parse_args()
 
     if args.channel != 'internal':
-        sys.exit('only --channel internal exists: a release channel needs Authenticode signing (round 8)')
+        sys.exit('only --channel internal exists: the service refuses a release manifest until it verifies Authenticode itself, and no trusted certificate exists yet')
+    if args.release_dir and not args.installer:
+        sys.exit('--release-dir needs --installer')
     stage = Path(args.stage).resolve()
     ver = version()
     if not (args.no_dotnet and args.no_core):
@@ -123,8 +140,46 @@ def main():
     if not args.no_core:
         build_core(stage, ver)
     write_build_config(stage)
+    # Sign first, hash second: the manifest must describe the files exactly as they will be installed.
+    windows_release.sign(windows_release.own_binaries(stage), args.sign)
     write_manifest(stage, ver, args.channel)
     print('stage ready:', stage)
+    if args.installer:
+        release(args, stage, ver)
+
+
+def release(args, stage, ver):
+    out = Path(args.release_dir).resolve() if args.release_dir else stage.parent / 'installer'
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
+    setup = windows_release.build_installer(stage, out, ver, args.sign)
+    commit, dirty = windows_release.source_state()
+    shutil.copy2(stage / 'manifest.json', out / 'manifest.json')
+    missing, modules = windows_release.write_notices(out)
+    inventory = windows_release.dependency_inventory(stage, ver, commit)
+    (out / 'dependencies.cdx.json').write_text(json.dumps(inventory, indent=2) + '\n')
+    archives = []
+    mihomo_commit = 'not archived (--skip-source-archives)'
+    if not args.skip_source_archives:
+        archives, mihomo_commit = windows_release.source_archives(out, commit)
+    windows_release.write_source_notice(out, commit, mihomo_commit, dirty)
+    info = {
+        'format_version': 1, 'version': ver, 'channel': 'internal', 'installer': setup.name,
+        'signing': args.sign,
+        # Only a certificate chained to a public root, with a time stamp, counts; a test signature never does.
+        'trusted_signature': False,
+        'source_commit': commit, 'source_dirty': dirty, 'mihomo_commit': mihomo_commit,
+        'third_party_modules': modules, 'modules_without_license_file': missing,
+        'source_archives': [a.name for a in archives],
+        'open_gates': ['trusted code-signing certificate and time stamp', 'clean Windows 10 and 11 machines (R01/R02)',
+                       'managed node with authoritative metering (round 7)', 'Wintun redistribution legal review', 'website operations'],
+    }
+    (out / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
+    lines = windows_release.write_checksums(out)
+    problems = windows_release.verify_checksums(out)
+    if problems:
+        sys.exit('SHA256SUMS does not verify: ' + '; '.join(problems))
+    print('release folder: %s (%d files, signing=%s, trusted_signature=false)' % (out, len(lines), args.sign))
 
 
 if __name__ == '__main__':

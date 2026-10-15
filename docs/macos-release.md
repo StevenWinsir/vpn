@@ -112,7 +112,7 @@ python3 scripts/test-native-macos.py --suite release
 
 - App 包内 `Resources/THIRD_PARTY_LICENSES.txt`（由 `go list -deps` 生成，Mihomo 文本置顶）和 `SOURCE.txt`（仓库、提交、Mihomo 提交、重建命令）。
 - 发布目录随 DMG 提供 `asterlink-source-<提交>.tar.gz` 与 `mihomo-source-<提交>.tar.gz`（`git archive` 的已提交内容）。**发布时两者必须一起提供**。
-- 当前 100 个链接模块中有 2 个在模块目录里找不到许可证文件：`github.com/metacubex/chacha`、`github.com/rasky/go-lzo`。**未核对其上游许可证**，正式收费发布前必须人工确认（清单在 `build-manifest.json` 的 `licenses_without_file`）。
+- 100 个链接模块现在都有许可证文本（`build-manifest.json` 的 `licenses_without_file` 应为空）。曾缺的两个：`github.com/rasky/go-lzo` 的文件名是 `LICENSE.gpl`（收集脚本现在也认 `LICENSE*`/`COPYING*` 变体），其内容是 **GPL-2.0**，与 GPL-3.0 的 Mihomo 组合是否可行需法律确认；`github.com/metacubex/chacha` v0.1.5 的模块包里没有许可证（上游 2025-08-12 才补上 MIT），用 `scripts/third_party_licenses/` 里注明来源的上游副本。
 - 把闭源/收费 App 与 GPL 内核放在同一安装包里是否合规，**取决于进程拆分之外的法律判断**，本文不给结论，发布前请让法务/律师确认。
 
 ## 9. 运维：密钥轮换、告警、备份
