@@ -241,6 +241,13 @@ def gradle(args, **kwargs):
     return subprocess.run([str(wrapper), '--console=plain', *args], cwd=ANDROID, **kwargs)
 
 
+def gradle_failure(process):
+    """Gradle writes the reason ("What went wrong") to stderr; stdout alone ends with BUILD FAILED."""
+    err = process.stderr or ''
+    reason = err[err.find('* What went wrong'):] if '* What went wrong' in err else err
+    return (reason.split('* Try:')[0].strip() or process.stdout)[-1200:]
+
+
 def run_unit_suite():
     if not shutil.which('go'):
         record('go.toolchain', False, 'go not found; nothing was tested', status='BLOCKED')
@@ -317,10 +324,33 @@ def boot(sdk, adb, name, keep_window, log_path):
         state = subprocess.run([str(adb), '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], capture_output=True, text=True).stdout.strip()
         # boot_completed comes before the package manager settles on a cold boot; installs then fail.
         if state == '1' and adb_run(adb, serial, 'shell', 'pm', 'path', 'android', check=False).startswith('package:'):
+            settle(adb, serial)
             return serial, process
         time.sleep(5)
     process.kill()
     raise RuntimeError('the emulator did not finish booting in 10 minutes')
+
+
+def settle(adb, serial, limit=180):
+    """A cold-booted emulator on a hosted runner keeps working long after boot_completed: system
+    and System UI ANR dialogs, failed installs and instrumentation runs, no network yet. Wait (at
+    most `limit` seconds) for a default network and for the load to fall below the vCPU count.
+    Not settling is reported, not fatal: the cases themselves decide."""
+    for scale in ('window_animation_scale', 'transition_animation_scale', 'animator_duration_scale'):
+        adb_run(adb, serial, 'shell', 'settings', 'put', 'global', scale, '0', check=False)
+    cpus = int(adb_run(adb, serial, 'shell', 'nproc', check=False).strip() or 1)
+    started = time.time()
+    network = load = None
+    while time.time() - started < limit:
+        default = adb_run(adb, serial, 'shell', 'dumpsys connectivity | grep -m1 "Active default network"', check=False)
+        network = re.search(r'Active default network: (\d+)', default)
+        load = float((adb_run(adb, serial, 'shell', 'cat', '/proc/loadavg', check=False).split() or ['99'])[0])
+        if network and load < cpus:
+            break
+        time.sleep(5)
+    print('emulator settled after %.0f s: default network %s, load %.2f on %d vCPU%s' % (
+        time.time() - started, network.group(1) if network else 'none', load, cpus,
+        '' if network and load < cpus else ' (NOT settled; continuing)'), flush=True)
 
 
 def ui_text(adb, serial):
@@ -450,7 +480,7 @@ def run_emulator_suite(args):
         tests, failures = junit_counts(connected_results)
         record('emulator.core_binding', connected.returncode == 0 and tests > 0 and failures == 0,
                'CoreBindingTest on the device: %d test(s), ipc-v1 cases, start/hello/read_snapshot/stop' % tests
-               + ('' if tests > 0 else '; Gradle output: ' + connected.stdout[-800:]) if connected.returncode == 0 else connected.stdout[-800:])
+               + ('' if tests > 0 else '; Gradle output: ' + connected.stdout[-800:]) if connected.returncode == 0 else gradle_failure(connected))
 
         # The app itself: launch, wait for the Core, read the screen.
         adb_run(adb, serial, 'install', '-r', str(apk), timeout=300)
