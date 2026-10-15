@@ -10,6 +10,8 @@
 
 ## 协议矩阵
 
+下表是**管理员可导入、客户端可解析的配置子集**，不代表 NodeAgent 已能为所有这些协议做可信商业计费。节点侧能力见后文；不得把配置解析成功当作 `node_reported` 验收通过。
+
 | YAML `type` | 托管支持范围 |
 | --- | --- |
 | `ss` | AES-128/256-GCM、ChaCha20-IETF-Poly1305；SS2022 的三种 Blake3 AEAD；obfs、v2ray-plugin WebSocket、ShadowTLS 插件 |
@@ -40,13 +42,27 @@ WireGuard 的 `private-key` 是严格验证的 32 字节 Base64 内容，不是�
 
 倍率和计费不按协议更改：`charged_units = (upload_delta + download_delta) * rate_permille`，1000 单位为 1 字节；500‰ = 0.5×，1000‰ = 1×。费率、节点和套餐绑定取自后端会话，不能由流量上报请求覆盖。累计计数、顺序、防重放、旧倍率结清、禁用节点、过期套餐与配额控制沿用现有逻辑。
 
-**计费仍然只依赖客户端上报。** TLS、会话鉴权、幂等序列和关闭 UI 导出能减少窃取、重放或误操作，不能证明受用户控制的客户端没有少报流量。内嵌 HMAC/签名密钥也不能创造可信的计量来源。隐藏 YAML 同样不能保证设备所有者无法取得代理凭据；更换 UUID/WireGuard/Reality 不会自动把共享凭据变成后端可撤销的每用户授权。
+这里必须区分两种计量来源。`client_reported` 仍只适合内部开发：TLS、幂等序列、隐藏 YAML 或内嵌签名密钥都不能证明设备所有者没有少报。`node_reported` 则使用节点侧 per-grant UUID、可信累计负载计数、epoch 字节上限、绝对到期和存量连接撤销；客户端 `/traffic` 不能再给这些 grant 记账。后者是后续商业计费轮引入的能力，不是上面的协议导入白名单自动提供的保证。
 
-此变更未放开现有生产环境保护，`production_ready` 仍为 false，未替换客户端计费来源。商业化前仍需处理节点侧访问授权/撤销（与计费来源是两回事），并明确承担纯客户端计费的少报风险。macOS 当前受控链路仍是 loopback mixed + 系统代理，不应将本补丁描述为已完成全设备 TUN、防泄漏或签名公证发布。
+### NodeAgent 参考转发器的商业能力
+
+| 传输 | 节点侧能力及边界 |
+| --- | --- |
+| VLESS v0 TCP（command 1）+ TLS | per-grant 认证、负载计数、额度、到期、Remove 关闭存量连接 |
+| VLESS plain UDP（command 2）+ TLS | 保留原有兼容路径；数据报完整接纳或拒绝，不截断，不计封装开销 |
+| VLESS XUDP（command 3 / mux.cool）+ TLS | 支持固定 Mihomo 的默认 UDP；New/Keep/End/KeepAlive、IPv4/IPv6/域名、帧内目标切换；沿用相同 grant、额度、到期与撤销边界 |
+| 通用 TCP Mux、Reality、XTLS flow、packetaddr、其他协议 | 参考 NodeAgent **未提供**相应商业能力；不能据客户端可解析就加入商业支持矩阵 |
+
+XUDP 的外层 command 3 后没有目标地址；`v1.mux.cool` 是逻辑 mux 目的地，不应写成 YAML 的节点 `server`。真实 UDP 目标来自帧内地址，每个目标都经过解析后的私网检查，只有测试显式设置 `AllowPrivateTargets` 才允许私网。每条 carrier 至多 64 个 UDP session、合计 64 个目标；global ID 只按格式读取，不跨 carrier/grant 复用身份或 socket。TCP/mux/TLS 封装不计费。详情和复现命令见 [NodeAgent XUDP 维护记录](nodeagent-xudp.md)。
+
+已有 native 客户端默认就在发送 XUDP，本轮修复需要重新构建并部署 **NodeAgent**；无需为此升级 Mihomo pin、重新录入节点 YAML、添加 `packet-encoding` 或迁移数据库。验收工具需重建，`--udp-sink` 现使用真实 pinned Mihomo XUDP，不允许静默回退到 command 2。公网必须启用节点 TLS；本机 loopback 和 CI 通过不等于已完成真实公网 TLS 节点、各平台 TUN、支付或签名公证发布验收。
 
 ## 可复现检查与证据范围
 
 ```sh
+python3 scripts/prepare_mihomo.py
+(cd native/nodeagent && go test -race -count=1 ./...)
+(cd native/core && go test -race -count=1 -v ./integration)
 python3 scripts/sync-backend-shared.py --check
 python3 scripts/test-backend-shared.py
 python3 scripts/test-backend-standalone.py

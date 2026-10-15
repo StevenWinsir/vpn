@@ -56,6 +56,10 @@ jobs:
         with:
           go-version: '1.26.6'
           cache-dependency-path: native/legacy-core/go.sum
+      - name: NodeAgent XUDP and real pinned Mihomo UDP enforcement (no TUN)
+        run: |
+          (cd native/nodeagent && go test -race -count=1 ./forwarder)
+          (cd native/core && go test -race -count=1 -v ./integration)
       - name: Real Core managed protocol regressions
         working-directory: native/legacy-core
         env:

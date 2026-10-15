@@ -18,10 +18,14 @@ import (
 	"time"
 
 	"asterlink/core/internal/managed"
+
+	"github.com/metacubex/mihomo/adapter/outbound"
+	C "github.com/metacubex/mihomo/constant"
 )
 
-// An independent client of the managed node (round 7, cases B04-B07). It speaks VLESS v0 itself, using only
-// the credential a grant carried. That is the attack the node-side enforcement exists for: a user who
+// An independent client of the managed node (round 7, cases B04-B07). TCP speaks VLESS v0 itself;
+// UDP uses the pinned Mihomo adapter's default XUDP, with only the credential a grant carried.
+// Neither path runs the AsterLink Manager, TUN or usage reporter. This models a user who
 // extracts the per-grant credential and runs their own client, with no AsterLink Core, no TUN and no usage
 // report. If the node still counts, limits and cuts this client, the control is real.
 
@@ -210,62 +214,56 @@ func (f *tcpFlow) put(n int64, within time.Duration) error {
 
 func (f *tcpFlow) close() { _ = f.conn.Close() }
 
-// udpFlow is one VLESS UDP association (command 2, length-prefixed datagrams) to the sink's echo port.
+// udpFlow uses the real pinned Mihomo client, NOT plain command-2 VLESS.
+// --udp-sink must exercise the same wire encoding as all native clients; it
+// must not silently fall back and certify a node that cannot serve their UDP.
 type udpFlow struct {
-	conn    net.Conn
-	reader  *bufio.Reader
+	conn    net.PacketConn
+	adapter *outbound.Vless
+	target  net.Addr
 	prefix  []byte
-	greeted bool
 }
 
 func openUDP(ctx context.Context, t nodeTarget, to destination, sinkToken string) (*udpFlow, error) {
-	conn, err := t.dial(ctx)
+	id := fmt.Sprintf("%x-%x-%x-%x-%x", t.uuid[:4], t.uuid[4:6], t.uuid[6:8], t.uuid[8:10], t.uuid[10:])
+	a, err := outbound.NewVless(outbound.VlessOption{Name: "grant-udp-probe", Server: t.server, Port: t.port, UUID: id, UDP: true, TLS: t.useTLS, ServerName: t.serverTL, SkipCertVerify: t.insecure})
 	if err != nil {
 		return nil, err
 	}
-	if _, err = conn.Write(to.header(t, 2)); err != nil {
-		conn.Close()
+	m := &C.Metadata{NetWork: C.UDP, Host: to.host, DstPort: uint16(to.port)}
+	pc, err := a.ListenPacketContext(ctx, m)
+	if err != nil {
+		a.Close()
 		return nil, err
 	}
-	f := &udpFlow{conn: conn, reader: bufio.NewReader(conn), prefix: []byte("t=" + sinkToken + ";")}
+	f := &udpFlow{conn: pc, adapter: a, target: m.UDPAddr(), prefix: []byte("t=" + sinkToken + ";")}
 	if err = f.ping(5 * time.Second); err != nil {
-		conn.Close()
+		f.close()
 		return nil, err
 	}
 	return f, nil
 }
 
-// ping sends one token-prefixed datagram and waits for the echo.
+// ping sends one token-prefixed datagram and waits for the XUDP echo.
 func (f *udpFlow) ping(within time.Duration) error {
 	_ = f.conn.SetDeadline(time.Now().Add(within))
 	defer f.conn.SetDeadline(time.Time{})
 	payload := append(append([]byte(nil), f.prefix...), strconv.FormatInt(time.Now().UnixNano(), 10)...)
-	frame := binary.BigEndian.AppendUint16(nil, uint16(len(payload)))
-	if _, err := f.conn.Write(append(frame, payload...)); err != nil {
+	if _, err := f.conn.WriteTo(payload, f.target); err != nil {
 		return err
 	}
-	if !f.greeted {
-		head := make([]byte, 2)
-		if _, err := io.ReadFull(f.reader, head); err != nil || head[0] != 0 {
-			return errors.Join(errors.New("no vless response"), err)
-		}
-		f.greeted = true
-	}
-	var length [2]byte
-	if _, err := io.ReadFull(f.reader, length[:]); err != nil {
+	back := make([]byte, 65535)
+	n, _, err := f.conn.ReadFrom(back)
+	if err != nil {
 		return err
 	}
-	back := make([]byte, binary.BigEndian.Uint16(length[:]))
-	if _, err := io.ReadFull(f.reader, back); err != nil {
-		return err
-	}
-	if string(back) != string(payload) {
+	if string(back[:n]) != string(payload) {
 		return errors.New("echo mismatch")
 	}
 	return nil
 }
 
-func (f *udpFlow) close() { _ = f.conn.Close() }
+func (f *udpFlow) close() { _ = f.conn.Close(); _ = f.adapter.Close() }
 
 // probe holds a TCP and a UDP flow open and records when each one first fails. The sampling interval bounds the
 // precision of every latency the report states.

@@ -95,6 +95,23 @@ func (e *entry) admit(n int64) int64 {
 	}
 }
 
+// admitDatagram reserves all of a UDP payload or nothing. A rejected datagram
+// must not consume the residual budget (nor be truncated into a different packet).
+func (e *entry) admitDatagram(n int64) bool {
+	for {
+		if n < 0 || !e.live(time.Now()) {
+			return false
+		}
+		spent, limit := e.spent.Load(), e.cap.Load()
+		if n > limit-spent {
+			return false
+		}
+		if e.spent.CompareAndSwap(spent, spent+n) {
+			return true
+		}
+	}
+}
+
 // refund returns bytes that were admitted but not delivered.
 func (e *entry) refund(n int64) {
 	if n > 0 {

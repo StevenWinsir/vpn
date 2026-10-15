@@ -7,6 +7,11 @@ replace github.com/metacubex/mihomo => ../third_party/Clash.Meta
 // The shared policy is the single source for both the API and this Core.
 replace vpn/nodepolicy => ../../shared/nodepolicy
 
+// Test-only integration with the independently deployed, standard-library node agent.
+replace asterlink/nodeagent => ../nodeagent
+
+require asterlink/nodeagent v0.0.0
+
 require (
 	github.com/metacubex/mihomo v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.4

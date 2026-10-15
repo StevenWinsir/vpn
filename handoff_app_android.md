@@ -526,7 +526,7 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 | 轮次 | 状态 | 下一步与前置条件 |
 | --- | --- | --- |
 | 1 环境与骨架 | DONE（PR StevenWinsir/vpn#28 已合并） | 本机 API 36 arm64 模拟器 5/5 PASS；16 KB/API 29/API 26 镜像留到第 6 轮安装 |
-| 2 真实 TUN PoC | DONE（PR #29 已合并） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；每次连接的 NAT goroutine 泄漏已在下方独立维护轮修复；VLESS UDP/XUDP 仍待处理 |
+| 2 真实 TUN PoC | DONE（PR #29 已合并） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；每次连接的 NAT goroutine 泄漏已在下方独立维护轮修复；VLESS UDP/XUDP 协议缺口已在下方 NodeAgent 维护轮修复，真实节点/TUN 重新验收仍是后续门禁 |
 | 3 账号与 UI | NOT_STARTED | 本地隔离后端；demo 手工确认需要用户输入测试账号密码 |
 | 4 连接与计量 | NOT_STARTED | 公网 sink 部署位置（节点可达的服务器）由用户确认 |
 | 5 生命周期与可靠性 | NOT_STARTED | 无 |
@@ -688,6 +688,17 @@ CI 中 Windows 原生 x64、Linux/macOS 与 Android KVM 结果由本分支 PR �
 `artifacts/sing-tun-leak/` 的 backend/macOS 日志和两个负向对照。节点配置不提交，节点主机仅用哈希标识。
 现有模拟器保留运行。已经安装的 macOS/Windows/Android 程序不会因源码修改自动更新，必须分别重新构建安装。
 VLESS UDP/XUDP 不匹配、IPv6 上游验收、真实节点与 Android 第 3–6 轮仍按原计划处理。
+
+### 独立维护轮：NodeAgent VLESS XUDP（PR #30 之后）
+
+基于 `e8dcd7a`，在新 worktree 分支 `fix/nodeagent-vless-xudp` 修复第二个跨平台发现；没有继续开发 Android 第 3 轮，也没有改动 Mihomo pin 或上一轮生命周期补丁。
+
+- 参考 forwarder 支持 VLESS command 3 的 UDP mux 子集，保持 per-grant UUID、可信负载计数、原子整包 epoch 额度、到期和 Remove 存量踢除；每个帧内目标经过 DNS 后私网检查。Global ID 不跨 grant/连接恢复授权。
+- `native/core/integration` 用真实 pinned Mihomo 默认 VLESS UDP 验证往返、计数、撤销、到期、并发额度、私网与同 global ID 的 grant 隔离；未修复基线首个 17 B 数据报 EOF，修复后通过。
+- `asterlink-billtest --udp-sink` 已改为真实 Mihomo XUDP，无 command-2 回退；旧节点必须 FAIL。普通 command 2 兼容回归保留。
+- 本机 NodeAgent/Core 全模块 race 与真实 API＋临时 PostgreSQL＋mTLS＋NodeAgent＋sink 的 grants 验收通过；后者观察到 TCP+XUDP 撤销约 0.8–1 s、空闲过期 14 s、套餐终止约 4 s，多设备竞争没有超过额度。这些是本机测试值，不是生产延迟承诺。
+
+实现与复现见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)，商业能力和 Windows `--udp-sink` 说明同步更新。本轮需要部署重建后的 NodeAgent 才能修复已安装客户端的 UDP；无需因此修改客户端 YAML、添加 packet encoding 或迁移数据库。没有部署服务、连接远端测试数据库、修改系统路由/DNS、停止现有模拟器或改写历史 TUN 报告；真实公网 TLS 节点、三平台 OS TUN、IPv6 上游和 Android 第 3–6 轮仍保留原验收门禁。
 
 ## 附录 A. 源码核验索引
 

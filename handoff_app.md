@@ -709,3 +709,9 @@ DNS 泄漏修复：系统 DNS 不经隧道（2026-10-12）
 - 根因 ①（真 bug）：`HelperClient` 是 `ObservableObject`，但视图以普通 `let helper` 持有、未用 `@ObservedObject`，SwiftUI 不随注册状态刷新——按钮其实执行了，界面不变；注册错误也只在设置页显示。② macOS 对任何 `SMAppService.daemon` 都要求用户在"登录项与扩展"批准一次，Developer ID 也一样，只能引导。③ 钥匙串弹窗：临时签名条目的分区 ID 是 `cdhash`，每个新构建都变；Developer ID 为 `teamid`，跨版本稳定，正式版不会出现。
 - 修复：`HelperClient` 改为 `@Observable`；"启用"注册后若为待批准状态，直接打开登录项设置页并显示引导（待批准的 "Operation not permitted" 不再当错误）；`watchRegistration` 每秒检测批准，变为已启用后 `SessionController.serviceBecameAvailable()` 自动重走启动（含记住密码自动登录）；登录页用"首次使用"三步卡片替代原提示，未启用时禁用登录按钮；App 在 DMG/AppTranslocation 中运行时提示先拖到"应用程序"。`docs/macos-release.md` 第 3 节已更新。
 - 验证：`swift test` 46 项全绿（新增批准后自动续登/无问题时不重复两项）。真机首装流程待用户验证。
+
+NodeAgent VLESS XUDP 兼容维护（Android 第 2 轮发现，PR #30 之后）
+- 问题：NodeAgent 受管 VLESS 只支持 command 2，但固定 Mihomo 在 macOS/Windows/Android 默认使用 command 3 XUDP。旧 billtest 的自写 UDP 客户端漏掉了这个跨平台不匹配。
+- 修复：新 worktree 分支 `fix/nodeagent-vless-xudp` 增加节点 UDP mux 子集，保留 per-grant UUID、可信负载计数、epoch 额度、到期、Remove 存量踢除和逐目标私网检查；不改 Mihomo pin、上一轮生命周期补丁或 macOS Helper/TUN。
+- 证据：真实 pinned Mihomo UDP 先在旧 forwarder 上复现 17 B 首包 EOF，修复后往返、精确计数、撤销、到期、并发额度、私网拒绝通过；NodeAgent/Core 全模块 race 与真实 API＋临时 PostgreSQL＋NodeAgent grants 验收通过。`--udp-sink` 改用真实 XUDP，无 command-2 回退。
+- 部署与限制：必须更新 NodeAgent 才会修复已安装客户端；无需因此改 YAML、packet encoding 或数据库。没有重跑 macOS OS TUN / 公网 TLS 节点验收，也没有更新 DMG、部署服务或改变系统网络。参见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md) 与 [handoff_app_android.md](handoff_app_android.md) 的独立维护记录。

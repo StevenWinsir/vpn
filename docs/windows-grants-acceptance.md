@@ -5,6 +5,18 @@ node still enforce the commercial rules?** The Core's grant path (`connectGrante
 node-confirmed balance) already exists and is shared with macOS (`docs/macos-stage4.md`); Windows consumes it unchanged.
 Round 7 adds the evidence tooling and the UI source label — no second ledger, no Windows-specific API.
 
+## XUDP compatibility correction (after Android round 2)
+
+The original round-7 independent UDP probe used plain VLESS command 2. It did **not** prove native-client UDP:
+all pinned Mihomo native clients default to XUDP (command 3, mux.cool), previously missing in NodeAgent.
+The reference forwarder now supports this UDP subset. Rebuild the node agent and `asterlink-billtest`.
+`--udp-sink` now uses the **real pinned Mihomo VLESS adapter with default XUDP**, with no fallback to command 2.
+TCP remains the independent raw VLESS client; neither probe sends `/traffic`, runs the Manager, nor creates a TUN.
+Reports label the probe `UDP(XUDP/pinned Mihomo)`. A legacy command-2-only node is a regression **FAIL**, not PASS.
+`B05-revoke` also checks a fresh XUDP carrier with the revoked credential is refused.
+See [implementation, tests and limits](nodeagent-xudp.md). Historical evidence below is retained as command-2 evidence;
+the new `native/core/integration` tests and updated real-agent loopback acceptance are separate from Windows TUN acceptance.
+
 ## What round 7 added
 
 | Item | Where |
@@ -47,7 +59,8 @@ Duplicate / out-of-order usage reports are idempotent by cumulative counters (`T
   Timings are sampled at 250 ms and depend on the test's 1 s agent sync; they are not production latency promises.
 * Harness unit tests: 114 Go tests in the `grants` suite (race detector on macOS/Linux), node agent module 18 tests.
 * **Not run (NOT_RUN / BLOCKED):** anything against `demo.hyshentou.cn` — the current test account has no node governed by an agent
-  (see below); Windows 10/11 real-machine `B04-tun`; Windows+macOS cross-machine `B06`; Mihomo's VLESS **UDP** against the reference forwarder.
+  (see below); Windows 10/11 real-machine `B04-tun`; Windows+macOS cross-machine `B06`. The original round also did not test
+  Mihomo's VLESS **UDP**; that protocol-level gap is addressed by the later XUDP correction above, not retroactively by these results.
 
 ## Production-mode capability matrix
 
@@ -57,8 +70,9 @@ implemented **and tested** on the node. Anything else must not be sold as a bill
 | Protocol / transport | Node-side enforcement | Evidence | May go in a paid plan? |
 | --- | --- | --- | --- |
 | VLESS over TCP, reference forwarder, **with TLS** | authoritative | agent unit tests; loopback e2e above (plaintext in tests only) | yes, once on a node you manage and after the live run below |
-| VLESS UDP (command 2), reference forwarder | authoritative (counted, cut on revoke) | forwarder tests + independent-client UDP flow above | yes for the independent-client path; **Mihomo-originated UDP over this forwarder is not yet verified end to end** (`B04-tun` with a UDP target) |
-| VLESS Reality / XTLS flow / Mux.Cool | none (forwarder does not implement them) | — | **no** |
+| VLESS plain UDP (command 2), reference forwarder | authoritative (counted, cut on revoke) | retained forwarder regression tests; historical round-7 probe | only with TLS and live-node acceptance; this is not Mihomo's default encoding |
+| VLESS XUDP / UDP-only Mux.Cool (command 3), reference forwarder | per-grant payload counters, shared epoch cap, deadline, immediate Remove; guarded per-frame targets | real pinned Mihomo loopback integration; updated `--udp-sink`; CI on Linux/macOS/Windows | after public TLS-node and real-client TUN acceptance; loopback is not a release waiver |
+| VLESS Reality / XTLS flow / general TCP Mux.Cool / packetaddr | none (forwarder does not implement them) | — | **no** |
 | Shadowsocks | none (shared-port AEAD cannot tell users apart; needs per-grant ports) | — | **no** — stays an internal development line (`client_reported`) |
 | Trojan / WireGuard / others | none | — | **no** |
 | Plaintext VLESS | enforced but unencrypted | — | never on the public internet (`NODEAGENT_ALLOW_PLAINTEXT` is for tests) |
@@ -102,6 +116,10 @@ $env:ASTERLINK_BILL_SINK_TOKEN = Read-Host 'sink token'
 
 Exit code `0` = all PASS, `1` = a case FAILed, `3` = BLOCKED (nothing proven). Report: `<output>\billing-report.json` (redacted).
 
+`--udp-sink` tests XUDP over the node connection, **not an OS TUN UDP transfer**. Omitting it still means UDP is NOT_TESTED.
+Use a sink IP for deterministic testing; the pinned Mihomo UDP adapter resolves destination names on the client.
+The node must permit outbound UDP to the sink, and its private-target guard remains enabled on public deployments.
+
 ### Your company VPN
 
 * The unit tests, CI and the loopback evidence are unaffected.
@@ -117,5 +135,5 @@ Exit code `0` = all PASS, `1` = a case FAILed, `3` = BLOCKED (nothing proven). R
 * Budget is returned only after the node confirms a revocation, so on a tiny quota a new grant right after revoking can briefly see
   `quota_exhausted`; the tool waits for the confirmation before asking again.
 * Grants are minted per connection; switching line, disconnecting or quitting revokes the grant first (existing Core behaviour).
-* Not proven: Windows 11; cross-machine race; real public TLS node; Mihomo VLESS-UDP through the reference forwarder; payments and
-  invoicing — those remain release gates in `handoff_app_windows.md` §13.
+* Not proven by this maintenance: Windows 10/11 real-machine TUN UDP; cross-machine race; real public TLS-node deployment; payments and
+  invoicing — those remain release gates in `handoff_app_windows.md` §13. The pinned-client **protocol-level** NodeAgent XUDP regression is now automated.

@@ -854,6 +854,14 @@ CI 修复（2026-10-15，PR #27 Windows job 的 2 个 FAIL）：
      标准用户输入另一管理员密码时清理的是该管理员的 AsterLink 项（已写入 docs/windows-release.md 第 3 节）。
 ```
 
+## 后续维护：NodeAgent XUDP（Android 第 2 轮发现，PR #30 之后）
+
+`fix/nodeagent-vless-xudp` 在独立 worktree 修复 NodeAgent 的 VLESS command-3 UDP mux 支持，保留 command 2；不改变 Windows App/Service、Mihomo pin 或上一轮 goroutine 修复。真实 pinned Mihomo UDP 回归现位于 `native/core/integration`，Windows CI 显式运行（loopback、无 TUN）；覆盖往返、per-grant 计数、额度、到期、撤销和私网拒绝。
+
+第 7 轮旧 `--udp-sink` 使用自写 command-2 客户端，不能作为 Mihomo XUDP 兼容证据。现已改用真实 pinned Mihomo，不静默回退；报告标记 `UDP(XUDP/pinned Mihomo)`，旧 command-2-only 节点应 FAIL。真实 API＋临时本机 PostgreSQL＋NodeAgent 的 grants 验收重新通过，但不重写旧 Windows 10 真机记录，也不声称完成新 Windows 10/11 TUN UDP、公网 TLS 节点或跨机器竞争验收。
+
+部署需更新 NodeAgent 和验收工具；现有客户端已经默认发 XUDP，无需为本修复改节点 YAML、packet encoding 或数据库。完整设计、限制与复现见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)，操作步骤见 [docs/windows-grants-acceptance.md](docs/windows-grants-acceptance.md)。
+
 ## 附录 A. 源码核验索引
 
 下列路径在本轮实际阅读或定位，行号以本文基线为准；开发后应以新代码为准更新本表。
