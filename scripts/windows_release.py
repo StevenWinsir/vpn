@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -82,16 +83,37 @@ def find_iscc():
     sys.exit('ISCC.exe (Inno Setup 6.7.x) was not found; set ISCC or install it (docs/windows-release.md)')
 
 
+def short_path(path):
+    """The 8.3 form of an existing Windows path (unchanged if it has no spaces or 8.3 names are off)."""
+    text = str(path)
+    if ' ' not in text or sys.platform != 'win32':
+        return text
+    import ctypes
+    buffer = ctypes.create_unicode_buffer(1024)
+    if ctypes.windll.kernel32.GetShortPathNameW(text, buffer, 1024):
+        return buffer.value
+    return text
+
+
 def build_installer(stage, out, version, sign_mode):
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, ASTERLINK_VERSION=version, ASTERLINK_STAGE=str(stage), ASTERLINK_OUTPUT=str(out))
     cmd = [find_iscc(), '/Qp']
     if sign_mode != 'none':
-        # Inno substitutes $f with the quoted file name; the setup and the uninstaller are both signed this way.
-        tool = '"%s" -NoProfile -ExecutionPolicy Bypass -File "%s" -Mode %s -Files $f' % (powershell(), SIGN_SCRIPT, sign_mode)
-        cmd += ['/DSign=1', '/Sasterlink=' + tool]
+        # ISCC splits its own /S argument and cannot take paths with spaces or quotes, so the sign tool is a small .cmd
+        # wrapper reached through a space-free (8.3) path. Inno substitutes $f with the quoted file name; the setup and
+        # the uninstaller are both signed this way.
+        wrapper_dir = Path(tempfile.mkdtemp(prefix='asterlink-sign-'))
+        wrapper = wrapper_dir / 'sign-tool.cmd'
+        wrapper.write_text('@echo off\r\n"%s" -NoProfile -ExecutionPolicy Bypass -File "%s" -Mode %s -Files %%1\r\nexit /b %%ERRORLEVEL%%\r\n'
+                           % (powershell(), SIGN_SCRIPT, sign_mode))
+        cmd += ['/DSign=1', '/Sasterlink=' + short_path(wrapper) + ' $f']
     cmd.append(str(SETUP_SCRIPT))
-    run(cmd, env=env)
+    try:
+        run(cmd, env=env)
+    finally:
+        if sign_mode != 'none':
+            shutil.rmtree(wrapper_dir, ignore_errors=True)
     setup = out / ('AsterLink-Setup-x64-%s.exe' % version)
     if not setup.is_file():
         sys.exit('ISCC finished but %s does not exist' % setup)
