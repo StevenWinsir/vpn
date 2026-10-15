@@ -263,7 +263,7 @@ def ensure_avd(sdk, name, image):
                    input='no\n', capture_output=True, text=True, check=True)
 
 
-def boot(sdk, adb, name, keep_window):
+def boot(sdk, adb, name, keep_window, log_path):
     running = subprocess.run([str(adb), 'devices'], capture_output=True, text=True).stdout
     serials = re.findall(r'^(emulator-\d+)\s+device$', running, re.M)
     for serial in serials:
@@ -273,12 +273,16 @@ def boot(sdk, adb, name, keep_window):
     args = [str(tool(sdk, 'emulator', 'emulator')), '-avd', name, '-port', str(port), '-no-snapshot-save', '-no-boot-anim', '-no-audio', '-no-metrics']
     if not keep_window:
         args += ['-no-window', '-gpu', 'swiftshader_indirect']
-    process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # The emulator's own output is kept: it is the only diagnosis when it refuses to start.
+    log = open(log_path, 'wb')
+    process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT)
     serial = 'emulator-%d' % port
     deadline = time.time() + 600
     while time.time() < deadline:
         if process.poll() is not None:
-            raise RuntimeError('the emulator exited with %s' % process.returncode)
+            log.close()
+            tail = Path(log_path).read_text(errors='replace')[-1500:]
+            raise RuntimeError('the emulator exited with %s:\n%s' % (process.returncode, tail))
         state = subprocess.run([str(adb), '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], capture_output=True, text=True).stdout.strip()
         if state == '1':
             return serial, process
@@ -352,9 +356,9 @@ def run_emulator_suite(args):
         return
     name = args.avd or 'asterlink-api%s' % args.api
     ensure_avd(sdk, name, image)
-    serial, process = boot(sdk, adb, name, args.window)
     out_dir = Path(args.out or ROOT / 'artifacts' / 'native-android' / 'emulator')
     out_dir.mkdir(parents=True, exist_ok=True)
+    serial, process = boot(sdk, adb, name, args.window, out_dir / 'emulator.log')
     try:
         facts = {'api': adb_run(adb, serial, 'shell', 'getprop', 'ro.build.version.sdk').strip(),
                  'abi': adb_run(adb, serial, 'shell', 'getprop', 'ro.product.cpu.abi').strip(),
@@ -425,7 +429,7 @@ def main():
         try:
             run_emulator_suite(args)
         except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-            record('emulator.run', False, str(error)[-600:])
+            record('emulator.run', False, str(error)[-1800:])
     else:
         print('suite %r arrives in a later round (handoff_app_android.md 10)' % args.suite)
         return EXIT_BLOCKED
