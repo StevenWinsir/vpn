@@ -15,6 +15,10 @@ pins (its `tool` block) into .runtime/android/bin. Public build parameters come 
 apps/android/.env (or .env.example for Debug), parsed by the Gradle build itself.
 Release packaging (signing, ABI splits, R8) is round 6 and refused here.
 
+  --tun-test-hooks  binds the debug-only TUN acceptance hooks (-tags asterlink_tuntest) and also
+                    builds the test APK with -Pasterlink.tunTest=true. core-build.json records
+                    tuntest_hooks, and the app build refuses an AAR whose hooks do not match.
+
 Exit codes: 0 = built, 1 = failed, 3 = BLOCKED (a prerequisite is missing).
 """
 import argparse
@@ -138,7 +142,7 @@ def check_so(so: Path, abi: str) -> dict:
             'load_segments': len(aligns), 'min_load_align': min(aligns)}
 
 
-def bind(abis, app_version, out_dir: Path) -> dict:
+def bind(abis, app_version, out_dir: Path, hooks=False) -> dict:
     ndk = ndk_dir()
     revision = mihomo_revision()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +152,7 @@ def bind(abis, app_version, out_dir: Path) -> dict:
                  PATH=str(TOOLS) + os.pathsep + os.environ.get('PATH', ''))
     run([TOOLS / 'gomobile', 'bind', '-target=' + ','.join(ABIS[a][0] for a in abis),
          '-androidapi', str(LOCK['android']['min_sdk']), '-javapkg', 'com.asterlink.core',
-         '-trimpath', '-ldflags', ldflags, '-o', aar, './mobile'], cwd=CORE, env=env)
+         '-trimpath', *(['-tags', 'asterlink_tuntest'] if hooks else []), '-ldflags', ldflags, '-o', aar, './mobile'], cwd=CORE, env=env)
     libraries = {}
     with tempfile.TemporaryDirectory() as scratch, zipfile.ZipFile(aar) as archive:
         names = archive.namelist()
@@ -165,20 +169,23 @@ def bind(abis, app_version, out_dir: Path) -> dict:
         'go': LOCK['go']['version'], 'x_mobile': LOCK['x_mobile']['version'], 'ndk': LOCK['ndk']['version'],
         'androidapi': LOCK['android']['min_sdk'], 'abis': libraries,
         'aar_bytes': aar.stat().st_size, 'aar_sha256': sha256(aar),
+        # Debug-only TUN acceptance hooks (native/core/mobile/tuntest.go). The app build
+        # refuses an AAR whose hooks do not match what it was asked to build.
+        'tuntest_hooks': hooks,
     }
 
 
 def build_aar(args) -> dict:
     check_go()
     build_gomobile()
-    record = bind(args.abi, args.app_version, OUT)
+    record = bind(args.abi, args.app_version, OUT, args.tun_test_hooks)
     (OUT / 'core-build.json').write_text(json.dumps(record, indent=2) + '\n')
     for abi, lib in record['abis'].items():
         print('libgojni.so %-12s %6.1f MiB  min LOAD align 0x%x  %s' % (abi, lib['bytes'] / 2 ** 20, lib['min_load_align'], lib['machine']))
     print('AAR %s (%.1f MiB) sha256 %s' % (OUT / 'asterlink-core.aar', record['aar_bytes'] / 2 ** 20, record['aar_sha256']))
     if args.check_reproducible:
         with tempfile.TemporaryDirectory() as again:
-            second = bind(args.abi, args.app_version, Path(again))
+            second = bind(args.abi, args.app_version, Path(again), args.tun_test_hooks)
         differ = [abi for abi in args.abi if second['abis'][abi]['sha256'] != record['abis'][abi]['sha256']]
         if differ:
             raise RuntimeError('libgojni.so is not reproducible for %s' % differ)
@@ -202,13 +209,15 @@ def gradle(tasks, app_version, env):
 
 def build_apk(args) -> dict:
     record_file = OUT / 'core-build.json'
-    if args.rebuild_core or not record_file.is_file() or not (OUT / 'asterlink-core.aar').is_file():
+    stale = record_file.is_file() and json.loads(record_file.read_text()).get('tuntest_hooks', False) != args.tun_test_hooks
+    if args.rebuild_core or stale or not record_file.is_file() or not (OUT / 'asterlink-core.aar').is_file():
         build_aar(args)
     record = json.loads(record_file.read_text())
     if record['app_version'] != args.app_version:
         raise RuntimeError('the Core AAR was built as %s, the APK would be %s; rebuild with --rebuild-core' % (record['app_version'], args.app_version))
     env = java_env()
-    gradle([':app:assembleDebug'], args.app_version, env)
+    tasks = [':app:assembleDebug'] + ([':app:assembleDebugAndroidTest', '-Pasterlink.tunTest=true'] if args.tun_test_hooks else [])
+    gradle(tasks, args.app_version, env)
     apk = ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'debug' / 'app-debug.apk'
     zipalign = sorted((sdk_root() / 'build-tools').glob('*/zipalign'))
     if not zipalign:
@@ -238,6 +247,8 @@ def main():
     parser.add_argument('--app-version', default=None, help='default: apps/android/gradle.properties asterlink.appVersion')
     parser.add_argument('--rebuild-core', action='store_true', help='apk: rebuild the Core AAR even if one exists')
     parser.add_argument('--check-reproducible', action='store_true', help='aar: bind twice and require identical libgojni.so')
+    parser.add_argument('--tun-test-hooks', action='store_true',
+                        help='aar/apk: bind the debug-only TUN acceptance hooks (scripts/test-native-android.py --suite tun only)')
     args = parser.parse_args()
     args.abi = sorted(set(args.abi or ['arm64-v8a']))
     if args.app_version is None:

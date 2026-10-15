@@ -19,6 +19,12 @@ val coreDir = rootProject.layout.buildDirectory.dir("core")
 val coreAar = coreDir.map { it.file("asterlink-core.aar") }
 val coreRecord = coreDir.map { it.file("core-build.json") }
 
+// The TUN acceptance build (scripts/test-native-android.py --suite tun): its Core AAR carries
+// debug-only engine hooks (native/core/mobile/tuntest.go, -tags asterlink_tuntest) and its test
+// APK adds src/androidTestTun. Both must be asked for together; verifyCoreAar refuses any mix,
+// so an ordinary or release APK can never be built on a hooks AAR.
+val tunTest = providers.gradleProperty("asterlink.tunTest").orNull == "true"
+
 android {
     namespace = "com.asterlink.vpn"
     compileSdk = 37
@@ -67,6 +73,7 @@ android {
     sourceSets {
         // The shared contract fixtures, readable by the instrumented tests on the device.
         getByName("androidTest").assets.directories.add(rootDir.resolve("../../shared/contracts").path)
+        if (tunTest) getByName("androidTest").kotlin.directories.add("src/androidTestTun/java")
     }
 
     testOptions {
@@ -80,7 +87,9 @@ val verifyCoreAar = tasks.register("verifyCoreAar") {
     description = "Checks that the gomobile Core AAR exists and matches its build record."
     val aar = coreAar
     val record = coreRecord
+    val wantHooks = tunTest
     inputs.files(aar, record).optional()
+    inputs.property("tunTest", wantHooks)
     doLast {
         val aarFile = aar.get().asFile
         val recordFile = record.get().asFile
@@ -93,6 +102,13 @@ val verifyCoreAar = tasks.register("verifyCoreAar") {
         val recorded = Regex("\"aar_sha256\"\\s*:\\s*\"([0-9a-f]{64})\"").find(recordFile.readText())?.groupValues?.get(1)
         if (recorded != digest) {
             throw GradleException("Core AAR does not match core-build.json (sha256 $digest, recorded $recorded); rebuild it")
+        }
+        val hooks = Regex("\"tuntest_hooks\"\\s*:\\s*true").containsMatchIn(recordFile.readText())
+        if (hooks != wantHooks) {
+            throw GradleException(
+                if (hooks) "This Core AAR carries the TUN acceptance hooks; rebuild it without --tun-test-hooks"
+                else "The TUN acceptance build needs a Core AAR bound with --tun-test-hooks",
+            )
         }
     }
 }

@@ -15,5 +15,11 @@
     <string name="label_network">当前网络</string>
     <string name="network_none">无网络</string>
     <string name="env_from_example">使用 .env.example 的公开示例值构建（仅限 Debug）</string>
-    <string name="next_round_hint">下一轮：VpnService 与真实 TUN。当前版本不会建立任何代理连接。</string>
+    <string name="next_round_hint">第 2 轮：VpnService 与真实 TUN 已接入；登录与连接界面在第 3、4 轮提供。</string>
+    <string name="vpn_channel_name">VPN 连接状态</string>
+    <string name="vpn_channel_description">AsterLink 连接期间常驻的无声通知</string>
+    <string name="vpn_notification_title">AsterLink · %1$s</string>
+    <string name="vpn_state_connecting">正在连接</string>
+    <string name="vpn_state_connected">已连接</string>
+    <string name="vpn_action_disconnect">断开</string>
 </resources>

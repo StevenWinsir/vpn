@@ -25,6 +25,12 @@ func preflightPlatform(context.Context) error {
 	return nil
 }
 
+// attachTun: sing-tun creates the Wintun adapter itself; the section is used as it is.
+func attachTun(conf tunConfig) (tunConfig, error) { return conf, nil }
+
+// releaseTun: the adapter goes with the listener.
+func releaseTun() {}
+
 // tunnelDevices lists the Core's own adapter if it exists. Windows identifies it by name
 // (a stale one from a killed Core keeps the name), unlike macOS where utunN is unique.
 func tunnelDevices() map[string]bool {

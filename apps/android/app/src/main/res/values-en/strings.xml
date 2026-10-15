@@ -14,5 +14,11 @@
     <string name="label_network">Network</string>
     <string name="network_none">No network</string>
     <string name="env_from_example">Built from the public .env.example values (Debug only)</string>
-    <string name="next_round_hint">Next round: VpnService and a real TUN. This build makes no proxy connection.</string>
+    <string name="next_round_hint">Round 2: the VpnService and a real TUN are in; sign-in and the connect screen arrive in rounds 3 and 4.</string>
+    <string name="vpn_channel_name">VPN connection status</string>
+    <string name="vpn_channel_description">Silent notification shown while AsterLink is connected</string>
+    <string name="vpn_notification_title">AsterLink · %1$s</string>
+    <string name="vpn_state_connecting">Connecting</string>
+    <string name="vpn_state_connected">Connected</string>
+    <string name="vpn_action_disconnect">Disconnect</string>
 </resources>

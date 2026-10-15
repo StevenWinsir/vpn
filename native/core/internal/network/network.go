@@ -103,6 +103,12 @@ func (e *Egress) DialContext(ctx context.Context, network, address string) (net.
 func (e *Egress) dialResolver(ctx context.Context, network, address string) (net.Conn, error) {
 	servers := e.Resolvers()
 	if len(servers) == 0 {
+		// Android has no /etc/resolv.conf: the Go resolver would ask 127.0.0.1:53 and every
+		// API lookup (login included) would fail. The default network's own servers stand in
+		// for it there; desktop hosts return nothing and keep the system configuration.
+		servers = platformResolvers()
+	}
+	if len(servers) == 0 {
 		return e.Dialer().DialContext(ctx, network, address)
 	}
 	var last error

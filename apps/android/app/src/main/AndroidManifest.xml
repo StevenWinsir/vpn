@@ -5,12 +5,23 @@
     <!-- The Core reaches the API itself; the app reads the default network for the Core. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- NetworkMonitor follows the physical network with requestNetwork before API 31. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!--
+      The VPN runs as a foreground service (handoff_app_android.md 7.2). Type specialUse:
+      systemExempted is documented only for "VPN apps configured using Settings > VPN" and
+      throws ForegroundServiceTypeNotAllowedException otherwise, which a just-consented
+      app cannot rule out (docs/android-tun-design.md, decision D3).
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 13+: the connection notification. Denied = the VPN still works. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
       Backup is off and every domain is excluded from cloud backup and device transfer
       (data_extraction_rules.xml): the remembered-password ciphertext and device_id must
       not follow the user to another device (handoff_app_android.md 5.3).
-      The VpnService and its foreground-service type arrive in round 2.
     -->
     <application
         android:name=".AsterApp"
@@ -34,5 +45,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Only the system may bind it (BIND_VPN_SERVICE). Always-on VPN is not supported in
+          this release: the system must never bring the tunnel up without a signed-in user
+          asking for it, and the service refuses a start without its own action.
+        -->
+        <service
+            android:name=".vpn.AsterVpnService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+                android:value="false" />
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn" />
+        </service>
     </application>
 </manifest>

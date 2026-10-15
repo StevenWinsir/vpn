@@ -32,6 +32,18 @@ func TestHostSnapshotDecodesTheDefaultNetwork(t *testing.T) {
 	}
 }
 
+// A report of the VPN itself (DNS 198.18.0.2, the tunnel resolver) must not hand the
+// control plane a fake-ip resolver; only the real servers next to it survive.
+func TestHostSnapshotNeverOffersTheTunnelResolver(t *testing.T) {
+	s, err := ParseHostSnapshot(`{"available":true,"interface":"wlan0","index":3,"addresses":["10.0.2.16"],"dns":["198.18.0.2","198.19.255.1","10.0.2.3"],"metered":false}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Resolvers(); !reflect.DeepEqual(got, []string{"10.0.2.3"}) {
+		t.Fatalf("resolvers %v", got)
+	}
+}
+
 func TestHostSnapshotWithoutNetwork(t *testing.T) {
 	s, err := ParseHostSnapshot(`{"available":false}`)
 	if err != nil {

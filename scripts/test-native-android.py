@@ -10,7 +10,8 @@ Implemented suites (round 1):
       the macOS utun/networksetup/route files or the do-nothing placeholder), and
       `go vet` passes for android/arm64 and android/amd64
     * the manifest baseline: backup off, every data domain excluded from cloud backup and
-      device transfer, no cleartext, system CAs only, no VPN service or permission yet
+      device transfer, no cleartext, system CAs only; exactly the round-2 permissions and one
+      VpnService (BIND_VPN_SERVICE, not exported, specialUse foreground service, no always-on)
   unit        needs Go, a JDK and the Core AAR (scripts/build-native-android.py --target aar)
     * Go host tests of the binding, IPC, host-network and managed packages (non-zero count)
     * Gradle: build-logic env-v1 contract tests and the app's JVM unit tests (non-zero count)
@@ -21,8 +22,21 @@ Implemented suites (round 1):
       (the login request there must say platform=android)
     * records API level, ABI and kernel page size; a 16 KB page image is a separate AVD
 
+Round 2:
+  tun         needs Go, a JDK, the SDK emulator and a system image; --allow-network-changes
+    * binds the Core AAR with the debug-only acceptance hooks and builds the test APK
+    * starts cmd/asterlink-testnode (pinned Mihomo as Shadowsocks/VLESS/REALITY server) and
+      cmd/asterlink-trafficsink on the host loopback only; pre-grants VPN consent (appops)
+    * runs TunAcceptanceTest in the app (AsterVpnService, VpnService.Builder, fd hand-off,
+      protect, Verify): T01 path proven by the node's own counter, T02 SS/VLESS/REALITY and a
+      wrong key, T03 DNS (fake-ip, Private DNS off/opportunistic/strict, port-53 hijack, UDP),
+      T04 IPv6, T05 control plane and loop, T06 udp:false never DIRECT, T07 stop, T-CYCLES;
+      then T09 kills a connected app and requires the VPN to vanish
+    * only the emulator's network changes; the user's own nodes (T02-real) come only from
+      ASTERLINK_TUN_PROXY_JSON / ASTERLINK_TUN_REAL_NODES (disconnect a company VPN first)
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
-The tun/billing/grants/lifecycle/release suites arrive in rounds 2-6 and refuse to run here.
+The billing/grants/lifecycle/release suites arrive in rounds 4-6 and refuse to run here.
 """
 import argparse
 import json
@@ -161,8 +175,21 @@ def check_manifest():
           and attrs.get('networkSecurityConfig') == '@xml/network_security_config'
           and 'usesCleartextTraffic' not in attrs and 'debuggable' not in attrs)
     record('manifest.baseline', ok, 'backup off, extraction rules and network security config set; permissions %s' % permissions)
-    record('manifest.no_vpn_yet', permissions == ['android.permission.ACCESS_NETWORK_STATE', 'android.permission.INTERNET'] and not app.findall('service'),
-           'no VpnService/foreground-service declarations before round 2')
+    expected = ['android.permission.ACCESS_NETWORK_STATE', 'android.permission.CHANGE_NETWORK_STATE', 'android.permission.FOREGROUND_SERVICE',
+                'android.permission.FOREGROUND_SERVICE_SPECIAL_USE', 'android.permission.INTERNET', 'android.permission.POST_NOTIFICATIONS']
+    record('manifest.permissions', permissions == expected, 'exactly %s' % ', '.join(p.rsplit('.', 1)[-1] for p in permissions))
+    services = app.findall('service')
+    vpn = services[0] if len(services) == 1 else None
+    sattrs = {k.replace(ANDROID_NS, ''): v for k, v in (vpn.attrib.items() if vpn is not None else [])}
+    actions = [a.get(ANDROID_NS + 'name') for f in (vpn.findall('intent-filter') if vpn is not None else []) for a in f.findall('action')]
+    meta = {m.get(ANDROID_NS + 'name'): m.get(ANDROID_NS + 'value') for m in (vpn.findall('meta-data') if vpn is not None else [])}
+    props = {m.get(ANDROID_NS + 'name'): m.get(ANDROID_NS + 'value') for m in (vpn.findall('property') if vpn is not None else [])}
+    record('manifest.vpn_service', vpn is not None and sattrs.get('name') == '.vpn.AsterVpnService'
+           and sattrs.get('permission') == 'android.permission.BIND_VPN_SERVICE' and sattrs.get('exported') == 'false'
+           and sattrs.get('foregroundServiceType') == 'specialUse' and actions == ['android.net.VpnService']
+           and meta.get('android.net.VpnService.SUPPORTS_ALWAYS_ON') == 'false'
+           and props.get('android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE') == 'vpn',
+           'one VpnService: bound only by the system (BIND_VPN_SERVICE), not exported, specialUse foreground service, always-on refused')
 
     rules = ET.parse(ANDROID / 'app' / 'src' / 'main' / 'res' / 'xml' / 'data_extraction_rules.xml').getroot()
     domains = {'root', 'file', 'database', 'sharedpref', 'external'}
@@ -218,7 +245,7 @@ def run_unit_suite():
     if not shutil.which('go'):
         record('go.toolchain', False, 'go not found; nothing was tested', status='BLOCKED')
     else:
-        code, passed, failed = count_go_tests(['./mobile', './internal/ipc', './internal/network', './internal/managed'])
+        code, passed, failed = count_go_tests(['./mobile', './internal/ipc', './internal/network', './internal/managed', './internal/engine', './cmd/asterlink-testnode'])
         record('go.unit', code == 0 and passed > 0 and not failed, '%d Go tests passed%s' % (passed, ', failed: %s' % failed if failed else ''))
     if sdk_root() is None:
         record('gradle.unit', False, 'ANDROID_HOME not set; JVM tests not run', status='BLOCKED')
@@ -330,11 +357,28 @@ def go_tests_on_device(sdk, adb, serial, abi, out_dir):
            '%d binding tests passed on android/%s, including platform=android in the login body%s' % (len(passed), goarch, ', failed %s' % failed if failed else ''))
 
 
-def run_emulator_suite(args):
+class Emulator:
+    """A booted (or reused) AVD with the Debug APK's Core record checked against its ABI."""
+
+    def __init__(self, sdk, adb, serial, process, abi, name, core_record, out_dir, facts):
+        self.sdk, self.adb, self.serial, self.process = sdk, adb, serial, process
+        self.abi, self.name, self.core_record, self.out_dir, self.facts = abi, name, core_record, out_dir, facts
+
+    def close(self, keep):
+        if self.process is not None and not keep:
+            subprocess.run([str(self.adb), '-s', self.serial, 'emu', 'kill'], capture_output=True)
+            try:
+                self.process.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+
+
+def open_emulator(args, prefix, default_out):
+    """Prerequisites, AVD and boot; None (with a BLOCKED record) when something is missing."""
     sdk = sdk_root()
     if sdk is None:
-        record('emulator.sdk', False, 'ANDROID_HOME not set', status='BLOCKED')
-        return
+        record(prefix + '.sdk', False, 'ANDROID_HOME not set', status='BLOCKED')
+        return None
     adb = tool(sdk, 'platform-tools', 'adb')
     abi = args.abi or host_abi()
     image = 'system-images;android-%s;google_apis;%s' % (args.api, abi)
@@ -343,17 +387,17 @@ def run_emulator_suite(args):
                                           ('avdmanager', tool(sdk, 'cmdline-tools', 'latest', 'bin', 'avdmanager')),
                                           (image, image_dir)) if not present]
     if missing:
-        record('emulator.prerequisites', False, 'not installed: %s' % ', '.join(missing), status='BLOCKED')
-        return
+        record(prefix + '.prerequisites', False, 'not installed: %s' % ', '.join(missing), status='BLOCKED')
+        return None
     apk = ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'debug' / 'app-debug.apk'
     core = ANDROID / 'build' / 'core' / 'core-build.json'
     if not apk.is_file() or not core.is_file():
-        record('emulator.apk', False, 'build first: python3 scripts/build-native-android.py --target apk', status='BLOCKED')
-        return
+        record(prefix + '.apk', False, 'build first: python3 scripts/build-native-android.py --target apk', status='BLOCKED')
+        return None
     core_record = json.loads(core.read_text())
     if abi not in core_record['abis']:
-        record('emulator.abi', False, 'the Core AAR has %s, the emulator needs %s (--abi %s)' % (sorted(core_record['abis']), abi, abi), status='BLOCKED')
-        return
+        record(prefix + '.abi', False, 'the Core AAR has %s, the emulator needs %s (--abi %s)' % (sorted(core_record['abis']), abi, abi), status='BLOCKED')
+        return None
     name = args.avd or 'asterlink-api%s' % args.api
     # avdmanager and the emulator must agree on where AVDs live; on the CI runner avdmanager
     # follows XDG_CONFIG_HOME while the emulator looks in ~/.android/avd.
@@ -361,16 +405,24 @@ def run_emulator_suite(args):
     avd_home.mkdir(parents=True, exist_ok=True)
     os.environ['ANDROID_AVD_HOME'] = str(avd_home)
     ensure_avd(sdk, name, image)
-    out_dir = Path(args.out or ROOT / 'artifacts' / 'native-android' / 'emulator')
+    out_dir = Path(args.out or ROOT / 'artifacts' / 'native-android' / default_out)
     out_dir.mkdir(parents=True, exist_ok=True)
     serial, process = boot(sdk, adb, name, args.window, out_dir / 'emulator.log')
-    try:
-        facts = {'api': adb_run(adb, serial, 'shell', 'getprop', 'ro.build.version.sdk').strip(),
-                 'abi': adb_run(adb, serial, 'shell', 'getprop', 'ro.product.cpu.abi').strip(),
-                 'page_size': adb_run(adb, serial, 'shell', 'getconf', 'PAGE_SIZE').strip(),
-                 'avd': name}
-        record('emulator.device', facts['abi'] == abi, 'API %(api)s, %(abi)s, page size %(page_size)s, AVD %(avd)s' % facts)
+    facts = {'api': adb_run(adb, serial, 'shell', 'getprop', 'ro.build.version.sdk').strip(),
+             'abi': adb_run(adb, serial, 'shell', 'getprop', 'ro.product.cpu.abi').strip(),
+             'page_size': adb_run(adb, serial, 'shell', 'getconf', 'PAGE_SIZE').strip(),
+             'avd': name}
+    record(prefix + '.device', facts['abi'] == abi, 'API %(api)s, %(abi)s, page size %(page_size)s, AVD %(avd)s' % facts)
+    return Emulator(sdk, adb, serial, process, abi, name, core_record, out_dir, facts)
 
+
+def run_emulator_suite(args):
+    emu = open_emulator(args, 'emulator', 'emulator')
+    if emu is None:
+        return
+    sdk, adb, serial, abi, core_record, out_dir, facts = emu.sdk, emu.adb, emu.serial, emu.abi, emu.core_record, emu.out_dir, emu.facts
+    apk = ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'debug' / 'app-debug.apk'
+    try:
         # Instrumented test with the real AAR (builds and installs both APKs).
         connected_results = ANDROID / 'app' / 'build' / 'outputs' / 'androidTest-results' / 'connected'
         shutil.rmtree(connected_results, ignore_errors=True)
@@ -403,12 +455,221 @@ def run_emulator_suite(args):
             record('emulator.go_binding', False, 'go not found', status='BLOCKED')
         (out_dir / 'device.json').write_text(json.dumps(facts, indent=2) + '\n')
     finally:
-        if process is not None and not args.keep_emulator:
-            subprocess.run([str(adb), '-s', serial, 'emu', 'kill'], capture_output=True)
+        emu.close(args.keep_emulator)
+
+
+# ---------------------------------------------------------------- tun
+
+PACKAGE = 'com.asterlink.vpn'
+RUNNER = 'com.asterlink.vpn.test/androidx.test.runner.AndroidJUnitRunner'
+TUN_CLASS = 'com.asterlink.vpn.TunAcceptanceTest'
+
+
+# Everything the suite runs on the host listens on its loopback only. The emulator reaches
+# the host's loopback at 10.0.2.2 without any VPN: that is how the app's protected socket
+# reaches the test node, and the sink's "direct" address, which answers anyone who gets there
+# without the node (a reply there through the tunnel would be traffic sent DIRECT). The app
+# reaches the sink through the node only by name: the node resolves TARGET_NAME to its own
+# loopback (publicly the name leads to IANA). No LAN or company-VPN address is involved.
+LOOPBACK, EMULATOR_HOST, TARGET_NAME = '127.0.0.1', '10.0.2.2', 'example.com'
+
+
+def free_port(host=LOOPBACK):
+    import socket
+    with socket.socket() as s:
+        s.bind((host, 0))
+        return s.getsockname()[1]
+
+
+def write_private(adb, serial, name, data: bytes):
+    """Into the debug app's private files through run-as and stdin: never argv, never logcat."""
+    process = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s sh -c "mkdir -p files/tuntest && cat > files/tuntest/%s"' % (PACKAGE, name)],
+                             input=data, capture_output=True, timeout=60)
+    if process.returncode != 0:
+        raise RuntimeError('writing %s into the app failed: %s' % (name, process.stderr.decode(errors='replace')[-300:]))
+
+
+def read_private(adb, serial, name):
+    return subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s cat files/tuntest/%s' % (PACKAGE, name)],
+                          capture_output=True, text=True, timeout=60).stdout
+
+
+def vpn_up(adb, serial):
+    """Whether the device has any VPN network (the emulator runs no other VPN app). Only network
+    agents count: network requests (SystemUI listens for VPNs) mention the transport too."""
+    dump = adb_run(adb, serial, 'shell', 'dumpsys', 'connectivity', check=False, timeout=60)
+    return bool(re.search(r'^\s*NetworkAgentInfo\{.*\bni\{VPN CONNECTED', dump, re.M))
+
+
+def real_nodes_from_env():
+    """The user's own nodes for T02-real, from the environment only (never argv or a tracked file)."""
+    nodes = []
+    if os.environ.get('ASTERLINK_TUN_PROXY_JSON'):
+        nodes.append(json.loads(os.environ['ASTERLINK_TUN_PROXY_JSON']))
+    if os.environ.get('ASTERLINK_TUN_REAL_NODES'):
+        nodes.extend(json.loads(os.environ['ASTERLINK_TUN_REAL_NODES']))
+    if not all(isinstance(n, dict) and n.get('type') and n.get('server') for n in nodes):
+        raise RuntimeError('ASTERLINK_TUN_PROXY_JSON / ASTERLINK_TUN_REAL_NODES must be proxy objects with type and server')
+    return nodes
+
+
+def urlopen_text(url):
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=10) as response:
+        return response.read().decode()
+
+
+def instrument_command(adb, serial, method):
+    return [str(adb), '-s', serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', '%s#%s' % (TUN_CLASS, method), RUNNER]
+
+
+def start_helpers(args, scratch, helpers):
+    """The controlled node (pinned Mihomo as a server) and the traffic sink, on this host's loopback."""
+    for name in ('asterlink-testnode', 'asterlink-trafficsink'):
+        subprocess.run(['go', 'build', '-o', os.path.join(scratch, name), './cmd/' + name], cwd=CORE, env=go_env(), check=True, capture_output=True)
+    token = os.urandom(16).hex()
+    sink_port, udp_port = free_port(), free_port()
+    helpers.append(subprocess.Popen([os.path.join(scratch, 'asterlink-trafficsink'), '--listen', '%s:%d' % (LOOPBACK, sink_port), '--udp-listen', '%s:%d' % (LOOPBACK, udp_port)],
+                                env=dict(os.environ, ASTERLINK_SINK_TOKEN=token), stdout=open(os.path.join(scratch, 'sink.log'), 'wb'), stderr=subprocess.STDOUT))
+    ready_file = os.path.join(scratch, 'node.json')
+    helpers.append(subprocess.Popen([os.path.join(scratch, 'asterlink-testnode'), '--listen', LOOPBACK, '--status-listen', LOOPBACK + ':0',
+                                     '--ready-file', ready_file, '--reality-dest', '' if args.no_reality else args.reality_dest, '--max-seconds', '3600'],
+                                    stdout=open(os.path.join(scratch, 'node.log'), 'wb'), stderr=subprocess.STDOUT))
+    for _ in range(150):
+        if os.path.exists(ready_file) and os.path.getsize(ready_file) > 0:
+            break
+        time.sleep(0.1)
+    else:
+        raise RuntimeError('the test node did not start: ' + Path(scratch, 'node.log').read_text(errors='replace')[-600:])
+    time.sleep(0.2)
+    node = json.loads(Path(ready_file).read_text())
+    sink = {'name': TARGET_NAME, 'direct_host': EMULATOR_HOST, 'port': str(sink_port), 'udp_port': str(udp_port), 'token': token}
+    return node, sink
+
+
+def tun_config(args, node, sink, real):
+    gateway = EMULATOR_HOST
+    ss = {'name': 'ss', 'type': 'ss', 'server': gateway, 'port': node['ss_port'], 'cipher': node['ss_cipher'], 'password': node['ss_password'], 'udp': True}
+    nodes = {
+        'ss': ss,
+        'vless': {'name': 'vless', 'type': 'vless', 'server': gateway, 'port': node['vless_port'], 'uuid': node['vless_uuid'], 'udp': True, 'tls': False},
+        'ss_bad': dict(ss, password=os.urandom(16).hex()),
+        'ss_noudp': dict(ss, udp=False),
+    }
+    if node.get('reality_port'):
+        nodes['reality'] = {'name': 'reality', 'type': 'vless', 'server': gateway, 'port': node['reality_port'], 'uuid': node['vless_uuid'],
+                            'udp': True, 'tls': True, 'servername': node['reality_server_name'], 'client-fingerprint': 'chrome',
+                            'reality-opts': {'public-key': node['reality_public_key'], 'short-id': node['reality_short_id']}}
+    api = args.api_host or '%s:443' % native_env.load_env_file(ANDROID / '.env.example')['API_BASE_URL'].split('/')[2]
+    return {'nodes': nodes, 'real_nodes': real, 'cycles': args.cycles, 'download_bytes': 4 << 20, 'api_host': api, 'sink': sink,
+            'node_stats': {'port': node['status_addr'].rsplit(':', 1)[1], 'token': node['status_token']}}
+
+
+def kill_case(adb, serial, config, out_dir):
+    """T09: kill the process while connected; the system must remove the VPN with it."""
+    adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+    write_private(adb, serial, 'config.json', json.dumps(dict(config, hold=True)).encode())
+    holder = subprocess.Popen(instrument_command(adb, serial, 'holdForKill'), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    ready, deadline = None, time.time() + 120
+    try:
+        while time.time() < deadline:
+            line = holder.stdout.readline()
+            if not line:
+                break
+            match = re.search(r'asterlink=tun_ready=(\d)', line)
+            if match:
+                ready = match.group(1) == '1'
+                break
+        up_before = vpn_up(adb, serial)
+        if not up_before:
+            agents = [l for l in adb_run(adb, serial, 'shell', 'dumpsys', 'connectivity', check=False).splitlines() if 'NetworkAgentInfo{' in l]
+            (out_dir / 'kill-dumpsys.txt').write_text('\n'.join(agents) + '\n')
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+        gone_after = None
+        for i in range(20):
+            if not vpn_up(adb, serial):
+                gone_after = i * 0.5
+                break
+            time.sleep(0.5)
+    finally:
+        holder.kill()
+    record('tun.T09-kill', bool(ready) and up_before and gone_after is not None,
+           'connected=%s, VPN present before the kill=%s, gone %s after am force-stop'
+           % (ready, up_before, '%.1f s' % gone_after if gone_after is not None else 'NOT within 10 s'))
+
+
+def run_tun_suite(args):
+    if not args.allow_network_changes:
+        record('tun.consent', False, 'pass --allow-network-changes: the suite creates a VPN inside the emulator (the host network is not changed)', status='BLOCKED')
+        return
+    if not shutil.which('go'):
+        record('tun.go', False, 'go not found', status='BLOCKED')
+        return
+    abi = args.abi or host_abi()
+    if not args.skip_build:
+        # Always rebind: the hooks AAR must be the current Go sources, never a leftover.
+        build = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'build-native-android.py'), '--target', 'apk', '--tun-test-hooks', '--rebuild-core', '--abi', abi],
+                               capture_output=True, text=True)
+        if build.returncode != 0:
+            record('tun.build', False, 'hooks AAR + debug/test APKs: ' + (build.stdout + build.stderr)[-800:])
+            return
+    core = json.loads((ANDROID / 'build' / 'core' / 'core-build.json').read_text())
+    test_apk = ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'androidTest' / 'debug' / 'app-debug-androidTest.apk'
+    if not core.get('tuntest_hooks') or not test_apk.is_file():
+        record('tun.build', False, 'the Core AAR lacks the acceptance hooks or the test APK is missing (run without --skip-build)', status='BLOCKED')
+        return
+    record('tun.build', True, 'Core AAR with the debug-only acceptance hooks (sha256 %s) and the test APK' % core['aar_sha256'][:16])
+    real = real_nodes_from_env()
+
+    emu = open_emulator(args, 'tun', 'tun')
+    if emu is None:
+        return
+    adb, serial = emu.adb, emu.serial
+    scratch = tempfile.mkdtemp(prefix='asterlink-tun-')
+    helpers = []
+    try:
+        node, sink = start_helpers(args, scratch, helpers)
+        record('tun.helpers', True, 'test node and sink on the host loopback only (emulator: %s; the sink by name only through the node); both stop with the suite' % EMULATOR_HOST)
+        config = tun_config(args, node, sink, real)
+
+        adb_run(adb, serial, 'install', '-r', '-t', str(ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'debug' / 'app-debug.apk'), timeout=300)
+        adb_run(adb, serial, 'install', '-r', '-t', str(test_apk), timeout=300)
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+        # The consent dialog cannot be automated; appops records exactly what the dialog grants.
+        adb_run(adb, serial, 'shell', 'appops', 'set', PACKAGE, 'ACTIVATE_VPN', 'allow')
+        if vpn_up(adb, serial):
+            record('tun.clean_start', False, 'a VPN is already up in the emulator', status='BLOCKED')
+            return
+
+        write_private(adb, serial, 'config.json', json.dumps(config).encode())
+        run = subprocess.run(instrument_command(adb, serial, 'acceptance'), capture_output=True, text=True, timeout=args.max_seconds)
+        (emu.out_dir / 'instrument.txt').write_text(re.sub(r't=[0-9a-f]{32}', 't=<token>', run.stdout + run.stderr))
+        try:
+            cases = json.loads(read_private(adb, serial, 'report.json'))['cases']
+        except (ValueError, KeyError):
+            record('tun.report', False, 'no report from the device: ' + (run.stdout + run.stderr)[-1200:])
+            return
+        for case in cases:
+            record('tun.' + case['case_id'], case['status'] == 'PASS', case['observed'], status=case['status'])
+        for name in ('goroutines-first.txt', 'goroutines-last.txt'):  # T-CYCLES evidence
+            (emu.out_dir / name).write_text(read_private(adb, serial, name))
+        kill_case(adb, serial, config, emu.out_dir)
+        totals = json.loads(urlopen_text('http://%s:%s/stats?t=%s' % (LOOPBACK, config['node_stats']['port'], config['node_stats']['token'])))
+        (emu.out_dir / 'tun-report.json').write_text(json.dumps({
+            'device': emu.facts, 'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'aar_sha256', 'tuntest_hooks')},
+            'node_totals': totals, 'cases': results}, indent=2) + '\n')
+    finally:
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE, check=False)
+        adb_run(adb, serial, 'shell', 'run-as %s rm -rf files/tuntest' % PACKAGE, check=False)
+        adb_run(adb, serial, 'shell', 'appops', 'set', PACKAGE, 'ACTIVATE_VPN', 'default', check=False)
+        for helper in helpers:
+            helper.terminate()
             try:
-                process.wait(timeout=60)
+                helper.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                process.kill()
+                helper.kill()
+        shutil.rmtree(scratch, ignore_errors=True)
+        emu.close(args.keep_emulator)
 
 
 def main():
@@ -421,6 +682,15 @@ def main():
     parser.add_argument('--out', help='emulator suite: evidence directory (default artifacts/native-android/emulator)')
     parser.add_argument('--window', action='store_true', help='emulator suite: show the emulator window')
     parser.add_argument('--keep-emulator', action='store_true', help='emulator suite: leave a booted emulator running')
+    parser.add_argument('--allow-network-changes', action='store_true', help='tun suite: confirm a VPN may be created inside the emulator')
+    parser.add_argument('--cycles', type=int, default=20, help='tun suite: start/verify/stop cycles for T-CYCLES (default 20)')
+    parser.add_argument('--api-host', help='tun suite: host:port for T05 (default: the API host of apps/android/.env.example)')
+    parser.add_argument('--reality-dest', default='itunes.apple.com:443', help='tun suite: TLS server the test node borrows its REALITY handshake from')
+    parser.add_argument('--no-reality', action='store_true', help='tun suite: no REALITY inbound (T02-reality BLOCKED)')
+    parser.add_argument('--skip-build', action='store_true', help='tun suite: use the hooks AAR and APKs already built')
+    parser.add_argument('--max-seconds', type=int, default=1800, help='tun suite: upper bound for the instrumented run')
+    parser.add_argument('--expect-blocked', help='comma-separated case ids the environment cannot run (e.g. CI: no IPv6 upstream, '
+                                                  'no real node); they stay BLOCKED in the report, but only they may be BLOCKED for exit 0')
     args = parser.parse_args()
 
     if args.suite == 'foundation':
@@ -435,6 +705,11 @@ def main():
             run_emulator_suite(args)
         except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             record('emulator.run', False, str(error)[-1800:])
+    elif args.suite == 'tun':
+        try:
+            run_tun_suite(args)
+        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as error:
+            record('tun.run', False, str(error)[-1800:])
     else:
         print('suite %r arrives in a later round (handoff_app_android.md 10)' % args.suite)
         return EXIT_BLOCKED
@@ -446,7 +721,14 @@ def main():
     print('\n%d cases: %s' % (len(results), ', '.join('%s=%d' % (s, sum(r['status'] == s for r in results)) for s in sorted(statuses))))
     if 'FAIL' in statuses:
         return EXIT_FAIL
-    return EXIT_BLOCKED if 'BLOCKED' in statuses else EXIT_PASS
+    blocked = sorted(r['case_id'] for r in results if r['status'] == 'BLOCKED')
+    expected = set(filter(None, (args.expect_blocked or '').split(',')))
+    if blocked and set(blocked) <= expected:
+        # Still reported as BLOCKED (nothing was proven for them); the run passes only because
+        # the caller declared exactly these as impossible in its environment.
+        print('only the declared BLOCKED cases remain (%s): exit 0' % ', '.join(blocked))
+        return EXIT_PASS
+    return EXIT_BLOCKED if blocked else EXIT_PASS
 
 
 if __name__ == '__main__':

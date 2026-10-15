@@ -5,8 +5,8 @@ name: Android client CI
 # whose libgojni.so is ELF for its ABI, 16 KB aligned and reproducible, the Debug APK builds
 # with the .so stored uncompressed, the env-v1 parser and JVM tests pass, and on a KVM x86_64
 # emulator the app starts the real Core, shows its version and the instrumented binding test
-# passes. Nothing here creates a VPN or touches the runner's network; the VpnService/TUN
-# suites arrive in round 2 and run against an emulator only.
+# passes. Round 2 adds the tun job: a real VpnService TUN inside the emulator only; the
+# runner's own network is never changed.
 # x86_64 is built only so the Linux runner can run the app; the product ABI is arm64-v8a.
 
 on:
@@ -134,5 +134,46 @@ jobs:
         with:
           name: android-emulator-evidence
           path: artifacts/native-android/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  tun:
+    # Round 2: the real VpnService TUN inside the emulator, against a controlled test node and
+    # traffic sink started on the runner (scripts/test-native-android.py --suite tun). The VPN
+    # exists only inside the emulator; the runner's own network is not changed. This job binds
+    # its own Core AAR with the debug-only acceptance hooks; that AAR never leaves the job.
+    name: Android TUN acceptance (API 36 x86_64, KVM)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: native/core/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      - name: Allow the emulator to use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator, system image and the NDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null
+      - name: TUN suite (hooks AAR, VpnService, SS/VLESS/REALITY, DNS, UDP, IPv6, loop, stop, kill, cycles)
+        # The runner has no IPv6 upstream and no real node: those two stay BLOCKED in the report.
+        run: python3 scripts/test-native-android.py --suite tun --allow-network-changes --api 36 --abi x86_64 --cycles 10 --expect-blocked tun.T04-ipv6,tun.T02-real --report artifacts/native-android/tun/report.json
+      - name: Retain TUN evidence (report, instrumentation output; tokens redacted)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tun-evidence
+          path: artifacts/native-android/tun/
           retention-days: 14
           if-no-files-found: ignore

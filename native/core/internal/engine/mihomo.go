@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/component/iface"
+	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/listener"
@@ -136,7 +138,14 @@ func (e *Mihomo) Start(ctx context.Context, profile managed.Profile) error {
 	// logs its failure, so the log is watched to turn it into a precise error.
 	failures := watchTunErrors()
 	defer failures.Close()
-	listener.ReCreateTun(e.prepareTunConf(tunConf), tunnel.Tunnel)
+	// Android: the VpnService establishes the interface now and its descriptor joins the
+	// section; the desktops pass it through (sing-tun creates the device itself).
+	running, err := attachTun(e.prepareTunConf(tunConf))
+	if err != nil {
+		e.stopLocked()
+		return fmt.Errorf("%w: %w", managed.ErrTunnelFailed, err)
+	}
+	listener.ReCreateTun(running, tunnel.Tunnel)
 
 	deadline := time.Now().Add(e.StartTimeout)
 	for {
@@ -180,9 +189,13 @@ func (e *Mihomo) Verify(ctx context.Context) error {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	defer client.CloseIdleConnections()
+	// The last probe's failure travels with the stable error (errors.Is still matches), so a
+	// report can say why; it names only the public probe URL.
+	var last error
 	for _, url := range e.Probes {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
+			last = err
 			continue
 		}
 		response, err := client.Do(request)
@@ -190,6 +203,7 @@ func (e *Mihomo) Verify(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			last = err
 			continue
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -197,6 +211,10 @@ func (e *Mihomo) Verify(ctx context.Context) error {
 		if response.StatusCode >= 200 && response.StatusCode < 400 {
 			return nil
 		}
+		last = fmt.Errorf("probe answered %d", response.StatusCode)
+	}
+	if last != nil {
+		return fmt.Errorf("%w: %w", managed.ErrTunnelUnhealthy, last)
 	}
 	return managed.ErrTunnelUnhealthy
 }
@@ -223,6 +241,16 @@ func (e *Mihomo) Stop() error {
 	defer e.mu.Unlock()
 	e.stopLocked()
 	return nil
+}
+
+// NetworkChanged is the host's hint that the default network moved (Android:
+// ConnectivityManager). Mihomo's own default-interface monitor is off on Android
+// (auto-detect-interface needs netlink), so this does its work: cached interface data is
+// dropped and the resolvers reconnect over the new network. Whether the session may
+// continue is not decided here; the managed watchdog compares network signatures.
+func NetworkChanged() {
+	iface.FlushCache()
+	resolver.ResetConnection()
 }
 
 // DNSMode reports whether the running session captured the system resolver.
@@ -252,6 +280,9 @@ func (e *Mihomo) stopLocked() {
 	e.releaseIPv6Policy()
 	tunnel.OnSuspend()
 	listener.ReCreateTun(LC.Tun{}, tunnel.Tunnel)
+	// Android: the listener closed the VPN descriptor it owned; one it never took is closed
+	// here, so the interface disappears either way.
+	releaseTun()
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
 		_ = c.Close()
 		return true

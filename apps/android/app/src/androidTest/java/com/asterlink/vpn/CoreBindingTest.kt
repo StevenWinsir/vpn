@@ -8,7 +8,8 @@ import com.asterlink.vpn.core.CoreBridge
 import com.asterlink.vpn.core.CoreProtocol
 import com.asterlink.vpn.core.CoreResponse
 import com.asterlink.vpn.vpn.AndroidPlatform
-import com.asterlink.vpn.vpn.HostNetwork
+import com.asterlink.vpn.vpn.NetworkMonitor
+import com.asterlink.vpn.vpn.VpnHostRegistry
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -60,7 +61,9 @@ class CoreBindingTest {
 
         // 2. Started: the build identity is this APK's, and the managed session is signed out.
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
-        val core = CoreBridge(AndroidPlatform(connectivity), context.cacheDir)
+        val monitor = NetworkMonitor(connectivity) {}.also { it.start() }
+        // No VpnService runs here: protect refuses and openTun returns -1.
+        val core = CoreBridge(AndroidPlatform(VpnHostRegistry(), monitor), context.cacheDir)
         core.start()
         try {
             val hello = call("""{"request_id":"h","protocol_version":1,"generation":0,"command":"hello"}""")
@@ -74,7 +77,7 @@ class CoreBindingTest {
             assertEquals("signed_out", snapshot.result!!.jsonObject.getValue("state").jsonPrimitive.content)
 
             // The default network report the Core will rely on decodes to a real link.
-            val network = HostNetwork.read(connectivity)
+            val network = monitor.current()
             assertTrue("emulator has a default network", network.available)
             assertFalse(network.interfaceName.isNullOrEmpty())
             assertTrue("interface index ${network.index}", (network.index ?: 0) > 0)

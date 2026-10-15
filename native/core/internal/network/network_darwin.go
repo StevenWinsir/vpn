@@ -93,3 +93,6 @@ func ViaTunnel() string {
 
 // platformSignature: the signature is read from the interface itself (network.go).
 func platformSignature() (string, bool) { return "", false }
+
+// platformResolvers: until the tunnel records bootstrap servers, /etc/resolv.conf applies.
+func platformResolvers() []string { return nil }

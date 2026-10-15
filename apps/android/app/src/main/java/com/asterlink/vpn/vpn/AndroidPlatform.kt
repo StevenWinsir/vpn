@@ -1,21 +1,46 @@
 package com.asterlink.vpn.vpn
 
-import android.net.ConnectivityManager
 import com.asterlink.core.mobile.Platform
-import com.asterlink.vpn.core.CoreProtocol
 
 /**
- * The callbacks the Go Core makes into the app. Round 1 has no VpnService, so there is no
- * VPN to exclude a socket from and no TUN to open: protect refuses (the Core then fails the
- * dial instead of sending it anywhere) and openTun returns -1. The Core never calls either
- * in this build, because its Android engine reports tun_unavailable before any tunnel step.
- * Round 2 moves both onto AsterVpnService.
+ * Where the Core's platform calls land: the running [AsterVpnService] while there is one.
+ * Only a VpnService the user consented to can protect sockets or establish an interface,
+ * so without it protect refuses (the Core then fails the dial instead of sending it into the
+ * VPN) and openTun returns -1 (the Core reports tun_unavailable).
  */
-class AndroidPlatform(private val connectivity: ConnectivityManager) : Platform {
-    override fun protect(fd: Int): Boolean = false
+class VpnHostRegistry {
+    @Volatile var current: VpnHost? = null
+        private set
 
-    override fun openTun(specJSON: String): Int = -1
+    fun attach(host: VpnHost) {
+        current = host
+    }
 
-    override fun networkSnapshot(): String =
-        CoreProtocol.json.encodeToString(HostNetwork.serializer(), HostNetwork.read(connectivity))
+    /** Only the host that is registered can remove itself. */
+    fun detach(host: VpnHost) {
+        if (current === host) current = null
+    }
+}
+
+/** The two VpnService abilities the Core needs (implemented by [AsterVpnService]). */
+interface VpnHost {
+    fun protectSocket(fd: Int): Boolean
+
+    /** Establishes the interface for [spec]; the detached descriptor, or -1. */
+    fun establish(spec: TunSpec): Int
+}
+
+class AndroidPlatform(
+    private val hosts: VpnHostRegistry,
+    private val network: NetworkMonitor,
+) : Platform {
+    override fun protect(fd: Int): Boolean = hosts.current?.protectSocket(fd) ?: false
+
+    override fun openTun(specJSON: String): Int {
+        val host = hosts.current ?: return -1
+        val spec = TunSpec.parse(specJSON) ?: return -1
+        return host.establish(spec)
+    }
+
+    override fun networkSnapshot(): String = network.snapshotJson()
 }

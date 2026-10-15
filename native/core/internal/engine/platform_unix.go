@@ -17,6 +17,12 @@ func platformSupported() bool { return runtime.GOOS == "darwin" }
 // preflightPlatform has nothing to add on macOS: root is the Helper's concern.
 func preflightPlatform(context.Context) error { return nil }
 
+// attachTun: sing-tun creates the utun device itself; the section is used as it is.
+func attachTun(conf tunConfig) (tunConfig, error) { return conf, nil }
+
+// releaseTun: the device goes with the listener.
+func releaseTun() {}
+
 func tunnelDevices() map[string]bool {
 	found := map[string]bool{}
 	interfaces, _ := net.Interfaces()

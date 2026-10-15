@@ -17,7 +17,7 @@ func TestAndroidBuildLinksOnlyAndroidPlatformFiles(t *testing.T) {
 		ctx.GOOS, ctx.GOARCH, ctx.CgoEnabled = "android", arch, true
 		for dir, want := range map[string]struct{ in, out []string }{
 			"../internal/engine": {
-				in:  []string{"platform_android.go", "sysdns_android.go", "ipv6_android.go", "sysdns_common.go", "mihomo.go", "config.go"},
+				in:  []string{"platform_android.go", "sysdns_android.go", "ipv6_android.go", "sysdns_common.go", "mihomo.go", "config.go", "tunspec.go", "tunfd_unix.go"},
 				out: []string{"platform_unix.go", "sysdns.go", "ipv6_route.go", "platform_windows.go", "sysdns_windows.go", "ipv6_windows.go"},
 			},
 			"../internal/network": {
@@ -44,6 +44,19 @@ func TestAndroidBuildLinksOnlyAndroidPlatformFiles(t *testing.T) {
 					t.Errorf("android/%s %s: the macOS test %s would run on Android", arch, dir, f)
 				}
 			}
+		}
+	}
+	// The TUN acceptance hooks exist only when asked for by tag: a normal Android bind (the
+	// AAR every APK uses) must not export them.
+	for _, tags := range [][]string{nil, {"asterlink_tuntest"}} {
+		ctx := build.Default
+		ctx.GOOS, ctx.GOARCH, ctx.CgoEnabled, ctx.BuildTags = "android", "arm64", true, tags
+		pkg, err := ctx.ImportDir(".", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if linked := slices.Contains(pkg.GoFiles, "tuntest.go"); linked != (tags != nil) {
+			t.Errorf("tags %v: tuntest.go linked=%v", tags, linked)
 		}
 	}
 	// The desktop builds keep their own files.

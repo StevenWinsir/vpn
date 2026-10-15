@@ -17,3 +17,6 @@ func otherTunnels() []string                             { return nil }
 
 // platformSignature: the signature is read from the interface itself (network.go).
 func platformSignature() (string, bool) { return "", false }
+
+// platformResolvers: the system resolver configuration (/etc/resolv.conf) applies.
+func platformResolvers() []string { return nil }

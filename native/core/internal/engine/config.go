@@ -86,5 +86,17 @@ func buildConfig(profile managed.Profile, goos string) ([]byte, error) {
 		tun["strict-route"] = true
 		tun["device"] = TunName
 	}
+	if goos == "android" {
+		// The VpnService owns the device and its routes (handoff_app_android.md 7.1): the
+		// Builder installs the addresses, the default routes and the resolver from the spec
+		// the engine derives from this same document, and the engine adds the descriptor it
+		// returns as tun.file-descriptor. auto-route would try to program routes an app may
+		// not touch, and auto-detect-interface reads netlink, which Android 11+ refuses to
+		// ordinary apps; outbound sockets are protected instead (DefaultSocketHook).
+		tun := config["tun"].(map[string]any)
+		tun["auto-route"] = false
+		tun["auto-detect-interface"] = false
+		tun["mtu"] = AndroidMTU
+	}
 	return yaml.Marshal(config)
 }
