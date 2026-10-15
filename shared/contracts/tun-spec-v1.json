@@ -1,0 +1,35 @@
+{
+  "contract": "asterlink-android-tun-spec",
+  "description": "The VPN interface description the Go Core (native/core/internal/engine/tunspec.go) passes to the Android app's Platform.openTun, and the app applies to VpnService.Builder (apps/android/.../vpn/TunSpec.kt). It is derived from the same parsed Mihomo TUN section the stack runs, so address, prefix, MTU and resolver cannot drift. It never carries node or account data. Go must produce exactly the 'produced' documents from the Android template; Kotlin must accept every 'accept' case and refuse every 'reject' case.",
+  "fields": ["address4", "prefix4", "dns", "mtu", "ipv6", "address6", "prefix6"],
+  "produced": [
+    {
+      "name": "node without IPv6: no IPv6 address, route or resolver (Android blocks the family)",
+      "ipv6": false,
+      "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false}"
+    },
+    {
+      "name": "node that carries IPv6",
+      "ipv6": true,
+      "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"
+    }
+  ],
+  "accept": [
+    {"name": "ipv4 only", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false}"},
+    {"name": "with ipv6", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "smallest mtu", "spec": "{\"address4\":\"10.111.0.1\",\"prefix4\":24,\"dns\":\"10.111.0.2\",\"mtu\":1280,\"ipv6\":false}"}
+  ],
+  "reject": [
+    {"name": "not json", "spec": "tun0"},
+    {"name": "unknown field (e.g. a route or node address)", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false,\"server\":\"192.0.2.1\"}"},
+    {"name": "missing dns", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"mtu\":9000,\"ipv6\":false}"},
+    {"name": "hostname instead of address", "spec": "{\"address4\":\"tun.example\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false}"},
+    {"name": "ipv6 in the ipv4 field", "spec": "{\"address4\":\"fdfe:dcba:9876::1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false}"},
+    {"name": "prefix out of range", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":31,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false}"},
+    {"name": "mtu below the IPv6 minimum", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1000,\"ipv6\":false}"},
+    {"name": "ipv6 flag without an address", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":true}"},
+    {"name": "ipv6 address without the flag", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "public resolver instead of the tunnel's", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"8.8.8.8\",\"mtu\":9000,\"ipv6\":false}"},
+    {"name": "trailing data", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":9000,\"ipv6\":false}{}"}
+  ]
+}

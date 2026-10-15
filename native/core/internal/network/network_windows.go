@@ -184,3 +184,6 @@ func OwnTunnelUp() bool {
 
 // platformSignature: the signature is read from the interface itself (network.go).
 func platformSignature() (string, bool) { return "", false }
+
+// platformResolvers: until the tunnel records bootstrap servers, the system resolver applies.
+func platformResolvers() []string { return nil }

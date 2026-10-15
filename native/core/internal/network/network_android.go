@@ -21,7 +21,14 @@ import (
 // socket would route into the VPN, so the dial fails instead.
 var ErrNotProtected = errors.New("socket could not be protected from the vpn")
 
-func bindToInterface(c syscall.RawConn, _ string, _ int) error {
+func bindToInterface(c syscall.RawConn, _ string, _ int) error { return ProtectSocket(c) }
+
+// ProtectSocket excludes one socket from the VPN through the host. It is also Mihomo's
+// dialer.DefaultSocketHook on Android (engine/platform_android.go), so the node's outer
+// connection, its UDP relay and the bootstrap lookup of the node's name never enter the
+// TUN they carry: the pinned core disables its loopback detector on Android, so this is
+// the only thing preventing a routing loop (T05-loop).
+func ProtectSocket(c syscall.RawConn) error {
 	h := currentHost()
 	if h == nil {
 		return ErrNotProtected
@@ -61,6 +68,10 @@ func HostResolvers() []string {
 	}
 	return s.Resolvers()
 }
+
+// platformResolvers: there is no /etc/resolv.conf, so control-plane lookups always use the
+// default network's servers (over protected sockets while the VPN is up).
+func platformResolvers() []string { return HostResolvers() }
 
 func platformSignature() (string, bool) {
 	s, err := hostSnapshot()

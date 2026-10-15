@@ -1,6 +1,7 @@
 package com.asterlink.vpn.vpn
 
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -25,10 +26,16 @@ data class HostNetwork(
     companion object {
         val NONE = HostNetwork(available = false)
 
-        fun read(connectivity: ConnectivityManager): HostNetwork {
-            val network = connectivity.activeNetwork ?: return NONE
+        /**
+         * Describes [network], which must be a physical (non-VPN) network: while this app's VPN
+         * is up, `activeNetwork` is the VPN itself for this app, whose resolver answers with
+         * fake-ip addresses. [NetworkMonitor] supplies the network underneath.
+         */
+        fun read(connectivity: ConnectivityManager, network: Network?): HostNetwork {
+            if (network == null) return NONE
             val link = connectivity.getLinkProperties(network) ?: return NONE
             val capabilities = connectivity.getNetworkCapabilities(network) ?: return NONE
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return NONE
             val name = link.interfaceName ?: return NONE
             val index = runCatching { NetworkInterface.getByName(name)?.index }.getOrNull() ?: return NONE
             return HostNetwork(

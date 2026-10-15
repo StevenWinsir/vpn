@@ -1,6 +1,6 @@
 // Package mobile is the in-process binding the Android app links through gomobile
-// (handoff_app_android.md 3.3). The Kotlin side gets exactly three functions and one
-// callback interface; everything else (session, configuration, lease, metering, grants)
+// (handoff_app_android.md 3.3). The Kotlin side gets Start, Call, Stop, the NetworkChanged
+// hint and one callback interface; everything else (session, configuration, lease, metering, grants)
 // stays in the same Go Core that macOS and Windows run behind their pipes.
 //
 // Call takes the same JSON document an IPC frame carries (shared/contracts/ipc-v1.json)
@@ -44,9 +44,10 @@ const CodeNotStarted = "core_not_started"
 type Platform interface {
 	// Protect is VpnService.protect(fd): the socket bypasses the VPN.
 	Protect(fd int32) bool
-	// OpenTun establishes the VPN interface described by specJSON (addresses, prefix,
-	// MTU, DNS, whether IPv6 is carried; never any node data) and returns the detached
-	// file descriptor, or -1. Not called before the round-2 TUN path exists.
+	// OpenTun establishes the VPN interface described by specJSON (engine.TunSpec:
+	// addresses, prefixes, MTU, DNS, whether IPv6 is carried; never any node data) and
+	// returns the detached file descriptor, which the Core owns and closes from then on, or
+	// -1 when no VpnService is running or the system refused.
 	OpenTun(specJSON string) int32
 	// NetworkSnapshot reports the default network (network.ParseHostSnapshot format).
 	NetworkSnapshot() string
@@ -153,6 +154,7 @@ func Start(platform Platform, buildJSON string) error {
 		return err
 	}
 	network.SetHost(host{platform})
+	engine.SetTunHost(host{platform})
 	manager := managed.New(managed.Options{CoreVersion: version, Engine: engine.New()})
 	current = newSession(service.New(manager))
 	return nil
@@ -173,8 +175,15 @@ func Stop() {
 	if s != nil {
 		s.close()
 	}
+	engine.SetTunHost(nil)
 	network.SetHost(nil)
 }
+
+// NetworkChanged is the app's hint that the default network changed (a
+// ConnectivityManager callback). It refreshes Mihomo's network-dependent state; whether a
+// running session may continue is the Core's own decision (the watchdog compares network
+// signatures and re-verifies). Safe at any time.
+func NetworkChanged() { engine.NetworkChanged() }
 
 func info() ipc.BuildInfo {
 	return ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}
@@ -219,5 +228,6 @@ func (notStarted) Close() {}
 // host adapts the Kotlin callbacks to the network package.
 type host struct{ platform Platform }
 
-func (h host) Protect(fd int) bool { return h.platform.Protect(int32(fd)) }
-func (h host) Snapshot() string    { return h.platform.NetworkSnapshot() }
+func (h host) Protect(fd int) bool     { return h.platform.Protect(int32(fd)) }
+func (h host) Snapshot() string        { return h.platform.NetworkSnapshot() }
+func (h host) OpenTun(spec string) int { return int(h.platform.OpenTun(spec)) }

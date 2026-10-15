@@ -525,8 +525,8 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 
 | 轮次 | 状态 | 下一步与前置条件 |
 | --- | --- | --- |
-| 1 环境与骨架 | IN_REVIEW（PR StevenWinsir/vpn#28） | 本机 API 36 arm64 模拟器 5/5 PASS；16 KB/API 29/API 26 镜像留到第 2、6 轮安装 |
-| 2 真实 TUN PoC | NOT_STARTED | 本地 NodeAgent 即可开始；真实 SS/VLESS 节点凭据由用户经安全方式提供 |
+| 1 环境与骨架 | DONE（PR StevenWinsir/vpn#28 已合并） | 本机 API 36 arm64 模拟器 5/5 PASS；16 KB/API 29/API 26 镜像留到第 6 轮安装 |
+| 2 真实 TUN PoC | IN_REVIEW（worktree-android-round2-tun） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；真实节点需用户断开公司 VPN 后用环境变量注入 |
 | 3 账号与 UI | NOT_STARTED | 本地隔离后端；demo 手工确认需要用户输入测试账号密码 |
 | 4 连接与计量 | NOT_STARTED | 公网 sink 部署位置（节点可达的服务器）由用户确认 |
 | 5 生命周期与可靠性 | NOT_STARTED | 无 |
@@ -589,6 +589,59 @@ APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
 下一位从哪个文件/验收项开始；回退方法：
   第 2 轮从 native/core/internal/engine/platform_android.go（fd 路径）与 apps/android/.../vpn/ 开始；
   回退：撤销本 PR 即恢复桌面端原状（桌面端链接的依赖与行为未变）。
+```
+
+### 第 2 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 2 轮 / 2026-10-15 / Claude（worktree 分支 worktree-android-round2-tun）
+基线 commit / 已有未提交改动：9b1c26d（PR #28 合并点）；无
+实际修改与契约变化（不含秘密）：
+  新契约 shared/contracts/tun-spec-v1.json（Core → Platform.openTun 的接口描述；Go 产出与 Kotlin 校验同一夹具）。
+  Go Core：engine/tunspec.go（TunSpec 由 Mihomo 解析后的 TUN 段推导，地址/前缀/MTU/DNS 单一来源；TunHost 注册）；
+    config.go android 分支（auto-route/auto-detect-interface 关闭，mtu 9000）；platform_android.go（fd 交接、
+    tunReady=监听器确实在读本次 fd、dialer.DefaultSocketHook→protect）；tunfd_unix.go（fd 所有权：监听器关闭，
+    未接管时按 inode 身份关闭，绝不二次关闭）；mihomo.go 增加 attachTun/releaseTun 钩子（桌面为直通）、
+    NetworkChanged（刷新 Mihomo 接口缓存与解析器连接）、Verify 把最后一个探测的原因包进 tunnel_unhealthy
+    （errors.Is 不变）。network：Android 无 /etc/resolv.conf，控制面解析回落到物理网络自身的 DNS
+    （否则登录也会失败）；HostSnapshot 拒收 198.18.0.0/15 作为引导解析器；导出 ProtectSocket。
+  mobile：Start/Stop 注册/移除 TUN 宿主；新增 NetworkChanged；tuntest.go 调试钩子仅在 -tags asterlink_tuntest 时存在。
+  Android：AsterVpnService（specialUse 前台服务、通知“断开”、onRevoke/onDestroy 有界断开、拒绝无动作启动即
+    不支持始终开启 VPN、establish 后等待 VPN 真正成为本应用网络再交 fd）；TunSpec（严格解码、无 DNS 查询的字面量
+    校验）；NetworkMonitor（跟随 INTERNET+NOT_VPN 的最佳网络——VPN 起来后 activeNetwork 会变成 VPN 本身）；
+    AndroidPlatform/VpnHostRegistry；TunnelSession 接缝（生产=Core connect）；CoreClient.connect/disconnect；
+    Manifest：VpnService（BIND_VPN_SERVICE、不导出、SUPPORTS_ALWAYS_ON=false）、FOREGROUND_SERVICE(_SPECIAL_USE)、
+    POST_NOTIFICATIONS、CHANGE_NETWORK_STATE。
+  测试：cmd/asterlink-testnode（固定 Mihomo 作 SS/VLESS/REALITY 服务端，仅监听回环，example.com 仅在节点处
+    映射到回环上的 sink）；androidTestTun/TunAcceptanceTest（仅 -Pasterlink.tunTest=true 编译）；
+    test-native-android.py --suite tun；build-native-android.py --tun-test-hooks；verifyCoreAar 拒绝钩子 AAR 与
+    普通构建混用；CI android.yml 新增 tun 作业（KVM x86_64 模拟器）。docs/android-tun-design.md。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，公司 VPN 开启，模拟器 API 36 arm64 页 4096）：
+  test-native-android.py --suite tun --allow-network-changes --cycles 20：26 PASS / 0 FAIL / 2 BLOCKED
+    T01（4 MiB 经节点，节点计数 ≥ 正文）、B-COUNT（×1.0003）、T01a、T01-noproxy、T02-ss/vless/reality/badkey、
+    T03-dns-off/opportunistic/strict/any53、T03-udp（SNTP 经节点）、T04-ipv6-fallback（IPv6 connect 0–2 ms 失败）、
+    T05、T05-loop（无指向节点/引导解析器的 TUN 流）、T06-udp-reject、T07、T-CYCLES、T09-kill 全部 PASS；
+    BLOCKED：T04-ipv6（模拟器上游无 IPv6）、T02-real（未提供真实节点）
+  --suite foundation 19 PASS；--suite unit 3 PASS；--suite emulator 5 PASS（普通 AAR）
+  回归：native/core go test ./...（13 包）、go vet（windows/linux/fakeengine/android）、test-native.py、
+    test-native-macos.py --suite unit（7/7，Go 229、Swift 46）全部 PASS
+APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
+  0.1.0；Mihomo 70f0570405c3；arm64 libgojni.so 44.4 MiB（第 1 轮 25.1 MiB 是因为 TUN 代码不可达被链接器裁掉，
+  44.4 MiB 才是真实基线）；Debug APK 约 56 MiB（增量打包残留空间时文件可达 100 MiB，条目合计不变）；
+  artifacts/native-android/tun/（tun-report.json、instrument.txt、goroutine 剖面；不提交，令牌已脱敏）
+未解决问题、复现方法与发布限制：
+  ① 每次 TUN 启动泄漏 1 个 goroutine（三端共有，上游）：固定 Mihomo 以 context.TODO() 创建 TUN 监听器，sing-tun
+     的 TCP NAT 超时循环只随该 context 结束；20 次循环 +19，其它不增长，fd 持平。需在固定内核中按监听器传可取消
+     context，三端回归——单独一轮处理。
+  ② NodeAgent VLESS 参考转发器不支持 XUDP，而固定 Mihomo 的 VLESS 客户端 UDP 总是 XUDP：受管 VLESS 节点上的 UDP
+     在所有客户端都不通（billtest 用自带客户端所以未暴露）——需在转发器侧支持 XUDP。
+  ③ 公网不存在的域名：fake-ip 本地答 A、AAAA 转发上游得 NXDOMAIN，Android 随后拒绝整个域名；真实域名不受影响。
+  ④ 公司 VPN 影响：本机“主地址”是公司 VPN 的 utun 地址（本机都不可达），所以测试辅助程序全部只监听回环；
+     T02-real（用户真实节点）必须断开公司 VPN 后再跑，否则测的是公司网络而非节点。
+  ⑤ 前台服务类型选 specialUse（systemExempted 仅限“在设置中配置的 VPN 应用”，否则抛异常）；第 6 轮真机复核。
+下一位从哪个文件/验收项开始；回退方法：
+  第 3 轮从 apps/android/.../vpn/TunnelSession.kt（CoreTunnelSession）与 core/CoreClient.kt 开始接登录与快照；
+  回退：撤销本 PR（桌面端仅多了直通的 attachTun/releaseTun 与 Verify 错误原因，行为不变）。
 ```
 
 ## 附录 A. 源码核验索引

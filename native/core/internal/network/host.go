@@ -118,13 +118,18 @@ func (s HostSnapshot) Signature() string {
 }
 
 // Resolvers are the link's DNS servers the control plane may query directly, filtered
-// by the same rules as a desktop adapter (BootstrapResolvers).
+// by the same rules as a desktop adapter (BootstrapResolvers). An address inside the
+// tunnel's own range (198.18.0.0/15, where the VPN's resolver lives) is never one: it
+// would mean the host reported the VPN instead of the network underneath, and a lookup
+// there answers with fake-ip addresses.
 func (s HostSnapshot) Resolvers() []string {
 	adapter := Adapter{Name: s.Interface}
 	for _, a := range s.DNS {
-		if ip, err := netip.ParseAddr(a); err == nil {
+		if ip, err := netip.ParseAddr(a); err == nil && !tunnelRange.Contains(ip.Unmap()) {
 			adapter.DNS = append(adapter.DNS, ip)
 		}
 	}
 	return BootstrapResolvers(adapter)
 }
+
+var tunnelRange = netip.MustParsePrefix("198.18.0.0/15")

@@ -13,7 +13,10 @@ import kotlinx.serialization.Serializable
  */
 class CoreBridge(private val platform: Platform, private val cacheDir: File) : CoreTransport {
     private val lock = Any()
-    private var started = false
+    @Volatile private var started = false
+
+    /** Whether the Go library is loaded and the Core running (hints are pointless before). */
+    val isStarted: Boolean get() = started
 
     /** Start's input (mobile.buildConfig): process facts only, never account or node data. */
     @Serializable
