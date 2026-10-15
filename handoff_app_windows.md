@@ -815,7 +815,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
 轮次 / 日期 / 执行者：第 8 轮 / 2026-10-14 / Claude (Sonnet 5.5)
 基线 commit / 已有未提交改动：ed773bf（PR #26 合并点）；新 worktree worktree-windows-round8-release，工作区干净
 实际修改与契约变化（不含秘密）：
-  安装器：apps/windows/Packaging/setup.iss（Inno Setup 6.7.3，x64os、Windows 10 2004+、一次 UAC）。Inno 只做载体和界面：把 stage 解到自己的临时目录，调用
+  安装器：apps/windows/Packaging/setup.iss（Inno Setup 6.7.1，x64os、Windows 10 2004+、一次 UAC）。Inno 只做载体和界面：把 stage 解到自己的临时目录，调用
     服务的 install --stage 验证式动词；不直接往 Program Files 拷文件。GUI 运行时安装/卸载被拒绝（静默模式直接失败）；安装后可选以“原始非提权用户”启动。
   升级/回退（ServiceVerbs.Install）：降级默认拒绝（exit 7，--allow-downgrade 才放行，UpgradePolicy 数值比较）；旧目录改名为 AsterLink.previous，
     新版验证并运行后才删除；任一步失败即恢复并重新验证旧版、重启其服务（RollBack），不恢复登录；中断留下的 .previous 在下次安装时恢复或清理。
@@ -828,7 +828,7 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   发布资料：package-native-windows.py --installer --release-dir → Setup、SHA256SUMS、release-info.json（trusted_signature=false、open_gates）、manifest、
     依赖清单（CycloneDX 形，无第三方 NuGet）、第三方许可、SOURCE.txt 与两份 GPL 源码归档。docs/windows-release.md 为升级/卸载/回退/限制说明。
   测试：AsterLink.Tests +升级分类/清理选择单测；Tests.Windows +CredentialManager 清理；scripts/windows/release-check.ps1 与 test-native-windows.py --suite release；
-    windows.yml 安装 Inno 并真实静默安装/重装/被拒绝/回退/降级拒绝/卸载（保留与删除用户数据），上传测试签名安装包。toolchain.lock.json 记录 Inno 6.7.3 决定。
+    windows.yml 安装 Inno 并真实静默安装/重装/被拒绝/回退/降级拒绝/卸载（保留与删除用户数据），上传测试签名安装包。toolchain.lock.json 记录 Inno 6.7.1 决定。
   未改后端、网站、共享契约、macOS 工程、Core。
 执行命令 / 实际测试数 / PASS、FAIL、BLOCKED：
   macOS：dotnet build 全解决方案 0 警告 0 错误；AsterLink.Tests 318 例 0 FAIL；test-native-windows.py --suite release（可移植部分）与 --suite foundation 通过，

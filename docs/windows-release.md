@@ -6,7 +6,7 @@ certificate proves the signing pipeline only; it is trusted by nobody and gives 
 
 ## 1. What the installer is
 
-`AsterLink-Setup-x64-<version>.exe` (Inno Setup 6.7.3, `apps/windows/Packaging/setup.iss`) is a carrier and a user interface. It
+`AsterLink-Setup-x64-<version>.exe` (Inno Setup 6.7.1, `apps/windows/Packaging/setup.iss`) is a carrier and a user interface. It
 unpacks the stage tree into its own temporary folder and runs **one** privileged program, the service executable's `install --stage`
 verb, which (all of it from the earlier rounds, plus the upgrade logic below):
 
@@ -91,7 +91,7 @@ instructions). `release-check.ps1` re-reads `SHA256SUMS` independently and scans
 Build and test:
 
 ```sh
-# Windows x64 with Go, .NET SDK 10.0.401 and Inno Setup 6.7.3 (ISCC on PATH or in %ProgramFiles(x86)%)
+# Windows x64 with Go, .NET SDK 10.0.401 and Inno Setup 6.7.1 (ISCC on PATH or in %ProgramFiles(x86)%)
 py -3 scripts/package-native-windows.py --channel internal --installer --sign test --release-dir artifacts\native-windows\installer
 py -3 scripts/test-native-windows.py --suite release --allow-service-install --sign test      # elevated; installs and removes the product
 ```

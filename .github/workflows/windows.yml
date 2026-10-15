@@ -52,8 +52,8 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
   SOLUTION: apps/windows/AsterLink.sln
   GO_VERSION: '1.26.6'
-  INNO_VERSION: '6.7.3'
-  ASTERLINK_INNO_VERSION: '6.7.3'
+  INNO_VERSION: '6.7.1'
+  ASTERLINK_INNO_VERSION: '6.7.1'
 
 jobs:
   windows-x64:

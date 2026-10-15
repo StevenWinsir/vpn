@@ -37,9 +37,9 @@
   },
   "installer": {
     "tool": "Inno Setup",
-    "version": "6.7.3",
+    "version": "6.7.1",
     "candidates": {"7.x": "7.1.0 (2026-08-12)", "6.x": "6.7.3 (2026-05-26)"},
-    "decision": "6.7.3 (round 8): the stable 6.x line; installed in CI from the pinned Chocolatey package (windows.yml INNO_VERSION). 7.x is not adopted until it has a track record here.",
+    "decision": "6.7.1 (round 8): newest 6.x on the Chocolatey feed (6.7.3, published by the vendor, is not there yet); installed in CI from the pinned Chocolatey package (windows.yml INNO_VERSION). 7.x is not adopted until it has a track record here.",
     "license_note": "The vendor asks commercial users to purchase a license. Budget for it before the public release.",
     "verified": "version chosen from the list read from jrsoftware.org on 2026-10-13; CI run of the round 8 PR is the first build with it"
   },
