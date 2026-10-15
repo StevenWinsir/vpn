@@ -689,6 +689,8 @@ def main():
     parser.add_argument('--no-reality', action='store_true', help='tun suite: no REALITY inbound (T02-reality BLOCKED)')
     parser.add_argument('--skip-build', action='store_true', help='tun suite: use the hooks AAR and APKs already built')
     parser.add_argument('--max-seconds', type=int, default=1800, help='tun suite: upper bound for the instrumented run')
+    parser.add_argument('--expect-blocked', help='comma-separated case ids the environment cannot run (e.g. CI: no IPv6 upstream, '
+                                                  'no real node); they stay BLOCKED in the report, but only they may be BLOCKED for exit 0')
     args = parser.parse_args()
 
     if args.suite == 'foundation':
@@ -719,7 +721,14 @@ def main():
     print('\n%d cases: %s' % (len(results), ', '.join('%s=%d' % (s, sum(r['status'] == s for r in results)) for s in sorted(statuses))))
     if 'FAIL' in statuses:
         return EXIT_FAIL
-    return EXIT_BLOCKED if 'BLOCKED' in statuses else EXIT_PASS
+    blocked = sorted(r['case_id'] for r in results if r['status'] == 'BLOCKED')
+    expected = set(filter(None, (args.expect_blocked or '').split(',')))
+    if blocked and set(blocked) <= expected:
+        # Still reported as BLOCKED (nothing was proven for them); the run passes only because
+        # the caller declared exactly these as impossible in its environment.
+        print('only the declared BLOCKED cases remain (%s): exit 0' % ', '.join(blocked))
+        return EXIT_PASS
+    return EXIT_BLOCKED if blocked else EXIT_PASS
 
 
 if __name__ == '__main__':

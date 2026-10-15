@@ -135,8 +135,11 @@ type tunTestFlow struct {
 	// Destination is what the app asked for (host or IP, and port), as the TUN saw it.
 	Destination string `json:"dst"`
 	Network     string `json:"network"`
-	Upload      int64  `json:"up"`
-	Download    int64  `json:"down"`
+	// Inbound is where the flow came from: "Tun" for app traffic, "Inner" for the core's own
+	// connections through the node (the template's DNS-over-TCP nameservers).
+	Inbound  string `json:"inbound"`
+	Upload   int64  `json:"up"`
+	Download int64  `json:"down"`
 }
 
 type tunTestStatus struct {
@@ -145,7 +148,7 @@ type tunTestStatus struct {
 	Active     int   `json:"active"`
 	Goroutines int   `json:"goroutines"`
 	FDs        int   `json:"fds"`
-	// Flows are the tracked TUN flows, largest first (at most 12). A routing loop shows up
+	// Flows are the tracked TUN flows, largest first (at most 64). A routing loop shows up
 	// as a flow whose destination is the node itself or the bootstrap resolver: the Core's
 	// own outer connection re-entering the tunnel it carries (T05-loop).
 	Flows []tunTestFlow `json:"flows"`
@@ -170,11 +173,11 @@ func TunTestStatus() string {
 			dst = c.Metadata.DstIP.String()
 		}
 		s.Flows = append(s.Flows, tunTestFlow{Destination: net.JoinHostPort(dst, strconv.Itoa(int(c.Metadata.DstPort))),
-			Network: c.Metadata.NetWork.String(), Upload: c.UploadTotal.Load(), Download: c.DownloadTotal.Load()})
+			Network: c.Metadata.NetWork.String(), Inbound: c.Metadata.Type.String(), Upload: c.UploadTotal.Load(), Download: c.DownloadTotal.Load()})
 	}
 	slices.SortFunc(s.Flows, func(a, b tunTestFlow) int { return int((b.Upload + b.Download) - (a.Upload + a.Download)) })
-	if len(s.Flows) > 12 {
-		s.Flows = s.Flows[:12]
+	if len(s.Flows) > 64 {
+		s.Flows = s.Flows[:64]
 	}
 	s.Goroutines = runtime.NumGoroutine()
 	if entries, err := os.ReadDir("/proc/self/fd"); err == nil {

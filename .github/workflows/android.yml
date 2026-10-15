@@ -167,7 +167,8 @@ jobs:
       - name: Emulator, system image and the NDK
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null
       - name: TUN suite (hooks AAR, VpnService, SS/VLESS/REALITY, DNS, UDP, IPv6, loop, stop, kill, cycles)
-        run: python3 scripts/test-native-android.py --suite tun --allow-network-changes --api 36 --abi x86_64 --cycles 10 --report artifacts/native-android/tun/report.json
+        # The runner has no IPv6 upstream and no real node: those two stay BLOCKED in the report.
+        run: python3 scripts/test-native-android.py --suite tun --allow-network-changes --api 36 --abi x86_64 --cycles 10 --expect-blocked tun.T04-ipv6,tun.T02-real --report artifacts/native-android/tun/report.json
       - name: Retain TUN evidence (report, instrumentation output; tokens redacted)
         if: always()
         uses: actions/upload-artifact@v4

@@ -173,17 +173,20 @@ class TunAcceptanceTest {
         val size = config["download_bytes"]?.jsonPrimitive?.long ?: (4L shl 20)
         val node0 = nodeStats()
         val core0 = coreStatus()
-        val body = httpDown(sink().str("name"), size)
+        val (body, flow) = httpDownCounted(sink().str("name"), size)
         Thread.sleep(1_500) // trackers push their last chunk asynchronously
         val node1 = nodeStats()
         val core1 = coreStatus()
         val nodeDown = if (node0 != null && node1 != null) node1.getValue("download").jsonPrimitive.long - node0.getValue("download").jsonPrimitive.long else -1
         record("T01", body == size && nodeDown >= size,
-            "an ordinary app request (no proxy) fetched $body of $size bytes; the node counted $nodeDown bytes down for it")
+            "an ordinary app request (no proxy) fetched $body of $size bytes; the node counted $nodeDown bytes down meanwhile (all apps)")
+        // Every app shares the tunnel, so the totals include whatever else the device did
+        // meanwhile (recorded only). The verdict is this download's own tracked flow: its
+        // counter must cover the body plus HTTP headers and nothing more.
         val coreDown = core1.getValue("download").jsonPrimitive.long - core0.getValue("download").jsonPrimitive.long
-        val coreUp = core1.getValue("upload").jsonPrimitive.long - core0.getValue("upload").jsonPrimitive.long
-        record("B-COUNT", coreDown >= size && coreDown <= size * 11 / 10 + 65536 && coreUp > 0,
-            "Mihomo's proxy-only counters: down $coreDown (x%.4f of the body), up $coreUp".format(coreDown.toDouble() / size))
+        val (flowUp, flowDown) = flow ?: (-1L to -1L)
+        record("B-COUNT", flowDown >= size && flowDown <= size + 4096 && flowUp > 0,
+            "the download's own flow counted down $flowDown (x%.5f of the body), up $flowUp; device-wide proxy total down $coreDown meanwhile".format(flowDown.toDouble() / size))
 
         dnsCases()
         val node2 = nodeStats()
@@ -451,7 +454,11 @@ class TunAcceptanceTest {
         val seen = mutableSetOf<String>()
         repeat(6) {
             Thread.sleep(1_000)
-            coreStatus().getValue("flows").jsonArray.forEach { seen += it.jsonObject.str("dst") }
+            // Only flows that entered through the TUN: the template's own DNS-over-TCP to
+            // 1.1.1.1/8.8.8.8 travels through the node as "Inner" connections, which is correct.
+            coreStatus().getValue("flows").jsonArray.map { it.jsonObject }
+                .filter { it.str("inbound") == "Tun" }
+                .forEach { seen += it.str("dst") }
         }
         val s1 = coreStatus()
         val grown = (s1.getValue("upload").jsonPrimitive.long - s0.getValue("upload").jsonPrimitive.long) +
@@ -540,6 +547,43 @@ class TunAcceptanceTest {
      */
     private fun ipv4(host: String): InetAddress =
         InetAddress.getAllByName(host).firstOrNull { it is Inet4Address } ?: throw java.net.UnknownHostException("no IPv4 address for $host")
+
+    /**
+     * Downloads [bytes] over HTTP/1.1 and keeps the connection open after the body (the sink
+     * sends Content-Length), so this flow is still tracked when its counters are read: the
+     * body length and (upload, download) of the Mihomo flow towards the sink's port.
+     */
+    private fun httpDownCounted(host: String, bytes: Long): Pair<Long, Pair<Long, Long>?> {
+        val s = sink()
+        val port = s.str("port").toInt()
+        return runCatching {
+            Socket(Proxy.NO_PROXY).use { socket ->
+                socket.connect(InetSocketAddress(ipv4(host), port), 10_000)
+                socket.soTimeout = 30_000
+                socket.getOutputStream().write("GET /down?t=${s.str("token")}&bytes=$bytes HTTP/1.1\r\nHost: $host\r\n\r\n".toByteArray())
+                val input = java.io.BufferedInputStream(socket.getInputStream())
+                val head = StringBuilder()
+                while (!head.endsWith("\r\n\r\n")) {
+                    val b = input.read()
+                    if (b < 0 || head.length > 8192) return@use -1L to null
+                    head.append(b.toChar())
+                }
+                if (head.substring(9, 12) != "200") return@use -1L to null
+                val buf = ByteArray(64 shl 10)
+                var total = 0L
+                while (total < bytes) {
+                    val n = input.read(buf, 0, minOf(buf.size.toLong(), bytes - total).toInt())
+                    if (n < 0) break
+                    total += n
+                }
+                Thread.sleep(1_000) // trackers push their last chunk asynchronously
+                val flow = coreStatus().getValue("flows").jsonArray.map { it.jsonObject }
+                    .firstOrNull { it.str("dst") == "$host:$port" }
+                    ?.let { it.getValue("up").jsonPrimitive.long to it.getValue("down").jsonPrimitive.long }
+                total to flow
+            }
+        }.getOrDefault(-1L to null)
+    }
 
     private fun httpDown(host: String, bytes: Long): Long {
         val s = sink()
