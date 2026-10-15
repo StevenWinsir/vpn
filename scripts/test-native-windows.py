@@ -193,6 +193,11 @@ def check_embedded_wintun():
 
 
 def run_core_tests():
+    patch_test = subprocess.run([sys.executable, str(ROOT / 'scripts/test-mihomo-patches.py')],
+                                cwd=ROOT, capture_output=True, text=True, env=go_env())
+    record('core.mihomo_patch', patch_test.returncode == 0,
+           'hash-locked patch and real NAT lifecycle regressions' if patch_test.returncode == 0
+           else (patch_test.stdout + patch_test.stderr)[-1600:])
     process = subprocess.run(['go', 'test', '-count=1', '-json', './...'], cwd=CORE, capture_output=True, text=True, env=go_env())
     passed = failed = skipped = 0
     failures = []
@@ -543,6 +548,9 @@ def main():
     parser.add_argument('--sign', choices=('none', 'test', 'thumbprint', 'pfx'), default='test', help='release suite: signing mode used for the installer build (default: a self-signed TEST certificate)')
     parser.add_argument('--skip-source-archives', action='store_true', help='release suite: faster local run')
     args = parser.parse_args()
+
+    import prepare_mihomo
+    prepare_mihomo.prepare()
 
     if args.suite == 'foundation':
         check_lock_file()

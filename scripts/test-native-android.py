@@ -618,6 +618,10 @@ def run_tun_suite(args):
     if not core.get('tuntest_hooks') or not test_apk.is_file():
         record('tun.build', False, 'the Core AAR lacks the acceptance hooks or the test APK is missing (run without --skip-build)', status='BLOCKED')
         return
+    import prepare_mihomo
+    if core.get('mihomo_patch') != prepare_mihomo.prepare(check=True):
+        record('tun.build', False, 'Core AAR lacks the current Mihomo patch identity; run without --skip-build')
+        return
     record('tun.build', True, 'Core AAR with the debug-only acceptance hooks (sha256 %s) and the test APK' % core['aar_sha256'][:16])
     real = real_nodes_from_env()
 
@@ -651,12 +655,12 @@ def run_tun_suite(args):
             return
         for case in cases:
             record('tun.' + case['case_id'], case['status'] == 'PASS', case['observed'], status=case['status'])
-        for name in ('goroutines-first.txt', 'goroutines-last.txt'):  # T-CYCLES evidence
+        for name in ('goroutines-before.txt', 'goroutines-first.txt', 'goroutines-last.txt'):  # T-CYCLES evidence
             (emu.out_dir / name).write_text(read_private(adb, serial, name))
         kill_case(adb, serial, config, emu.out_dir)
         totals = json.loads(urlopen_text('http://%s:%s/stats?t=%s' % (LOOPBACK, config['node_stats']['port'], config['node_stats']['token'])))
         (emu.out_dir / 'tun-report.json').write_text(json.dumps({
-            'device': emu.facts, 'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'aar_sha256', 'tuntest_hooks')},
+            'device': emu.facts, 'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'mihomo_patch', 'aar_sha256', 'tuntest_hooks')},
             'node_totals': totals, 'cases': results}, indent=2) + '\n')
     finally:
         adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE, check=False)
@@ -692,6 +696,9 @@ def main():
     parser.add_argument('--expect-blocked', help='comma-separated case ids the environment cannot run (e.g. CI: no IPv6 upstream, '
                                                   'no real node); they stay BLOCKED in the report, but only they may be BLOCKED for exit 0')
     args = parser.parse_args()
+
+    import prepare_mihomo
+    prepare_mihomo.prepare()
 
     if args.suite == 'foundation':
         check_lock_file()

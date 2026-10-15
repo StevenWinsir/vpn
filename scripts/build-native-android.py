@@ -33,6 +33,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import prepare_mihomo
+
 ROOT = Path(__file__).resolve().parent.parent
 ANDROID = ROOT / 'apps' / 'android'
 CORE = ROOT / 'native' / 'core'
@@ -143,6 +145,7 @@ def check_so(so: Path, abi: str) -> dict:
 
 
 def bind(abis, app_version, out_dir: Path, hooks=False) -> dict:
+    patch = prepare_mihomo.prepare()
     ndk = ndk_dir()
     revision = mihomo_revision()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -166,6 +169,7 @@ def bind(abis, app_version, out_dir: Path, hooks=False) -> dict:
             raise RuntimeError('AAR has no classes.jar')
     return {
         'app_version': app_version, 'core_version': app_version, 'mihomo_revision': revision,
+        'mihomo_patch': patch,
         'go': LOCK['go']['version'], 'x_mobile': LOCK['x_mobile']['version'], 'ndk': LOCK['ndk']['version'],
         'androidapi': LOCK['android']['min_sdk'], 'abis': libraries,
         'aar_bytes': aar.stat().st_size, 'aar_sha256': sha256(aar),
@@ -176,6 +180,7 @@ def bind(abis, app_version, out_dir: Path, hooks=False) -> dict:
 
 
 def build_aar(args) -> dict:
+    prepare_mihomo.prepare()
     check_go()
     build_gomobile()
     record = bind(args.abi, args.app_version, OUT, args.tun_test_hooks)
@@ -208,8 +213,10 @@ def gradle(tasks, app_version, env):
 
 
 def build_apk(args) -> dict:
+    patch = prepare_mihomo.prepare()
     record_file = OUT / 'core-build.json'
-    stale = record_file.is_file() and json.loads(record_file.read_text()).get('tuntest_hooks', False) != args.tun_test_hooks
+    old = json.loads(record_file.read_text()) if record_file.is_file() else {}
+    stale = old.get('tuntest_hooks', False) != args.tun_test_hooks or old.get('mihomo_patch') != patch
     if args.rebuild_core or stale or not record_file.is_file() or not (OUT / 'asterlink-core.aar').is_file():
         build_aar(args)
     record = json.loads(record_file.read_text())

@@ -14,6 +14,9 @@ on:
     paths:
       - 'apps/android/**'
       - 'native/core/**'
+      - 'native/third_party/**'
+      - 'scripts/prepare_mihomo.py'
+      - 'scripts/test-mihomo-patches.py'
       - 'shared/**'
       - 'scripts/build-native-android.py'
       - 'scripts/test-native-android.py'
@@ -24,6 +27,9 @@ on:
     paths:
       - 'apps/android/**'
       - 'native/core/**'
+      - 'native/third_party/**'
+      - 'scripts/prepare_mihomo.py'
+      - 'scripts/test-mihomo-patches.py'
       - 'shared/**'
       - 'scripts/build-native-android.py'
       - 'scripts/test-native-android.py'

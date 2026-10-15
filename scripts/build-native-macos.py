@@ -25,6 +25,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import native_env  # noqa: E402
 import collect_licenses  # noqa: E402
+import prepare_mihomo  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ID = 'com.asterlink.vpn'
@@ -113,6 +114,7 @@ def main():
         raise SystemExit('Run directory exists; use a new --run-id to preserve evidence: ' + str(out))
     out.mkdir(parents=True)
     revision = mihomo_revision()
+    patch = prepare_mihomo.prepare()
     config = args.configuration.lower()
 
     # 1. Go Core (CGO off, arm64, trimmed). The TUN proof of concept is a separate module and is not built here.
@@ -161,14 +163,15 @@ def main():
     licenses, missing_licenses, _ = collect_licenses.collect()
     (contents / 'Resources/THIRD_PARTY_LICENSES.txt').write_text(licenses, encoding='utf-8')
     commit = capture(['git', 'rev-parse', 'HEAD'], cwd=ROOT)
-    dirty = bool(capture(['git', 'status', '--porcelain'], cwd=ROOT))
+    dirty = prepare_mihomo.source_dirty()
     remote = capture(['git', 'config', '--get', 'remote.origin.url'], cwd=ROOT)
     (contents / 'Resources/SOURCE.txt').write_text(
         'AsterLink %s corresponds to:\n  repository  %s\n  commit      %s%s\n  mihomo      %s (submodule native/third_party/Clash.Meta)\n\n'
+        'Mihomo patch: %s (SHA-256 %s), retained in native/third_party/patches.\n'
         'Rebuild: git clone --recursive the repository, check out the commit above, then\n'
         '  python3 scripts/build-native-macos.py --configuration Release --internal\n'
         'The installer is shipped with source archives of both trees (docs/macos-release.md section 8).\n'
-        % (args.app_version, remote, commit, ' (+uncommitted changes)' if dirty else '', revision), encoding='utf-8')
+        % (args.app_version, remote, commit, ' (+uncommitted changes)' if dirty else '', revision, patch['id'], patch['patch_sha256']), encoding='utf-8')
 
     # 4. Sign inside-out, then verify. Manifest is written before signing so it is sealed.
     codesign(contents / 'Resources/asterlink-core', CORE_ID, identity, optimized)
@@ -187,6 +190,7 @@ def main():
 
     manifest = {
         'configuration': args.configuration, 'app_version': args.app_version, 'mihomo_revision': revision,
+        'mihomo_patch': patch,
         'channel': values['APP_ENV'],
         'distribution': 'developer-id' if release else ('internal-adhoc' if args.internal else 'debug'),
         'signing': 'developer-id' if release else ('ad-hoc' if identity == '-' else 'development-identity'),

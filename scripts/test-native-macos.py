@@ -40,6 +40,10 @@ def count_tests(text, pattern):
 
 
 def suite_unit():
+    result = sh([sys.executable, 'scripts/test-mihomo-patches.py'])
+    record('U-MIHOMO-PATCH', 'hash-locked patch and real NAT lifecycle regressions pass',
+           'passed' if result.returncode == 0 else (result.stdout + result.stderr)[-1200:],
+           'pass' if result.returncode == 0 else 'fail')
     go_env = dict(os.environ, CGO_ENABLED='0')
     for case_id, directory in (('U-GO-IPC', 'native/core'), ('U-GO-POLICY', 'shared/nodepolicy'), ('U-GO-NODEAGENT', 'native/nodeagent')):
         result = sh(['go', 'test', '-count=1', '-v', './...'], cwd=ROOT / directory, env=go_env)
@@ -197,6 +201,8 @@ def main():
     parser.add_argument('--max-rss-growth-pct', type=float, default=20.0, help='soak: fail if resident memory grows more than this')
     parser.add_argument('--run-id', default=time.strftime('%Y%m%d-%H%M%S'))
     args = parser.parse_args()
+    import prepare_mihomo
+    prepare_mihomo.prepare()
     if args.suite == 'unit':
         suite_unit()
     elif args.suite == 'soak':

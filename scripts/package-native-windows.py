@@ -74,6 +74,8 @@ def publish_dotnet(stage):
 
 
 def build_core(stage, ver):
+    import prepare_mihomo
+    prepare_mihomo.prepare()
     target = stage / 'core'
     target.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, GOOS='windows', GOARCH='amd64', GOAMD64='v1', CGO_ENABLED='0')

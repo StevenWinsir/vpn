@@ -262,22 +262,33 @@ class TunAcceptanceTest {
     }
 
     /**
-     * Goroutines of the one known per-listener leak: the pinned Mihomo creates the TUN listener
-     * with context.TODO(), and sing-tun's TCP NAT timeout loop only ends with that context
-     * (stack_system_nat.go), so each start leaves one behind on every platform. It is counted
-     * and reported on its own (docs/android-tun-design.md 9); any other growth fails.
+     * Count the former per-listener leak by aggregated pprof stack, not matching lines.
+     * The pinned listener now cancels its context on Close. No growth is permitted,
+     * even if unrelated goroutines exiting would hide it in the total.
      */
-    private fun knownLeak(profile: String): Int = profile.split("\n\n").sumOf { block ->
-        // A block is "<count> @ <pcs>" plus its frames; the first one follows the profile header.
-        val count = Regex("(?m)^(\\d+) @").find(block)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        if ("TCPNat).loopCheckTimeout" in block) count else 0
+    private fun knownLeak(profile: String): Int {
+        check(profile.startsWith("goroutine profile: total ")) { "missing goroutine profile" }
+        return profile.split("\n\n").sumOf { block ->
+            // A block is "<count> @ <pcs>" plus its frames; the first one follows the profile header.
+            val count = Regex("(?m)^(\\d+) @").find(block)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            if ("TCPNat).loopCheckTimeout" in block) {
+                check(count > 0) { "TCP NAT profile block has no valid count" }
+                count
+            } else 0
+        }
     }
 
     private fun cycles(node: JsonObject) {
         val n = config["cycles"]?.jsonPrimitive?.int ?: 20
+        if (n < 2) return record("T-CYCLES", false, "cycles must be >= 2")
         var goroutines0 = 0
         var fds0 = 0
-        var known0 = 0
+        // Before the first cycle: do not silently accept its worker as baseline.
+        Thread.sleep(500)
+        val beforeProfile = Mobile.tunTestGoroutines()
+        val known0 = knownLeak(beforeProfile)
+        File(dir, "goroutines-before.txt").writeText(beforeProfile)
+        var completed = 0
         val failures = mutableListOf<String>()
         for (i in 1..n) {
             val begin = start(node, controlled = true)
@@ -294,9 +305,9 @@ class TunAcceptanceTest {
                 goroutines0 = s.getValue("goroutines").jsonPrimitive.int
                 fds0 = s.getValue("fds").jsonPrimitive.int
                 val profile = Mobile.tunTestGoroutines()
-                known0 = knownLeak(profile)
                 File(dir, "goroutines-first.txt").writeText(profile)
             }
+            completed++
         }
         Thread.sleep(1_000)
         val s = coreStatus()
@@ -305,14 +316,16 @@ class TunAcceptanceTest {
         val goroutines = s.getValue("goroutines").jsonPrimitive.int
         val fds = s.getValue("fds").jsonPrimitive.int
         val known = knownLeak(profile) - known0
-        // Scheduler noise allowance of 3; the known leak is at most one per later cycle.
-        if (goroutines - goroutines0 - known > 3 || known > n - 1 || fds - fds0 > 2) {
+        // Scheduler noise allowance stays, but the known leak has ZERO allowance.
+        // Do not subtract it from the total to make a leaking build pass.
+        if (goroutines - goroutines0 > 3 || known > 0 || fds - fds0 > 2) {
             failures += "growth: goroutines $goroutines0->$goroutines (known sing-tun NAT loop +$known), fds $fds0->$fds"
         }
         if (tunDescriptorOpen()) failures += "a /dev/tun descriptor is still open"
+        if (completed != n) failures += "only $completed/$n cycles completed"
         record("T-CYCLES", failures.isEmpty(),
-            "$n start/verify/stop cycles: goroutines $goroutines0->$goroutines of which +$known are the known sing-tun TCP NAT timeout loop " +
-                "(one per listener, upstream), other growth ${goroutines - goroutines0 - known}; fds $fds0->$fds; failures $failures")
+            "$completed/$n start/verify/stop cycles: goroutines $goroutines0->$goroutines; known sing-tun TCP NAT timeout loop +$known " +
+                "(allowed +0); fds $fds0->$fds; failures $failures")
     }
 
     // ---- DNS: system resolver, port-53 hijack, Private DNS modes

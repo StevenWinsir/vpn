@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"asterlink/core/internal/engine"
+	"asterlink/core/internal/leakcheck"
 	"asterlink/core/internal/managed"
 	"asterlink/core/internal/network"
 )
@@ -257,6 +258,17 @@ func idleLoopCheck(ctx context.Context, eng *engine.Mihomo) {
 func cycleCheck(ctx context.Context, eng *engine.Mihomo, profile managed.Profile, iface network.Interface, before snapshot, n int) {
 	var goroutines0, fds0 int
 	var failures []string
+	if n < 2 {
+		record("T-CYCLES", "at least two complete cycles", "--cycles must be >= 2", "fail")
+		return
+	}
+	// Capture before even the first connect, so its leak cannot become a baseline.
+	nat0, err := leakcheck.TCPNAT()
+	if err != nil {
+		record("T-CYCLES", "readable goroutine profile", err.Error(), "fail")
+		return
+	}
+	completed := 0
 	for i := 1; i <= n && ctx.Err() == nil; i++ {
 		network.Default.Set(iface)
 		if err := eng.Start(ctx, profile); err != nil {
@@ -275,16 +287,22 @@ func cycleCheck(ctx context.Context, eng *engine.Mihomo, profile managed.Profile
 		if i == 1 {
 			goroutines0, fds0 = runtime.NumGoroutine(), openFDs()
 		}
+		completed++
+	}
+	if completed != n {
+		failures = append(failures, fmt.Sprintf("only %d/%d cycles completed (context=%v)", completed, n, ctx.Err()))
 	}
 	goroutines, fds := runtime.NumGoroutine(), openFDs()
-	if goroutines-goroutines0 > 20 || fds-fds0 > 8 {
-		failures = append(failures, fmt.Sprintf("growth: goroutines %d->%d, fds %d->%d", goroutines0, goroutines, fds0, fds))
+	nat, err := leakcheck.TCPNAT()
+	if err != nil {
+		failures = append(failures, err.Error())
 	}
+	failures = append(failures, cycleGrowth(goroutines0, goroutines, fds0, fds, nat0, nat)...)
 	if left := diff(before, capture()); len(left) > 0 {
 		failures = append(failures, strings.Join(left, "; "))
 	}
 	record("T-CYCLES", fmt.Sprintf("%d connect/disconnect cycles leave no accumulation", n),
-		fmt.Sprintf("goroutines %d->%d fds %d->%d failures=%v", goroutines0, goroutines, fds0, fds, failures), verdict(len(failures) == 0))
+		fmt.Sprintf("%d/%d cycles; goroutines %d->%d fds %d->%d TCPNat.loopCheckTimeout %d->%d (%+d, allowed +0) failures=%v", completed, n, goroutines0, goroutines, fds0, fds, nat0, nat, nat-nat0, failures), verdict(len(failures) == 0))
 }
 
 // ---- helpers ----------------------------------------------------------------------------
