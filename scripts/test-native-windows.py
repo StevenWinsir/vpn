@@ -488,8 +488,9 @@ def run_release_suite(args):
     if args.skip_source_archives:
         cmd.append('--skip-source-archives')
     packaged = subprocess.run(cmd, capture_output=True, text=True)
-    print(packaged.stdout[-3000:])
+    print(packaged.stdout[-6000:])
     if packaged.returncode != 0:
+        print(packaged.stderr[-3000:])
         record('release.package', False, (packaged.stdout + packaged.stderr)[-1500:])
         return
     record('release.package', True, 'installer built at %s (signing=%s)' % (release_dir, sign_mode))

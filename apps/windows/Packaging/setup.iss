@@ -1,4 +1,4 @@
-; AsterLink Windows x64 installer (round 8). Built by scripts/package-native-windows.py --installer; do not run ISCC by hand.
+﻿; AsterLink Windows x64 installer (round 8). Built by scripts/package-native-windows.py --installer; do not run ISCC by hand.
 ;
 ; Design: this installer is only a carrier and a user interface. It unpacks the stage tree (the same tree the
 ; development installer used: app\, service\, core\, build-config.json, manifest.json) into its own temporary
@@ -141,7 +141,7 @@ begin
   if not RunVerb(Service, 'install --stage "' + Stage + '"', InstallLog, ExitCode) or (ExitCode <> 0) then
   begin
     Log('install verb exit code ' + IntToStr(ExitCode) + ': ' + VerbMessage(InstallLog));
-    SuppressibleMsgBox(FmtMessage(CustomMessage('InstallFailed'), [IntToStr(ExitCode) + ' ' + VerbMessage(InstallLog), ExpandConstant('{log}')]),
+    SuppressibleMsgBox(FmtMessage(CustomMessage('InstallFailed'), [IntToStr(ExitCode) + ' ' + VerbMessage(InstallLog), '(run Setup with /LOG=file for details)']),
                        mbCriticalError, MB_OK, IDOK);
     // Inno's own record (the uninstaller, the Start-menu entry) must not outlive a failed install.
     Abort;
@@ -178,7 +178,7 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ExitCode: Integer;
-  Gui, Copy, Log1, Answer: String;
+  Gui, CopyDir, Log1, Answer: String;
 begin
   if CurUninstallStep <> usUninstall then Exit;
 
@@ -193,11 +193,11 @@ begin
   end;
 
   // 2. A program cannot delete its own folder: run the verb from a copy outside the install directory.
-  Copy := ExpandConstant('{tmp}\uninstall-service');
+  CopyDir := ExpandConstant('{tmp}\uninstall-service');
   Log1 := ExpandConstant('{tmp}\uninstall-verb.json');
-  if not DirExists(Copy) then ForceDirectories(Copy);
-  Exec(ExpandConstant('{sys}\xcopy.exe'), '"' + ExpandConstant('{app}\service') + '\*" "' + Copy + '\service\" /E /I /Q /Y', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
-  if (not RunVerb(Copy + '\service\AsterLink.Service.exe', 'uninstall', Log1, ExitCode)) or (ExitCode <> 0) then
+  if not DirExists(CopyDir) then ForceDirectories(CopyDir);
+  Exec(ExpandConstant('{sys}\xcopy.exe'), '"' + ExpandConstant('{app}\service') + '\*" "'+ CopyDir + '\service\" /E /I /Q /Y', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  if (not RunVerb(CopyDir + '\service\AsterLink.Service.exe', 'uninstall', Log1, ExitCode)) or (ExitCode <> 0) then
   begin
     Answer := VerbMessage(Log1);
     Log('uninstall verb exit code ' + IntToStr(ExitCode) + ': ' + Answer);
