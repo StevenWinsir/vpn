@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -59,6 +60,28 @@ class Blocked(Exception):
 def run(cmd, **kwargs):
     print('+ ' + ' '.join(str(c) for c in cmd), flush=True)
     subprocess.run([str(c) for c in cmd], check=True, **kwargs)
+
+
+# gomobile bind runs `go mod tidy` in a scratch module, which consults sum.golang.org on every
+# bind. A hosted runner's dropped HTTP/2 stream must not fail the build; a checksum MISMATCH,
+# or any compile error, is not a network error and fails at once (GOSUMDB stays on).
+TRANSIENT_GO_NETWORK = re.compile(
+    r'(reading|fetching) https://\S+: (stream error|unexpected EOF|.*(i/o timeout|connection reset|TLS handshake timeout))'
+    r'|Get "https://[^"]+": (dial tcp|unexpected EOF|.*(i/o timeout|connection reset|TLS handshake timeout))'
+    r'|https://\S+: 50[234] ')
+
+
+def run_with_network_retry(cmd, attempts=3, **kwargs):
+    for attempt in range(1, attempts + 1):
+        print('+ ' + ' '.join(str(c) for c in cmd), flush=True)
+        process = subprocess.run([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kwargs)
+        print(process.stdout, end='' if process.stdout.endswith('\n') or not process.stdout else '\n', flush=True)
+        if process.returncode == 0:
+            return
+        if attempt == attempts or not TRANSIENT_GO_NETWORK.search(process.stdout):
+            raise subprocess.CalledProcessError(process.returncode, [str(c) for c in cmd], process.stdout)
+        print('transient Go module network error; retrying (%d/%d) in %ds' % (attempt + 1, attempts, 15 * attempt), flush=True)
+        time.sleep(15 * attempt)
 
 
 def sha256(path: Path) -> str:
@@ -153,7 +176,7 @@ def bind(abis, app_version, out_dir: Path, hooks=False) -> dict:
     ldflags = '-s -w -X asterlink/core/mobile.version=%s -X asterlink/core/mobile.mihomoRevision=%s' % (app_version, revision)
     env = go_env(ANDROID_HOME=str(sdk_root()), ANDROID_NDK_HOME=str(ndk),
                  PATH=str(TOOLS) + os.pathsep + os.environ.get('PATH', ''))
-    run([TOOLS / 'gomobile', 'bind', '-target=' + ','.join(ABIS[a][0] for a in abis),
+    run_with_network_retry([TOOLS / 'gomobile', 'bind', '-target=' + ','.join(ABIS[a][0] for a in abis),
          '-androidapi', str(LOCK['android']['min_sdk']), '-javapkg', 'com.asterlink.core',
          '-trimpath', *(['-tags', 'asterlink_tuntest'] if hooks else []), '-ldflags', ldflags, '-o', aar, './mobile'], cwd=CORE, env=env)
     libraries = {}
