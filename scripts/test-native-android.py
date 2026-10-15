@@ -273,7 +273,11 @@ def tool(sdk: Path, *parts):
 def adb_run(adb, serial, *args, check=True, timeout=120):
     process = subprocess.run([str(adb), '-s', serial, *args], capture_output=True, text=True, timeout=timeout)
     if check and process.returncode != 0:
-        raise RuntimeError('adb %s failed: %s' % (' '.join(args), (process.stderr or process.stdout)[-300:]))
+        output = (process.stderr or process.stdout).strip()
+        # The reason (e.g. INSTALL_FAILED_*, the exception type) is at the start; a bare tail is only a stack.
+        if len(output) > 600:
+            output = output[:300] + ' ... ' + output[-300:]
+        raise RuntimeError('adb %s failed: %s' % (' '.join(args), output))
     return process.stdout
 
 
@@ -429,7 +433,8 @@ def run_emulator_suite(args):
         connected = gradle([':app:connectedDebugAndroidTest'], capture_output=True, text=True, env=dict(os.environ, ANDROID_SERIAL=serial))
         tests, failures = junit_counts(connected_results)
         record('emulator.core_binding', connected.returncode == 0 and tests > 0 and failures == 0,
-               'CoreBindingTest on the device: %d test(s), ipc-v1 cases, start/hello/read_snapshot/stop' % tests if connected.returncode == 0 else connected.stdout[-800:])
+               'CoreBindingTest on the device: %d test(s), ipc-v1 cases, start/hello/read_snapshot/stop' % tests
+               + ('' if tests > 0 else '; Gradle output: ' + connected.stdout[-800:]) if connected.returncode == 0 else connected.stdout[-800:])
 
         # The app itself: launch, wait for the Core, read the screen.
         adb_run(adb, serial, 'install', '-r', str(apk), timeout=300)
