@@ -839,6 +839,13 @@ Go 交叉构建的核心目标为 `GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENAB
   R02（其他用户凭据、真实旧版本升级、断电中断）NOT_RUN；Wintun 预编译二进制再分发条款和 Inno 商业许可需法务/采购确认；round 7 受管节点仍缺失；Windows 11 NOT_RUN。
 下一位从哪里开始：拿到证书后 sign-files.ps1 的 thumbprint/pfx 模式；实现 PeerPolicy/InstallVerifier 的 Authenticode 校验并放开 release 渠道；在干净 Windows 10/11 跑 release-check.ps1 -Install 与手工 R01。
 回退与网络恢复方法：本轮不改网络；升级失败自动回到旧版；回退本 PR = 删除 worktree 分支，或卸载后安装旧版 Setup。
+CI 修复（2026-10-15，PR #27 Windows job 的 2 个 FAIL）：
+  1) E99 unins000.exe 不存在：install 动词原在 ssPostInstall 运行，此时 Inno 已写好 {app}\setup\unins000.exe，动词把整个安装根改名为 .previous 后删掉，
+     卸载器随之消失（添加/删除程序也会坏）；且 Inno 6.7.1 源码显示 ssPostInstall 里的 Abort 被吞掉，安装失败仍 exit 0。改为 ssInstall 先
+     ExtractTemporaryFiles 再跑动词（失败 exit 3，Inno 什么都没记录），动词也会把旧根里的 setup\ 复制到新根（GUI 开发安装按钮同样走该动词）。
+     release-check 新增 I01-uninstaller-registered，I03/I05 也检查卸载器。
+  2) R04 许可缺失：收集脚本写死 darwin/arm64（漏了 Windows 独有的 go-ole）；现在按 windows/amd64 收集，识别 LICENSE.gpl 这类变体，
+     metacubex/chacha v0.1.5 用 scripts/third_party_licenses/ 中注明来源的上游 MIT 文本。go-lzo 为 GPL-2.0，需法务确认与 GPL-3.0 组合。
 ```
 
 ## 附录 A. 源码核验索引

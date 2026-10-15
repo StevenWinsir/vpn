@@ -7,6 +7,11 @@
 ; service and rolls back to the previous version on any failure. Inno therefore never copies product files into
 ; Program Files itself; it only records the uninstaller and the Start-menu entry.
 ;
+; Order matters: the verb runs at ssInstall, BEFORE Inno writes {app}\setup\unins000.exe and the Add/Remove
+; Programs entry. Run later (ssPostInstall) the verb's rename of the install root would take the fresh uninstaller
+; with it, and Inno ignores an Abort raised at ssPostInstall (Setup would still exit 0). At ssInstall a failure ends
+; Setup with exit code 3 before Inno has recorded anything.
+;
 ; Defines passed by the build script (environment): ASTERLINK_VERSION, ASTERLINK_STAGE, ASTERLINK_OUTPUT,
 ; and optionally ASTERLINK_SIGN=1 (sign the setup and the uninstaller through the "asterlink" sign tool).
 
@@ -66,8 +71,9 @@ UninstallFailed=AsterLink could not be fully removed / 无法完全卸载 AsterL
 LaunchAsUser=Start AsterLink now / 现在启动 AsterLink
 
 [Files]
-; Unpacked to Setup's own temporary folder and removed with it; the privileged verb installs from there.
-Source: "{#StageDir}\*"; DestDir: "{tmp}\stage"; Flags: recursesubdirs createallsubdirs ignoreversion deleteafterinstall
+; Never installed by Inno (dontcopy): CurStepChanged(ssInstall) unpacks it to Setup's own temporary folder, which is
+; removed with Setup, and the privileged verb installs from there.
+Source: "{#StageDir}\*"; DestDir: "{tmp}\stage"; Flags: dontcopy recursesubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\app\AsterLink.exe"
@@ -133,17 +139,19 @@ var
   ExitCode: Integer;
   Stage, Service: String;
 begin
-  if CurStep <> ssPostInstall then Exit;
+  // ssInstall: Inno has not written anything yet (see the header for why not ssPostInstall).
+  if CurStep <> ssInstall then Exit;
   Stage := ExpandConstant('{tmp}\stage');
   Service := Stage + '\service\AsterLink.Service.exe';
   InstallLog := ExpandConstant('{tmp}\install-verb.json');
   WizardForm.StatusLabel.Caption := 'AsterLink';
+  ExtractTemporaryFiles('{tmp}\stage\*');
   if not RunVerb(Service, 'install --stage "' + Stage + '"', InstallLog, ExitCode) or (ExitCode <> 0) then
   begin
     Log('install verb exit code ' + IntToStr(ExitCode) + ': ' + VerbMessage(InstallLog));
     SuppressibleMsgBox(FmtMessage(CustomMessage('InstallFailed'), [IntToStr(ExitCode) + ' ' + VerbMessage(InstallLog), '(run Setup with /LOG=file for details)']),
                        mbCriticalError, MB_OK, IDOK);
-    // Inno's own record (the uninstaller, the Start-menu entry) must not outlive a failed install.
+    // Raised at ssInstall this stops Setup (exit code 3) before the uninstaller and the Start-menu entry exist.
     Abort;
   end;
   Log('install verb: ' + VerbMessage(InstallLog));

@@ -5,7 +5,9 @@
 
 The module list comes from `go list -deps` on the exact command that is shipped, so it
 cannot drift from the binary. A module without a license file is reported (and fails
-`--strict`) instead of being skipped silently. Mihomo (GPL-3.0) is called out first: its
+`--strict`) instead of being skipped silently. A module whose published archive carries no license file
+(the upstream added one later) is covered by a reviewed copy in scripts/third_party_licenses/, which names
+its source. The module set depends on the target platform (--goos/--goarch). Mihomo (GPL-3.0) is called out first: its
 license is why the package also carries SOURCE.txt and the corresponding-source archives
 (docs/macos-release.md section 8).
 """
@@ -16,13 +18,16 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 LICENSE_NAMES = ('LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'COPYING', 'COPYING.md', 'UNLICENSE')
+# Variants such as LICENSE.gpl or LICENSE-MIT, tried (sorted) when none of the names above exists.
+LICENSE_PREFIXES = ('license', 'licence', 'copying', 'unlicense')
 MIHOMO_DIR = ROOT / 'native/third_party/Clash.Meta'
+OVERRIDES_DIR = ROOT / 'scripts/third_party_licenses'
 
 
-def linked_modules():
+def linked_modules(goos, goarch):
     out = subprocess.run(
         ['go', 'list', '-deps', '-f', '{{if .Module}}{{.Module.Path}}\t{{.Module.Version}}\t{{.Module.Dir}}{{end}}', './cmd/asterlink-core'],
-        cwd=ROOT / 'native/core', env={'GOOS': 'darwin', 'GOARCH': 'arm64', 'CGO_ENABLED': '0', **_base_env()},
+        cwd=ROOT / 'native/core', env={'GOOS': goos, 'GOARCH': goarch, 'CGO_ENABLED': '0', **_base_env()},
         capture_output=True, text=True, check=True).stdout
     modules = {}
     for line in out.splitlines():
@@ -42,12 +47,20 @@ def license_file(directory: Path):
         candidate = directory / name
         if candidate.is_file():
             return candidate
+    for candidate in sorted(directory.iterdir()) if directory.is_dir() else []:
+        if candidate.is_file() and candidate.name.lower().startswith(LICENSE_PREFIXES):
+            return candidate
     return None
 
 
-def collect():
-    """Returns (rendered_text, missing_module_paths, module_count)."""
-    modules = linked_modules()
+def override_file(module_path):
+    candidate = OVERRIDES_DIR / (module_path.replace('/', '_') + '.txt')
+    return candidate if candidate.is_file() else None
+
+
+def collect(goos='darwin', goarch='arm64'):
+    """Returns (rendered_text, missing_module_paths, module_count) for the Core built for goos/goarch."""
+    modules = linked_modules(goos, goarch)
     missing = []
     sections = []
     for path in sorted(modules, key=lambda p: (p != 'github.com/metacubex/mihomo' and 'Clash.Meta' not in str(modules[p][1]), p)):
@@ -55,7 +68,7 @@ def collect():
         # Main module and the in-repo shared policy are this product's own code.
         if directory.is_relative_to(ROOT) and not directory.is_relative_to(MIHOMO_DIR):
             continue
-        found = license_file(directory)
+        found = license_file(directory) or override_file(path)
         header = '=' * 78 + '\n%s %s\n' % (path, version or '(local replace)') + '=' * 78
         if found is None:
             missing.append(path)
@@ -74,8 +87,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--strict', action='store_true', help='fail when a linked module has no license file')
+    parser.add_argument('--goos', default='darwin')
+    parser.add_argument('--goarch', default='arm64')
     args = parser.parse_args()
-    text, missing, count = collect()
+    text, missing, count = collect(args.goos, args.goarch)
     args.output.write_text(text, encoding='utf-8')
     print('licenses: %d third-party modules, %d without a license file' % (count, len(missing)))
     for path in missing:

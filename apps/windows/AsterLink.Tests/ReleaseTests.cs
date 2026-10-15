@@ -31,6 +31,14 @@ public class ReleaseTests
         Assert.Throws<ArgumentException>(() => UpgradePolicy.Classify("0.1.0", "0.1"));
 
     [Fact]
+    public void Inno_uninstaller_directory_is_outside_what_the_verbs_and_the_manifest_manage()
+    {
+        // Managed directories are verified file by file and deleted by the verbs; Inno's unins000.* must be neither.
+        Assert.DoesNotContain(InstallLayout.UninstallerDirectory, InstallLayout.ManagedDirectories, StringComparer.OrdinalIgnoreCase);
+        Assert.Null(InstallLayout.FromComponentDirectory(@"C:\Program Files\AsterLink\" + InstallLayout.UninstallerDirectory));
+    }
+
+    [Fact]
     public void Cleanup_does_only_what_was_chosen()
     {
         var directory = Path.Combine(Path.GetTempPath(), "asterlink-cleanup-" + Guid.NewGuid().ToString("N"));

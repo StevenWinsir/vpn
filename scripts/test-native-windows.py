@@ -455,6 +455,17 @@ def run_release_suite(args):
     # Inno must never copy product files into Program Files itself, and the stage must stay out of {app}.
     files_section = iss.split('[Files]')[1].split('[Icons]')[0]
     record('release.iss_files_only_to_tmp', '{tmp}' in files_section and '{app}' not in files_section, 'payload goes to Setup temp, never straight to {app}')
+    # The verb must run before Inno writes unins000.exe / the Add/Remove Programs entry: at ssPostInstall its root
+    # rename removed the fresh uninstaller, and Inno swallows an Abort raised there (Setup still exits 0).
+    code = iss.split('[Code]')[1]
+    record('release.iss_verb_before_inno_records',
+           'dontcopy' in files_section and 'if CurStep <> ssInstall then Exit;' in code and "ExtractTemporaryFiles('{tmp}\\stage\\*')" in code,
+           'stage unpacked and verb run at ssInstall, before the uninstaller exists')
+    uninstall_dir = re.search(r'^UninstallFilesDir=\{app\}\\(\w+)\s*$', iss, re.M)
+    layout = (WINDOWS / 'AsterLink.Shared' / 'Service' / 'InstallLayout.cs').read_text(encoding='utf-8')
+    record('release.iss_uninstaller_dir_matches_layout',
+           bool(uninstall_dir) and ('UninstallerDirectory = "%s";' % uninstall_dir.group(1)) in layout,
+           '%s is the directory the install verb carries across a reinstall' % (uninstall_dir.group(0).strip() if uninstall_dir else 'missing'))
 
     refused = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'package-native-windows.py'), '--channel', 'release'], capture_output=True, text=True)
     record('release.channel_release_refused', refused.returncode != 0 and 'release manifest' in (refused.stdout + refused.stderr), 'a "release" channel stays refused until the service verifies Authenticode')

@@ -21,6 +21,12 @@ public sealed record InstallLayout(string Root)
     /// <summary>Directories whose full content the manifest must account for.</summary>
     public static readonly string[] ManagedDirectories = ["app", "service", "core"];
 
+    /// <summary>
+    /// Inno Setup's uninstaller (unins000.exe/.dat, <c>UninstallFilesDir</c> in setup.iss). Not in the manifest and
+    /// not managed: the install verb carries it across a reinstall and the uninstall verb leaves it to Inno.
+    /// </summary>
+    public const string UninstallerDirectory = "setup";
+
     public string AppExe => Join(AppExeRelative);
     public string ServiceExe => Join(ServiceExeRelative);
     public string CoreExe => Join(CoreExeRelative);

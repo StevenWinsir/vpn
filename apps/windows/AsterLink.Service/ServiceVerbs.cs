@@ -125,6 +125,9 @@ public static class ServiceVerbs
             Directory.CreateDirectory(target.Root);
             ProtectedFiles.Protect(target.Root, usersMayRead: true);
             PrepareProgramData();
+            // Inno's uninstaller lives in the root but is not ours to drop: Add/Remove Programs points at it. Copied,
+            // not moved, so a rollback still puts the previous tree back whole.
+            if (movedOld) CopyUninstaller(backup, target);
 
             foreach (var name in InstallLayout.ManagedDirectories) CopyTree(stage.Join(name), target.Join(name));
             File.Copy(stage.BuildConfig, target.BuildConfig);
@@ -173,6 +176,14 @@ public static class ServiceVerbs
             return;
         }
         Directory.Delete(backup, recursive: true);
+    }
+
+    private static void CopyUninstaller(string previousRoot, InstallLayout target)
+    {
+        var source = Path.Combine(previousRoot, InstallLayout.UninstallerDirectory);
+        if (!Directory.Exists(source)) return;
+        if (IsLink(source)) throw new InvalidOperationException("the uninstaller directory is a reparse point; it is left untouched");
+        CopyTree(source, target.Join(InstallLayout.UninstallerDirectory));
     }
 
     private static void TryDeleteTree(string path)

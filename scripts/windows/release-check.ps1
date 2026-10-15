@@ -31,6 +31,7 @@ $InstalledGui = Join-Path $Installed 'app\AsterLink.exe'
 $InstalledService = Join-Path $Installed 'service\AsterLink.Service.exe'
 $AppId = '6C1F7E52-5B0E-4A6B-9D4E-A57E71C0B8D1'
 $UninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{$AppId}_is1"
+$Uninstaller = Join-Path $Installed 'setup\unins000.exe'
 
 function Case([string]$Id, [bool]$Ok, [string]$Observed, [string]$Status) {
     if (-not $Status) { $Status = if ($Ok) { 'PASS' } else { 'FAIL' } }
@@ -124,9 +125,9 @@ function Run-Setup([string[]]$SetupArgs, [string]$LogName) {
     [pscustomobject]@{ Code = $p.ExitCode; Log = $(if (Test-Path $log) { Get-Content $log -Raw } else { '' }) }
 }
 function Run-Uninstall([string[]]$UninstallArgs, [string]$LogName) {
-    $exe = Join-Path $Installed 'setup\unins000.exe'
+    if (-not (Test-Path $Uninstaller)) { throw "the uninstaller $Uninstaller does not exist (Add/Remove Programs would be broken)" }
     $log = Join-Path $Work $LogName
-    $p = Start-Process -FilePath $exe -ArgumentList (@('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$log`"") + $UninstallArgs) -PassThru -Wait
+    $p = Start-Process -FilePath $Uninstaller -ArgumentList (@('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$log`"") + $UninstallArgs) -PassThru -Wait
     [pscustomobject]@{ Code = $p.ExitCode; Log = $(if (Test-Path $log) { Get-Content $log -Raw } else { '' }) }
 }
 function GuiCheck([string]$Name, [int]$HoldSeconds = 0, [switch]$NoWait) {
@@ -140,6 +141,8 @@ function GuiCheck([string]$Name, [int]$HoldSeconds = 0, [switch]$NoWait) {
     if (Test-Path $out) { $result = Get-Content $out -Raw | ConvertFrom-Json }
     [pscustomobject]@{ Exit = $p.ExitCode; Result = $result }
 }
+# The file Add/Remove Programs runs must exist where the registry says (the install verb replaces the root around it).
+function UninstallerOk { (Test-Path $Uninstaller) -and ("$((Get-ItemProperty $UninstallKey -ErrorAction SilentlyContinue).UninstallString)" -like "*$Uninstaller*") }
 function CoreCount { @(Get-Process -Name asterlink-core -ErrorAction SilentlyContinue).Count }
 function Cred-List([string]$Pattern) { (& cmdkey.exe "/list:$Pattern" 2>&1 | Out-String) }
 $Prefs = Join-Path $env:LOCALAPPDATA 'AsterLink'
@@ -157,6 +160,7 @@ try {
     Case 'I01-service-registered' ($st.installed -and $st.state -eq 'Running' -and $st.account -eq 'LocalSystem' -and $st.start -eq 'Auto' -and $s.integrity_ok -and $s.binary_path_ok) `
         "state=$($st.state) account=$($st.account) start=$($st.start) integrity=$($s.integrity_ok) path_ok=$($s.binary_path_ok) problems=$($s.problems -join '|')" $null
     Case 'I01-add-remove-programs' ((Test-Path $UninstallKey) -and ((Get-ItemProperty $UninstallKey).DisplayVersion -eq $Version)) "uninstall entry present=$(Test-Path $UninstallKey) version=$((Get-ItemProperty $UninstallKey -ErrorAction SilentlyContinue).DisplayVersion)" $null
+    Case 'I01-uninstaller-registered' (UninstallerOk) "unins000.exe present=$(Test-Path $Uninstaller) UninstallString=$((Get-ItemProperty $UninstallKey -ErrorAction SilentlyContinue).UninstallString)" $null
     Case 'I01-start-menu-shortcut' (Test-Path (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\AsterLink.lnk')) 'all-users Start menu shortcut' $null
     Case 'I01-no-previous-dir' (-not (Test-Path "$Installed.previous")) "leftover upgrade directory: $(Test-Path "$Installed.previous")" $null
     Case 'I02-gui-not-started-elevated-silently' ((@(Get-Process -Name AsterLink -ErrorAction SilentlyContinue).Count) -eq 0) "AsterLink.exe processes after a silent install: $(@(Get-Process -Name AsterLink -ErrorAction SilentlyContinue).Count)" $null
@@ -183,8 +187,8 @@ try {
     # -- reinstall over the same version (the upgrade path with an identical version) --------------------------------
     $r = Run-Setup @() 'setup-reinstall.log'
     $s = Status
-    Case 'I03-reinstall-over-existing' (($r.Code -eq 0) -and $s.integrity_ok -and $s.service_state -eq 'Running' -and -not (Test-Path "$Installed.previous")) `
-        "exit=$($r.Code) integrity=$($s.integrity_ok) state=$($s.service_state) previous_dir_left=$(Test-Path "$Installed.previous") log_says_reinstall=$($r.Log -match 'reinstall')" $null
+    Case 'I03-reinstall-over-existing' (($r.Code -eq 0) -and $s.integrity_ok -and $s.service_state -eq 'Running' -and -not (Test-Path "$Installed.previous") -and (UninstallerOk)) `
+        "exit=$($r.Code) integrity=$($s.integrity_ok) state=$($s.service_state) previous_dir_left=$(Test-Path "$Installed.previous") uninstaller=$(UninstallerOk) log_says_reinstall=$($r.Log -match 'reinstall')" $null
 
     # -- setup refuses while the app is open: nothing changes ---------------------------------------------------------
     $held = GuiCheck 'held' -HoldSeconds 120 -NoWait
@@ -206,8 +210,8 @@ try {
     try { $r = Run-Setup @() 'setup-locked.log' } finally { $lock.Dispose() }
     $s = Status
     $st = ServiceStatus
-    Case 'I05-failed-upgrade-rolls-back' (($r.Code -ne 0) -and $s.integrity_ok -and $st.state -eq 'Running' -and -not (Test-Path "$Installed.previous")) `
-        "exit=$($r.Code) integrity=$($s.integrity_ok) service=$($st.state) previous_dir_left=$(Test-Path "$Installed.previous") verb_says_rolled_back=$($r.Log -match 'rolled back')" $null
+    Case 'I05-failed-upgrade-rolls-back' (($r.Code -ne 0) -and $s.integrity_ok -and $st.state -eq 'Running' -and -not (Test-Path "$Installed.previous") -and (UninstallerOk)) `
+        "exit=$($r.Code) integrity=$($s.integrity_ok) service=$($st.state) previous_dir_left=$(Test-Path "$Installed.previous") uninstaller=$(UninstallerOk) verb_says_rolled_back=$($r.Log -match 'rolled back')" $null
     $after = GuiCheck 'after-rollback'
     Case 'I05-previous-version-works' ($after.Result.connected -and $after.Result.service_version -eq $Version) "connected=$($after.Result.connected) service=$($after.Result.service_version)" $null
 
@@ -254,7 +258,7 @@ finally {
     & cmdkey.exe '/delete:AsterLink/https://test.invalid/api/v1/client|release-check@asterlink-test.invalid' 2>&1 | Out-Null
     # Whatever happened, leave the machine without the product.
     try {
-        if ((ServiceStatus).installed -or (Test-Path (Join-Path $Installed 'setup\unins000.exe'))) {
+        if ((ServiceStatus).installed -or (Test-Path $Uninstaller)) {
             [void](Run-Uninstall @('/REMOVEUSERDATA=0') 'uninstall-cleanup.log')
         }
     } catch { }

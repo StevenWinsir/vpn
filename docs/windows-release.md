@@ -8,20 +8,21 @@ certificate proves the signing pipeline only; it is trusted by nobody and gives 
 
 `AsterLink-Setup-x64-<version>.exe` (Inno Setup 6.7.1, `apps/windows/Packaging/setup.iss`) is a carrier and a user interface. It
 unpacks the stage tree into its own temporary folder and runs **one** privileged program, the service executable's `install --stage`
-verb, which (all of it from the earlier rounds, plus the upgrade logic below):
+verb, at the start of Inno's install step (`ssInstall`), before Inno has recorded anything. The verb (all of it from the earlier rounds, plus the upgrade logic below):
 
 1. verifies every staged file against `manifest.json` and refuses a wrong channel/version **before touching the machine**;
 2. refuses a **downgrade** (exit 7, `downgrade_refused`) unless run by hand with `--allow-downgrade`;
 3. stops the old service (the Core settles and closes the session; nothing connected survives an upgrade, no login is restored);
 4. **renames** the old `%ProgramFiles%\AsterLink` to `AsterLink.previous` (the old version stays whole and verifiable),
-   creates the protected tree, copies, re-verifies the installed copy, registers the service (LocalSystem, auto start,
+   creates the protected tree, copies Inno's `setup\` folder (the uninstaller) over from the old tree, copies, re-verifies the installed copy, registers the service (LocalSystem, auto start,
    restart-on-crash) and waits for `Running`;
 5. on **any** failure puts the previous version back, verifies it again and restarts its service (`rolled back: …` in the message);
    a rollback that itself fails says `ROLLBACK FAILED` and asks for a re-run;
 6. deletes `.previous` only after the new version is proven. A `.previous` left by a power loss is settled at the next install
    (restored if the live tree is missing, dropped otherwise).
 
-Inno itself only adds: the Add/Remove Programs entry, the all-users Start-menu shortcut, `{app}\setup\unins000.exe`, and an
+Inno itself only adds, and only after the verb succeeded (a failed verb ends Setup with exit code 3 and leaves none of them): the
+Add/Remove Programs entry, the all-users Start-menu shortcut, `{app}\setup\unins000.exe`, and an
 optional "Start AsterLink" checkbox that starts the GUI **as the original, non-elevated user** (`runasoriginaluser`, never with the
 administrator token; skipped in silent installs). x64 only (`x64os`, no ARM64), Windows 10 2004 (build 19041) or newer.
 
@@ -84,7 +85,9 @@ the real certificate.
 
 `AsterLink-Setup-x64-<v>.exe`, `SHA256SUMS`, `release-info.json` (version, channel, signing mode, `trusted_signature: false`, source
 commits, open gates), `manifest.json`, `dependencies.cdx.json` (CycloneDX-shaped inventory: Go modules linked into the Core for
-windows/amd64, the .NET runtime version, Wintun, Mihomo; there are no third-party NuGet packages), `THIRD_PARTY_LICENSES.txt`,
+windows/amd64, the .NET runtime version, Wintun, Mihomo; there are no third-party NuGet packages), `THIRD_PARTY_LICENSES.txt` (the same
+windows/amd64 module set; a module whose published archive has no license file uses the reviewed upstream copy in
+`scripts/third_party_licenses/`, which names its source),
 `SOURCE.txt` and the two GPL source archives (`git archive` of this repository and of the pinned Mihomo commit, with rebuild
 instructions). `release-check.ps1` re-reads `SHA256SUMS` independently and scans the text files for secret-looking content.
 
@@ -120,7 +123,8 @@ py -3 scripts/test-native-windows.py --suite release --allow-service-install --s
 3. Round 7: a managed node with authoritative metering. Only VLESS(TCP/UDP)+TLS through the reference forwarder is enforced node-side.
 4. **Legal review**: Mihomo is GPL-3.0 (source shipped here); Wintun's prebuilt-binary licence restricts redistribution/extraction
    (`toolchain.lock.json`, `wintun.license_note`): decide whether the in-memory embedding by sing-tun is acceptable for a commercial
-   installer or ship the unmodified `wintun.dll` next to the Core; Inno Setup commercial licence.
+   installer or ship the unmodified `wintun.dll` next to the Core; Inno Setup commercial licence; `github.com/rasky/go-lzo`
+   (linked by Mihomo) ships only GPL-2.0 text (`LICENSE.gpl`), so confirm it may be combined with GPL-3.0 Mihomo.
 5. Website operations (payments, backups, MFA, monitoring) are outside this client.
 
 ## 8. For the Windows test machine

@@ -159,7 +159,7 @@ def dependency_inventory(stage, version, commit):
 def write_notices(out):
     sys.path.insert(0, str(ROOT / 'scripts'))
     import collect_licenses
-    text, missing, count = collect_licenses.collect()
+    text, missing, count = collect_licenses.collect('windows', 'amd64')
     text += ('\n' + '=' * 78 + '\nWintun\n' + '=' * 78 +
              '\nWintun is embedded unmodified in asterlink-core.exe (via github.com/metacubex/sing-tun). Copyright (C) 2018-2021 WireGuard LLC.\n'
              'Prebuilt signed binaries are distributed under the "Prebuilt Binaries License" published at https://www.wintun.net/ ; its terms on\n'
