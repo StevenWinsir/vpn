@@ -438,6 +438,12 @@ func (g *grantRun) revokeCutsFlows(ctx context.Context, s session, node apiclien
 	if again {
 		problems = append(problems, "a NEW connection with the revoked credential was accepted")
 	}
+	if g.udp != nil {
+		if fresh, err := openUDP(ctx, gr.target, *g.udp, g.token); err == nil {
+			fresh.close()
+			problems = append(problems, "a NEW Mihomo XUDP carrier with the revoked credential was accepted")
+		}
+	}
 	detail := "no flow was cut"
 	if ok {
 		detail = fmt.Sprintf("TCP%s cut %v after the revocation (sampling %v); a new connection with the same credential is refused", g.udpNote(), cut.Sub(began).Round(100*time.Millisecond), probeInterval)
@@ -449,7 +455,7 @@ func (g *grantRun) udpNote() string {
 	if g.udp == nil {
 		return " (UDP not tested: no --udp-sink)"
 	}
-	return "+UDP"
+	return "+UDP(XUDP/pinned Mihomo)"
 }
 
 func (g *grantRun) waitDown(ctx context.Context, p *probe, within time.Duration) (time.Time, bool) {

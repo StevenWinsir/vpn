@@ -183,6 +183,13 @@ jobs:
           if ($LASTEXITCODE -ne 3) { throw "grants suite exited $LASTEXITCODE, expected 3 (live part BLOCKED, everything else PASS)" }
           exit 0
 
+      - name: Pinned Mihomo XUDP against the real NodeAgent forwarder (loopback, no TUN)
+        working-directory: native/core
+        shell: pwsh
+        run: |
+          go test -count=1 -v ./integration
+          if ($LASTEXITCODE -ne 0) { throw 'Mihomo/NodeAgent UDP integration failed' }
+
       - name: Embedded Wintun DLL is the signed official build
         shell: pwsh
         run: |

@@ -75,7 +75,7 @@ func main() {
 	raceN := flag.Int("race-sessions", 0, "with --grants: B06, this many devices ask for a grant at once (needs spare device slots)")
 	raceAt := flag.String("race-at", "", "with --race-sessions: RFC 3339 start time, to line up several machines (e.g. 2026-10-14T20:30:00+08:00)")
 	raceMax := flag.Int64("race-max-mib", 2048, "with --race-sessions: refuse (BLOCKED) when the account has more quota than this left")
-	udpSink := flag.String("udp-sink", "", "with --grants: host:port of the sink's UDP echo (asterlink-trafficsink --udp-listen); empty = TCP flows only")
+	udpSink := flag.String("udp-sink", "", "with --grants: host:port of the sink's UDP echo, tested with pinned Mihomo XUDP (no command-2 fallback); empty = TCP flows only")
 	flag.Parse()
 
 	needTUN := !*grants || *tun

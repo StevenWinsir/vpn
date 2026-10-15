@@ -17,12 +17,12 @@ import (
 	"time"
 )
 
-// VLESS is a reference forwarder for the VLESS protocol (version 0, no flow, no
-// mux): TCP (command 1) and UDP (command 2, length-prefixed datagrams). Every user
+// VLESS is a reference forwarder for VLESS version 0, without XTLS flows:
+// TCP (command 1), plain UDP (command 2) and XUDP (command 3). Every user
 // has their own UUID; a connection is attributed to the grant that owns the UUID,
 // so counting and revocation are per user by construction.
 //
-// It is deliberately small. It does not implement Reality, XTLS flows or multiplexing:
+// It is deliberately small. It does not implement Reality, XTLS or TCP multiplexing:
 // a node that needs those must use a forwarder that is separately verified for the same
 // guarantees (credential per user, trusted counters, kill of established flows). The
 // agent reports only the protocols its forwarder enforces.
@@ -272,15 +272,20 @@ func readRequest(br *bufio.Reader) (key [16]byte, req request, err error) {
 		return
 	}
 	copy(key[:], head[1:17])
-	if _, err = io.CopyN(io.Discard, br, int64(head[17])); err != nil {
+	if head[17] != 0 {
+		err = errors.New("vless addons/flows are not supported")
 		return
 	}
-	body := make([]byte, 4)
-	if _, err = io.ReadFull(br, body[:3]); err != nil {
+	if req.command, err = br.ReadByte(); err != nil || req.command == 3 {
+		// Command 3 has NO outer address. v1.mux.cool is a logical mux
+		// destination; the following bytes are already the first frame.
 		return
 	}
-	req.command = body[0]
-	req.port = int(binary.BigEndian.Uint16(body[1:3]))
+	var port [2]byte
+	if _, err = io.ReadFull(br, port[:]); err != nil {
+		return
+	}
+	req.port = int(binary.BigEndian.Uint16(port[:]))
 	kind, err := br.ReadByte()
 	if err != nil {
 		return
@@ -330,6 +335,8 @@ func (v *VLESS) serve(c net.Conn) {
 		v.tcp(e, c, br, req)
 	case 2:
 		v.udp(e, c, br, req)
+	case 3:
+		v.xudp(e, c, br)
 	}
 }
 
@@ -482,14 +489,8 @@ func (v *VLESS) udp(e *entry, c net.Conn, br *bufio.Reader, req request) {
 			if _, err := io.ReadFull(br, payload[:n]); err != nil {
 				return
 			}
-			if !e.live(time.Now()) || e.admit(int64(n)) < int64(n) {
-				return
-			}
-			e.up.Add(int64(n))
-			w, err := pc.Write(payload[:n])
-			e.refund(int64(n - w))
-			e.up.Add(int64(w - n))
-			if err != nil {
+			_ = pc.SetWriteDeadline(time.Now().Add(v.opts.IdleTimeout))
+			if err := writeDatagram(e, pc, payload[:n], 0, &e.up); err != nil {
 				return
 			}
 		}
@@ -504,14 +505,9 @@ func (v *VLESS) udp(e *entry, c net.Conn, br *bufio.Reader, req request) {
 			if err != nil {
 				return
 			}
-			if !e.live(time.Now()) || e.admit(int64(n)) < int64(n) {
-				return
-			}
 			binary.BigEndian.PutUint16(buf[:2], uint16(n))
-			e.down.Add(int64(n))
-			if _, err := c.Write(buf[:2+n]); err != nil {
-				e.refund(int64(n))
-				e.down.Add(-int64(n))
+			_ = c.SetWriteDeadline(time.Now().Add(v.opts.IdleTimeout))
+			if err := writeDatagram(e, c, buf[:2+n], 2, &e.down); err != nil {
 				return
 			}
 		}

@@ -106,11 +106,13 @@ not supported (`SUPPORTS_ALWAYS_ON=false`, and a start without our action stops 
 
 ## 9. Findings for other platforms and later rounds
 
-- **VLESS UDP through the reference forwarder.** The pinned Mihomo VLESS client always uses XUDP (mux) for UDP
-  (`adapter/outbound/vless.go`: an empty `packet-encoding` turns XUDP on), while `native/nodeagent/forwarder` only speaks
-  plain VLESS UDP (command 2). UDP over a NodeAgent-managed VLESS node therefore does not work from any Mihomo client
-  (macOS/Windows included); `asterlink-billtest` passed because it uses its own VLESS client. Fix belongs to the forwarder
-  (XUDP support) and needs its own round with three-platform regression; not changed here.
+- **VLESS UDP through the reference forwarder — corrected in the later NodeAgent maintenance.** PR #29 found that
+  the pinned Mihomo defaults to XUDP (command 3) while NodeAgent only implemented plain command 2; the old independent
+  billtest UDP client therefore missed a gap affecting macOS/Windows/Android alike. The forwarder now supports the UDP
+  mux subset, with real pinned-client round-trip, per-grant counter/cap/deadline/revoke/private-target tests and
+  Linux/macOS/Windows CI coverage. `--udp-sink` now uses real Mihomo XUDP without a command-2 fallback.
+  See [NodeAgent XUDP maintenance](nodeagent-xudp.md). This does not rewrite the round-2 TUN report or claim a new
+  Android/macOS/Windows real-device TUN or public TLS-node acceptance run.
 - **libgojni.so size.** Round 1 recorded 25.1 MiB for arm64 because `platformSupported()` was a constant `false` and the
   linker dropped the whole unreachable TUN/listener stack. With the real TUN the arm64 `.so` is 44.4 MiB and the Debug APK
   ~56 MiB. This is the real baseline for round 6.

@@ -46,6 +46,7 @@ type fakeNode struct {
 	logins   int
 
 	// faults
+	noXUDP     bool // legacy command-2-only node must fail --udp-sink
 	lax        bool // a revoked grant keeps its established flows
 	freeRiders bool // the forwarder does not bill
 	oversell   bool // the forwarder keeps going past the quota
@@ -152,17 +153,8 @@ func (n *fakeNode) serve(c net.Conn) {
 		return
 	}
 	id := fmt.Sprintf("%x-%x-%x-%x-%x", head[1:5], head[5:7], head[7:9], head[9:11], head[11:17])
-	rest := make([]byte, 4)
-	if _, err := io.ReadFull(br, rest[:3]); err != nil {
-		return
-	}
-	command, port := rest[0], int(binary.BigEndian.Uint16(rest[1:3]))
-	kind, _ := br.ReadByte()
-	if kind != 1 {
-		return
-	}
-	ip := make([]byte, 4)
-	if _, err := io.ReadFull(br, ip); err != nil {
+	command, err := br.ReadByte()
+	if err != nil {
 		return
 	}
 	n.mu.Lock()
@@ -173,6 +165,25 @@ func (n *fakeNode) serve(c net.Conn) {
 	}
 	n.mu.Unlock()
 	if !live {
+		return
+	}
+	if command == 3 {
+		if !n.noXUDP {
+			n.relayXUDP(c, br)
+		}
+		return
+	}
+	var rawPort [2]byte
+	if _, err := io.ReadFull(br, rawPort[:]); err != nil {
+		return
+	}
+	port := int(binary.BigEndian.Uint16(rawPort[:]))
+	kind, _ := br.ReadByte()
+	if kind != 1 {
+		return
+	}
+	ip := make([]byte, 4)
+	if _, err := io.ReadFull(br, ip); err != nil {
 		return
 	}
 	target := net.JoinHostPort(net.IP(ip).String(), strconv.Itoa(port))
@@ -238,6 +249,74 @@ func (n *fakeNode) relayUDP(c net.Conn, br *bufio.Reader, target string) {
 			return
 		}
 		_, _ = c.Write(append(binary.BigEndian.AppendUint16(nil, uint16(size)), buf[:size]...))
+	}
+}
+
+// Minimal fixture-side XUDP decoder, separate from the production forwarder.
+// The harness's negative billing/revocation controls now exercise real Mihomo
+// UDP as well; this is not the production compatibility oracle (integration/ is).
+func (n *fakeNode) relayXUDP(c net.Conn, br *bufio.Reader) {
+	_, _ = c.Write([]byte{0, 0})
+	var up net.Conn
+	defer func() {
+		if up != nil {
+			up.Close()
+		}
+	}()
+	for {
+		var size [2]byte
+		if _, err := io.ReadFull(br, size[:]); err != nil {
+			return
+		}
+		hlen := int(binary.BigEndian.Uint16(size[:]))
+		if hlen != 12 && hlen != 20 {
+			return
+		}
+		h := make([]byte, hlen)
+		if _, err := io.ReadFull(br, h); err != nil {
+			return
+		}
+		if h[0] != 0 || h[1] != 0 || h[3] != 1 || h[4] != 2 || h[7] != 1 {
+			return
+		}
+		if up == nil {
+			if h[2] != 1 {
+				return
+			}
+			target := net.JoinHostPort(net.IP(h[8:12]).String(), strconv.Itoa(int(binary.BigEndian.Uint16(h[5:7]))))
+			var err error
+			up, err = net.Dial("udp", target)
+			if err != nil {
+				return
+			}
+		} else if h[2] != 2 {
+			return
+		}
+		if _, err := io.ReadFull(br, size[:]); err != nil {
+			return
+		}
+		payload := make([]byte, int(binary.BigEndian.Uint16(size[:])))
+		if _, err := io.ReadFull(br, payload); err != nil {
+			return
+		}
+		if _, err := up.Write(payload); err != nil {
+			return
+		}
+		_ = up.SetReadDeadline(time.Now().Add(time.Second))
+		b := make([]byte, 65535)
+		got, err := up.Read(b)
+		if err != nil {
+			return
+		}
+		if n.bill(int64(len(payload) + got)) {
+			return
+		}
+		wire := []byte{0, 4, 0, 0, 2, 1}
+		wire = binary.BigEndian.AppendUint16(wire, uint16(got))
+		wire = append(wire, b[:got]...)
+		if _, err = c.Write(wire); err != nil {
+			return
+		}
 	}
 }
 
@@ -458,10 +537,19 @@ func TestFaithfulNodePassesTheEnforcementCases(t *testing.T) {
 	}
 }
 
+func TestCommand2OnlyNodeFailsMihomoUDPProbe(t *testing.T) {
+	n := newFakeNode(t, 64<<20)
+	n.noXUDP = true
+	got := results(n.run(t, grantOptions{udpSink: "x"}))
+	if got["B04-node-bills"] != "pass" || got["B05-revoke"] != "fail" {
+		t.Fatalf("plain TCP must still work but XUDP must fail without fallback: %v", got)
+	}
+}
+
 func TestNodeThatKeepsFlowsAfterRevokeFails(t *testing.T) {
 	n := newFakeNode(t, 64<<20)
 	n.lax = true
-	got := results(n.run(t, grantOptions{cutWithin: 2 * time.Second}))
+	got := results(n.run(t, grantOptions{cutWithin: 2 * time.Second, udpSink: "x"}))
 	if got["B05-revoke"] != "fail" {
 		t.Fatalf("B05-revoke = %q, want fail: a node that leaves established flows alive must not pass", got["B05-revoke"])
 	}
