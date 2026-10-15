@@ -315,7 +315,8 @@ def boot(sdk, adb, name, keep_window, log_path):
             tail = Path(log_path).read_text(errors='replace')[-1500:]
             raise RuntimeError('the emulator exited with %s:\n%s' % (process.returncode, tail))
         state = subprocess.run([str(adb), '-s', serial, 'shell', 'getprop', 'sys.boot_completed'], capture_output=True, text=True).stdout.strip()
-        if state == '1':
+        # boot_completed comes before the package manager settles on a cold boot; installs then fail.
+        if state == '1' and adb_run(adb, serial, 'shell', 'pm', 'path', 'android', check=False).startswith('package:'):
             return serial, process
         time.sleep(5)
     process.kill()
@@ -325,6 +326,21 @@ def boot(sdk, adb, name, keep_window, log_path):
 def ui_text(adb, serial):
     adb_run(adb, serial, 'shell', 'uiautomator', 'dump', '/data/local/tmp/ui.xml')
     return adb_run(adb, serial, 'shell', 'cat', '/data/local/tmp/ui.xml')
+
+
+def dismiss_foreign_anr(adb, serial, screen):
+    """A slow emulator's own ANR dialog ("Process system isn't responding") covers the app; press Wait.
+    One about AsterLink itself is never dismissed. Returns the stalled process's name, or None."""
+    match = re.search(r'text="([^"]+) isn(?:\'|&apos;|&#39;)t responding"', screen)
+    if not match or 'AsterLink' in match.group(1):
+        return None
+    wait = re.search(r'text="Wait"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', screen)
+    if wait:
+        x1, y1, x2, y2 = map(int, wait.groups())
+        adb_run(adb, serial, 'shell', 'input', 'tap', str((x1 + x2) // 2), str((y1 + y2) // 2), check=False)
+    else:
+        adb_run(adb, serial, 'shell', 'input', 'keyevent', 'KEYCODE_BACK', check=False)
+    return match.group(1)
 
 
 def ndk_clang(sdk, abi):
@@ -441,13 +457,19 @@ def run_emulator_suite(args):
         adb_run(adb, serial, 'shell', 'am', 'force-stop', 'com.asterlink.vpn')
         adb_run(adb, serial, 'shell', 'am', 'start', '-W', '-n', 'com.asterlink.vpn/.MainActivity')
         screen = ''
+        stalled = []
         for _ in range(20):
             time.sleep(1.5)
             screen = ui_text(adb, serial)
+            foreign = dismiss_foreign_anr(adb, serial, screen)
+            if foreign:
+                stalled.append(foreign)
+                continue
             if core_record['mihomo_revision'][:12] in screen:
                 break
         shown = core_record['core_version'] in screen and core_record['mihomo_revision'][:12] in screen
-        record('emulator.app_shows_core', shown, 'the launched app shows Core %s and Mihomo %s' % (core_record['core_version'], core_record['mihomo_revision'][:12]))
+        record('emulator.app_shows_core', shown, 'the launched app shows Core %s and Mihomo %s' % (core_record['core_version'], core_record['mihomo_revision'][:12])
+               + ('; dismissed the emulator\'s own ANR dialog for: %s' % ', '.join(sorted(set(stalled))) if stalled else ''))
         with open(out_dir / ('foundation-api%s-%s.png' % (facts['api'], abi)), 'wb') as png:
             png.write(subprocess.run([str(adb), '-s', serial, 'exec-out', 'screencap', '-p'], capture_output=True, check=True).stdout)
         pid = adb_run(adb, serial, 'shell', 'pidof', 'com.asterlink.vpn', check=False).strip()
