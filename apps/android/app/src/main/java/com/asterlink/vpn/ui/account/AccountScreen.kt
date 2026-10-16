@@ -72,6 +72,7 @@ fun AccountScreen(
     device: DeviceStatus = DeviceStatus(),
 ) {
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
+    var showLicenses by rememberSaveable { mutableStateOf(false) }
     val snapshot = state.snapshot
     val user = snapshot.user
     Column(
@@ -182,12 +183,30 @@ fun AccountScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp, start = 4.dp),
                 )
+                TextButton(onClick = { showLicenses = true }, modifier = Modifier.padding(top = 4.dp)) {
+                    Text(stringResource(R.string.about_licenses))
+                }
             }
 
             Spacer(Modifier.height(16.dp))
             SecondaryButton(stringResource(R.string.sign_out), { confirmSignOut = true }, icon = R.drawable.ic_logout, danger = true, enabled = !state.busy)
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    if (showLicenses) {
+        AlertDialog(
+            onDismissRequest = { showLicenses = false },
+            title = { Text(stringResource(R.string.about_licenses)) },
+            text = { Text(stringResource(R.string.about_licenses_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLicenses = false
+                    actions.openWebsite(WebPage.Download)
+                }) { Text(stringResource(R.string.about_licenses_open)) }
+            },
+            dismissButton = { TextButton(onClick = { showLicenses = false }) { Text(stringResource(R.string.dialog_close)) } },
+        )
     }
 
     if (confirmSignOut) {

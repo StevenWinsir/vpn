@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -34,6 +36,7 @@ import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -143,7 +146,15 @@ fun LoginScreen(state: SessionState, facts: BuildFacts, actions: AppActions, mod
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                // The whole row is the switch: a tap on the label toggles it, and TalkBack reads one
+                // item ("Remember password, switch, on") instead of a label and an unnamed switch.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .toggleable(value = remember, enabled = !signingIn, role = Role.Switch, onValueChange = { remember = it }),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Column(Modifier.weight(1f)) {
                         Text(stringResource(R.string.login_remember), style = MaterialTheme.typography.bodyMedium)
                         Text(
@@ -153,7 +164,7 @@ fun LoginScreen(state: SessionState, facts: BuildFacts, actions: AppActions, mod
                         )
                     }
                     Spacer(Modifier.padding(start = 12.dp))
-                    Switch(checked = remember, onCheckedChange = { remember = it }, enabled = !signingIn)
+                    Switch(checked = remember, onCheckedChange = null, enabled = !signingIn)
                 }
                 state.warning?.let {
                     Spacer(Modifier.height(12.dp))

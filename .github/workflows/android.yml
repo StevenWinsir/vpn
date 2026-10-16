@@ -14,7 +14,11 @@ name: Android client CI
 # Verify) and the server's ledger is checked to the unit, plus the automatic stop paths and the
 # node agent's own billing (scripts/test-native-android.py --suite billing). Round 5 adds the
 # lifecycle job (--suite lifecycle): the authorization gate, Doze, network changes, a competing
-# VPN and process death on the production build.
+# VPN and process death on the production build. Round 6 adds the release job: the R8-minified,
+# ABI-split release APKs signed by apksigner (v2+v3) with a THROWAWAY key (the real release key
+# never leaves the release machine), packaged with notices, inventory, GPL source archives and
+# SHA256SUMS, audited (--suite release), and rehearsed on the emulator through the real UI:
+# install, sign in, VPN consent, connect, upgrade in place, downgrade/foreign-key refusal, uninstall.
 # x86_64 is built only so the Linux runner can run the app; the product ABI is arm64-v8a.
 
 on:
@@ -27,6 +31,10 @@ on:
       - 'scripts/test-mihomo-patches.py'
       - 'shared/**'
       - 'scripts/build-native-android.py'
+      - 'scripts/package-native-android.py'
+      - 'scripts/android_release_suite.py'
+      - 'scripts/collect_licenses.py'
+      - 'scripts/third_party_licenses/**'
       - 'scripts/test-native-android.py'
       - 'scripts/native_env.py'
       - 'backend/**'
@@ -42,6 +50,10 @@ on:
       - 'scripts/test-mihomo-patches.py'
       - 'shared/**'
       - 'scripts/build-native-android.py'
+      - 'scripts/package-native-android.py'
+      - 'scripts/android_release_suite.py'
+      - 'scripts/collect_licenses.py'
+      - 'scripts/third_party_licenses/**'
       - 'scripts/test-native-android.py'
       - 'scripts/native_env.py'
       - 'backend/**'
@@ -342,5 +354,63 @@ jobs:
         with:
           name: android-lifecycle-evidence
           path: artifacts/native-android/lifecycle/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  release:
+    # Round 6: release packaging and its audit. The publish build carries arm64-v8a (the product
+    # ABI) and x86_64 (only so this runner's KVM emulator can install it); both are signed with a
+    # throwaway key, so release.R03-release-key is BLOCKED by design, and no real phone exists
+    # here (release.R04-device). Everything else must pass.
+    name: Android release packaging, audit and install rehearsal (API 36 x86_64, KVM)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      - name: Allow the emulator to use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator, system image and the NDK
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" "build-tools;36.0.0" emulator "$EMULATOR_IMAGE" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
+      - name: Release package (R8, ABI splits, apksigner v2+v3 with a throwaway key, notices, GPL source, SHA256SUMS)
+        run: |
+          printf 'APP_ENV=release\nAPI_BASE_URL=https://demo.hyshentou.cn/api/v1/client\nWEBSITE_BASE_URL=https://test.hyshentou.cn\n' > "$RUNNER_TEMP/release.env"
+          python3 scripts/package-native-android.py --channel internal --key ephemeral --env-file "$RUNNER_TEMP/release.env" --abi arm64-v8a --abi x86_64
+      - name: PostgreSQL binaries for the private test database (the runner's preinstalled server stays stopped)
+        run: echo "$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)" >> "$GITHUB_PATH"
+      - name: Release suite (R03 audit, R01 install/start, R01/R02 rehearsal through the UI)
+        run: python3 scripts/test-native-android.py --suite release --allow-network-changes --avds api36 --abi x86_64 --expect-blocked release.R03-release-key,release.R04-device --report artifacts/native-android/release-suite/report.json
+      - name: Retain release evidence (report, release-info, notices; the throwaway-signed APKs are not kept)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-evidence
+          path: |
+            artifacts/native-android/release-suite/
+            artifacts/native-android/release/release-info.json
+            artifacts/native-android/release/SHA256SUMS
+            artifacts/native-android/release/THIRD_PARTY_LICENSES.txt
           retention-days: 14
           if-no-files-found: ignore

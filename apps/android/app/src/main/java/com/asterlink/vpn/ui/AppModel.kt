@@ -29,6 +29,9 @@ enum class WebPage(val path: String) {
     Plans("/plans"),
     Orders("/orders"),
     Dashboard("/dashboard"),
+
+    /** The website's download page: the current APK, its SHA-256 and the source/licence notices. */
+    Download("/download"),
 }
 
 /**

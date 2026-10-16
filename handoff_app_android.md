@@ -1,6 +1,6 @@
 # AsterLink Android 原生客户端开发交接计划
 
-> 编制日期：2026-10-15。状态：**规划完成，Android 实现尚未开始**。
+> 编制日期：2026-10-15。状态：**6 轮开发全部完成（第 6 轮 2026-10-16）；内部渠道发布候选，`trusted_release=false`，真机抽检等外部门槛见第 6 轮记录**。
 > 勘察基线：`a0a8bf2`（PR #27 合并点，Windows 第 8 轮）；Mihomo 固定提交 `70f0570405c3c2c47bb113b88db95006d239b346`（`native/third_party/Clash.Meta`，FlClash 分支）。
 > 项目根目录：`/Users/stevenlee/Desktop/vpn`；开发机：Mac mini M4（arm64，32 GiB，macOS 26.6.2）。无 Android 真机，开发与验收以 Android Studio 模拟器为主。
 > 规划轮只新增本文件；第 1 轮起的实际进度见第 14 节状态表与逐轮记录。
@@ -530,7 +530,7 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 | 3 账号与 UI | DONE（本轮 PR，分支 worktree-android-round3-ui） | 本机 API 36 arm64：account 套件 20/20 PASS、ui 30 张截图、JVM 78、emulator 5/5；demo 服务器 + 用户真实账号的手工确认待用户执行（见第 3 轮记录） |
 | 4 连接与计量 | DONE（本轮 PR，分支 worktree-android-round4-billing） | 本机 API 36 arm64：billing 套件 32/32 PASS（20+80 MiB，1×/0.5× 逐单位精确、B02、A04×4、B04 本地 NodeAgent）；tun 26/2 BLOCKED 不回归；demo 服务器手工确认与 Quick Settings 磁贴待用户执行（见第 4 轮记录）；B04-live 无公网受管节点 |
 | 5 生命周期与可靠性 | DONE（本轮 PR，分支 worktree-android-round5-lifecycle） | 本机 API 36 arm64：lifecycle 套件 24 PASS / 2 NOT_RUN（L07-8h、L08 Chrome DoH/WebRTC 需人工或长时运行，见 docs/android-lifecycle.md）；授权闸门仅 Android 启用，桌面行为不变；8 小时采样与真机厂商 ROM 待用户/第 6 轮 |
-| 6 打磨与发布 | NOT_STARTED | 发布密钥库由用户生成并保管；真机/云真机抽检渠道 |
+| 6 打磨与发布 | DONE（本轮 PR，分支 worktree-android-round6-release） | 本机：release 套件 R03 审计全 PASS、R01 API 36/36-16 KB/26 安装启动 PASS、R01/R02 经真实界面的安装-授权-连接-升级-降级拒绝-异钥拒绝-卸载演练全 PASS；R04 真机 BLOCKED（无真机）；发布密钥已在开发机生成，**用户须离线备份**（docs/android-release.md 第 1 节） |
 
 每轮追加：
 
@@ -863,6 +863,59 @@ APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
 下一位从哪个文件/验收项开始；回退方法：
   第 6 轮从 R01–R04（签名、ABI 拆分、release 审计）与真机抽检开始；
   回退：撤销本 PR（桌面端默认 ResumeStop，唯一共享行为变化为暂停期目录过期时绑定前多读一次目录——桌面从不暂停）。
+```
+
+### 第 6 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 6 轮 / 2026-10-16 / Claude（worktree 分支 worktree-android-round6-release）
+基线 commit / 已有未提交改动：f367aaf（PR #38 合并点）；无
+实际修改与契约变化（不含秘密）：
+  无契约 JSON 变化；无 Go Core / 后端代码变化。
+  发布构建：release 构建类型开启 R8 + 资源压缩，app/proguard-rules.pro 保留 gomobile 绑定（go.**、com.asterlink.core.**、
+    Platform 实现）；Gradle 不配置签名（输出未签名 APK）；-Pasterlink.abiSplits 按 ABI 拆分；libgojni.so 不再被 AGP strip
+    （发布包中的 .so 与 core-build.json 记录的可复现产物逐字节相同）；versionCode 由版本推导（主*10000+次*100+修订，
+    删去手写的 asterlink.versionCode）；dependenciesInfo 关闭；writeReleaseDependencies 任务输出解析后的 Maven 依赖；
+    build-logic 支持 -Pasterlink.envFile（仅发布演练用，同样按 env-v1 校验）。
+  scripts/build-native-android.py --configuration Release；scripts/package-native-android.py（--create-keystore 生成免费自签
+    AsterLink 发布密钥：~/.asterlink/android/asterlink-release.p12，别名 asterlink，RSA 4096，30 年，密码在 macOS 钥匙串；
+    apksigner v2+v3 签名与复核；THIRD_PARTY_LICENSES（按 ABI 的 Go 模块 + Maven/Apache-2.0）、CycloneDX 清单、SOURCE.txt +
+    GPL 源码包、release-info.json（trusted_release=false + open_gates）、SHA256SUMS；mapping 与网站配置放 release-private/）；
+    collect_licenses.py 支持 android 目标（gomobile 绑定 + x/mobile bind，cgo）；scripts/third_party_licenses/Apache-2.0.txt。
+  App：服务端 client_upgrade_required → 连接页“下载新版本”跳官网 /download；“我的 → 关于”增加“开源许可与源代码”；
+    登录页“记住密码”整行可点（TalkBack 读作一个开关；原先只有右侧小开关可点）。截图 36 张（新增需要更新、开源许可）。
+  网站：/download 公开页（frontend/.env 的 ANDROID_APK_* 服务端变量，每次请求读取，改后重启即可；任何值无效则显示“暂未发布”）、
+    导航“下载客户端”、scripts/downloads.test.mjs（CI 的 Web validation 执行）。
+  测试：test-native-android.py --suite release（实现于 scripts/android_release_suite.py）；foundation 新增 release.config；
+    CI android.yml 新增 release 作业（临时密钥打包 arm64-v8a+x86_64，审计 + KVM 模拟器演练）。docs/android-release.md。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，公司 VPN 开启）：
+  package-native-android.py --channel internal（发布密钥）：AsterLink-0.1.0-android-arm64-v8a.apk 45.9 MiB，v2+v3，
+    证书 SHA-256 4b3d7810d7f7c603d07733092438f46943b3022abfe437ead8916b3e4931e54f
+  --suite release --allow-network-changes --avds api36,api36-16k,api26：见下方“最终运行”；分项结果：
+    R03 审计 14 项 PASS（签名、清单、16 KB 对齐、无测试代码、无秘密 + 自检、HTTPS 端点、许可/源码/清单、mapping 不公开）；
+    R01-api36（页 4096）、R01-api36-16k（页 16384）、R01-api26 发布 APK 安装启动、登录页显示 Core 0.1.0 · Mihomo 70f0570405c3、无崩溃；
+    演练：全新安装 → 界面登录（记住密码）→ 选线 → 系统 VPN 授权弹窗 → 已连接（5–12 s）→ 断开；覆盖升级 0.1.0→0.1.1 自动登录、
+    不再弹授权；降级 INSTALL_FAILED_VERSION_DOWNGRADE；异钥 INSTALL_FAILED_UPDATE_INCOMPATIBLE；连接中卸载 VPN 立即消失、授权记录消失、
+    重装为空白登录页。R04-device BLOCKED（无真机）。
+  负向对照：同一扫描器在 Debug APK 中发现 Landroidx/compose/ui/test/ 与 PreviewActivity（证明能失败）。
+  回归：foundation 21、unit 3（Go 186、JVM 98）、ui 2（36 张）、emulator 5 PASS；frontend typecheck/eslint/build/test:downloads PASS。
+    account/billing/lifecycle/tun 未在本机重跑（本轮未改 Core、会话、VPN 服务代码），由本 PR 的 CI 作业回归。
+APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
+  0.1.0（versionCode 100）；Mihomo 70f0570405c3（生命周期补丁 d425c1a0…）；arm64 libgojni.so 44.4 MiB；Release APK 45.9 MiB；
+  镜像：android-36 google_apis、android-36 google_apis_ps16k、android-26 google_apis（arm64-v8a；后两者本轮经分段下载 + sdkmanager 校验安装）；
+  artifacts/native-android/{release,release-private,release-suite}/（不提交；release-private 含 mapping 与网站配置，不公开）
+未解决问题、复现方法与发布限制：
+  ① 发布密钥只存在于开发机：用户必须立即离线备份 .p12 与钥匙串中的密码，丢失后无法发布可升级版本。
+  ② R04 真机/云真机、厂商 ROM、真实射频与耗电未验证；B04-live 无公网受管节点；GPL/go-lzo 法务、网站支付/隐私政策等运营门槛未关闭
+     → release-info.json trusted_release=false，只作内部渠道。
+  ③ 32 位 armeabi-v7a 可构建但未运行验证，不发布；API 29、API 37 镜像未安装。
+  ④ 下载页需用户把 APK 上传到网站并填写 frontend/.env（docs/android-release.md 第 4 节）；demo 服务器 + 真实账号 + 真实线路的
+     人工确认须断开公司 VPN 后进行（第 6 节）。
+  ⑤ 公司 VPN 影响：本轮自动化只走模拟器与本机回环；演练中“已连接”的 Verify 经测试节点访问公网探测地址，经过公司网络但不影响结论。
+下一位从哪个文件/验收项开始；回退方法：
+  后续从 docs/android-release.md 第 6、7 节（真机抽检、外部门槛）开始；新版本：改 gradle.properties 的 asterlink.appVersion →
+  package-native-android.py → --suite release → 上传并更新 frontend/.env。
+  回退：撤销本 PR（Core、后端、契约、桌面端均无改动；网站只多一个公开页面）。
 ```
 
 ## 附录 A. 源码核验索引

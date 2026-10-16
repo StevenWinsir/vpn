@@ -83,8 +83,31 @@ Round 5:
     * L07-8h and L08 (Chrome DoH, WebRTC) are NOT_RUN here: docs/android-lifecycle.md
     * only the emulator's network changes; nothing reaches demo.hyshentou.cn or the remote database
 
+Round 6:
+  release     audits a packaged release folder and rehearses install/upgrade/uninstall
+              (scripts/android_release_suite.py; docs/android-release.md)
+    * R03 (no emulator): every APK of --release-dir (default artifacts/native-android/release, made by
+      scripts/package-native-android.py) verifies with apksigner v2+v3 and one signer whose certificate
+      is the one release-info.json names (a throwaway key is reported BLOCKED: not publishable);
+      manifest facts (package, derived versionCode, minSdk 26, targetSdk 36, not debuggable/testOnly,
+      no cleartext, backup off, permission allowlist, no test activity); zipalign -P 16 and every .so
+      stored, ELF for its ABI with 16 KB LOAD alignment; no test classes, TUN hooks or debug tooling in
+      the dex or libgojni.so; no secret (local .env values, private keys, connection strings, the key
+      password) anywhere in the APK, with a planted-secret self check; the HTTPS API base baked in;
+      notices, inventory, SOURCE.txt, source archives and SHA256SUMS; the R8 mapping kept out of it
+    * R01/R02 rehearsal (--allow-network-changes, an emulator): the same release pipeline (R8, splits,
+      apksigner) built twice (version and version+0.0.1) against TestAndroidBillingWorld on a loopback
+      port and signed with one throwaway key; through the real UI: fresh install, sign in with
+      "remember password", pick a line, the system VPN consent dialog, connected, disconnected;
+      upgrade in place (signed in again by itself), downgrade refused, a different key refused,
+      uninstall while connected (VPN, package, consent and data gone; a reinstall starts empty)
+    * R01 per image (--avds, default api36,api36-16k,api26): the published APK installs, starts the
+      Core (its version and Mihomo commit on the login screen) with no crash; missing images are BLOCKED
+    * R04: --device <serial> runs the same on a real phone; without one it is BLOCKED
+    * --static-only runs R03 alone (CI without an emulator for the publish ABI)
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
-The grants/release suites arrive in round 6 and refuse to run here.
+The grants suite is not part of the Android plan (B04 runs inside the billing suite).
 """
 import argparse
 import json
@@ -259,6 +282,28 @@ def check_manifest():
            'cleartext refused, system CAs only, no per-domain exceptions')
 
 
+def check_release_config():
+    """Round 6: the release build type is R8-minified with the gomobile keep rules, unsigned in Gradle
+    (apksigner signs it; no key or password in the build files), and versionCode is derived."""
+    gradle_file = (ANDROID / 'app' / 'build.gradle.kts').read_text()
+    rules = (ANDROID / 'app' / 'proguard-rules.pro').read_text() if (ANDROID / 'app' / 'proguard-rules.pro').is_file() else ''
+    release = gradle_file[gradle_file.find('release {'):gradle_file.find('splits {')]
+    problems = []
+    if 'isMinifyEnabled = true' not in release or 'proguard-rules.pro' not in release:
+        problems.append('release is not R8-minified with proguard-rules.pro')
+    for keep in ('-keep class go.** { *; }', '-keep class com.asterlink.core.** { *; }', 'implements com.asterlink.core.mobile.Platform'):
+        if keep not in rules:
+            problems.append('keep rule missing: ' + keep)
+    if re.search(r'signingConfig\s*=|signingConfigs\s*\{|storePassword|keyPassword|storeFile', gradle_file):
+        problems.append('a signing config in Gradle (the release key belongs to apksigner only)')
+    if re.search(r'^asterlink\.versionCode=', (ANDROID / 'gradle.properties').read_text(), re.M):
+        problems.append('a hand-written versionCode in gradle.properties')
+    if 'keepDebugSymbols += "**/libgojni.so"' not in gradle_file:
+        problems.append('AGP would strip libgojni.so (not the reproducible bound file)')
+    record('release.config', not problems, 'release: R8 + gomobile keep rules, unsigned in Gradle (apksigner v2+v3 in package-native-android.py), versionCode derived, libgojni.so not re-stripped'
+           if not problems else '; '.join(problems))
+
+
 # ---------------------------------------------------------------- unit
 
 def count_go_tests(packages):
@@ -363,7 +408,8 @@ def boot(sdk, adb, name, keep_window, log_path):
     for serial in serials:
         if adb_run(adb, serial, 'emu', 'avd', 'name', check=False).splitlines()[:1] == [name]:
             return serial, None
-    port = 5580
+    # The first free console port: another AVD (e.g. the API 36 one of an earlier suite) may still run.
+    port = next(p for p in range(5580, 5640, 2) if 'emulator-%d' % p not in serials)
     args = [str(tool(sdk, 'emulator', 'emulator')), '-avd', name, '-port', str(port), '-no-snapshot-save', '-no-boot-anim', '-no-audio', '-no-metrics']
     if not keep_window:
         args += ['-no-window', '-gpu', 'swiftshader_indirect']
@@ -818,7 +864,7 @@ def run_ui_suite(args):
         shutil.copy2(png, out_dir / png.name)
     names = [p.stem for p in pngs]
     required = ('login', 'admin-no-plan', 'expired', 'quota-zero', 'no-line', 'ready', 'connecting', 'connected', 'failed',
-                'lines', 'lines-no-plan', 'lines-none', 'account', 'dark', 'font200', '360dp', 'en-')
+                'lines', 'lines-no-plan', 'lines-none', 'account', 'dark', 'font200', '360dp', 'en-', 'update-required', 'licenses')
     missing = [r for r in required if not any(r in n for n in names)]
     record('ui.states', len(pngs) >= 20 and not missing, '%d states in %s%s' % (len(pngs), out_dir, '; missing ' + ', '.join(missing) if missing else ''))
 
@@ -828,8 +874,8 @@ def run_ui_suite(args):
 ACCOUNT_CLASS = 'com.asterlink.vpn.AccountAcceptanceTest'
 
 
-def start_world(scratch, test='TestAndroidAccountWorld', output_env='ASTERLINK_ANDROID_WORLD', extra_env=None):
-    """Private PostgreSQL (Unix socket only) + a backend world test on 127.0.0.1."""
+def start_world(scratch, test='TestAndroidAccountWorld', output_env='ASTERLINK_ANDROID_WORLD', extra_env=None, port=None):
+    """Private PostgreSQL (Unix socket only) + a backend world test on 127.0.0.1 (port: default a free one)."""
     data, sock = Path(scratch) / 'pg', Path(scratch) / 'sock'
     sock.mkdir(mode=0o700)
     env = dict(os.environ, LC_ALL='C', LANG='C')
@@ -837,7 +883,7 @@ def start_world(scratch, test='TestAndroidAccountWorld', output_env='ASTERLINK_A
                    check=True, stdout=subprocess.DEVNULL, env=env)
     subprocess.run(['pg_ctl', '-D', str(data), '-l', str(Path(scratch) / 'postgres.log'), '-o', "-k %s -c listen_addresses=''" % sock, '-w', 'start'],
                    check=True, stdout=subprocess.DEVNULL, env=env)
-    port = free_port()
+    port = port or free_port()
     world_file = Path(scratch) / 'world.json'
     log = open(Path(scratch) / 'world.log', 'wb')
     world = subprocess.Popen(['go', 'test', '-count=1', '-timeout', '70m', '-run', '^%s$' % test, '-v', './internal/api'], cwd=ROOT / 'backend',
@@ -1265,6 +1311,10 @@ def main():
     parser.add_argument('--screen-off-seconds', type=int, default=120, help='lifecycle suite: L01 screen-off time (handoff: 600)')
     parser.add_argument('--soak-seconds', type=int, default=180, help='lifecycle suite: connected soak sampled every 15 s')
     parser.add_argument('--no-reboot', action='store_true', help='lifecycle suite: skip L06 (reboot the emulator)')
+    parser.add_argument('--release-dir', help='release suite: the packaged folder to audit (default artifacts/native-android/release)')
+    parser.add_argument('--avds', default='api36,api36-16k,api26', help='release suite: images for the published-APK smoke (api<N>[-16k])')
+    parser.add_argument('--static-only', action='store_true', help='release suite: R03 only (no emulator)')
+    parser.add_argument('--device', help='release suite: a real phone serial for R04 (adb devices)')
     parser.add_argument('--expect-blocked', help='comma-separated case ids the environment cannot run (e.g. CI: no IPv6 upstream, '
                                                   'no real node); they stay BLOCKED in the report, but only they may be BLOCKED for exit 0')
     args = parser.parse_args()
@@ -1277,6 +1327,7 @@ def main():
         check_env_example()
         check_platform_split()
         check_manifest()
+        check_release_config()
     elif args.suite == 'unit':
         run_unit_suite()
     elif args.suite == 'emulator':
@@ -1308,8 +1359,15 @@ def main():
         except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as error:
             detail = getattr(error, 'stderr', None) or getattr(error, 'output', None) or b''
             record('lifecycle.run', False, (str(error) + ' ' + (detail.decode(errors='replace') if isinstance(detail, bytes) else str(detail)))[-1800:])
+    elif args.suite == 'release':
+        import android_release_suite
+        try:
+            android_release_suite.run(sys.modules[__name__], args)
+        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as error:
+            detail = getattr(error, 'stderr', None) or getattr(error, 'output', None) or b''
+            record('release.run', False, (str(error) + ' ' + (detail.decode(errors='replace') if isinstance(detail, bytes) else str(detail)))[-1800:])
     else:
-        print('suite %r arrives in a later round (handoff_app_android.md 10)' % args.suite)
+        print('unknown suite %r (handoff_app_android.md 10, 12)' % args.suite)
         return EXIT_BLOCKED
 
     if args.report:

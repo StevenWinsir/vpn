@@ -10,7 +10,19 @@ plugins {
 
 val clientEnv = extensions.getByType<ClientEnvSource>()
 val appVersion = providers.gradleProperty("asterlink.appVersion").get()
-val appVersionCode = providers.gradleProperty("asterlink.versionCode").get().toInt()
+
+// versionCode is derived from the version, never edited by hand: MAJOR*10000 + MINOR*100 + PATCH.
+// An upgrade must carry a higher versionCode (Android refuses a downgrade), so a release can
+// never accidentally reuse one. Each part must stay below 100.
+val appVersionCode = Regex("""(\d+)\.(\d+)\.(\d+)(?:[.-].*)?""").matchEntire(appVersion)?.destructured?.let { (major, minor, patch) ->
+    listOf(major, minor, patch).map { it.toInt() }.also { parts ->
+        if (parts.drop(1).any { it > 99 } || parts[0] > 2000) throw GradleException("asterlink.appVersion $appVersion: minor and patch must be 0..99")
+    }.let { (major, minor, patch) -> major * 10000 + minor * 100 + patch }
+} ?: throw GradleException("asterlink.appVersion $appVersion is not MAJOR.MINOR.PATCH")
+
+// Release ABI splits (scripts/build-native-android.py --configuration Release): one APK per ABI,
+// each carrying only its own libgojni.so. Unset = one APK with every ABI the Core AAR has.
+val abiSplits = providers.gradleProperty("asterlink.abiSplits").orNull?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
 
 // The Go Core (native/core + pinned Mihomo) is bound by gomobile into an AAR that
 // scripts/build-native-android.py writes here together with its build record. Gradle never
@@ -50,9 +62,30 @@ android {
             isMinifyEnabled = false
         }
         release {
-            // Round 6: R8, gomobile keep rules, ABI splits and the user's signing key.
-            isMinifyEnabled = false
+            // R8 shrinks and obfuscates the Kotlin side; proguard-rules.pro keeps the gomobile
+            // binding (the Go side finds its Java classes and methods by name through JNI).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // No signingConfig: Gradle writes an unsigned APK and scripts/package-native-android.py
+            // signs it with apksigner (v2 + v3). The release key never enters Gradle or this tree.
         }
+    }
+
+    splits {
+        abi {
+            isEnable = abiSplits.isNotEmpty()
+            reset()
+            include(*abiSplits.toTypedArray())
+            isUniversalApk = false
+        }
+    }
+
+    // The "dependency metadata" block AGP adds to the signing block is readable only by Google
+    // Play; this APK is distributed from the website, and apksigner would drop it anyway.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     compileOptions {
@@ -68,6 +101,11 @@ android {
     packaging {
         // libgojni.so stays uncompressed and page-aligned in the APK (16 KB pages).
         jniLibs.useLegacyPackaging = false
+        // Go already links it stripped (-s -w); AGP's own strip pass would still rewrite it, and the
+        // release must ship the byte-identical, reproducible .so that core-build.json records.
+        jniLibs.keepDebugSymbols += "**/libgojni.so"
+        // Build metadata with no use on a device (coroutines' debugger agent, Kotlin tooling notes).
+        resources.excludes += setOf("DebugProbesKt.bin", "kotlin-tooling-metadata.json", "META-INF/*.version")
     }
 
     sourceSets {
@@ -135,6 +173,29 @@ val refuseReleaseFromExample = tasks.register("refuseReleaseFromExample") {
     val fromExample = clientEnv.fromExample
     doLast {
         if (fromExample) throw GradleException("Release builds read apps/android/.env, which is missing")
+    }
+}
+
+// The Maven artifacts inside the release APK, for the third-party notices and the dependency
+// inventory of scripts/package-native-android.py (resolved, not guessed from the catalog).
+val writeReleaseDependencies = tasks.register("writeReleaseDependencies") {
+    description = "Writes the resolved release runtime dependencies to build/outputs/release-dependencies.json."
+    val classpath = configurations.named("releaseRuntimeClasspath")
+    val components = classpath.flatMap { it.incoming.resolutionResult.rootComponent }
+    val out = layout.buildDirectory.file("outputs/release-dependencies.json")
+    outputs.file(out)
+    doLast {
+        val ids = mutableSetOf<String>()
+        fun walk(component: org.gradle.api.artifacts.result.ResolvedComponentResult) {
+            for (dependency in component.dependencies) {
+                if (dependency is org.gradle.api.artifacts.result.ResolvedDependencyResult) {
+                    val id = dependency.selected.id
+                    if (id is org.gradle.api.artifacts.component.ModuleComponentIdentifier && ids.add("${id.group}:${id.module}:${id.version}")) walk(dependency.selected)
+                }
+            }
+        }
+        walk(components.get())
+        out.get().asFile.writeText(ids.sorted().joinToString(",\n", "[\n", "\n]\n") { "  \"$it\"" })
     }
 }
 

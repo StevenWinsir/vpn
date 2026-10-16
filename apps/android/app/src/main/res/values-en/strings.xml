@@ -71,6 +71,12 @@
     <string name="switch_line_body">Switching disconnects and settles this session first. Connect again afterwards.</string>
     <string name="switch_line_confirm">Disconnect and switch</string>
     <string name="dialog_cancel">Cancel</string>
+    <string name="dialog_close">Close</string>
+    <string name="action_download_update">Download the new version</string>
+    <string name="update_hint">Install the new APK from the website\'s download page; installing over this one keeps your sign-in and settings</string>
+    <string name="about_licenses">Open-source licences and source code</string>
+    <string name="about_licenses_body">AsterLink embeds the Mihomo proxy core (GNU GPL v3) and open-source components such as AndroidX and Kotlin (Apache 2.0 and others). The full licence texts, the dependency list and the corresponding source code are offered with every version on the website\'s download page.</string>
+    <string name="about_licenses_open">Open the download page</string>
 
     <string name="account_title">Me</string>
     <string name="role_admin">Administrator</string>

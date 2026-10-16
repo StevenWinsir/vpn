@@ -7,7 +7,8 @@ The module list comes from `go list -deps` on the exact command that is shipped,
 cannot drift from the binary. A module without a license file is reported (and fails
 `--strict`) instead of being skipped silently. A module whose published archive carries no license file
 (the upstream added one later) is covered by a reviewed copy in scripts/third_party_licenses/, which names
-its source. The module set depends on the target platform (--goos/--goarch). Mihomo (GPL-3.0) is called out first: its
+its source. The module set depends on the target platform (--goos/--goarch); for --goos android the shipped code is the
+gomobile binding (native/core/mobile plus x/mobile's bind runtime, cgo on) rather than cmd/asterlink-core. Mihomo (GPL-3.0) is called out first: its
 license is why the package also carries SOURCE.txt and the corresponding-source archives
 (docs/macos-release.md section 8).
 """
@@ -24,10 +25,18 @@ MIHOMO_DIR = ROOT / 'native/third_party/Clash.Meta'
 OVERRIDES_DIR = ROOT / 'scripts/third_party_licenses'
 
 
+def shipped_packages(goos):
+    """What is linked into the product for this platform, and whether cgo is on (gomobile needs it)."""
+    if goos == 'android':
+        return ['./mobile', 'golang.org/x/mobile/bind/java'], '1'
+    return ['./cmd/asterlink-core'], '0'
+
+
 def linked_modules(goos, goarch):
+    packages, cgo = shipped_packages(goos)
     out = subprocess.run(
-        ['go', 'list', '-deps', '-f', '{{if .Module}}{{.Module.Path}}\t{{.Module.Version}}\t{{.Module.Dir}}{{end}}', './cmd/asterlink-core'],
-        cwd=ROOT / 'native/core', env={'GOOS': goos, 'GOARCH': goarch, 'CGO_ENABLED': '0', **_base_env()},
+        ['go', 'list', '-deps', '-f', '{{if .Module}}{{.Module.Path}}\t{{.Module.Version}}\t{{.Module.Dir}}{{end}}', *packages],
+        cwd=ROOT / 'native/core', env={'GOOS': goos, 'GOARCH': goarch, 'CGO_ENABLED': cgo, **_base_env()},
         capture_output=True, text=True, check=True).stdout
     modules = {}
     for line in out.splitlines():
@@ -79,7 +88,8 @@ def collect(goos='darwin', goarch='arm64'):
         'AsterLink third-party notices\n\n'
         'The proxy core embeds Mihomo (Clash.Meta fork, GNU GPL v3). The corresponding source of the\n'
         'exact build, with the instructions to rebuild it, is described in SOURCE.txt and shipped\n'
-        'beside the installer. The other modules below are linked into asterlink-core under their own licenses.\n\n')
+        'beside the installer. The other modules below are linked into %s under their own licenses.\n\n'
+        % ('libgojni.so (the Android Core)' if goos == 'android' else 'asterlink-core'))
     return preface + '\n'.join(sections), missing, len(sections)
 
 
