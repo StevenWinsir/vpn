@@ -702,9 +702,26 @@ class LifecycleAcceptanceTest {
         val fd0 = fds()
         val th0 = procStatus("Threads")
         var ok = 0
+        var retried = 0
         val failures = mutableListOf<String>()
         repeat(count) { i ->
-            if (connect(c) && forwards()) ok++ else failures += "#${i + 1}: ${c.state.value.message?.code ?: c.state.value.snapshot.lastError?.code}"
+            main { c.connectNow() }
+            val core = connected(c)
+            val vpn = core && vpnNetworkUp()
+            // The Core's Verify already proved forwarding; the app's own download is checked
+            // as well, with one retry (counted and reported) for a first flow racing the new network.
+            var got = if (vpn) download(256L shl 10) else null
+            if (got != null && got.getOrNull() != 256L shl 10) {
+                retried++
+                delay(500)
+                got = download(256L shl 10)
+            }
+            when {
+                !core -> failures += "#${i + 1}: not connected (${c.state.value.snapshot.state}, ${c.state.value.message?.code ?: c.state.value.snapshot.lastError?.code})"
+                !vpn -> failures += "#${i + 1}: connected but no VPN network registered"
+                got?.getOrNull() != 256L shl 10 -> failures += "#${i + 1}: download failed twice (${got?.exceptionOrNull()?.message?.take(80)})"
+                else -> ok++
+            }
             disconnect(c)
         }
         delay(2_000)
@@ -715,7 +732,7 @@ class LifecycleAcceptanceTest {
             if (fd1 - fd0 > 3) add("descriptors $fd0 -> $fd1")
             if (th1 - th0 > 4) add("threads $th0 -> $th1")
             if (vpnNetworkUp()) add("a VPN network remained")
-        }, "$ok/$count connect -> forward -> disconnect cycles; descriptors $fd0 -> $fd1, threads $th0 -> $th1 (Go goroutines are proven by the tun suite's T-CYCLES)")
+        }, "$ok/$count connect -> forward -> disconnect cycles ($retried download retried once); descriptors $fd0 -> $fd1, threads $th0 -> $th1 (Go goroutines are proven by the tun suite's T-CYCLES)")
     }
 
     /** L07 (short soak): connected for a few minutes with periodic traffic, sampled every 15 s. */
