@@ -4,6 +4,7 @@ import com.asterlink.vpn.core.CoreClient
 import com.asterlink.vpn.core.CoreSnapshot.State
 import com.asterlink.vpn.core.ErrorView
 import com.asterlink.vpn.core.LoginTarget
+import com.asterlink.vpn.core.MeteringView
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -33,10 +34,12 @@ class SessionControllerTest {
         val devices = DeviceIdentity { "33333333-3333-4333-8333-333333333333" }
         val client = CoreClient(core, StandardTestDispatcher(scope.testScheduler))
         val tunnel = FakeTunnel { client }
+        val alerts = FakeAlerts()
         val controller = SessionController(
             client, lifecycle, target, credentials, preferences, devices, tunnel,
             scope = scope.backgroundScope,
             clock = { scope.testScheduler.currentTime },
+            alerts = alerts,
         )
         val state get() = controller.state.value
     }
@@ -391,5 +394,77 @@ class SessionControllerTest {
         rig.controller.connectNow()
         assertEquals(LocalCodes.VPN_STOPPING, rig.state.message?.code)
         assertNull(rig.state.message?.text)
+    }
+
+    // ---- round 4: per-connection usage and stop alerts -------------------------------------------
+
+    @Test
+    fun usageCountsOnlyThisConnectionAtItsOwnRate() = runTest {
+        val rig = rig()
+        rig.controller.launchNow()
+        rig.controller.signInNow(email, password, remember = false, automatic = false)
+        // An earlier connection of this sign-in already carried 5 000 + 7 000 bytes.
+        rig.core.mutate { it.copy(metering = MeteringView(source = "client_reported", uploadBytes = 5_000, downloadBytes = 7_000)) }
+        rig.controller.pollNow()
+        rig.controller.selectNow("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") // 500 permille
+        rig.controller.connectNow()
+        assertEquals(ConnectionUsage(0, 0, 500), rig.state.usage)
+        rig.core.mutate { it.copy(metering = it.metering!!.copy(uploadBytes = 5_100, downloadBytes = 7_301)) }
+        rig.controller.pollNow()
+        val usage = rig.state.usage!!
+        assertEquals(100L, usage.uploadBytes)
+        assertEquals(301L, usage.downloadBytes)
+        // 401 bytes at 0.5x is 200.5 bytes of quota, floored like the server's remaining_bytes.
+        assertEquals(200L, usage.billedBytes)
+        rig.controller.disconnectNow()
+        assertNull(rig.state.usage)
+        assertNull(rig.state.connectionBaseline)
+    }
+
+    @Test
+    fun theCoreEndingTheTunnelAlertsWithItsReasonOnce() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.connectNow()
+        assertEquals(1, rig.alerts.clears) // a new connection clears an old alert
+        rig.core.mutate { it.copy(state = State.STOPPING) }
+        rig.controller.pollNow()
+        assertTrue(rig.alerts.stopped.isEmpty()) // still settling: not yet
+        rig.core.mutate { it.copy(state = State.READY, lastError = ErrorView("subscription_expired", "套餐已到期，请前往网站续费")) }
+        rig.controller.pollNow()
+        rig.controller.pollNow()
+        assertEquals(listOf(Notice("subscription_expired", "套餐已到期，请前往网站续费")), rig.alerts.stopped)
+    }
+
+    @Test
+    fun aDisconnectTheUserAskedForIsNotAnAlert() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.connectNow()
+        rig.controller.disconnectNow()
+        rig.controller.pollNow()
+        rig.controller.switchToNow("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        assertTrue(rig.alerts.stopped.isEmpty())
+    }
+
+    @Test
+    fun aSessionEndedByTheServerWhileConnectedAlerts() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.connectNow()
+        rig.core.mutate { com.asterlink.vpn.core.CoreSnapshot.Empty.copy(generation = it.generation, lastError = ErrorView("account_disabled", "账号已被停用")) }
+        rig.controller.pollNow()
+        assertEquals("account_disabled", rig.alerts.stopped.single().code)
+        assertEquals(AppPhase.SignedOut, rig.state.phase)
+    }
+
+    @Test
+    fun aFailedConnectIsShownInTheAppNotAlerted() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.core.connectFailure = ErrorView("tunnel_unhealthy", "已建立隧道但无法经线路访问网络，已断开；请更换线路或稍后重试")
+        rig.controller.connectNow()
+        rig.controller.pollNow()
+        assertTrue(rig.alerts.stopped.isEmpty())
     }
 }

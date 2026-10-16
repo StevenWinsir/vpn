@@ -50,8 +50,26 @@ Round 3:
     * then searches logcat for the password, node address, node secret and cipher
     * never touches the remote test database, demo.hyshentou.cn or the emulator's network
 
+Round 4:
+  billing     needs Go, PostgreSQL, a JDK, the SDK emulator and a system image; --allow-network-changes
+    * builds the normal debug APK (no acceptance hook in the AAR) and the test APK
+    * starts the round-2 test node and traffic sink on the host loopback, builds the real node
+      agent (native/nodeagent), and the backend's TestAndroidBillingWorld on a private
+      Unix-socket PostgreSQL: the real Gin API whose lines lead to the test node (emulator view
+      10.0.2.2) plus, with the agent, one node-reported line over real mTLS
+    * runs BillingAcceptanceTest in the app: the real SessionController, AsterVpnService and Go
+      Core connect for real (gates, first ACK, TUN, Verify) and move controlled bytes to the sink:
+      B01 1x and 0.5x charged to the unit (server ledger = Core counters = app display), B02 a lost
+      acknowledgement (dropped by the world after commit) resent unchanged and charged once,
+      A04 re-rate / disable / plan end / quota exhaustion each stop the tunnel by itself with its
+      reason and settle the tail at the bound rate, N01/N02 the live notification and the stop
+      alert, B04 the node agent bills a node-reported connection with no client report
+    * then searches logcat for the password, node secrets and the sink token
+    * only the emulator's network changes; nothing reaches demo.hyshentou.cn or the remote database
+      (Verify still probes its public URLs through the test node, i.e. through this Mac's network)
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
-The billing/grants/lifecycle/release suites arrive in rounds 4-6 and refuse to run here.
+The grants/lifecycle/release suites arrive in rounds 5-6 and refuse to run here.
 """
 import argparse
 import json
@@ -195,7 +213,8 @@ def check_manifest():
                 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE', 'android.permission.INTERNET', 'android.permission.POST_NOTIFICATIONS']
     record('manifest.permissions', permissions == expected, 'exactly %s' % ', '.join(p.rsplit('.', 1)[-1] for p in permissions))
     services = app.findall('service')
-    vpn = services[0] if len(services) == 1 else None
+    by_name = {s.get(ANDROID_NS + 'name'): s for s in services}
+    vpn = by_name.get('.vpn.AsterVpnService') if len(services) == 2 else None
     sattrs = {k.replace(ANDROID_NS, ''): v for k, v in (vpn.attrib.items() if vpn is not None else [])}
     actions = [a.get(ANDROID_NS + 'name') for f in (vpn.findall('intent-filter') if vpn is not None else []) for a in f.findall('action')]
     meta = {m.get(ANDROID_NS + 'name'): m.get(ANDROID_NS + 'value') for m in (vpn.findall('meta-data') if vpn is not None else [])}
@@ -206,6 +225,12 @@ def check_manifest():
            and meta.get('android.net.VpnService.SUPPORTS_ALWAYS_ON') == 'false'
            and props.get('android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE') == 'vpn',
            'one VpnService: bound only by the system (BIND_VPN_SERVICE), not exported, specialUse foreground service, always-on refused')
+    tile = by_name.get('.vpn.ConnectTileService')
+    tattrs = {k.replace(ANDROID_NS, ''): v for k, v in (tile.attrib.items() if tile is not None else [])}
+    tactions = [a.get(ANDROID_NS + 'name') for f in (tile.findall('intent-filter') if tile is not None else []) for a in f.findall('action')]
+    record('manifest.tile_service', tile is not None and tattrs.get('permission') == 'android.permission.BIND_QUICK_SETTINGS_TILE'
+           and tactions == ['android.service.quicksettings.action.QS_TILE'] and 'foregroundServiceType' not in tattrs,
+           'the only other service is the Quick Settings tile, bindable only by the system UI (BIND_QUICK_SETTINGS_TILE)')
 
     rules = ET.parse(ANDROID / 'app' / 'src' / 'main' / 'res' / 'xml' / 'data_extraction_rules.xml').getroot()
     domains = {'root', 'file', 'database', 'sharedpref', 'external'}
@@ -492,9 +517,10 @@ def run_emulator_suite(args):
         # Instrumented test with the real AAR (builds and installs both APKs).
         connected_results = ANDROID / 'app' / 'build' / 'outputs' / 'androidTest-results' / 'connected'
         shutil.rmtree(connected_results, ignore_errors=True)
-        # AccountAcceptanceTest is the account suite's driver (run by class with its world); the
-        # connected-test reporter would count its "no world" assumption as a failure.
-        connected = gradle([':app:connectedDebugAndroidTest', '-Pandroid.testInstrumentationRunnerArguments.notClass=' + ACCOUNT_CLASS],
+        # AccountAcceptanceTest and BillingAcceptanceTest (@SuiteDriver) are the account and billing
+        # suites' drivers (run by class with their worlds); the connected-test reporter would count
+        # their "no world" assumption as a failure.
+        connected = gradle([':app:connectedDebugAndroidTest', '-Pandroid.testInstrumentationRunnerArguments.notAnnotation=com.asterlink.vpn.SuiteDriver'],
                            capture_output=True, text=True, env=dict(os.environ, ANDROID_SERIAL=serial))
         tests, failures = junit_counts(connected_results)
         record('emulator.core_binding', connected.returncode == 0 and tests > 0 and failures == 0,
@@ -787,8 +813,8 @@ def run_ui_suite(args):
 ACCOUNT_CLASS = 'com.asterlink.vpn.AccountAcceptanceTest'
 
 
-def start_world(scratch):
-    """Private PostgreSQL (Unix socket only) + backend TestAndroidAccountWorld on 127.0.0.1."""
+def start_world(scratch, test='TestAndroidAccountWorld', output_env='ASTERLINK_ANDROID_WORLD', extra_env=None):
+    """Private PostgreSQL (Unix socket only) + a backend world test on 127.0.0.1."""
     data, sock = Path(scratch) / 'pg', Path(scratch) / 'sock'
     sock.mkdir(mode=0o700)
     env = dict(os.environ, LC_ALL='C', LANG='C')
@@ -799,9 +825,9 @@ def start_world(scratch):
     port = free_port()
     world_file = Path(scratch) / 'world.json'
     log = open(Path(scratch) / 'world.log', 'wb')
-    world = subprocess.Popen(['go', 'test', '-count=1', '-timeout', '60m', '-run', '^TestAndroidAccountWorld$', '-v', './internal/api'], cwd=ROOT / 'backend',
+    world = subprocess.Popen(['go', 'test', '-count=1', '-timeout', '70m', '-run', '^%s$' % test, '-v', './internal/api'], cwd=ROOT / 'backend',
                              env=dict(env, NATIVE_TEST_DSN='host=%s user=postgres dbname=postgres sslmode=disable' % sock, RUN_DB_TESTS='0',
-                                      ASTERLINK_ANDROID_WORLD=str(world_file), ASTERLINK_ANDROID_WORLD_PORT=str(port), GOFLAGS='-buildvcs=false'),
+                                      ASTERLINK_ANDROID_WORLD_PORT=str(port), GOFLAGS='-buildvcs=false', **{output_env: str(world_file)}, **(extra_env or {})),
                              stdout=log, stderr=subprocess.STDOUT)
     for _ in range(3000):
         if world_file.is_file() and world_file.stat().st_size > 0:
@@ -880,6 +906,135 @@ def run_account_suite(args):
         emu.close(args.keep_emulator)
 
 
+# ---------------------------------------------------------------- billing (round 4)
+
+BILLING_CLASS = 'com.asterlink.vpn.BillingAcceptanceTest'
+
+
+def ensure_plain_build(abi):
+    """The normal debug APK and its test APK; the AAR must be the production binding (no hooks)."""
+    core_record = ANDROID / 'build' / 'core' / 'core-build.json'
+    rebuild = not core_record.is_file() or json.loads(core_record.read_text()).get('tuntest_hooks')
+    command = [sys.executable, str(ROOT / 'scripts' / 'build-native-android.py'), '--target', 'apk', '--abi', abi] + (['--rebuild-core'] if rebuild else [])
+    build = subprocess.run(command, capture_output=True, text=True)
+    if build.returncode != 0:
+        return 'debug APK: ' + (build.stdout + build.stderr)[-800:]
+    test = gradle([':app:assembleDebugAndroidTest'], capture_output=True, text=True)
+    if test.returncode != 0:
+        return 'test APK: ' + gradle_failure(test)
+    if json.loads(core_record.read_text()).get('tuntest_hooks'):
+        return 'the Core AAR carries the TUN acceptance hooks; the billing suite runs the production binding only'
+    return None
+
+
+def run_billing_suite(args):
+    if not args.allow_network_changes:
+        record('billing.consent', False, 'pass --allow-network-changes: the suite creates a VPN inside the emulator (the host network is not changed)', status='BLOCKED')
+        return
+    missing = [t for t in ('go', 'initdb', 'pg_ctl') if not shutil.which(t)]
+    if missing:
+        record('billing.tools', False, 'not installed: %s' % ', '.join(missing), status='BLOCKED')
+        return
+    abi = args.abi or host_abi()
+    if not args.skip_build:
+        problem = ensure_plain_build(abi)
+        if problem:
+            record('billing.build', False, problem)
+            return
+    core = json.loads((ANDROID / 'build' / 'core' / 'core-build.json').read_text())
+    record('billing.build', not core.get('tuntest_hooks'), 'production Core AAR (sha256 %s, no acceptance hooks) and the debug + test APKs' % core['aar_sha256'][:16])
+    test_apk = ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'androidTest' / 'debug' / 'app-debug-androidTest.apk'
+
+    emu = open_emulator(args, 'billing', 'billing')
+    if emu is None:
+        return
+    adb, serial = emu.adb, emu.serial
+    scratch = tempfile.mkdtemp(prefix='asterlink-billing-')
+    helpers, pg_data, world, port = [], None, None, None
+    try:
+        # No REALITY inbound: these lines are Shadowsocks and plain VLESS (round 2 covers REALITY).
+        node, sink = start_helpers(argparse.Namespace(**dict(vars(args), no_reality=True)), scratch, helpers)
+        extra = {'ASTERLINK_ANDROID_TESTNODE': os.path.join(scratch, 'node.json'), 'ASTERLINK_ANDROID_NODE_HOST': EMULATOR_HOST,
+                 'ASTERLINK_ANDROID_SINK': 'http://%s:%s' % (LOOPBACK, sink['port']), 'ASTERLINK_ANDROID_SINK_TOKEN': sink['token']}
+        if not args.no_node_agent:
+            agent = os.path.join(scratch, 'asterlink-nodeagent')
+            subprocess.run(['go', 'build', '-o', agent, './cmd/asterlink-nodeagent'], cwd=ROOT / 'native' / 'nodeagent', env=go_env(CGO_ENABLED='0'), check=True, capture_output=True)
+            extra['ASTERLINK_NODEAGENT_BIN'] = agent
+        pg_data, world, world_file, port = start_world(scratch, 'TestAndroidBillingWorld', 'ASTERLINK_ANDROID_BILLING_WORLD', extra)
+        facts = json.loads(world_file.read_text())
+        record('billing.world', True, 'TestAndroidBillingWorld on 127.0.0.1:%d (private PostgreSQL); test node + sink on the host loopback; node agent: %s%s'
+               % (port, 'yes' if facts.get('node_reported') else 'no', '' if facts.get('agent_target_resolves') or not facts.get('node_reported') else ' (B04 target does not resolve here)'))
+        secrets = [facts['password'], node['ss_password'], node['vless_uuid'], sink['token']]
+
+        adb_run(adb, serial, 'install', '-r', '-t', str(ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'debug' / 'app-debug.apk'), timeout=300)
+        adb_run(adb, serial, 'install', '-r', '-t', str(test_apk), timeout=300)
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+        # The consent dialog cannot be automated; appops records exactly what the dialog grants.
+        adb_run(adb, serial, 'shell', 'appops', 'set', PACKAGE, 'ACTIVATE_VPN', 'allow')
+        adb_run(adb, serial, 'shell', 'pm', 'grant', PACKAGE, 'android.permission.POST_NOTIFICATIONS', check=False)
+        if vpn_up(adb, serial):
+            record('billing.clean_start', False, 'a VPN is already up in the emulator', status='BLOCKED')
+            return
+        adb_run(adb, serial, 'reverse', 'tcp:%d' % port, 'tcp:%d' % port)
+        adb_run(adb, serial, 'logcat', '-c', check=False)
+        config = {'sink': {'name': TARGET_NAME, 'port': sink['port'], 'token': sink['token']}, 'upload_mib': args.upload_mib, 'download_mib': args.download_mib,
+                  'background_bytes': 2 << 20}
+        for name, data in (('world.json', world_file.read_bytes()), ('config.json', json.dumps(config).encode())):
+            process = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s sh -c "mkdir -p files/billingtest && cat > files/billingtest/%s"' % (PACKAGE, name)],
+                                     input=data, capture_output=True, timeout=60)
+            if process.returncode != 0:
+                raise RuntimeError('writing %s into the app failed' % name)
+        started = time.time()
+        run = subprocess.run([str(adb), '-s', serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', BILLING_CLASS + '#acceptance', RUNNER],
+                             capture_output=True, text=True, timeout=args.max_seconds)
+        (emu.out_dir / 'instrument.txt').write_text(run.stdout + run.stderr)
+        report = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s cat files/billingtest/report.json' % PACKAGE], capture_output=True, text=True, timeout=60).stdout
+        try:
+            cases = json.loads(report)['cases']
+        except (ValueError, KeyError):
+            record('billing.report', False, 'no report from the device: ' + (run.stdout + run.stderr)[-1200:])
+            return
+        for case in cases:
+            record('billing.' + case['case_id'], case['status'] == 'PASS', case['observed'], status=case['status'])
+        record('billing.vpn_gone', not vpn_up(adb, serial), 'no VPN network left in the emulator after the run (%.0f s)' % (time.time() - started))
+        logcat = adb_run(adb, serial, 'logcat', '-d', check=False, timeout=120)
+        leaked = [i for i, secret in enumerate(secrets) if secret and secret in logcat]
+        record('billing.logcat_clean', not leaked, 'logcat (%d lines) holds no password, node secret or sink token' % logcat.count('\n')
+               if not leaked else 'logcat contains secret #%s' % leaked)
+        (emu.out_dir / 'billing-report.json').write_text(json.dumps({
+            'device': emu.facts, 'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'mihomo_patch', 'aar_sha256', 'tuntest_hooks')},
+            'upload_mib': args.upload_mib, 'download_mib': args.download_mib, 'cases': results}, indent=2) + '\n')
+    finally:
+        if port:
+            try:
+                urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:%d/__world/stop' % port, data=b'{}', method='POST'), timeout=10)
+            except OSError:
+                pass
+            adb_run(adb, serial, 'reverse', '--remove', 'tcp:%d' % port, check=False)
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE, check=False)
+        adb_run(adb, serial, 'shell', 'run-as %s rm -rf files/billingtest' % PACKAGE, check=False)
+        adb_run(adb, serial, 'shell', 'appops', 'set', PACKAGE, 'ACTIVATE_VPN', 'default', check=False)
+        if world:
+            try:
+                world.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                world.kill()
+            log = Path(scratch) / 'world.log'
+            if log.is_file():
+                # Synthetic accounts only; the world prints no password or node secret.
+                (emu.out_dir / 'world.log').write_text(log.read_text(errors='replace')[-200_000:])
+        for helper in helpers:
+            helper.terminate()
+            try:
+                helper.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                helper.kill()
+        if pg_data:
+            subprocess.run(['pg_ctl', '-D', str(pg_data), '-m', 'fast', '-w', 'stop'], stdout=subprocess.DEVNULL, check=False)
+        shutil.rmtree(scratch, ignore_errors=True)
+        emu.close(args.keep_emulator)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--suite', required=True)
@@ -897,6 +1052,9 @@ def main():
     parser.add_argument('--no-reality', action='store_true', help='tun suite: no REALITY inbound (T02-reality BLOCKED)')
     parser.add_argument('--skip-build', action='store_true', help='tun suite: use the hooks AAR and APKs already built')
     parser.add_argument('--max-seconds', type=int, default=1800, help='tun suite: upper bound for the instrumented run')
+    parser.add_argument('--upload-mib', type=int, default=20, help='billing suite: controlled upload per B01 rate (default 20, handoff B01)')
+    parser.add_argument('--download-mib', type=int, default=80, help='billing suite: controlled download per B01 rate (default 80)')
+    parser.add_argument('--no-node-agent', action='store_true', help='billing suite: no node-reported line (B04 BLOCKED)')
     parser.add_argument('--expect-blocked', help='comma-separated case ids the environment cannot run (e.g. CI: no IPv6 upstream, '
                                                   'no real node); they stay BLOCKED in the report, but only they may be BLOCKED for exit 0')
     args = parser.parse_args()
@@ -928,6 +1086,12 @@ def main():
             run_tun_suite(args)
         except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as error:
             record('tun.run', False, str(error)[-1800:])
+    elif args.suite == 'billing':
+        try:
+            run_billing_suite(args)
+        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as error:
+            detail = getattr(error, 'stderr', None) or getattr(error, 'output', None) or b''
+            record('billing.run', False, (str(error) + ' ' + (detail.decode(errors='replace') if isinstance(detail, bytes) else str(detail)))[-1800:])
     else:
         print('suite %r arrives in a later round (handoff_app_android.md 10)' % args.suite)
         return EXIT_BLOCKED

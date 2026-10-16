@@ -32,8 +32,9 @@ import kotlinx.coroutines.launch
  * version), snapshots of an older generation are late news, action_error is a failed action
  * with fresh state, stale_generation re-reads the state, one silent re-login after a
  * native_session_* expiry (never after a refused password), and a lost Core ends the session
- * (the user signs in online again). Android adds the VPN hand-off ([TunnelControl]) and a
- * throttled catalog refresh when the app comes to the foreground.
+ * (the user signs in online again). Android adds the VPN hand-off ([TunnelControl]), a
+ * throttled catalog refresh when the app comes to the foreground, and an alert
+ * ([SessionAlerts]) when the tunnel ends without the user asking.
  */
 class SessionController(
     private val client: CoreClient,
@@ -49,6 +50,7 @@ class SessionController(
     private val idleIntervalMillis: Long = 2_000,
     private val liveIntervalMillis: Long = 1_000,
     private val refreshThrottleMillis: Long = 10_000,
+    private val alerts: SessionAlerts = SessionAlerts.None,
 ) {
     private val mutable = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = mutable.asStateFlow()
@@ -59,6 +61,8 @@ class SessionController(
     private var operationVersion = 0L
     private var cancelRequested = false
     private var lastRefreshMillis: Long? = null
+    /** The Core reported this tunnel connected and nobody here has asked it to stop since. */
+    private var tunnelUp = false
 
     private fun accountFor(email: String) = CredentialAccount.key(target.apiBase, email)
 
@@ -200,6 +204,8 @@ class SessionController(
         if (current.phase != AppPhase.SignedIn || current.busy) return
         stopPolling()
         operationVersion++
+        tunnelUp = false
+        alerts.clear()
         val known = current.snapshot.user?.email.orEmpty()
         val key = accountFor(known.ifEmpty { current.email })
         set { it.copy(phase = AppPhase.SignedOut, busy = true) }
@@ -211,7 +217,7 @@ class SessionController(
         if (tunnel.running) tunnel.stop()
         tryDelete(key)
         runCatching { preferences.setRememberedEmail(null) }
-        set { it.copy(snapshot = after, busy = false, rememberPassword = false, message = null, connectedSinceMillis = null) }
+        set { it.copy(snapshot = after, busy = false, rememberPassword = false, message = null, connectedSinceMillis = null, connectionBaseline = null) }
     }
 
     // ---- actions -----------------------------------------------------------------------------
@@ -282,6 +288,7 @@ class SessionController(
         if (current.phase != AppPhase.SignedIn || current.busy || !current.connection.canConnect) return
         cancelRequested = false
         operationVersion++
+        alerts.clear()
         set { it.copy(busy = true, activity = SessionActivity.Connecting, message = null) }
         try {
             when (val outcome = tunnel.connect(current.snapshot.generation)) {
@@ -316,6 +323,8 @@ class SessionController(
     suspend fun disconnectNow() {
         if (current.phase != AppPhase.SignedIn || current.busy) return
         operationVersion++
+        // Asked for: the end of this tunnel is no news to alert about.
+        tunnelUp = false
         set { it.copy(busy = true, activity = SessionActivity.Disconnecting) }
         try {
             // Closing the data path also settles the last traffic batch (a few seconds on a slow network).
@@ -340,6 +349,7 @@ class SessionController(
     suspend fun cancelConnectNow() {
         if (!current.busy || current.phase != AppPhase.SignedIn || current.activity != SessionActivity.Connecting) return
         cancelRequested = true
+        tunnelUp = false
         stopPolling()
         try {
             core.stop()
@@ -390,8 +400,9 @@ class SessionController(
         stopPolling()
         polling = scope.launch {
             while (isActive) {
-                // Live rates are only worth a faster read while a tunnel carries traffic.
-                delay(if (current.snapshot.state == State.CONNECTED) liveIntervalMillis else idleIntervalMillis)
+                // Live rates, and the moment a tunnel stops (why, and the VPN service with it),
+                // are worth a faster read while a tunnel exists.
+                delay(if (current.snapshot.tunnelBusy) liveIntervalMillis else idleIntervalMillis)
                 pollNow()
             }
         }
@@ -423,13 +434,16 @@ class SessionController(
      */
     private fun coreLost() {
         stopPolling()
-        set { it.copy(phase = AppPhase.SignedOut, snapshot = CoreSnapshot.Empty, message = Notice.local(LocalCodes.CORE_LOST), connectedSinceMillis = null) }
+        if (tunnelUp) alerts.tunnelStopped(Notice.local(LocalCodes.CORE_LOST))
+        tunnelUp = false
+        set { it.copy(phase = AppPhase.SignedOut, snapshot = CoreSnapshot.Empty, message = Notice.local(LocalCodes.CORE_LOST), connectedSinceMillis = null, connectionBaseline = null) }
         if (tunnel.running) tunnel.stop()
     }
 
     private fun cancelledByUser() {
         stopPolling()
-        set { it.copy(phase = AppPhase.SignedOut, snapshot = CoreSnapshot.Empty, message = Notice.local(LocalCodes.CANCELLED), connectedSinceMillis = null) }
+        tunnelUp = false
+        set { it.copy(phase = AppPhase.SignedOut, snapshot = CoreSnapshot.Empty, message = Notice.local(LocalCodes.CANCELLED), connectedSinceMillis = null, connectionBaseline = null) }
         if (tunnel.running) tunnel.stop()
     }
 
@@ -437,12 +451,35 @@ class SessionController(
         val previous = current.snapshot
         // A snapshot from an older generation of the same session is late news, not state.
         if (current.phase == AppPhase.SignedIn && latest.state != State.SIGNED_OUT && latest.generation < previous.generation) return
+        val continuing = latest.state == State.CONNECTED && previous.state == State.CONNECTED
         val since = when {
             latest.state != State.CONNECTED -> null
-            previous.state == State.CONNECTED && current.connectedSinceMillis != null -> current.connectedSinceMillis
+            continuing && current.connectedSinceMillis != null -> current.connectedSinceMillis
             else -> clock()
         }
-        set { it.copy(snapshot = latest, connectedSinceMillis = since) }
+        val baseline = when {
+            latest.state != State.CONNECTED -> null
+            continuing && current.connectionBaseline != null -> current.connectionBaseline
+            else -> ConnectionUsage.baseline(previous, latest)
+        }
+        set { it.copy(snapshot = latest, connectedSinceMillis = since, connectionBaseline = baseline) }
+        if (latest.state == State.CONNECTED) {
+            tunnelUp = true
+        } else if (tunnelUp && !latest.tunnelBusy) {
+            // The Core ended the tunnel by itself (quota, plan, a changed or disabled line,
+            // lost lease) or the session ended: say why, even with no screen open.
+            tunnelUp = false
+            val error = latest.lastError?.takeIf { it.message.isNotEmpty() }
+            val verdict = latest.entitlement?.takeIf { !it.accountAuthorized && it.reasonMessage.isNotEmpty() }
+            alerts.tunnelStopped(
+                when {
+                    error != null -> Notice.core(error.code, error.message)
+                    verdict != null -> Notice.core(verdict.reason, verdict.reasonMessage)
+                    latest.state == State.SIGNED_OUT -> Notice.local(LocalCodes.SESSION_ENDED)
+                    else -> Notice.local(LocalCodes.TUNNEL_ENDED)
+                },
+            )
+        }
         // The Core ended the tunnel by itself (quota, plan, lease, a changed line): the VPN
         // interface is already gone with its descriptor; leave the foreground as well.
         if (current.activity == SessionActivity.None && !latest.tunnelBusy && tunnel.running) tunnel.stop()

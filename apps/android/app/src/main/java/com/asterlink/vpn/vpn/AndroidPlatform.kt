@@ -28,6 +28,12 @@ interface VpnHost {
 
     /** Establishes the interface for [spec]; the detached descriptor, or -1. */
     fun establish(spec: TunSpec): Int
+
+    /**
+     * Already disconnecting: it stays registered while the tail settles (that needs protected
+     * sockets) but is no longer a running VPN to stop again.
+     */
+    val isEnding: Boolean get() = false
 }
 
 class AndroidPlatform(

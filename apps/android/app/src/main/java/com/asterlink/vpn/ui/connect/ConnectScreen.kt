@@ -56,6 +56,7 @@ import com.asterlink.vpn.R
 import com.asterlink.vpn.core.CoreSnapshot
 import com.asterlink.vpn.core.MeteringView
 import com.asterlink.vpn.session.ConnectionStatus
+import com.asterlink.vpn.session.ConnectionUsage
 import com.asterlink.vpn.session.ConnectionView
 import com.asterlink.vpn.session.Formatting
 import com.asterlink.vpn.session.SessionState
@@ -157,8 +158,9 @@ fun ConnectScreen(
                 Spacer(Modifier.height(12.dp))
             }
             val metering = snapshot.metering
-            if (view.status == ConnectionStatus.Connected && metering != null) {
-                TrafficCard(metering)
+            val usage = state.usage
+            if (view.status == ConnectionStatus.Connected && metering != null && usage != null) {
+                TrafficCard(metering, usage)
                 Spacer(Modifier.height(12.dp))
             }
             PlanCard(snapshot, nowInstant, onOpenAccount)
@@ -316,7 +318,7 @@ private fun LineCard(snapshot: CoreSnapshot, onOpenLines: () -> Unit) {
 }
 
 @Composable
-private fun TrafficCard(metering: MeteringView) {
+private fun TrafficCard(metering: MeteringView, usage: ConnectionUsage) {
     AsterCard {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Rate(R.drawable.ic_arrow_up, stringResource(R.string.upload), Formatting.speed(metering.uploadBytesPerSecond), Modifier.weight(1f))
@@ -327,10 +329,9 @@ private fun TrafficCard(metering: MeteringView) {
             Sparkline(metering, Modifier.fillMaxWidth().height(48.dp))
         }
         Spacer(Modifier.height(12.dp))
-        val physical = metering.uploadBytes + metering.downloadBytes
-        val billed = Formatting.billedBytes(physical, metering.ratePermille)
+        // This connection only, at the one rate it is bound to; the plan card holds the balance.
         Text(
-            stringResource(R.string.traffic_session, Formatting.bytes(physical), Formatting.bytes(billed)),
+            stringResource(R.string.traffic_session, Formatting.bytes(usage.physicalBytes), Formatting.bytes(usage.billedBytes)),
             style = MaterialTheme.typography.bodySmall.merge(TabularNumbers),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

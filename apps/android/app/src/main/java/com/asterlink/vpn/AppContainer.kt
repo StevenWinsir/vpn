@@ -3,6 +3,8 @@ package com.asterlink.vpn
 import android.content.Context
 import android.net.ConnectivityManager
 import android.os.SystemClock
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.asterlink.core.mobile.Mobile
 import com.asterlink.vpn.core.CoreBridge
 import com.asterlink.vpn.core.CoreClient
@@ -14,10 +16,12 @@ import com.asterlink.vpn.security.credentialStore
 import com.asterlink.vpn.security.settingsStore
 import com.asterlink.vpn.session.CoreLifecycle
 import com.asterlink.vpn.session.SessionController
+import com.asterlink.vpn.session.SessionState
 import com.asterlink.vpn.vpn.AndroidPlatform
 import com.asterlink.vpn.vpn.AsterVpnService
 import com.asterlink.vpn.vpn.CoreTunnelSession
 import com.asterlink.vpn.vpn.HostNetwork
+import com.asterlink.vpn.vpn.NotificationAlerts
 import com.asterlink.vpn.vpn.NetworkMonitor
 import com.asterlink.vpn.vpn.TunnelLauncher
 import com.asterlink.vpn.vpn.TunnelSession
@@ -26,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
 /** Hand-written constructor injection (no DI framework; the app is small). */
@@ -46,7 +51,9 @@ class AppContainer(context: Context) {
     val tunnelLauncher: TunnelLauncher = TunnelLauncher(
         startService = { AsterVpnService.connect(app) },
         stopService = { runCatching { AsterVpnService.disconnect(app) } },
-        isRunning = { vpnHosts.current != null },
+        // A service that is already settling its disconnect is not asked to stop again: that
+        // second stop would also cancel a connect queued behind the teardown.
+        isRunning = { vpnHosts.current?.isEnding == false },
     )
 
     /** What AsterVpnService runs. The TUN acceptance test replaces it (debug builds only). */
@@ -71,7 +78,14 @@ class AppContainer(context: Context) {
         tunnel = tunnelLauncher,
         scope = MainScope(),
         clock = SystemClock::elapsedRealtime,
+        alerts = NotificationAlerts(app) { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
     )
+
+    /**
+     * The state the VPN notification and the Quick Settings tile follow. The billing acceptance
+     * test (debug builds only) points it at the controller it drives against its own backend.
+     */
+    @Volatile var sessionState: StateFlow<SessionState> = session.state
 
     init {
         networkMonitor.start()

@@ -108,13 +108,18 @@ type Manager struct {
 	local  *meter.Meter
 
 	// stopped, set only by tests before Login, observes the reason of every completed
-	// teardown. lastError is no record of it: the next successful renewal clears it.
+	// teardown.
 	stopped func(reason string)
 }
 
 type errorInfo struct {
 	Code    string
 	Message string
+	// stop marks the reason a running tunnel was ended by a guard (quota, plan, a changed
+	// or disabled line, lease, network). It is the answer to "why did my VPN stop", so a
+	// later successful renewal does not erase it; the user's next action (connect, select,
+	// sign-in) replaces it like any other result.
+	stop bool
 }
 
 func New(opts Options) *Manager {
@@ -399,7 +404,11 @@ func (m *Manager) keepAlive(ctx context.Context, gen uint64, client *apiclient.C
 					return
 				}
 				m.applySessionLocked(s, start)
-				m.lastError = nil
+				// A renewal answers for renewals: it clears its own earlier failure, never
+				// the reason a tunnel was stopped.
+				if m.lastError != nil && !m.lastError.stop {
+					m.lastError = nil
+				}
 				m.mu.Unlock()
 				backoff = m.opts.BackoffMin
 				break

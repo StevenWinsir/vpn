@@ -341,14 +341,14 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 	}
 	switch {
 	case reason != "":
-		m.lastError = &errorInfo{Code: reason, Message: apiclient.Message(reason)}
+		m.lastError = &errorInfo{Code: reason, Message: apiclient.Message(reason), stop: true}
 	case settleErr != nil && active:
 		code := meter.CodeUnconfirmed
 		var apiErr *apiclient.Error
 		if errors.As(settleErr, &apiErr) {
 			code = apiErr.Code
 		}
-		m.lastError = &errorInfo{Code: code, Message: apiclient.Message(code)}
+		m.lastError = &errorInfo{Code: code, Message: apiclient.Message(code), stop: true}
 	case active:
 		m.lastError = nil
 	}

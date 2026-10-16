@@ -528,7 +528,7 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 | 1 环境与骨架 | DONE（PR StevenWinsir/vpn#28 已合并） | 本机 API 36 arm64 模拟器 5/5 PASS；16 KB/API 29/API 26 镜像留到第 6 轮安装 |
 | 2 真实 TUN PoC | DONE（PR #29 已合并） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；每次连接的 NAT goroutine 泄漏已在下方独立维护轮修复；VLESS UDP/XUDP 协议缺口已在下方 NodeAgent 维护轮修复，真实节点/TUN 重新验收仍是后续门禁 |
 | 3 账号与 UI | DONE（本轮 PR，分支 worktree-android-round3-ui） | 本机 API 36 arm64：account 套件 20/20 PASS、ui 30 张截图、JVM 78、emulator 5/5；demo 服务器 + 用户真实账号的手工确认待用户执行（见第 3 轮记录） |
-| 4 连接与计量 | NOT_STARTED | 公网 sink 部署位置（节点可达的服务器）由用户确认 |
+| 4 连接与计量 | DONE（本轮 PR，分支 worktree-android-round4-billing） | 本机 API 36 arm64：billing 套件 32/32 PASS（20+80 MiB，1×/0.5× 逐单位精确、B02、A04×4、B04 本地 NodeAgent）；tun 26/2 BLOCKED 不回归；demo 服务器手工确认与 Quick Settings 磁贴待用户执行（见第 4 轮记录）；B04-live 无公网受管节点 |
 | 5 生命周期与可靠性 | NOT_STARTED | 无 |
 | 6 打磨与发布 | NOT_STARTED | 发布密钥库由用户生成并保管；真机/云真机抽检渠道 |
 
@@ -756,6 +756,62 @@ APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
   第 4 轮从 session/SessionController.connectNow、vpn/TunnelLauncher、ui/connect/ConnectScreen.TrafficCard 与
   VpnNotifications（速率、线路名）开始，按 B01/B02/B04 做计费验收；
   回退：撤销本 PR（Go Core、契约、桌面端无改动；后端只多一个默认跳过的测试）。
+```
+
+### 第 4 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 4 轮 / 2026-10-16 / Claude（worktree 分支 worktree-android-round4-billing）
+基线 commit / 已有未提交改动：f8bb445（PR #36 合并点）；无
+实际修改与契约变化（不含秘密）：
+  无契约 JSON 变化。
+  共享 Go Core（影响 macOS/Windows）：managed 中“守卫停隧道的原因”（quota_exhausted、subscription_expired、
+    profile_changed、client_config_unavailable、network_changed…）不再被 keep-alive 下一次成功的 /session 续期清空，
+    保留到用户下一次操作（连接/选线/登录）；续期仍清除它自己的瞬时失败。PR #35 当时只修了测试、保留了清空行为；
+    本轮实测 2 s 报告周期下 App 读到快照前原因已被清空（A04×3、N02 失败）。新增 TestTheStopReasonSurvivesLaterRenewals
+    （无修复时失败）、TestARenewalClearsItsOwnFailureOnly；原 TestWaitStoppedSurvivesTheKeepAliveClearingLastError 由前者替代。
+  Android：
+    ① AsterVpnService 在 Builder.establish() 前自行调用 VpnService.prepare()：实测 API 36 进程内首次 establish 在没有
+       Activity 先调用 prepare() 时返回 null → 生产 connect 全部 tunnel_failed（磁贴、进程重启后连接都会命中）。
+    ② 断开结算未完成时的“连接”排队在同一前台服务里、结算完立即执行（原为 vpn_stopping 拒绝）；正在结束的服务不再算
+       “运行中”，控制器不会重复发 stop 而取消排队的连接。
+    ③ 连接页“本次连接用量 · 计费”改为本次连接（客户端计数在整个登录内累计、可能跨不同倍率）：连接建立时记录基线
+       （client_reported=连接前计数；node_reported=0），按连接绑定的唯一倍率整数计费。
+    ④ 前台通知实时显示“线路名 · ↑速率 ↓速率”，只由服务发布/移除（先停跟随再移除，杜绝残留）。
+    ⑤ 隧道非用户主动结束且 App 不在前台时，独立通知渠道提示原因（Core 中文原因；兜底套餐裁决原因）。
+    ⑥ 可选 Quick Settings 磁贴（ConnectTileService，BIND_QUICK_SETTINGS_TILE）：已登录+已选线+已授权时一键连/断，否则打开 App。
+    ⑦ 控制器在隧道存在（含 stopping）时 1 s 轮询。
+  测试：backend TestAndroidBillingWorld（仅设置 ASTERLINK_ANDROID_BILLING_WORLD 时运行，只监听 127.0.0.1；线路指向
+    round-2 testnode；可选真实 NodeAgent+mTLS 节点计量线路；/__world/ 回环控制：改倍率/停用/到期/剩余额度/账本/sink
+    统计/“ACK 丢失”——由 world 在真实处理器提交后断开连接注入，App 内没有任何注入开关）；androidTest
+    BillingAcceptanceTest（@SuiteDriver，生产 debug APK，无 hooks AAR）；test-native-android.py --suite billing；
+    emulator 套件改用 notAnnotation=SuiteDriver 排除套件驱动；foundation 新增磁贴服务检查；CI android.yml 新增 billing 作业
+    （4+16 MiB）。docs/android-billing-acceptance.md（含 demo 服务器手工步骤）。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，公司 VPN 开启，模拟器 API 36 arm64 页 4096）：
+  --suite billing --allow-network-changes（20 MiB 上 + 80 MiB 下）：32 PASS / 0 FAIL / 0 BLOCKED
+    B01 1×：计 20,972,965+83,888,065 B → 104,861,030,000 units；0.5×：20,972,909+83,888,063 B → 52,430,486,000 units；
+      sink 精确，服务端账本 = Core 确认计数 = App 显示；B02 丢失 sequence 20 的应答后原批重发、只扣一次；
+    A04 改倍率 0.9 s / 停用 1.3 s / 到期 1.4 s 自动停连（原因 profile_changed / client_config_unavailable /
+      subscription_expired），整段按原倍率结清；额度耗尽在持续下载 18.7 s 后停连，超扣 1,053,992 B（client_reported
+      一个报告周期，如实记录）；A04-rebind 新倍率 2000‰；N01 通知“HK-IEPL-01 · ↑306 B/s ↓2.76 MiB/s”；N02 到期提醒；
+    C01 断开后立即连接 583 ms 成功；B04 真实 NodeAgent：0 次客户端上报，/traffic → 409 metering_source_mismatch 账本不动，
+      节点独立计费 10 MiB 正文 @500‰ = 5,244,902,500 units（+0.04%）。
+  回归：--suite foundation 20 PASS；unit 3 PASS（Go 169、JVM 86）；ui 2 PASS（30 张）；emulator 5 PASS；account 20 PASS；
+    tun --cycles 20：26 PASS / 2 BLOCKED（T04-ipv6、T02-real，同第 2 轮），T-CYCLES goroutine 10→10、fd 104→104；
+    native/core go test ./...（15 包）PASS；scripts/test-native.py（隔离 PostgreSQL + race）PASS；
+    test-native-macos.py --suite unit 8/8 PASS（Core 258、policy 5、nodeagent 77、Swift 46）。
+APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
+  0.1.0；Mihomo 70f0570405c3（生命周期补丁 d425c1a0…）；Debug APK 约 57 MiB（增量打包残留时文件更大）；
+  artifacts/native-android/{billing,tun,ui}/（billing-report.json、instrument.txt、world.log；不提交）
+未解决问题、复现方法与发布限制：
+  ① demo 服务器 + 用户真实账号的手工确认、Chrome 浏览/视频、Quick Settings 磁贴点击未自动化（步骤见
+     docs/android-billing-acceptance.md）；须断开公司 VPN 再测，否则测的是公司网络。
+  ② B04-live（公网受管 TLS 节点）不存在，BLOCKED；client_reported 仍是开发账本，不解除生产保护。
+  ③ 停用线路的停连原因为 client_config_unavailable（“线路配置暂不可用”），比 node_unavailable 笼统，属 Core/后端文案，未改。
+  ④ 共享 Core 的停连原因保留改动需 Windows CI 回归（本 PR checks）。
+下一位从哪个文件/验收项开始；回退方法：
+  第 5 轮从 managed 的 ResumePolicy（7.5 授权闸门）与 vpn/AsterVpnService 生命周期开始；
+  回退：撤销本 PR（桌面端唯一行为变化是停连原因保留到下一次操作）。
 ```
 
 ## 附录 A. 源码核验索引
