@@ -715,3 +715,9 @@ NodeAgent VLESS XUDP 兼容维护（Android 第 2 轮发现，PR #30 之后）
 - 修复：新 worktree 分支 `fix/nodeagent-vless-xudp` 增加节点 UDP mux 子集，保留 per-grant UUID、可信负载计数、epoch 额度、到期、Remove 存量踢除和逐目标私网检查；不改 Mihomo pin、上一轮生命周期补丁或 macOS Helper/TUN。
 - 证据：真实 pinned Mihomo UDP 先在旧 forwarder 上复现 17 B 首包 EOF，修复后往返、精确计数、撤销、到期、并发额度、私网拒绝通过；NodeAgent/Core 全模块 race 与真实 API＋临时 PostgreSQL＋NodeAgent grants 验收通过。`--udp-sink` 改用真实 XUDP，无 command-2 回退。
 - 部署与限制：必须更新 NodeAgent 才会修复已安装客户端；无需因此改 YAML、packet encoding 或数据库。没有重跑 macOS OS TUN / 公网 TLS 节点验收，也没有更新 DMG、部署服务或改变系统网络。参见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md) 与 [handoff_app_android.md](handoff_app_android.md) 的独立维护记录。
+
+NodeAgent 目标空闲超时隔离（PR #32 之后）
+- 独立分支 `fix/nodeagent-xudp-target-idle`：单个 UDP 目标不回包超时，只退休该目标的 socket/reader，不再关闭承载其他活跃目标的 XUDP carrier；释放目标槽位，后续 Keep 可重新连接。
+- 退休与发送串行化，只有尚未发包/计费的退休状态才允许重试；per-grant 计数、额度、到期、Remove 最终结算和私网检查不变。carrier 整体空闲及其他错误仍按原规则关闭。
+- 旧源码已在同/跨 session 和真实 pinned Mihomo 回归中复现 EOF；目标生命周期 race 50 轮、真实 integration race 20 轮通过。测试与边界见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)。
+- 只需重建部署 NodeAgent；不修改 macOS App/Helper、Mihomo、节点 YAML 或数据库，不重打 DMG，不把本机 loopback 当作真机 TUN 验收。

@@ -53,3 +53,39 @@ python3 scripts/test-native.py -run TestBilltest ./internal/api
 部署新 NodeAgent 是让已安装 native 客户端恢复 UDP 的关键；既有 macOS/Windows/Android 客户端已经默认发 XUDP，不需为本修复改变 pin、节点 YAML 或 packet encoding。使用新的 billtest 二进制重新运行 [Windows grants acceptance](windows-grants-acceptance.md) 的 `--udp-sink` 流程。
 
 自动测试证明实际 pinned 客户端到实际参考 forwarder 的 UDP 与节点强制边界；**不等于**真实公网 TLS 节点、Windows 10/11 或 Android/macOS OS TUN 的重新验收。历史 Android `artifacts/native-android/tun/tun-report.json` 不改写为本轮证据。没有部署服务、使用远端测试数据库、更改系统网络或停止已有 Android 模拟器。
+
+## 后续维护：目标空闲超时隔离（PR #32 之后）
+
+基于 PR #32 合并提交 `6a1083879468f5f7c17c66e4bf31f5aa8924beb6`，独立 worktree / 分支 `fix/nodeagent-xudp-target-idle`。本轮只修复参考 NodeAgent 的共享 carrier 生命周期；不修改 main、客户端、API、数据库、计费公式、Mihomo pin 或 PR #30 的补丁。
+
+### 根因与生命周期
+
+原实现的每个目标 UDP reader 都设置 `IdleTimeout`（默认 5 分钟）。任何 `Read` 错误均调用 `x.Close()`；因此一个不回包的目标超时，会关闭同一 carrier 的 TCP 流及其他仍活跃目标。这是可用性故障，不是计费绕过。
+
+现在仅将**目标读取超时**视为目标级退休：关闭该 UDP socket，结束 reader，从 carrier 的活跃 socket 集合删除并释放目标槽位。session 不结束，原始目标地址仍保留；后续带地址或省略地址的 Keep 可以经同一受保护 `openPeer` 路径重新连接。每次重新连接仍检查 grant 和 DNS 后私网地址。
+
+session 的地址映射仍由 parser 独占；reader 只发布原子停止标志和清理自身 socket，parser 在下一帧清除退休引用，避免长期连接累计失效目标。按 socket 实例删除，不会误删同地址的替代 socket。退休与上行数据报接纳/写入用每目标 mutex 串行化：只有尚未发送、尚未计费的 `errXUDPPeerStopped` 才能触发重连重试；实际写失败、额度拒绝或已成功发送的包不重试。Remove 仍关闭全部流、取消 DNS/dial 并等待 parser / 所有 reader 后返回最终计数。
+
+这不是关闭超时保护：carrier 自身的读取空闲超时不变；非超时 UDP 读取错误、共享 TCP 写入失败、坏帧、鉴权/额度拒绝仍按原有方式关闭 carrier。64 个 session / 合计 64 个活跃目标的限制不变。本轮不改变 UDP 本身可能丢包的语义，也不承诺保留已退休目标 socket 上的延迟回复。
+
+### 回归证据与复现
+
+新增 `native/nodeagent/forwarder/xudp_idle_test.go` 和 `native/core/integration/nodeagent_xudp_idle_test.go`：
+
+- 一个目标静默，另一个持续交换流量；覆盖同 session 和跨 session，必须保持原 carrier，而不是靠重连掩盖故障。
+- 超时释放 socket；Keep 省略地址可重开原目标并收到正确回复；载荷精确计数，Remove 后无残留 socket。
+- 同 session 两轮装满 64 个活跃目标，累计超过 64 个不同目的地；回收后能继续使用，End 后复用 session ID 正常。
+- 退休/发包竞争不重复发送、不重复接纳/计费；carrier 自身完全空闲仍会关闭。
+- 真实 pinned Mihomo 默认 XUDP：静默目标超时三倍期间，其他目的地持续往返，随后重开原目标；精确结算，撤销后的原连接和新连接都拒绝。
+
+先在未修复源码上运行目标隔离测试，同 session / 跨 session 均在约 300 ms 后收到 EOF。真实 Mihomo 测试也通过 Go overlay 加载 PR #32 原始 `xudp.go` 做负向对照，在活跃目标读到 EOF；overlay 没有替换工作区源码。修复后 NodeAgent/Core 全模块普通测试、race、vet 通过，Core `go vet -tags fakeengine ./...` 也通过；目标生命周期 race 重复 **50 轮**、真实 Mihomo integration 全套 race 重复 **20 轮**通过。
+
+```sh
+python3 scripts/prepare_mihomo.py
+(cd native/nodeagent && go test -count=1 ./... && go test -race -count=1 ./... && go vet ./...)
+(cd native/nodeagent && go test -race -count=50 -run 'TestXUDPIdleTarget|TestXUDPPeerRetirement|TestXUDPCarrierIdle' ./forwarder)
+(cd native/core && go test -count=1 ./... && go test -race -count=1 ./... && go vet ./... && go vet -tags fakeengine ./...)
+(cd native/core && go test -race -count=20 ./integration)
+```
+
+本轮日志和负向 overlay 在独立 worktree 的 `artifacts/xudp-idle/`（不提交）。现有 Linux/macOS 协议 CI、Windows CI 会执行新增测试，无需修改工作流。这里只使用本机 loopback，不连接项目测试数据库，也不重跑 API/PostgreSQL、OS TUN、公网 TLS 节点或安装包验收；此前相应证据仍是历史记录。本修复生效需要重建并部署 **NodeAgent**，无需重打客户端 DMG/EXE/APK，不新增环境变量。
