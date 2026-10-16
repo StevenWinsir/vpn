@@ -67,5 +67,24 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="vpn" />
         </service>
+
+        <!--
+          Optional Quick Settings tile: only the system UI may bind it. A tap connects or
+          disconnects when the app already could (signed in, line chosen, consent given);
+          otherwise it opens the app.
+        -->
+        <service
+            android:name=".vpn.ConnectTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_vpn_key"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

@@ -345,19 +345,35 @@ func TestAuthorizationLossStopsTheTunnel(t *testing.T) {
 // The CI flake behind this harness: the stop sets LastError, then the keep-alive's next
 // successful /session poll clears it. waitStopped must still prove the stop reason when
 // it only looks after that poll (deterministic here; a stalled runner on CI).
-func TestWaitStoppedSurvivesTheKeepAliveClearingLastError(t *testing.T) {
+func TestTheStopReasonSurvivesLaterRenewals(t *testing.T) {
 	h := newHarness(t, 1000)
 	h.connect(t)
 	h.f.mu.Lock()
 	h.f.session.CanConnect, h.f.session.Reason = false, "subscription_expired"
 	h.f.mu.Unlock()
-	waitFor(t, "the stop reason to be cleared by a later renewal", func() bool {
-		s := h.m.Snapshot()
-		return s.State == StateBlocked && s.LastError == nil && h.stoppedWith("subscription_expired")
-	})
-	if s := h.waitStopped(t, "subscription_expired"); s.Entitlement == nil || s.Entitlement.Reason != "subscription_expired" {
-		t.Fatalf("%+v", s.Entitlement)
+	h.waitStopped(t, "subscription_expired")
+	// Several keep-alive renewals later (1 s apart in the harness) the user can still read
+	// why the VPN stopped; a renewal only clears its own failures.
+	renewals := h.f.sessionHits.Load()
+	waitFor(t, "two more renewals", func() bool { return h.f.sessionHits.Load() >= renewals+2 })
+	if s := h.m.Snapshot(); s.LastError == nil || s.LastError.Code != "subscription_expired" || s.Entitlement == nil || s.Entitlement.Reason != "subscription_expired" {
+		t.Fatalf("the stop reason was lost: %+v %+v", s.LastError, s.Entitlement)
 	}
+}
+
+func TestARenewalClearsItsOwnFailureOnly(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.f.mu.Lock()
+	h.f.sessionErr = &apiError{503, "client_service_unavailable"}
+	h.f.mu.Unlock()
+	waitFor(t, "the renewal failure to show", func() bool {
+		s := h.m.Snapshot()
+		return s.LastError != nil && s.LastError.Code == "client_service_unavailable"
+	})
+	h.f.mu.Lock()
+	h.f.sessionErr = nil
+	h.f.mu.Unlock()
+	waitFor(t, "the next renewal to clear it", func() bool { return h.m.Snapshot().LastError == nil })
 }
 
 // T06: sleeping or changing the network closes the data path before anything else.

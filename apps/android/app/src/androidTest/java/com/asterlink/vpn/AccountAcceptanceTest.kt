@@ -50,6 +50,7 @@ import org.junit.runner.RunWith
  * connectedDebugAndroidTest is unaffected. Results go to files/accounttest/report.json, one
  * entry per case, with measured times. The VPN is not used (round 4 connects).
  */
+@SuiteDriver
 @RunWith(AndroidJUnit4::class)
 class AccountAcceptanceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -172,4 +172,49 @@ class PresentationTest {
         assertEquals("https://a.example/api/v1/client|user@example.com", CredentialAccount.key("https://a.example/api/v1/client/", " User@Example.com "))
         assertFalse(CredentialAccount.key("https://a.example/api/v1/client", "u@x.io") == CredentialAccount.key("https://b.example/api/v1/client", "u@x.io"))
     }
+
+    // ---- round 4 -------------------------------------------------------------------------------
+
+    @Test
+    fun theOngoingNotificationNamesTheLineAndTheRatesOnly() {
+        val connected = fixtures().getValue("connected_metering")
+        val state = SessionState(phase = AppPhase.SignedIn, snapshot = connected)
+        val notice = TunnelNotice.from(state)
+        assertTrue(notice.connected)
+        val text = notice.text!!
+        assertTrue(text, text.startsWith((connected.selectedNode?.name ?: "") ))
+        assertTrue(text, text.contains("↑" + Formatting.speed(connected.metering!!.uploadBytesPerSecond)))
+        assertTrue(text, text.contains("↓" + Formatting.speed(connected.metering!!.downloadBytesPerSecond)))
+        // Not connected (or signed out): the title alone, no text.
+        assertNull(TunnelNotice.from(state.copy(snapshot = connected.copy(state = CoreSnapshot.State.READY))).text)
+        assertNull(TunnelNotice.from(state.copy(phase = AppPhase.SignedOut)).text)
+        assertEquals("↑0 B/s ↓1.00 KiB/s", TunnelNotice(true, null, 0, 1024).text)
+    }
+
+    @Test
+    fun aNodeReportedConnectionCountsFromZeroAClientReportedOneFromBeforeTheConnect() {
+        val all = fixtures()
+        val client = all.getValue("connected_metering")
+        val before = client.copy(state = CoreSnapshot.State.READY, metering = client.metering!!.copy(uploadBytes = 10, downloadBytes = 20))
+        assertEquals(com.asterlink.vpn.core.MeterSample(10, 20), ConnectionUsage.baseline(before, client))
+        val node = all.getValue("connected_node_reported")
+        assertEquals(com.asterlink.vpn.core.MeterSample(0, 0), ConnectionUsage.baseline(before, node))
+        // A baseline above the counters (the Core restarted its meter) never shows negative usage.
+        val usage = ConnectionUsage.of(client, com.asterlink.vpn.core.MeterSample(Long.MAX_VALUE, Long.MAX_VALUE))!!
+        assertEquals(0L, usage.physicalBytes)
+        assertNull(ConnectionUsage.of(before, null))
+    }
+
+    @Test
+    fun theTileOnlyConnectsWhenTheConnectPageWould() {
+        val all = fixtures()
+        assertEquals(TileView(false, TileView.Action.OpenApp), TileView.from(SessionState(phase = AppPhase.SignedOut)))
+        val connected = SessionState(phase = AppPhase.SignedIn, snapshot = all.getValue("connected_metering"))
+        assertEquals(TileView(true, TileView.Action.Disconnect), TileView.from(connected))
+        val ready = SessionState(phase = AppPhase.SignedIn, snapshot = all.getValue("ready_with_selection"))
+        assertEquals(TileView.Action.Connect, TileView.from(ready).action)
+        assertEquals(TileView.Action.Busy, TileView.from(ready.copy(busy = true, activity = SessionActivity.Connecting)).action)
+        val noLine = ready.copy(snapshot = ready.snapshot.copy(selectedNodeId = ""))
+        assertEquals(TileView.Action.OpenApp, TileView.from(noLine).action)
+    }
 }

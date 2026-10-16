@@ -2,6 +2,7 @@ package com.asterlink.vpn.session
 
 import com.asterlink.vpn.core.CoreSnapshot
 import com.asterlink.vpn.core.HelloResult
+import com.asterlink.vpn.core.MeterSample
 import java.nio.charset.StandardCharsets
 
 enum class AppPhase {
@@ -50,6 +51,8 @@ object LocalCodes {
     const val SELECT_LINE = "select_line"
     const val NO_MATCH = "no_match"
     const val SYNCING = "syncing_lines"
+    /** The tunnel ended without the user asking and the Core gave no reason. */
+    const val TUNNEL_ENDED = "tunnel_ended"
 }
 
 /** Everything the screens render. Derived from the Core's snapshot; nothing here decides authorization. */
@@ -68,8 +71,50 @@ data class SessionState(
     val identity: HelloResult? = null,
     /** elapsedRealtime when the Core first reported this tunnel connected (display only). */
     val connectedSinceMillis: Long? = null,
+    /** The Core's metering counters when this tunnel came up: "this connection" starts here. */
+    val connectionBaseline: MeterSample? = null,
 ) {
     val connection: ConnectionView get() = ConnectionView.from(snapshot, busy, activity)
+
+    /** Usage of the current connection only (null unless connected). */
+    val usage: ConnectionUsage? get() = ConnectionUsage.of(snapshot, connectionBaseline)
+}
+
+/**
+ * Bytes carried by the current connection and what they cost. The Core's client-reported
+ * counters are cumulative for the whole sign-in (they span connections, possibly at different
+ * rates), so the connection's share is the difference to [SessionState.connectionBaseline];
+ * a connection binds exactly one rate (a changed rate ends it), so billed = physical x rate.
+ * Integers only, like the server's ledger (handoff 8).
+ */
+data class ConnectionUsage(val uploadBytes: Long, val downloadBytes: Long, val ratePermille: Long) {
+    val physicalBytes: Long get() = uploadBytes + downloadBytes
+    val billedBytes: Long get() = Formatting.billedBytes(physicalBytes, ratePermille)
+
+    companion object {
+        fun of(snapshot: CoreSnapshot, baseline: MeterSample?): ConnectionUsage? {
+            val metering = snapshot.metering ?: return null
+            if (snapshot.state != CoreSnapshot.State.CONNECTED) return null
+            val base = baseline ?: MeterSample()
+            return ConnectionUsage(
+                uploadBytes = (metering.uploadBytes - base.upload).coerceAtLeast(0),
+                downloadBytes = (metering.downloadBytes - base.download).coerceAtLeast(0),
+                ratePermille = metering.ratePermille,
+            )
+        }
+
+        /**
+         * Where a new connection's count starts. Client-reported counters continue from the
+         * last snapshot before the connect; a node-reported connection has its own local meter
+         * that starts at zero.
+         */
+        fun baseline(before: CoreSnapshot, connected: CoreSnapshot): MeterSample {
+            val now = connected.metering
+            if (now?.source == "node_reported") return MeterSample()
+            val prior = before.metering?.takeIf { it.source == now?.source } ?: now ?: return MeterSample()
+            return MeterSample(prior.uploadBytes, prior.downloadBytes)
+        }
+    }
 }
 
 object LoginInput {

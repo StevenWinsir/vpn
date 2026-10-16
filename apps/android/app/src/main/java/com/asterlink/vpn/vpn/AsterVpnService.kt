@@ -12,13 +12,19 @@ import com.asterlink.vpn.AppContainer
 import com.asterlink.vpn.AsterApp
 import com.asterlink.vpn.MainActivity
 import com.asterlink.vpn.session.LocalCodes
+import com.asterlink.vpn.session.TunnelNotice
 import com.asterlink.vpn.session.TunnelOutcome
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The system VPN (handoff_app_android.md 7.2, 7.4). It owns nothing but the two abilities only
@@ -32,6 +38,10 @@ import kotlinx.coroutines.Dispatchers
  * onDestroy all end in the same bounded disconnect. Always-on VPN is not supported in this
  * release (manifest SUPPORTS_ALWAYS_ON=false): a start without our action is refused, so the
  * system cannot bring up a tunnel without a signed-in user asking for it.
+ *
+ * The ongoing notification is this service's alone: once connected it follows the session
+ * state (line name, live rates), and that follower is stopped before the notification is
+ * removed, so no late update can bring it back after the VPN is gone.
  */
 class AsterVpnService : VpnService(), VpnHost {
     companion object {
@@ -54,7 +64,12 @@ class AsterVpnService : VpnService(), VpnHost {
     private lateinit var container: AppContainer
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var session: Job? = null
+    private var notifier: Job? = null
     @Volatile private var ending = false
+    // Main thread only: a connect that arrived while a disconnect was settling, and whether
+    // the system has already destroyed this instance.
+    private var connectAfterEnd = false
+    private var destroyed = false
 
     override fun onCreate() {
         super.onCreate()
@@ -76,11 +91,12 @@ class AsterVpnService : VpnService(), VpnHost {
 
     private fun begin() {
         // startForegroundService obliges startForeground even when the request is dropped.
-        goForeground(connected = false)
-        // A disconnect of this instance is still settling and will stop it: connect again
-        // once it is gone rather than racing the teardown (the app says so).
+        goForeground(TunnelNotice.Connecting)
+        // A disconnect of this instance is still settling (a few seconds on a slow network):
+        // the connect waits for it in this same foreground service and then runs, instead of
+        // being refused or racing the teardown (measured: Disconnect, then Connect at once).
         if (ending) {
-            container.tunnelLauncher.claim()?.complete(TunnelOutcome.Refused(LocalCodes.VPN_STOPPING))
+            connectAfterEnd = true
             return
         }
         container.vpnHosts.attach(this)
@@ -89,16 +105,24 @@ class AsterVpnService : VpnService(), VpnHost {
         session = scope.launch {
             val failure = tunnel.connect()
             if (failure == null) {
-                goForeground(connected = true)
-            } else if (!ending) {
-                end()
+                goForeground(TunnelNotice(connected = true, lineName = null, uploadBytesPerSecond = 0, downloadBytesPerSecond = 0))
+                followSession()
+            } else {
+                withContext(Dispatchers.Main) { if (!ending) end() }
             }
         }
     }
 
-    /** The one way out: close the data path (bounded), then leave the foreground and stop. */
+    /** The one way out: close the data path (bounded), then leave the foreground and stop. Main thread. */
     private fun end() {
-        if (ending) return
+        if (ending) {
+            // A second disconnect (the notification's) also cancels a connect queued behind the first.
+            if (connectAfterEnd) {
+                connectAfterEnd = false
+                container.tunnelLauncher.claim()?.complete(TunnelOutcome.Refused(LocalCodes.VPN_STOPPING))
+            }
+            return
+        }
         ending = true
         val tunnel = container.tunnelSession
         val hosts = container.vpnHosts
@@ -108,13 +132,29 @@ class AsterVpnService : VpnService(), VpnHost {
         container.appScope.launch {
             try {
                 session?.cancel()
+                notifier?.cancelAndJoin()
                 tunnel.disconnect()
             } finally {
                 hosts.detach(this@AsterVpnService)
-                ServiceCompat.stopForeground(this@AsterVpnService, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                withContext(Dispatchers.Main + NonCancellable) { ended() }
             }
         }
+    }
+
+    /** The teardown is complete: run the connect that waited for it, or leave. Main thread. */
+    private fun ended() {
+        ending = false
+        if (connectAfterEnd && !destroyed) {
+            connectAfterEnd = false
+            begin()
+            return
+        }
+        if (connectAfterEnd) {
+            connectAfterEnd = false
+            container.tunnelLauncher.claim()?.complete(TunnelOutcome.Refused(LocalCodes.VPN_STOPPING))
+        }
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onRevoke() {
@@ -124,16 +164,30 @@ class AsterVpnService : VpnService(), VpnHost {
     }
 
     override fun onDestroy() {
+        destroyed = true
         end()
         scope.cancel()
         super.onDestroy()
     }
 
-    private fun goForeground(connected: Boolean) {
-        val notification = VpnNotifications.build(this, connected)
+    /** Line name and live rates while the session says connected (about once a second). */
+    private fun followSession() {
+        if (notifier?.isActive == true) return
+        notifier = scope.launch {
+            container.sessionState
+                .map(TunnelNotice::from)
+                .distinctUntilChanged()
+                .collect { notice -> if (notice.connected && !ending) VpnNotifications.update(this@AsterVpnService, notice) }
+        }
+    }
+
+    private fun goForeground(notice: TunnelNotice) {
+        val notification = VpnNotifications.build(this, notice)
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, VpnNotifications.ID, notification, type)
     }
+
+    override val isEnding: Boolean get() = ending
 
     override fun protectSocket(fd: Int): Boolean = protect(fd)
 
@@ -156,6 +210,17 @@ class AsterVpnService : VpnService(), VpnHost {
         // Deliberately absent: allowBypass, setHttpProxy and addDisallowedApplication(self).
         // The Core's own unprotected traffic (Verify, the system resolver) must take the
         // tunnel like any app; its control plane and the node connection are protected.
+        // establish() answers null unless this app is the system's current VPN owner, which
+        // prepare() makes it, when consent was given. The activity calls prepare() before a
+        // connect, but nothing else does (the Quick Settings tile, a connect after the process
+        // was restarted); measured on API 36: without this the first establish of a process
+        // returned null. Consent withdrawn in Settings: prepare() returns an intent; refuse.
+        val consented = try {
+            prepare(this) == null
+        } catch (error: RuntimeException) {
+            false
+        }
+        if (!consented) return -1
         val descriptor = try {
             builder.establish()
         } catch (error: IllegalArgumentException) {

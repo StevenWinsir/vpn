@@ -46,7 +46,7 @@
     <string name="line_rate">Billed %1$s</string>
     <string name="metering_node">Metered by the node</string>
     <string name="metering_client">Internal test line</string>
-    <string name="traffic_session">This session %1$s · billed %2$s</string>
+    <string name="traffic_session">This connection %1$s · billed %2$s</string>
     <string name="traffic_pending">The latest batch awaits server confirmation</string>
     <string name="upload">Upload</string>
     <string name="download">Download</string>
@@ -121,6 +121,7 @@
     <string name="notice_select_line">Choose a line on the Lines tab first</string>
     <string name="notice_no_match">No line matches</string>
     <string name="notice_syncing">Syncing lines…</string>
+    <string name="notice_tunnel_ended">The connection ended</string>
     <string name="notice_no_plan_lines">Lines become available with a plan</string>
     <string name="notice_browser_missing">No app can open web pages</string>
 
@@ -130,4 +131,14 @@
     <string name="vpn_state_connecting">Connecting</string>
     <string name="vpn_state_connected">Connected</string>
     <string name="vpn_action_disconnect">Disconnect</string>
+
+    <string name="alert_channel_name">Connection ended</string>
+    <string name="alert_channel_description">Tells you when the VPN stopped by itself because the plan ended, the data ran out or the line changed</string>
+    <string name="alert_title">AsterLink · Disconnected</string>
+
+    <string name="tile_label">AsterLink</string>
+    <string name="tile_connected">Connected</string>
+    <string name="tile_connecting">Connecting</string>
+    <string name="tile_disconnected">Not connected</string>
+    <string name="tile_open_app">Open the app</string>
 </resources>

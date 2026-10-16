@@ -63,3 +63,20 @@ interface TunnelControl {
     /** Leaves the foreground and stops the service; it settles with the Core first. */
     fun stop()
 }
+
+/**
+ * Tells the user that the VPN ended without them asking (quota used up, plan ended, line
+ * disabled or re-rated, lease lost), even when no screen is open: the ongoing notification
+ * disappears with the tunnel, so silence would look like a working VPN.
+ */
+interface SessionAlerts {
+    fun tunnelStopped(reason: Notice)
+
+    /** A new connection (or sign-out) makes an earlier alert stale. */
+    fun clear()
+
+    object None : SessionAlerts {
+        override fun tunnelStopped(reason: Notice) = Unit
+        override fun clear() = Unit
+    }
+}

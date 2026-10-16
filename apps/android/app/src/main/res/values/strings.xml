@@ -51,7 +51,7 @@
     <string name="line_rate">计费 %1$s</string>
     <string name="metering_node">节点实测计量</string>
     <string name="metering_client">内部测试线路</string>
-    <string name="traffic_session">本次用量 %1$s · 计费 %2$s</string>
+    <string name="traffic_session">本次连接用量 %1$s · 计费 %2$s</string>
     <string name="traffic_pending">最近一批用量待服务器确认</string>
     <string name="upload">上传</string>
     <string name="download">下载</string>
@@ -129,6 +129,7 @@
     <string name="notice_select_line">请先在“线路”页选择一条线路</string>
     <string name="notice_no_match">没有符合条件的线路</string>
     <string name="notice_syncing">正在同步线路…</string>
+    <string name="notice_tunnel_ended">连接已断开</string>
     <string name="notice_no_plan_lines">购买套餐后可选择线路</string>
     <string name="notice_browser_missing">没有可打开网页的应用</string>
 
@@ -139,4 +140,16 @@
     <string name="vpn_state_connecting">正在连接</string>
     <string name="vpn_state_connected">已连接</string>
     <string name="vpn_action_disconnect">断开</string>
+
+    <!-- The tunnel ended without the user asking (quota, plan, line changed) -->
+    <string name="alert_channel_name">连接中断提醒</string>
+    <string name="alert_channel_description">VPN 因套餐到期、流量用完或线路变更而自动断开时提醒</string>
+    <string name="alert_title">AsterLink · 已断开</string>
+
+    <!-- Quick Settings tile -->
+    <string name="tile_label">AsterLink</string>
+    <string name="tile_connected">已连接</string>
+    <string name="tile_connecting">正在连接</string>
+    <string name="tile_disconnected">未连接</string>
+    <string name="tile_open_app">打开应用</string>
 </resources>

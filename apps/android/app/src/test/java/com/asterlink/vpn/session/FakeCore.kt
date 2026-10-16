@@ -76,8 +76,11 @@ class FakeCore : CoreTransport {
                     snapshot = snapshot.copy(state = State.READY, lastError = failure)
                     respond(request, encode(snapshot, failure))
                 } else {
+                    // Client-reported counters continue across connections (the whole sign-in).
+                    val counters = snapshot.metering ?: MeteringView(source = "client_reported")
+                    val rate = snapshot.selectedNode?.ratePermille ?: 1000
                     snapshot = snapshot.copy(state = State.CONNECTED, tunnelHealth = "up", lastError = null,
-                        metering = MeteringView(source = "client_reported", uploadBytesPerSecond = 2048, downloadBytesPerSecond = 1048576))
+                        metering = counters.copy(uploadBytesPerSecond = 2048, downloadBytesPerSecond = 1048576, ratePermille = rate))
                     respond(request, encode(snapshot, null))
                 }
             }
@@ -234,5 +237,18 @@ class FakeTunnel(private val client: () -> CoreClient) : TunnelControl {
     override fun stop() {
         stops++
         running = false
+    }
+}
+
+class FakeAlerts : SessionAlerts {
+    val stopped = mutableListOf<Notice>()
+    var clears = 0
+
+    override fun tunnelStopped(reason: Notice) {
+        stopped += reason
+    }
+
+    override fun clear() {
+        clears++
     }
 }
