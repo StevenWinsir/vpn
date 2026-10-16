@@ -111,7 +111,14 @@ def sdk_root() -> Path:
     raise Blocked('ANDROID_HOME is not set')
 
 
+BUILD_TOOLS = '36.0.0'  # apps/android/toolchain.lock.json release_round6; CI installs exactly this
+
+
 def build_tool(name: str) -> Path:
+    """apksigner/aapt2/zipalign from the locked build-tools; the newest installed one otherwise."""
+    pinned = sdk_root() / 'build-tools' / BUILD_TOOLS / name
+    if pinned.is_file():
+        return pinned
     found = sorted((sdk_root() / 'build-tools').glob('*/' + name), key=lambda p: [int(x) for x in re.findall(r'\d+', p.parent.name)])
     if not found:
         raise Blocked('%s not found in the SDK build-tools' % name)
@@ -223,11 +230,15 @@ def verify_signature(apk: Path) -> dict:
     """apksigner's own verdict: schemes and the signer certificate."""
     out = capture([build_tool('apksigner'), 'verify', '--verbose', '--print-certs', apk])
     schemes = {s: re.search(r'Verified using %s scheme.*?: (true|false)' % s, out) for s in ('v1', 'v2', 'v3')}
-    cert = re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-f]{64})', out)
-    subject = re.search(r'Signer #1 certificate DN: (.+)', out)
+    # apksigner names signers "Signer #1" or, in newer build-tools with v3, "Signer (minSdkVersion=…)";
+    # one key may be listed once per scheme block, so signers are counted by distinct certificate.
+    digests = sorted(set(re.findall(r'^Signer[^\n]*? certificate SHA-256 digest: ([0-9a-f]{64})', out, re.M)))
+    subjects = re.findall(r'^Signer[^\n]*? certificate DN: (.+)$', out, re.M)
+    cert = digests[0] if len(digests) == 1 else None
+    subject = subjects[0].strip() if subjects else None
     return {'v1': bool(schemes['v1'] and schemes['v1'].group(1) == 'true'), 'v2': bool(schemes['v2'] and schemes['v2'].group(1) == 'true'),
-            'v3': bool(schemes['v3'] and schemes['v3'].group(1) == 'true'), 'certificate_sha256': cert.group(1) if cert else None,
-            'certificate_subject': subject.group(1).strip() if subject else None, 'signers': len(re.findall(r'^Signer #\d+ certificate DN', out, re.M))}
+            'v3': bool(schemes['v3'] and schemes['v3'].group(1) == 'true'), 'certificate_sha256': cert,
+            'certificate_subject': subject, 'signers': len(digests)}
 
 
 def badging(apk: Path) -> dict:
