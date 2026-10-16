@@ -352,6 +352,9 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 	case active:
 		m.lastError = nil
 	}
+	if m.stopped != nil && reason != "" {
+		m.stopped(reason)
+	}
 	return settleErr
 }
 

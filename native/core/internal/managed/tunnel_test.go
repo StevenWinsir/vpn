@@ -3,6 +3,8 @@ package managed
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,6 +41,26 @@ type harness struct {
 	m      *Manager
 	clock  *shiftClock
 	sig    atomic.Value
+
+	stopsMu sync.Mutex
+	stops   []string
+}
+
+// observeStops records every stop reason as it happens. Snapshot().LastError alone is
+// a race: the keep-alive's next successful /session poll clears it about a report
+// interval (1 s here) after the stop, so a stalled CI runner could miss it entirely.
+func (h *harness) observeStops() {
+	h.m.stopped = func(reason string) {
+		h.stopsMu.Lock()
+		defer h.stopsMu.Unlock()
+		h.stops = append(h.stops, reason)
+	}
+}
+
+func (h *harness) stoppedWith(reason string) bool {
+	h.stopsMu.Lock()
+	defer h.stopsMu.Unlock()
+	return slices.Contains(h.stops, reason)
 }
 
 func newHarness(t *testing.T, rate int64) *harness {
@@ -56,6 +78,7 @@ func newHarness(t *testing.T, rate int64) *harness {
 		BackoffMin: 5 * time.Millisecond, BackoffMax: 20 * time.Millisecond,
 		MonitorInterval: 10 * time.Millisecond, SettleTimeout: 2 * time.Second,
 	})
+	h.observeStops()
 	t.Cleanup(func() { h.m.Shutdown(context.Background()) })
 	if _, err := h.m.Login(t.Context(), f.params(f.password)); err != nil {
 		t.Fatal(err)
@@ -83,11 +106,15 @@ func (h *harness) ledger() (units, up, down, seq int64) {
 
 func (h *harness) waitStopped(t *testing.T, reason string) Snapshot {
 	t.Helper()
+	var s Snapshot
 	waitFor(t, "tunnel to stop with "+reason, func() bool {
-		s := h.m.Snapshot()
-		return s.State != StateConnected && s.State != StateStopping && s.LastError != nil && s.LastError.Code == reason
+		s = h.m.Snapshot()
+		if s.State == StateConnected || s.State == StateStopping {
+			return false
+		}
+		return (s.LastError != nil && s.LastError.Code == reason) || h.stoppedWith(reason)
 	})
-	return h.m.Snapshot()
+	return s
 }
 
 // B01 through the whole state machine: identical bytes at 1x and 0.5x charge exactly
@@ -312,6 +339,24 @@ func TestAuthorizationLossStopsTheTunnel(t *testing.T) {
 				t.Fatal("connect allowed after the node left the plan")
 			}
 		})
+	}
+}
+
+// The CI flake behind this harness: the stop sets LastError, then the keep-alive's next
+// successful /session poll clears it. waitStopped must still prove the stop reason when
+// it only looks after that poll (deterministic here; a stalled runner on CI).
+func TestWaitStoppedSurvivesTheKeepAliveClearingLastError(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	h.f.mu.Lock()
+	h.f.session.CanConnect, h.f.session.Reason = false, "subscription_expired"
+	h.f.mu.Unlock()
+	waitFor(t, "the stop reason to be cleared by a later renewal", func() bool {
+		s := h.m.Snapshot()
+		return s.State == StateBlocked && s.LastError == nil && h.stoppedWith("subscription_expired")
+	})
+	if s := h.waitStopped(t, "subscription_expired"); s.Entitlement == nil || s.Entitlement.Reason != "subscription_expired" {
+		t.Fatalf("%+v", s.Entitlement)
 	}
 }
 
