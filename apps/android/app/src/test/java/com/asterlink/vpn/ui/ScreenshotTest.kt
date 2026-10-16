@@ -6,6 +6,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.asterlink.vpn.core.CoreProtocol
 import com.asterlink.vpn.core.CoreSnapshot
 import com.asterlink.vpn.core.GateView
@@ -23,6 +25,7 @@ import com.asterlink.vpn.ui.navigation.Clock
 import com.asterlink.vpn.ui.navigation.Tab
 import com.asterlink.vpn.ui.theme.AsterTheme
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.github.takahirom.roborazzi.captureScreenRoboImage
 import java.io.File
 import java.time.Instant
 import java.util.TimeZone
@@ -318,6 +321,34 @@ class ScreenshotTest {
     ) {
         compose.onNodeWithText("设为“不限制”", substring = true).assertExists()
         compose.onNodeWithText("通知栏不会显示状态", substring = true).assertExists()
+    }
+
+    // ---- round 6 -------------------------------------------------------------------------------
+
+    @Test
+    fun updateRequired() = shoot(
+        "35-connect-update-required",
+        signedIn(ready().copy(lastError = ErrorView("client_upgrade_required", "应用版本过低，请升级后再连接"))),
+    ) {
+        compose.onNodeWithText("下载新版本").assertIsEnabled()
+        compose.onNodeWithText("应用版本过低", substring = true).assertExists()
+    }
+
+    @Test
+    fun accountLicences() {
+        // The dialog is a second window: drive it with the real clock and capture the whole screen.
+        val state = signedIn(ready().copy(user = ready().user!!.copy(email = "vip@example.com", name = "Vip")))
+        compose.setContent {
+            AsterTheme(darkTheme = false) {
+                AsterRoot(state, facts, ThemeMode.System, AppActions(), clock, initialTab = Tab.Account, device = DeviceStatus())
+            }
+        }
+        compose.onNodeWithText("开源许可与源代码").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("GNU GPL v3", substring = true).assertExists()
+        compose.onNodeWithText("打开下载页").assertExists()
+        out.mkdirs()
+        captureScreenRoboImage(File(out, "36-account-licenses.png").path)
     }
 
     private fun connectedSnapshot(): CoreSnapshot {

@@ -69,6 +69,7 @@ import com.asterlink.vpn.ui.components.LineTypeLabel
 import com.asterlink.vpn.ui.components.NoticeBanner
 import com.asterlink.vpn.ui.components.Pill
 import com.asterlink.vpn.ui.components.RegionBadge
+import com.asterlink.vpn.ui.components.PrimaryButton
 import com.asterlink.vpn.ui.components.SecondaryButton
 import com.asterlink.vpn.ui.components.noticeText
 import com.asterlink.vpn.ui.theme.Dimens
@@ -141,6 +142,17 @@ fun ConnectScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
+                )
+            }
+            if (view.needsUpdate || state.message?.code == ConnectionView.UPDATE_REQUIRED) {
+                Spacer(Modifier.height(16.dp))
+                PrimaryButton(stringResource(R.string.action_download_update), { actions.openWebsite(WebPage.Download) }, Modifier.widthIn(max = 320.dp))
+                Text(
+                    stringResource(R.string.update_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
             if (view.needsPurchase) {

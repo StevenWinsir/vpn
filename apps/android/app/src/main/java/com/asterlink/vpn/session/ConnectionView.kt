@@ -36,10 +36,15 @@ data class ConnectionView(
     val failure: Notice?,
     /** The account has no usable plan: offer the website's plans page. */
     val needsPurchase: Boolean,
+    /** The server refuses this app version (client_upgrade_required): offer the website's download page. */
+    val needsUpdate: Boolean = false,
 ) {
     companion object {
         /** Entitlement reasons the website fixes (buy, renew, top up). */
         private val PURCHASE_REASONS = setOf("upgrade_required", "paid_vip_required", "subscription_expired", "quota_exhausted")
+
+        /** The server's answer when this app version is below its CLIENT_MIN_APP_VERSION. */
+        const val UPDATE_REQUIRED = "client_upgrade_required"
 
         fun from(snapshot: CoreSnapshot, busy: Boolean, activity: SessionActivity): ConnectionView {
             val entitlement = snapshot.entitlement
@@ -89,6 +94,7 @@ data class ConnectionView(
                 blocker = blocker,
                 failure = failure,
                 needsPurchase = needsPurchase,
+                needsUpdate = failure?.code == UPDATE_REQUIRED || blocker?.code == UPDATE_REQUIRED,
             )
         }
 

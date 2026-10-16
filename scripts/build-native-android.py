@@ -13,7 +13,16 @@ The versions come from apps/android/toolchain.lock.json; a different Go, NDK or 
 FAIL, never a silent substitute. gomobile/gobind are built from the version native/core/go.mod
 pins (its `tool` block) into .runtime/android/bin. Public build parameters come from
 apps/android/.env (or .env.example for Debug), parsed by the Gradle build itself.
-Release packaging (signing, ABI splits, R8) is round 6 and refused here.
+
+  --configuration Release (with --target apk)
+                 builds the R8-minified release APKs, one per --abi (Gradle ABI splits), UNSIGNED:
+                 scripts/package-native-android.py signs them with apksigner; the release key never
+                 reaches Gradle. Needs apps/android/.env (the public sample is refused) unless
+                 --env-file names another env-v1 file (the release rehearsal of
+                 scripts/test-native-android.py --suite release only). Every packaged .so must be
+                 stored uncompressed, ELF for its ABI and 16 KB aligned; a hooks AAR is refused.
+                 Writes artifacts/native-android/release-build-report.json and the resolved Maven
+                 dependencies (app/build/outputs/release-dependencies.json).
 
   --tun-test-hooks  binds the debug-only TUN acceptance hooks (-tags asterlink_tuntest) and also
                     builds the test APK with -Pasterlink.tunTest=true. core-build.json records
@@ -239,7 +248,8 @@ def build_apk(args) -> dict:
     patch = prepare_mihomo.prepare()
     record_file = OUT / 'core-build.json'
     old = json.loads(record_file.read_text()) if record_file.is_file() else {}
-    stale = old.get('tuntest_hooks', False) != args.tun_test_hooks or old.get('mihomo_patch') != patch
+    # A different version (e.g. left by the release rehearsal) or binding is rebuilt, never reused.
+    stale = old.get('tuntest_hooks', False) != args.tun_test_hooks or old.get('mihomo_patch') != patch or old.get('app_version') != args.app_version
     if args.rebuild_core or stale or not record_file.is_file() or not (OUT / 'asterlink-core.aar').is_file():
         build_aar(args)
     record = json.loads(record_file.read_text())
@@ -269,6 +279,71 @@ def build_apk(args) -> dict:
     return report
 
 
+def release_apk_path(abi: str) -> Path:
+    return ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'release' / ('app-%s-release-unsigned.apk' % abi)
+
+
+def check_packaged_libraries(apk: Path, abi: str) -> dict:
+    """Every native library of one ABI split: only that ABI, stored, ELF for the ABI, 16 KB aligned."""
+    libraries = {}
+    with zipfile.ZipFile(apk) as archive, tempfile.TemporaryDirectory() as scratch:
+        for info in archive.infolist():
+            if not info.filename.startswith('lib/'):
+                continue
+            parts = info.filename.split('/')
+            if len(parts) != 3 or parts[1] != abi or not parts[2].endswith('.so'):
+                raise RuntimeError('%s packages %s (only lib/%s/*.so belongs in this split)' % (apk.name, info.filename, abi))
+            if info.compress_type != zipfile.ZIP_STORED:
+                raise RuntimeError('%s: %s is compressed; native libraries must be stored' % (apk.name, info.filename))
+            libraries[parts[2]] = check_so(Path(archive.extract(info, scratch)), abi)
+    if 'libgojni.so' not in libraries:
+        raise RuntimeError('%s has no lib/%s/libgojni.so' % (apk.name, abi))
+    return libraries
+
+
+def build_release(args) -> dict:
+    """Unsigned, R8-minified release APKs, one per ABI."""
+    patch = prepare_mihomo.prepare()
+    record_file = OUT / 'core-build.json'
+    old = json.loads(record_file.read_text()) if record_file.is_file() else {}
+    stale = (old.get('tuntest_hooks', False) or old.get('mihomo_patch') != patch or old.get('app_version') != args.app_version
+             or sorted(old.get('abis', {})) != sorted(args.abi))
+    if args.tun_test_hooks:
+        raise RuntimeError('a release APK never carries the TUN acceptance hooks')
+    if args.rebuild_core or stale or not (OUT / 'asterlink-core.aar').is_file():
+        build_aar(args)
+    record = json.loads(record_file.read_text())
+    env = java_env()
+    tasks = [':app:assembleRelease', ':app:writeReleaseDependencies', '-Pasterlink.abiSplits=' + ','.join(args.abi)]
+    if args.env_file:
+        tasks.append('-Pasterlink.envFile=' + str(Path(args.env_file).resolve()))
+    elif not (ANDROID / '.env').is_file():
+        raise Blocked('apps/android/.env is missing (copy .env.example, set APP_ENV=release and the production URLs)')
+    shutil.rmtree(ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'release', ignore_errors=True)
+    gradle(tasks, args.app_version, env)
+    zipalign = sorted((sdk_root() / 'build-tools').glob('*/zipalign'))
+    if not zipalign:
+        raise Blocked('zipalign not found in the SDK build-tools')
+    apks = {}
+    for abi in args.abi:
+        apk = release_apk_path(abi)
+        if not apk.is_file():
+            raise RuntimeError('Gradle did not write %s' % apk)
+        run([zipalign[-1], '-c', '-P', '16', '4', apk])
+        libraries = check_packaged_libraries(apk, abi)
+        if libraries['libgojni.so']['sha256'] != record['abis'][abi]['sha256']:
+            raise RuntimeError('%s carries a libgojni.so that is not the one in core-build.json' % apk.name)
+        apks[abi] = {'apk': str(apk.relative_to(ROOT)), 'bytes': apk.stat().st_size, 'sha256': sha256(apk), 'libraries': libraries}
+        print('release APK %-12s %6.1f MiB (unsigned, R8)  %s' % (abi, apk.stat().st_size / 2 ** 20, apk.name))
+    report = {'configuration': 'Release', 'app_version': args.app_version, 'env_file': args.env_file and Path(args.env_file).name,
+              'apks': apks, 'core': record, 'zipalign_16k': True, 'so_stored_uncompressed': True,
+              'mapping': str((ANDROID / 'app' / 'build' / 'outputs' / 'mapping' / 'release' / 'mapping.txt').relative_to(ROOT))}
+    reports = ROOT / 'artifacts' / 'native-android'
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / 'release-build-report.json').write_text(json.dumps(report, indent=2) + '\n')
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--target', choices=('aar', 'apk'), required=True)
@@ -279,6 +354,7 @@ def main():
     parser.add_argument('--check-reproducible', action='store_true', help='aar: bind twice and require identical libgojni.so')
     parser.add_argument('--tun-test-hooks', action='store_true',
                         help='aar/apk: bind the debug-only TUN acceptance hooks (scripts/test-native-android.py --suite tun only)')
+    parser.add_argument('--env-file', help='Release: read this env-v1 file instead of apps/android/.env (release rehearsal only)')
     args = parser.parse_args()
     args.abi = sorted(set(args.abi or ['arm64-v8a']))
     if args.app_version is None:
@@ -286,11 +362,15 @@ def main():
         args.app_version = re.search(r'^asterlink\.appVersion=(\S+)$', props, re.M).group(1)
     if not re.fullmatch(r'\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?', args.app_version):
         raise SystemExit('Invalid --app-version')
-    if args.configuration == 'Release':
-        print('BLOCKED: Release packaging (signing, R8, ABI splits) is round 6')
-        return EXIT_BLOCKED
+    if args.configuration == 'Release' and args.target != 'apk':
+        raise SystemExit('--configuration Release builds the APKs (--target apk)')
     try:
-        build_aar(args) if args.target == 'aar' else build_apk(args)
+        if args.target == 'aar':
+            build_aar(args)
+        elif args.configuration == 'Release':
+            build_release(args)
+        else:
+            build_apk(args)
     except Blocked as reason:
         print('BLOCKED: %s' % reason)
         return EXIT_BLOCKED

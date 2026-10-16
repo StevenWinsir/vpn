@@ -77,6 +77,12 @@
     <string name="switch_line_body">切换线路会先断开当前连接并结算本次流量，切换后需要重新连接。</string>
     <string name="switch_line_confirm">断开并切换</string>
     <string name="dialog_cancel">取消</string>
+    <string name="dialog_close">关闭</string>
+    <string name="action_download_update">下载新版本</string>
+    <string name="update_hint">在官网下载页安装新版 APK，覆盖安装会保留登录信息与设置</string>
+    <string name="about_licenses">开源许可与源代码</string>
+    <string name="about_licenses_body">AsterLink 内置 Mihomo 代理内核（GNU GPL v3）以及 AndroidX、Kotlin 等开源组件（Apache 2.0 等许可）。各组件的完整许可文本、依赖清单和对应源代码与每个版本的安装包一起在官网下载页提供。</string>
+    <string name="about_licenses_open">打开下载页</string>
 
     <!-- Account page -->
     <string name="account_title">我的</string>

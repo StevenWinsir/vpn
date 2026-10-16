@@ -2,6 +2,7 @@ package com.asterlink.vpn.session
 
 import com.asterlink.vpn.core.CoreProtocol
 import com.asterlink.vpn.core.CoreSnapshot
+import com.asterlink.vpn.core.ErrorView
 import com.asterlink.vpn.core.GateRecord
 import com.asterlink.vpn.core.GateView
 import com.asterlink.vpn.core.SnapshotReply
@@ -76,6 +77,19 @@ class PresentationTest {
             v2.getValue("errors").jsonObject.keys
         assertTrue("upgrade_required" in known)
         assertTrue("quota_exhausted" in known)
+    }
+
+    @Test
+    fun aServerVersionRefusalOffersTheDownloadPage() {
+        // client_upgrade_required is a real server code (426, native-v2.json), and only it offers "download".
+        val v2 = Json.parseToJsonElement(contracts.resolve("native-v2.json").readText()).jsonObject
+        assertTrue(ConnectionView.UPDATE_REQUIRED in v2.getValue("errors").jsonObject.keys)
+        val ready = fixtures().getValue("ready_with_selection")
+        val refused = ConnectionView.from(ready.copy(lastError = ErrorView(ConnectionView.UPDATE_REQUIRED, "应用版本过低，请升级后再连接")), false, SessionActivity.None)
+        assertTrue(refused.needsUpdate)
+        assertEquals(ConnectionView.UPDATE_REQUIRED, refused.failure?.code)
+        assertFalse(ConnectionView.from(ready.copy(lastError = ErrorView("tunnel_unhealthy", "x")), false, SessionActivity.None).needsUpdate)
+        assertFalse(ConnectionView.from(ready, false, SessionActivity.None).needsUpdate)
     }
 
     @Test

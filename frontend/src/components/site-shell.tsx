@@ -18,6 +18,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   IconArrowUpRight,
+  IconDownload,
   IconLayoutDashboard,
   IconLogout,
   IconReceipt,
@@ -34,6 +35,7 @@ const links = [
   { href: '/nodes', label: '节点列表', icon: IconServer2 },
   { href: '/plans', label: '套餐与订阅', icon: IconStack2 },
   { href: '/orders', label: '订单记录', icon: IconReceipt },
+  { href: '/download', label: '下载客户端', icon: IconDownload },
 ];
 export function Logo() {
   return (
@@ -56,7 +58,8 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const [leaving, setLeaving] = useState(false);
   const authPage = path === '/login' || path === '/register';
   const workspace =
-    ['/dashboard', '/nodes', '/plans', '/orders'].includes(path) || path.startsWith('/admin/');
+    ['/dashboard', '/nodes', '/plans', '/orders', '/download'].includes(path) ||
+    path.startsWith('/admin/');
   const navigation =
     user?.role === 'admin'
       ? [...links, { href: '/admin/nodes', label: '节点管理', icon: IconShieldLock }]
@@ -97,9 +100,14 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
           </Group>
           <Group gap="lg">
             {!workspace ? (
-              <Link className="quiet-link desktop-only" href="/plans">
-                浏览套餐
-              </Link>
+              <>
+                <Link className="quiet-link desktop-only" href="/download">
+                  下载客户端
+                </Link>
+                <Link className="quiet-link desktop-only" href="/plans">
+                  浏览套餐
+                </Link>
+              </>
             ) : null}
             {user ? (
               <Menu shadow="md" width={220}>
