@@ -141,4 +141,14 @@
     <string name="tile_connecting">Connecting</string>
     <string name="tile_disconnected">Not connected</string>
     <string name="tile_open_app">Open the app</string>
+    <string name="status_reconfirming">Re-verifying</string>
+    <string name="status_waiting_network">Waiting for network</string>
+    <string name="status_detail_reconfirming">The device woke up or the network changed; confirming your authorization online. Nothing is forwarded until then</string>
+    <string name="status_detail_waiting_network">The server cannot be reached yet. The tunnel is kept but forwards nothing, and continues when the network is back</string>
+    <string name="notice_vpn_revoked">The VPN was turned off by system settings or another VPN app; this session\'s traffic is settled</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notifications_on">Allowed: connection status, live rates and why a connection ended</string>
+    <string name="settings_notifications_off">Off: the VPN still works, but status and disconnect reasons are not shown</string>
+    <string name="settings_battery_unrestricted">Background use allowed</string>
+    <string name="settings_battery_restricted">The system may restrict this app while the screen is off, which slows recovery or disconnects; set it to “Unrestricted” here</string>
 </resources>

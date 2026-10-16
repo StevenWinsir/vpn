@@ -87,6 +87,13 @@ class AppContainer(context: Context) {
      */
     @Volatile var sessionState: StateFlow<SessionState> = session.state
 
+    /**
+     * Who is told that the system revoked the VPN. Called on the main thread by onRevoke, before
+     * the service starts its disconnect, so no snapshot of that disconnect can be read as an
+     * unexplained end first. The lifecycle acceptance test (debug) redirects it.
+     */
+    @Volatile var onVpnRevoked: () -> Unit = { session.vpnRevokedNow() }
+
     init {
         networkMonitor.start()
     }

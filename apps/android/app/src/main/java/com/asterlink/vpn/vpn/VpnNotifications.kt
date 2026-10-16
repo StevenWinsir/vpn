@@ -72,7 +72,14 @@ object VpnNotifications {
             Intent(context, AsterVpnService::class.java).setAction(AsterVpnService.ACTION_DISCONNECT),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val title = context.getString(if (notice.connected) R.string.vpn_state_connected else R.string.vpn_state_connecting)
+        val title = context.getString(
+            when {
+                !notice.connected -> R.string.vpn_state_connecting
+                notice.gate == TunnelNotice.GateState.Reconfirming -> R.string.status_reconfirming
+                notice.gate == TunnelNotice.GateState.WaitingNetwork -> R.string.status_waiting_network
+                else -> R.string.vpn_state_connected
+            },
+        )
         return NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_vpn_key)
             .setContentTitle(context.getString(R.string.vpn_notification_title, title))

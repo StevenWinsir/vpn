@@ -78,6 +78,31 @@ data class MeteringView(
 @Serializable
 data class ErrorView(val code: String = "", val message: String = "")
 
+/**
+ * A closed authorization gate (handoff_app_android.md 7.5; Go: managed.GateView). The tunnel
+ * is still up and holds every packet, but nothing is forwarded until the Core has re-confirmed
+ * online: after the phone slept, the network underneath changed, or the lease lapsed.
+ */
+@Serializable
+data class GateView(
+    /** lifecycle_reconfirmation_required, network_changed or lease_expired. */
+    val reason: String = "",
+    /** The last attempt could not reach the network or the server. */
+    @SerialName("waiting_network") val waitingNetwork: Boolean = false,
+    @SerialName("closed_seconds") val closedSeconds: Long = 0,
+    val attempts: Long = 0,
+)
+
+/** The latest gate of this session and how it ended ("reopened" or "stopped"); evidence for L01-L03. */
+@Serializable
+data class GateRecord(
+    val reason: String = "",
+    val outcome: String = "",
+    @SerialName("closed_ms") val closedMillis: Long = 0,
+    val attempts: Long = 0,
+    @SerialName("total_closures") val totalClosures: Long = 0,
+)
+
 /** The complete UI state returned by the Core. The app renders only this. */
 @Serializable
 data class CoreSnapshot(
@@ -94,6 +119,9 @@ data class CoreSnapshot(
     val metering: MeteringView? = null,
     @SerialName("last_error") val lastError: ErrorView? = null,
     @SerialName("core_version") val coreVersion: String = "",
+    /** Present only while the tunnel's authorization gate is closed (tunnel_health "gated"). */
+    val gate: GateView? = null,
+    @SerialName("last_gate") val lastGate: GateRecord? = null,
 ) {
     val selectedNode: NodeView? get() = nodes.firstOrNull { it.id == selectedNodeId && selectedNodeId.isNotEmpty() }
 

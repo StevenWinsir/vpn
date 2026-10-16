@@ -243,6 +243,59 @@ func (e *Mihomo) Stop() error {
 	return nil
 }
 
+var _ managed.Gate = (*Mihomo)(nil)
+
+// errNotRunning: the gate can only hold back or release a running engine.
+var errNotRunning = errors.New("engine is not running")
+
+// Suspend closes the authorization gate (managed.ResumeGate, Android): the tunnel stops
+// dispatching (every new TCP/UDP flow from the device is dropped) and every tracked flow is
+// closed, while the device, its routes and its DNS stay. Applications keep sending into
+// the tunnel and nothing leaves it, so nothing leaks to the physical network and nothing
+// is carried unauthorized. The DNS hijack keeps answering: fake-ip A answers are local;
+// the few other lookups it forwards use the node, as at any time, and are not proxy flows.
+func (e *Mihomo) Suspend() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.running {
+		return errNotRunning
+	}
+	tunnel.OnSuspend()
+	closeFlows()
+	return nil
+}
+
+// Resume opens the gate again. Resolver connections are renewed first: after a sleep or a
+// network change the ones to the node are usually dead.
+func (e *Mihomo) Resume() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.running {
+		return errNotRunning
+	}
+	resolver.ResetConnection()
+	tunnel.OnRunning()
+	return nil
+}
+
+// closeFlows closes every tracked proxy flow and waits briefly for them to leave.
+func closeFlows() {
+	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
+		_ = c.Close()
+		return true
+	})
+	// Closing a tracker wakes its socket, but the handler goroutine may need a
+	// scheduling turn to leave the manager. Wait briefly so repeated in-process
+	// Start/Stop cycles do not accumulate old flow workers.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(statistic.DefaultManager.Snapshot().Connections) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // NetworkChanged is the host's hint that the default network moved (Android:
 // ConnectivityManager). Mihomo's own default-interface monitor is off on Android
 // (auto-detect-interface needs netlink), so this does its work: cached interface data is
@@ -283,20 +336,7 @@ func (e *Mihomo) stopLocked() {
 	// Android: the listener closed the VPN descriptor it owned; one it never took is closed
 	// here, so the interface disappears either way.
 	releaseTun()
-	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
-		_ = c.Close()
-		return true
-	})
-	// Closing a tracker wakes its socket, but the handler goroutine may need a
-	// scheduling turn to leave the manager. Wait briefly so repeated in-process
-	// Start/Stop cycles do not accumulate old flow workers.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(statistic.DefaultManager.Snapshot().Connections) == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	closeFlows()
 	executor.Shutdown()
 	if e.home != "" {
 		_ = os.RemoveAll(e.home)

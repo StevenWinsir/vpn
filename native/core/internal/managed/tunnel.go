@@ -300,6 +300,7 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 	gen, conn, mt, grant, local := m.generation, m.conn, m.meter, m.grant, m.local
 	active := conn != nil || m.state == StateConnected || m.state == StateConnecting
 	m.conn = nil
+	m.closeGateRecordLocked("stopped")
 	if active {
 		m.state = StateStopping
 	}
@@ -435,36 +436,76 @@ func (m *Manager) monitor(ctx context.Context, gen uint64, conn *connection, mt 
 	results := make(chan reportResult, 1)
 	reporting := false
 	ticks := 0
+	// settled folds one metering result in; false when the segment is over.
+	settled := func(result reportResult) bool {
+		reporting = false
+		switch code := meter.ErrorCode(result.err); {
+		case result.done:
+			return false // the session ended inside the report; everything is already closed
+		case result.err == nil:
+			retry = m.opts.BackoffMin
+			nextReport = m.opts.Now().Add(m.reportEvery())
+		case code == meter.CodeConflict || code == meter.CodeInvalidCounters || code == meter.CodeSessionMismatch || code == meter.CodeRateChanged:
+			m.requestStop(gen, code)
+			return false
+		default: // transient: retry the identical batch soon, with growing patience
+			nextReport = m.opts.Now().Add(retry)
+			retry = min(retry*2, 20*time.Second)
+		}
+		return true
+	}
+	// lapse handles a reason the segment can no longer assume authorization: the desktop
+	// policy stops; the gate policy re-confirms (after the report in flight, if any, so
+	// the ledger has one writer) and continues on the confirmed network. False when over.
+	lapse := func(reason string) bool {
+		if !m.gating() {
+			m.requestStop(gen, reason)
+			return false
+		}
+		if reporting {
+			select {
+			case <-ctx.Done():
+				return false
+			case result := <-results:
+				if !settled(result) {
+					return false
+				}
+			}
+		}
+		confirmed, ok := m.reconfirm(ctx, gen, reason, mt)
+		if !ok {
+			return false
+		}
+		signature = confirmed
+		watch = clockWatch{}
+		watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
+		retry = m.opts.BackoffMin
+		nextReport = m.opts.Now().Add(m.reportEvery())
+		return true
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case result := <-results:
-			reporting = false
-			switch code := meter.ErrorCode(result.err); {
-			case result.done:
-				return // the session ended inside the report; everything is already closed
-			case result.err == nil:
-				retry = m.opts.BackoffMin
-				nextReport = m.opts.Now().Add(m.reportEvery())
-			case code == meter.CodeConflict || code == meter.CodeInvalidCounters || code == meter.CodeSessionMismatch || code == meter.CodeRateChanged:
-				m.requestStop(gen, code)
+			if !settled(result) {
 				return
-			default: // transient: retry the identical batch soon, with growing patience
-				nextReport = m.opts.Now().Add(retry)
-				retry = min(retry*2, 20*time.Second)
 			}
 			continue
 		case <-tick.C:
 		}
 		ticks++
 		if watch.jumped(m.opts.Now().Round(0), m.opts.Mono()) {
-			m.requestStop(gen, "lifecycle_reconfirmation_required")
-			return
+			if !lapse("lifecycle_reconfirmation_required") {
+				return
+			}
+			continue
 		}
 		if ticks%3 == 0 && m.opts.Signature() != signature {
-			m.requestStop(gen, "network_changed")
-			return
+			if !lapse("network_changed") {
+				return
+			}
+			continue
 		}
 		if err := mt.Sample(); err != nil {
 			m.requestStop(gen, meter.ErrorCode(err))
@@ -479,6 +520,12 @@ func (m *Manager) monitor(ctx context.Context, gen uint64, conn *connection, mt 
 		m.mu.Unlock()
 		if code == "" && mt.EstimatedRemaining() <= 0 {
 			code = "quota_exhausted"
+		}
+		if code == "lease_expired" && m.gating() {
+			if !lapse(code) {
+				return
+			}
+			continue
 		}
 		if code != "" {
 			m.requestStop(gen, code)

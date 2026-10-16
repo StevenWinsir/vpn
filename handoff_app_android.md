@@ -529,7 +529,7 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 | 2 真实 TUN PoC | DONE（PR #29 已合并） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；每次连接的 NAT goroutine 泄漏已在下方独立维护轮修复；VLESS UDP/XUDP 协议缺口已在下方 NodeAgent 维护轮修复，真实节点/TUN 重新验收仍是后续门禁 |
 | 3 账号与 UI | DONE（本轮 PR，分支 worktree-android-round3-ui） | 本机 API 36 arm64：account 套件 20/20 PASS、ui 30 张截图、JVM 78、emulator 5/5；demo 服务器 + 用户真实账号的手工确认待用户执行（见第 3 轮记录） |
 | 4 连接与计量 | DONE（本轮 PR，分支 worktree-android-round4-billing） | 本机 API 36 arm64：billing 套件 32/32 PASS（20+80 MiB，1×/0.5× 逐单位精确、B02、A04×4、B04 本地 NodeAgent）；tun 26/2 BLOCKED 不回归；demo 服务器手工确认与 Quick Settings 磁贴待用户执行（见第 4 轮记录）；B04-live 无公网受管节点 |
-| 5 生命周期与可靠性 | NOT_STARTED | 无 |
+| 5 生命周期与可靠性 | DONE（本轮 PR，分支 worktree-android-round5-lifecycle） | 本机 API 36 arm64：lifecycle 套件 24 PASS / 2 NOT_RUN（L07-8h、L08 Chrome DoH/WebRTC 需人工或长时运行，见 docs/android-lifecycle.md）；授权闸门仅 Android 启用，桌面行为不变；8 小时采样与真机厂商 ROM 待用户/第 6 轮 |
 | 6 打磨与发布 | NOT_STARTED | 发布密钥库由用户生成并保管；真机/云真机抽检渠道 |
 
 每轮追加：
@@ -812,6 +812,57 @@ APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
 下一位从哪个文件/验收项开始；回退方法：
   第 5 轮从 managed 的 ResumePolicy（7.5 授权闸门）与 vpn/AsterVpnService 生命周期开始；
   回退：撤销本 PR（桌面端唯一行为变化是停连原因保留到下一次操作）。
+```
+
+### 第 5 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 5 轮 / 2026-10-16 / Claude（worktree 分支 worktree-android-round5-lifecycle）
+基线 commit / 已有未提交改动：658ed7c（PR #37 合并点）；无
+实际修改与契约变化（不含秘密）：
+  契约：snapshot-v1.json 新增可选字段 gate / last_gate 与 tunnel_health "gated"（夹具 connected_gated）；仅 Android
+    策略产生，Swift/C# 解码忽略未知字段，Kotlin 严格解码已同步。
+  共享 Go Core（managed）：Options.ResumePolicy（零值 ResumeStop = 桌面原行为不变；mobile 绑定选 ResumeGate）、
+    GateLimit（默认 5 分钟清醒时间）；resume.go：休眠/时钟（lifecycle_reconfirmation_required）、网络签名变化
+    （network_changed）、租约失效（lease_expired）→ 关闸（Engine.Suspend：拒新流、关存量流，保留 TUN fd/路由/DNS）
+    → 在线重验（Preflight + 计量批次重放/发送或节点计量 GET /session）→ 授权有效则 Resume + 经 TUN 的真实探测后开闸；
+    服务器拒绝则照常停流结账；无网/无应答退避重试（2→30 s，NetworkChanged 与回到前台立即重试），超限才断开。
+    SetForeground：后台暂停目录长轮询（先测后定：停连依赖 /traffic 应答与 /session，不依赖 watcher）；暂停期间
+    目录标记过期，绑定线路前先读一次目录（首轮设备实测发现：用过期目录绑定会被下一次目录判为 profile_changed）。
+  engine：Mihomo.Suspend/Resume（tunnel.OnSuspend/OnRunning + 关闭跟踪流）；stopLocked 共用 closeFlows。
+  mobile：Start 使用 ResumeGate；新增 SetForeground；NetworkChanged 同时唤醒等待中的闸门。
+  Android：连接页/通知显示“正在重新验证/等待网络”（仍可断开）；onRevoke 在主线程先告知控制器 → “VPN 已被系统设置或
+    其它 VPN 应用关闭，本次流量已结算”（App 内或后台告警，只一次）；ProcessLifecycleOwner → Core 前后台提示；
+    “我的”页显示通知是否允许、是否已豁免电池优化并跳转系统设置（不擅自申请豁免）。“允许局域网”决策：本版不做。
+  测试：managed/resume_test.go（13 个，含负向对照）；JVM 95（新增闸门展示、撤销提示）；截图 34（新增 4）；
+    androidTest LifecycleAcceptanceTest + 测试 APK 内的竞争 VPN（CompetitorActivity/CompetitorVpnService）；
+    TestAndroidBillingWorld 新增 life 用户与 /__world/api（模拟 API 不可达）、/__world/hits（按端点计数）；
+    test-native-android.py --suite lifecycle；scripts/android/lifecycle.sh（8 小时采样与手工步骤）；CI android.yml
+    新增 lifecycle 作业（--no-reboot、短息屏/短采样）；docs/android-lifecycle.md。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，公司 VPN 开启，模拟器 API 36 arm64 页 4096）：
+  --suite lifecycle --allow-network-changes --screen-off-seconds 600：24 PASS / 0 FAIL / 2 NOT_RUN
+    N01 拒绝通知仍可连接转发；L01-stall 进程停 16 s → 闸门 0.5 s 重开、同一连接；L01-screen 息屏 600 s 同一连接
+    （模拟器 CPU 不深睡，深睡路径由 L01-stall 与 Go 单测覆盖）；L01-gate-holds API 不可达时闸门等待、经隧道下载失败、
+    sink +0 字节、VPN 保持，API 恢复后重开；L02 Doze 15 s 内 7–8 次计量上报到达服务器、隧道可下载；BG 后台 12 s
+    目录轮询 0 次（前台 8 s 4 次）、后台改倍率 2.0–2.4 s 停连（上报间隔 2 s；生产 60 s）、回前台目录 2 s 追上；
+    L03 Wi-Fi↔蜂窝闸门 0.5–0.6 s 重开、飞行模式等待并在恢复后约 2 s 重开；L04 竞争 VPN 抢占 0.9 s 停流结账
+    （账本 = Core 确认计数）、提示一次、之后可重连；L05 移除任务/am kill 不影响、force-stop VPN 立即消失；
+    L06 重启后无 VPN/进程/服务；L07 20 次循环 fd 126→124、线程 40→41，3 分钟采样 RSS ≈255 MiB 平稳。
+    NOT_RUN：L07-8h（需无人值守长跑）、L08 Chrome DoH/WebRTC（需 Chrome 与人工；Private DNS 见第 2 轮 T03）。
+  回归：foundation 20、unit 3（Go 186、JVM 95）、ui 2（34 张）、emulator 5、account 20、billing 32（20+80 MiB）全部 PASS；
+    tun --cycles 20：26 PASS / 2 BLOCKED（T04-ipv6、T02-real，同前），T-CYCLES goroutine 10→10、fd 104→104；native/core go test ./... PASS；scripts/test-native.py PASS；test-native-macos.py --suite unit 8/8
+    （Core 275、Swift 46）。
+APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
+  0.1.0；Mihomo 70f0570405c3（生命周期补丁 d425c1a0…）；Debug APK 57.1 MiB；
+  artifacts/native-android/lifecycle/（lifecycle-report.json、timeline.json、soak-samples.json、instrument.txt；不提交）
+未解决问题、复现方法与发布限制：
+  ① 8 小时采样、Chrome DoH/WebRTC、厂商 ROM 后台清理、真实射频切换与真实耗电需真机/人工（docs/android-lifecycle.md）。
+  ② 闸门关闭期间 DNS 劫持仍应答（fake-ip A 记录本地；少量转发查询照常经节点，不是代理流量也不计量）。
+  ③ 模拟器息屏不进入深睡，“10 分钟息屏”在模拟器上只证明息屏路径；深睡恢复由 L01-stall（进程停顿）与单测证明。
+  ④ 共享 managed 改动需 Windows CI 回归（本 PR checks）。
+下一位从哪个文件/验收项开始；回退方法：
+  第 6 轮从 R01–R04（签名、ABI 拆分、release 审计）与真机抽检开始；
+  回退：撤销本 PR（桌面端默认 ResumeStop，唯一共享行为变化为暂停期目录过期时绑定前多读一次目录——桌面从不暂停）。
 ```
 
 ## 附录 A. 源码核验索引

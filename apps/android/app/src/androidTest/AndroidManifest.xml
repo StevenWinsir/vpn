@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Test APK only (com.asterlink.vpn.test). L04 of the lifecycle suite needs a second VPN app to
+  take the system VPN over: an activity (started by the shell, so it is in the foreground and may
+  start its service) and a minimal VpnService. Never part of the app itself.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="com.asterlink.vpn.CompetitorActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <service
+            android:name="com.asterlink.vpn.CompetitorVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

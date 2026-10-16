@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import com.asterlink.vpn.core.CoreProtocol
 import com.asterlink.vpn.core.CoreSnapshot
+import com.asterlink.vpn.core.GateView
 import com.asterlink.vpn.core.ErrorView
 import com.asterlink.vpn.core.HelloResult
 import com.asterlink.vpn.core.NodeView
@@ -91,11 +92,11 @@ class ScreenshotTest {
         TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"))
     }
 
-    private fun shoot(name: String, state: SessionState, tab: Tab = Tab.Connect, dark: Boolean = false, check: () -> Unit = {}) {
+    private fun shoot(name: String, state: SessionState, tab: Tab = Tab.Connect, dark: Boolean = false, device: DeviceStatus = DeviceStatus(), check: () -> Unit = {}) {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             AsterTheme(darkTheme = dark) {
-                AsterRoot(state, facts, if (dark) ThemeMode.Dark else ThemeMode.System, AppActions(), clock, initialTab = tab)
+                AsterRoot(state, facts, if (dark) ThemeMode.Dark else ThemeMode.System, AppActions(), clock, initialTab = tab, device = device)
             }
         }
         compose.mainClock.advanceTimeBy(600)
@@ -281,6 +282,42 @@ class ScreenshotTest {
     @Config(qualifiers = "en-w411dp-h891dp-xxhdpi")
     fun englishLogin() = shoot("30-en-login", SessionState(phase = AppPhase.SignedOut, identity = identity, email = "")) {
         compose.onNodeWithText("Sign in").assertExists()
+    }
+
+    // ---- round 5: the authorization gate, a revoked VPN, background settings --------------------
+
+    @Test
+    fun reconfirming() = shoot(
+        "31-connect-reconfirming",
+        signedIn(connectedSnapshot().copy(tunnelHealth = "gated", gate = GateView("lifecycle_reconfirmation_required", attempts = 0))),
+    ) {
+        compose.onNodeWithText("正在重新验证").assertExists()
+        compose.onNodeWithText("确认前不转发任何流量", substring = true).assertExists()
+    }
+
+    @Test
+    fun waitingForNetwork() = shoot(
+        "32-connect-waiting-network",
+        signedIn(connectedSnapshot().copy(tunnelHealth = "gated", gate = GateView("network_changed", waitingNetwork = true, closedSeconds = 42, attempts = 3))),
+    ) {
+        compose.onNodeWithText("等待网络").assertExists()
+        compose.onNodeWithText("网络恢复后自动继续", substring = true).assertExists()
+    }
+
+    @Test
+    fun vpnRevoked() = shoot("33-connect-vpn-revoked", signedIn(ready(), message = Notice.local(LocalCodes.VPN_REVOKED))) {
+        compose.onNodeWithText("其它 VPN 应用关闭", substring = true).assertExists()
+    }
+
+    @Test
+    fun accountBackgroundRestricted() = shoot(
+        "34-account-restricted",
+        signedIn(ready().copy(user = ready().user!!.copy(email = "vip@example.com", name = "Vip"))),
+        Tab.Account,
+        device = DeviceStatus(notificationsAllowed = false, batteryUnrestricted = false),
+    ) {
+        compose.onNodeWithText("设为“不限制”", substring = true).assertExists()
+        compose.onNodeWithText("通知栏不会显示状态", substring = true).assertExists()
     }
 
     private fun connectedSnapshot(): CoreSnapshot {

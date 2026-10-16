@@ -467,4 +467,52 @@ class SessionControllerTest {
         rig.controller.pollNow()
         assertTrue(rig.alerts.stopped.isEmpty())
     }
+
+    // ---- round 5: the authorization gate and a revoked VPN ---------------------------------------
+
+    @Test
+    fun aClosedGateKeepsTheTunnelAndSaysWhy() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.connectNow()
+        val since = rig.state.connectedSinceMillis
+        rig.core.mutate { it.copy(tunnelHealth = "gated", gate = com.asterlink.vpn.core.GateView("lifecycle_reconfirmation_required", attempts = 1)) }
+        rig.controller.pollNow()
+        assertEquals(ConnectionStatus.Reconfirming, rig.state.connection.status)
+        assertTrue(rig.state.connection.showDisconnect)
+        rig.core.mutate { it.copy(gate = it.gate!!.copy(waitingNetwork = true, attempts = 3)) }
+        rig.controller.pollNow()
+        assertEquals(ConnectionStatus.WaitingNetwork, rig.state.connection.status)
+        // Neither is an end of the tunnel: no alert, the VPN service stays, the timer continues.
+        assertTrue(rig.alerts.stopped.isEmpty())
+        assertTrue(rig.tunnel.running)
+        assertEquals(0, rig.tunnel.stops)
+        rig.core.mutate { it.copy(tunnelHealth = "up", gate = null, lastGate = com.asterlink.vpn.core.GateRecord("lifecycle_reconfirmation_required", "reopened", 1_200, 3, 1)) }
+        rig.controller.pollNow()
+        assertEquals(ConnectionStatus.Connected, rig.state.connection.status)
+        assertEquals(since, rig.state.connectedSinceMillis)
+    }
+
+    @Test
+    fun aRevokedVpnIsExplainedOnceAndNotAlertedAgain() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.connectNow()
+        rig.controller.vpnRevokedNow()
+        assertEquals(listOf(Notice.local(LocalCodes.VPN_REVOKED)), rig.alerts.stopped)
+        assertEquals(LocalCodes.VPN_REVOKED, rig.state.message?.code)
+        // The service then disconnects through the Core; that end is already explained.
+        rig.core.mutate { it.copy(state = State.READY) }
+        rig.controller.pollNow()
+        assertEquals(1, rig.alerts.stopped.size)
+    }
+
+    @Test
+    fun aRevocationWithoutATunnelSaysNothing() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.vpnRevokedNow()
+        assertTrue(rig.alerts.stopped.isEmpty())
+        assertNull(rig.state.message)
+    }
 }

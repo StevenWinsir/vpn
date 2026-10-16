@@ -313,6 +313,25 @@ class SessionController(
         }
     }
 
+    /**
+     * The system revoked the VPN (onRevoke: another VPN app was started, or the user turned it
+     * off in Settings). The service is already closing the data path and settling with the
+     * Core; this only says why, in the app and, when no screen is open, as a notification.
+     */
+    fun vpnRevoked(): Job = scope.launch { vpnRevokedNow() }
+
+    /** [vpnRevoked] for a caller already on the controller's thread (onRevoke runs on the main thread). */
+    fun vpnRevokedNow() {
+        if (current.phase != AppPhase.SignedIn) return
+        val wasUp = tunnelUp || current.snapshot.tunnelBusy
+        // The end of this tunnel is now explained: the next snapshot must not alert again.
+        tunnelUp = false
+        if (!wasUp) return
+        val notice = Notice.local(LocalCodes.VPN_REVOKED)
+        alerts.tunnelStopped(notice)
+        set { it.copy(message = notice) }
+    }
+
     /** The user declined the system VPN dialog: stay ready and say why nothing happened. */
     fun vpnConsentDenied() {
         set { it.copy(message = Notice.local(LocalCodes.VPN_PERMISSION_DENIED)) }

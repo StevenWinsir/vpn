@@ -235,3 +235,18 @@ func TestCloseInterruptsTheCommandInFlight(t *testing.T) {
 		t.Fatalf("closed session answered %+v", r)
 	}
 }
+
+// The foreground hint is safe before Start and after Stop, and reaches the running Core
+// without waiting behind a command.
+func TestSetForegroundIsSafeAtAnyTime(t *testing.T) {
+	Stop()
+	SetForeground(false)
+	start(t)
+	if active().manager == nil {
+		t.Fatal("the running Core must receive the foreground hint")
+	}
+	SetForeground(false)
+	SetForeground(true)
+	Stop()
+	SetForeground(true)
+}

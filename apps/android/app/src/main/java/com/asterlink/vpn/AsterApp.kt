@@ -24,7 +24,13 @@ class AsterApp : Application() {
         // controller; it does nothing until someone has signed in).
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
+                container.core.setForeground(true)
                 container.session.onForeground()
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                // No screen visible: the Core pauses the catalog long-poll (handoff 7.6).
+                container.core.setForeground(false)
             }
         })
         // The Quick Settings tile is only bound while the shade is open; ask the system to

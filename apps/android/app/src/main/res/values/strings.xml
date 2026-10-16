@@ -152,4 +152,14 @@
     <string name="tile_connecting">正在连接</string>
     <string name="tile_disconnected">未连接</string>
     <string name="tile_open_app">打开应用</string>
+    <string name="status_reconfirming">正在重新验证</string>
+    <string name="status_waiting_network">等待网络</string>
+    <string name="status_detail_reconfirming">设备唤醒或网络变化，正在在线确认授权；确认前不转发任何流量</string>
+    <string name="status_detail_waiting_network">暂时连不上服务器：隧道保持但不转发流量，网络恢复后自动继续</string>
+    <string name="notice_vpn_revoked">VPN 已被系统设置或其它 VPN 应用关闭，本次流量已结算</string>
+    <string name="settings_notifications">通知</string>
+    <string name="settings_notifications_on">已允许：显示连接状态、实时速率与断开原因</string>
+    <string name="settings_notifications_off">已关闭：VPN 仍可使用，但通知栏不会显示状态与断开原因</string>
+    <string name="settings_battery_unrestricted">已允许后台运行</string>
+    <string name="settings_battery_restricted">系统可能在息屏后限制本应用，导致恢复变慢或断开；可在此设为“不限制”</string>
 </resources>

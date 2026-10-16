@@ -65,19 +65,32 @@ func (h *harness) stoppedWith(reason string) bool {
 
 func newHarness(t *testing.T, rate int64) *harness {
 	t.Helper()
+	return newHarnessWith(t, rate, nil, nil)
+}
+
+// newHarnessWith lets a test adjust the server (under its lock) and the options.
+func newHarnessWith(t *testing.T, rate int64, mutate func(*fakeAPI), opts func(*harness, *Options)) *harness {
+	t.Helper()
 	f := newFakeAPI(t)
 	f.mu.Lock()
 	f.session.RatePermille = rate
 	f.session.ReportInterval = 1
+	if mutate != nil {
+		mutate(f)
+	}
 	f.mu.Unlock()
 	h := &harness{f: f, engine: &recordingEngine{api: f}, clock: newShiftClock()}
 	h.sig.Store("wifi")
-	h.m = New(Options{
+	o := Options{
 		CoreVersion: "t", Engine: h.engine, Now: h.clock.now, Mono: h.clock.mono,
 		Signature:  func() string { return h.sig.Load().(string) },
 		BackoffMin: 5 * time.Millisecond, BackoffMax: 20 * time.Millisecond,
 		MonitorInterval: 10 * time.Millisecond, SettleTimeout: 2 * time.Second,
-	})
+	}
+	if opts != nil {
+		opts(h, &o)
+	}
+	h.m = New(o)
 	h.observeStops()
 	t.Cleanup(func() { h.m.Shutdown(context.Background()) })
 	if _, err := h.m.Login(t.Context(), f.params(f.password)); err != nil {

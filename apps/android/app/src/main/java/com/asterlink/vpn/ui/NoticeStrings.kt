@@ -35,6 +35,7 @@ fun noticeRes(code: String): Int = when (code) {
     LocalCodes.NO_MATCH -> R.string.notice_no_match
     LocalCodes.SYNCING -> R.string.notice_syncing
     LocalCodes.TUNNEL_ENDED -> R.string.notice_tunnel_ended
+    LocalCodes.VPN_REVOKED -> R.string.notice_vpn_revoked
     else -> R.string.notice_operation_failed
 }
 

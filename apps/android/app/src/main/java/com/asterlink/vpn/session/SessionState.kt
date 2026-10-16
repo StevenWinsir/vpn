@@ -53,6 +53,8 @@ object LocalCodes {
     const val SYNCING = "syncing_lines"
     /** The tunnel ended without the user asking and the Core gave no reason. */
     const val TUNNEL_ENDED = "tunnel_ended"
+    /** The system took the VPN away (another VPN app, or the user in Settings): VpnService.onRevoke. */
+    const val VPN_REVOKED = "vpn_revoked"
 }
 
 /** Everything the screens render. Derived from the Core's snapshot; nothing here decides authorization. */

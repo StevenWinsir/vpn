@@ -83,6 +83,11 @@ type Snapshot struct {
 	Metering        *MeteringView    `json:"metering"`
 	LastError       *ErrorView       `json:"last_error"`
 	CoreVersion     string           `json:"core_version"`
+	// Gate is present only while a connected segment's authorization gate is closed
+	// (tunnel_health "gated": the tunnel is held and forwards nothing); LastGate only
+	// once a gate has closed in this session. Both exist only under ResumeGate (Android).
+	Gate     *GateView   `json:"gate,omitempty"`
+	LastGate *GateRecord `json:"last_gate,omitempty"`
 }
 
 func (m *Manager) Snapshot() Snapshot {
@@ -102,10 +107,19 @@ func (m *Manager) snapshotLocked() Snapshot {
 	switch m.state {
 	case StateConnected:
 		out.TunnelHealth = "up"
+		if g := m.gate; g != nil {
+			out.TunnelHealth = "gated"
+			out.Gate = &GateView{Reason: g.reason, WaitingNetwork: g.waiting, Attempts: int64(g.attempts),
+				ClosedSeconds: max(0, int64(m.opts.Now().Round(0).Sub(g.since.Round(0))/time.Second))}
+		}
 	case StateConnecting, StatePreparing:
 		out.TunnelHealth = "starting"
 	case StateStopping:
 		out.TunnelHealth = "stopping"
+	}
+	if m.lastGate != nil {
+		record := *m.lastGate
+		out.LastGate = &record
 	}
 	if m.user != nil {
 		out.User = &UserView{ID: m.user.ID, Email: m.user.Email, Name: m.user.Name, Role: m.user.Role}

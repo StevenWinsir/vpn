@@ -318,13 +318,21 @@ func (m *Manager) monitorGranted(ctx context.Context, gen uint64, conn *connecti
 		case <-tick.C:
 		}
 		ticks++
+		reason := ""
 		if watch.jumped(m.opts.Now().Round(0), m.opts.Mono()) {
-			m.requestStop(gen, "lifecycle_reconfirmation_required")
-			return
+			reason = "lifecycle_reconfirmation_required"
+		} else if ticks%3 == 0 && m.opts.Signature() != signature {
+			reason = "network_changed"
 		}
-		if ticks%3 == 0 && m.opts.Signature() != signature {
-			m.requestStop(gen, "network_changed")
-			return
+		if reason != "" {
+			confirmed, ok := m.lapseGranted(ctx, gen, reason)
+			if !ok {
+				return
+			}
+			signature = confirmed
+			watch = clockWatch{}
+			watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
+			continue
 		}
 		m.mu.Lock()
 		if m.generation != gen {
@@ -340,11 +348,30 @@ func (m *Manager) monitorGranted(ctx context.Context, gen uint64, conn *connecti
 		if code == "" && exhausted {
 			code = "quota_exhausted"
 		}
+		if code == "lease_expired" && m.gating() {
+			confirmed, ok := m.lapseGranted(ctx, gen, code)
+			if !ok {
+				return
+			}
+			signature = confirmed
+			watch = clockWatch{}
+			watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
+			continue
+		}
 		if code != "" {
 			m.requestStop(gen, code)
 			return
 		}
 	}
+}
+
+// lapseGranted is lapse for a node-reported segment, which has no ledger of its own.
+func (m *Manager) lapseGranted(ctx context.Context, gen uint64, reason string) (string, bool) {
+	if !m.gating() {
+		m.requestStop(gen, reason)
+		return "", false
+	}
+	return m.reconfirm(ctx, gen, reason, nil)
 }
 
 // finishGrant revokes a grant after the data path is closed, then waits (bounded) for

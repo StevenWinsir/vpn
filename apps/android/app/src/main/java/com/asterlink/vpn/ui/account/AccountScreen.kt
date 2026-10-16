@@ -43,6 +43,7 @@ import com.asterlink.vpn.session.Formatting
 import com.asterlink.vpn.session.SessionState
 import com.asterlink.vpn.ui.AppActions
 import com.asterlink.vpn.ui.BuildFacts
+import com.asterlink.vpn.ui.DeviceStatus
 import com.asterlink.vpn.ui.WebPage
 import com.asterlink.vpn.ui.components.AsterCard
 import com.asterlink.vpn.ui.components.AsterIcon
@@ -68,6 +69,7 @@ fun AccountScreen(
     actions: AppActions,
     nowInstant: Instant,
     modifier: Modifier = Modifier,
+    device: DeviceStatus = DeviceStatus(),
 ) {
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     val snapshot = state.snapshot
@@ -144,7 +146,19 @@ fun AccountScreen(
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                SettingRow(R.drawable.ic_battery, stringResource(R.string.settings_battery), stringResource(R.string.settings_battery_hint), actions.openBatterySettings)
+                val batteryHint = when (device.batteryUnrestricted) {
+                    true -> R.string.settings_battery_unrestricted
+                    false -> R.string.settings_battery_restricted
+                    null -> R.string.settings_battery_hint
+                }
+                SettingRow(R.drawable.ic_battery, stringResource(R.string.settings_battery), stringResource(batteryHint), actions.openBatterySettings)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                SettingRow(
+                    R.drawable.ic_info,
+                    stringResource(R.string.settings_notifications),
+                    stringResource(if (device.notificationsAllowed) R.string.settings_notifications_on else R.string.settings_notifications_off),
+                    actions.openNotificationSettings,
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                 SettingRow(R.drawable.ic_key, stringResource(R.string.settings_vpn), stringResource(R.string.settings_vpn_hint), actions.openVpnSettings)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
