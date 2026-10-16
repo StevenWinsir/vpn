@@ -77,8 +77,17 @@ android {
     }
 
     testOptions {
-        unitTests.all {
-            it.systemProperty("asterlink.contracts", rootDir.resolve("../../shared/contracts").absolutePath)
+        unitTests {
+            // Robolectric reads the merged resources (strings, drawables, themes).
+            isIncludeAndroidResources = true
+            all {
+                it.systemProperty("asterlink.contracts", rootDir.resolve("../../shared/contracts").absolutePath)
+                // Screenshot tests always write their PNGs (there are no committed goldens to
+                // compare against: fonts differ between hosts); the suite collects them.
+                it.systemProperty("roborazzi.test.record", "true")
+                it.systemProperty("asterlink.screenshots", layout.buildDirectory.dir("outputs/roborazzi").get().asFile.absolutePath)
+                it.maxHeapSize = "3g"
+            }
         }
     }
 }
@@ -147,10 +156,22 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.lifecycle.process)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.browser)
+    implementation(libs.androidx.core.splashscreen)
     debugImplementation(libs.compose.ui.tooling)
+    // Hosts the empty activity that createComposeRule() launches (JVM screenshot tests).
+    debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Screenshot tests on the JVM (Robolectric native graphics + Roborazzi), no emulator.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)

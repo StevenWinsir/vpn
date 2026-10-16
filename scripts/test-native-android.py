@@ -35,6 +35,21 @@ Round 2:
     * only the emulator's network changes; the user's own nodes (T02-real) come only from
       ASTERLINK_TUN_PROXY_JSON / ASTERLINK_TUN_REAL_NODES (disconnect a company VPN first)
 
+Round 3:
+  ui          needs a JDK and the Core AAR; no emulator
+    * the Roborazzi screenshot set (ScreenshotTest: login, connect, lines, me, every empty and
+      error state, dark, 200 % font, 360 dp, English) rendered on the JVM; PNGs are copied to
+      artifacts/native-android/ui/ and at least 20 states are required
+  account     needs Go, PostgreSQL (initdb/pg_ctl), a JDK, the SDK emulator and a system image
+    * starts the backend's TestAndroidAccountWorld on a private Unix-socket PostgreSQL: the real
+      Gin API with seeded synthetic accounts and lines, on 127.0.0.1 only; `adb reverse` lets
+      the emulator reach it as 127.0.0.1 (the Core's loopback-only HTTP rule, no 10.0.2.2)
+    * runs AccountAcceptanceTest in the app: the real SessionController, Go Core and Keystore
+      credential store against that API (A01 sign-in/remember/relaunch/sign-out, A02 no plan,
+      zero quota, expiry, device limit, A04 admin rename/rate/disable/enable/delete timings)
+    * then searches logcat for the password, node address, node secret and cipher
+    * never touches the remote test database, demo.hyshentou.cn or the emulator's network
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 The billing/grants/lifecycle/release suites arrive in rounds 4-6 and refuse to run here.
 """
@@ -48,6 +63,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -476,10 +492,13 @@ def run_emulator_suite(args):
         # Instrumented test with the real AAR (builds and installs both APKs).
         connected_results = ANDROID / 'app' / 'build' / 'outputs' / 'androidTest-results' / 'connected'
         shutil.rmtree(connected_results, ignore_errors=True)
-        connected = gradle([':app:connectedDebugAndroidTest'], capture_output=True, text=True, env=dict(os.environ, ANDROID_SERIAL=serial))
+        # AccountAcceptanceTest is the account suite's driver (run by class with its world); the
+        # connected-test reporter would count its "no world" assumption as a failure.
+        connected = gradle([':app:connectedDebugAndroidTest', '-Pandroid.testInstrumentationRunnerArguments.notClass=' + ACCOUNT_CLASS],
+                           capture_output=True, text=True, env=dict(os.environ, ANDROID_SERIAL=serial))
         tests, failures = junit_counts(connected_results)
         record('emulator.core_binding', connected.returncode == 0 and tests > 0 and failures == 0,
-               'CoreBindingTest on the device: %d test(s), ipc-v1 cases, start/hello/read_snapshot/stop' % tests
+               'instrumented tests on the device: %d (CoreBindingTest ipc-v1 + start/stop, SecurityStoreTest Keystore)' % tests
                + ('' if tests > 0 else '; Gradle output: ' + connected.stdout[-800:]) if connected.returncode == 0 else gradle_failure(connected))
 
         # The app itself: launch, wait for the Core, read the screen.
@@ -733,6 +752,134 @@ def run_tun_suite(args):
         emu.close(args.keep_emulator)
 
 
+# ---------------------------------------------------------------- ui (round 3)
+
+def run_ui_suite(args):
+    if sdk_root() is None:
+        record('ui.sdk', False, 'ANDROID_HOME not set', status='BLOCKED')
+        return
+    if not (ANDROID / 'build' / 'core' / 'asterlink-core.aar').is_file():
+        record('ui.core', False, 'Core AAR missing: python3 scripts/build-native-android.py --target aar', status='BLOCKED')
+        return
+    shots = ANDROID / 'app' / 'build' / 'outputs' / 'roborazzi'
+    shutil.rmtree(shots, ignore_errors=True)
+    results_dir = ANDROID / 'app' / 'build' / 'test-results' / 'testDebugUnitTest'
+    shutil.rmtree(results_dir, ignore_errors=True)
+    run = gradle([':app:testDebugUnitTest', '--tests', 'com.asterlink.vpn.ui.ScreenshotTest', '--rerun'], capture_output=True, text=True)
+    tests, failures = junit_counts(results_dir)
+    pngs = sorted(shots.glob('*.png')) if shots.is_dir() else []
+    record('ui.screenshot_tests', run.returncode == 0 and tests > 0 and failures == 0,
+           '%d screenshot tests passed (each also asserts its state)' % tests if run.returncode == 0 else gradle_failure(run))
+    out_dir = Path(args.out or ROOT / 'artifacts' / 'native-android' / 'ui')
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True)
+    for png in pngs:
+        shutil.copy2(png, out_dir / png.name)
+    names = [p.stem for p in pngs]
+    required = ('login', 'admin-no-plan', 'expired', 'quota-zero', 'no-line', 'ready', 'connecting', 'connected', 'failed',
+                'lines', 'lines-no-plan', 'lines-none', 'account', 'dark', 'font200', '360dp', 'en-')
+    missing = [r for r in required if not any(r in n for n in names)]
+    record('ui.states', len(pngs) >= 20 and not missing, '%d states in %s%s' % (len(pngs), out_dir, '; missing ' + ', '.join(missing) if missing else ''))
+
+
+# ---------------------------------------------------------------- account (round 3)
+
+ACCOUNT_CLASS = 'com.asterlink.vpn.AccountAcceptanceTest'
+
+
+def start_world(scratch):
+    """Private PostgreSQL (Unix socket only) + backend TestAndroidAccountWorld on 127.0.0.1."""
+    data, sock = Path(scratch) / 'pg', Path(scratch) / 'sock'
+    sock.mkdir(mode=0o700)
+    env = dict(os.environ, LC_ALL='C', LANG='C')
+    subprocess.run(['initdb', '-D', str(data), '-U', 'postgres', '--auth-local=trust', '--auth-host=reject', '--no-locale', '-E', 'UTF8'],
+                   check=True, stdout=subprocess.DEVNULL, env=env)
+    subprocess.run(['pg_ctl', '-D', str(data), '-l', str(Path(scratch) / 'postgres.log'), '-o', "-k %s -c listen_addresses=''" % sock, '-w', 'start'],
+                   check=True, stdout=subprocess.DEVNULL, env=env)
+    port = free_port()
+    world_file = Path(scratch) / 'world.json'
+    log = open(Path(scratch) / 'world.log', 'wb')
+    world = subprocess.Popen(['go', 'test', '-count=1', '-timeout', '60m', '-run', '^TestAndroidAccountWorld$', '-v', './internal/api'], cwd=ROOT / 'backend',
+                             env=dict(env, NATIVE_TEST_DSN='host=%s user=postgres dbname=postgres sslmode=disable' % sock, RUN_DB_TESTS='0',
+                                      ASTERLINK_ANDROID_WORLD=str(world_file), ASTERLINK_ANDROID_WORLD_PORT=str(port), GOFLAGS='-buildvcs=false'),
+                             stdout=log, stderr=subprocess.STDOUT)
+    for _ in range(3000):
+        if world_file.is_file() and world_file.stat().st_size > 0:
+            return data, world, world_file, port
+        if world.poll() is not None:
+            break
+        time.sleep(0.1)
+    raise RuntimeError('the backend world did not start: ' + (Path(scratch) / 'world.log').read_text(errors='replace')[-1200:])
+
+
+def run_account_suite(args):
+    missing = [t for t in ('go', 'initdb', 'pg_ctl') if not shutil.which(t)]
+    if missing:
+        record('account.tools', False, 'not installed: %s' % ', '.join(missing), status='BLOCKED')
+        return
+    if not args.skip_build:
+        build = gradle([':app:assembleDebug', ':app:assembleDebugAndroidTest'], capture_output=True, text=True)
+        if build.returncode != 0:
+            record('account.build', False, gradle_failure(build))
+            return
+    test_apk = ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'androidTest' / 'debug' / 'app-debug-androidTest.apk'
+    emu = open_emulator(args, 'account', 'account')
+    if emu is None:
+        return
+    adb, serial = emu.adb, emu.serial
+    scratch = tempfile.mkdtemp(prefix='asterlink-account-')
+    pg_data, world, port = None, None, None
+    try:
+        pg_data, world, world_file, port = start_world(scratch)
+        facts = json.loads(world_file.read_text())
+        secrets = [facts['password'], 'metadata-private.example.invalid', 'never-reaches-the-ui', 'aes-256-gcm']
+        record('account.world', True, 'backend TestAndroidAccountWorld on 127.0.0.1:%d (private PostgreSQL on a Unix socket, synthetic accounts)' % port)
+        adb_run(adb, serial, 'install', '-r', '-t', str(ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'debug' / 'app-debug.apk'), timeout=300)
+        adb_run(adb, serial, 'install', '-r', '-t', str(test_apk), timeout=300)
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+        # The emulator's 127.0.0.1:port is the host's: the Core keeps its loopback-only HTTP rule.
+        adb_run(adb, serial, 'reverse', 'tcp:%d' % port, 'tcp:%d' % port)
+        adb_run(adb, serial, 'logcat', '-c', check=False)
+        process = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s sh -c "rm -rf files/accounttest && mkdir -p files/accounttest && cat > files/accounttest/world.json"' % PACKAGE],
+                                 input=world_file.read_bytes(), capture_output=True, timeout=60)
+        if process.returncode != 0:
+            raise RuntimeError('writing world.json into the app failed')
+        run = subprocess.run([str(adb), '-s', serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', ACCOUNT_CLASS + '#acceptance', RUNNER],
+                             capture_output=True, text=True, timeout=args.max_seconds)
+        (emu.out_dir / 'instrument.txt').write_text(run.stdout + run.stderr)
+        report = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s cat files/accounttest/report.json' % PACKAGE], capture_output=True, text=True, timeout=60).stdout
+        try:
+            cases = json.loads(report)['cases']
+        except (ValueError, KeyError):
+            record('account.report', False, 'no report from the device: ' + (run.stdout + run.stderr)[-1200:])
+            return
+        for case in cases:
+            record('account.' + case['case_id'], case['status'] == 'PASS', case['observed'], status=case['status'])
+        logcat = adb_run(adb, serial, 'logcat', '-d', check=False, timeout=120)
+        leaked = [i for i, secret in enumerate(secrets) if secret in logcat]
+        record('account.logcat_clean', not leaked, 'logcat (%d lines) holds no password, node address, node secret or cipher' % logcat.count('\n')
+               if not leaked else 'logcat contains secret #%s' % leaked)
+        (emu.out_dir / 'account-report.json').write_text(json.dumps({'device': emu.facts, 'cases': results}, indent=2) + '\n')
+    finally:
+        if port:
+            try:
+                urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:%d/__world/stop' % port, data=b'{}', method='POST'), timeout=10)
+            except OSError:
+                pass
+            adb_run(adb, serial, 'reverse', '--remove', 'tcp:%d' % port, check=False)
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE, check=False)
+        adb_run(adb, serial, 'shell', 'run-as %s rm -rf files/accounttest' % PACKAGE, check=False)
+        if world:
+            try:
+                world.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                world.kill()
+        if pg_data:
+            subprocess.run(['pg_ctl', '-D', str(pg_data), '-m', 'fast', '-w', 'stop'], stdout=subprocess.DEVNULL, check=False)
+        shutil.rmtree(scratch, ignore_errors=True)
+        emu.close(args.keep_emulator)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--suite', required=True)
@@ -769,6 +916,13 @@ def main():
             run_emulator_suite(args)
         except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             record('emulator.run', False, str(error)[-1800:])
+    elif args.suite == 'ui':
+        run_ui_suite(args)
+    elif args.suite == 'account':
+        try:
+            run_account_suite(args)
+        except (subprocess.SubprocessError, OSError, RuntimeError) as error:
+            record('account.run', False, str(error)[-800:])
     elif args.suite == 'tun':
         try:
             run_tun_suite(args)

@@ -11,6 +11,8 @@ import androidx.core.content.ContextCompat
 import com.asterlink.vpn.AppContainer
 import com.asterlink.vpn.AsterApp
 import com.asterlink.vpn.MainActivity
+import com.asterlink.vpn.session.LocalCodes
+import com.asterlink.vpn.session.TunnelOutcome
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -76,8 +78,11 @@ class AsterVpnService : VpnService(), VpnHost {
         // startForegroundService obliges startForeground even when the request is dropped.
         goForeground(connected = false)
         // A disconnect of this instance is still settling and will stop it: connect again
-        // once it is gone rather than racing the teardown.
-        if (ending) return
+        // once it is gone rather than racing the teardown (the app says so).
+        if (ending) {
+            container.tunnelLauncher.claim()?.complete(TunnelOutcome.Refused(LocalCodes.VPN_STOPPING))
+            return
+        }
         container.vpnHosts.attach(this)
         if (session?.isActive == true) return
         val tunnel = container.tunnelSession

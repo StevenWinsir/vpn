@@ -527,7 +527,7 @@ gomobile 目标：`-target=android/arm64`（发布另加 `android/arm` 视决策
 | --- | --- | --- |
 | 1 环境与骨架 | DONE（PR StevenWinsir/vpn#28 已合并） | 本机 API 36 arm64 模拟器 5/5 PASS；16 KB/API 29/API 26 镜像留到第 6 轮安装 |
 | 2 真实 TUN PoC | DONE（PR #29 已合并） | 本机 API 36 arm64：tun 套件 26 PASS / 2 BLOCKED（T04-ipv6 无 IPv6 上游、T02-real 未提供真实节点）；每次连接的 NAT goroutine 泄漏已在下方独立维护轮修复；VLESS UDP/XUDP 协议缺口已在下方 NodeAgent 维护轮修复，真实节点/TUN 重新验收仍是后续门禁 |
-| 3 账号与 UI | NOT_STARTED | 本地隔离后端；demo 手工确认需要用户输入测试账号密码 |
+| 3 账号与 UI | DONE（本轮 PR，分支 worktree-android-round3-ui） | 本机 API 36 arm64：account 套件 20/20 PASS、ui 30 张截图、JVM 78、emulator 5/5；demo 服务器 + 用户真实账号的手工确认待用户执行（见第 3 轮记录） |
 | 4 连接与计量 | NOT_STARTED | 公网 sink 部署位置（节点可达的服务器）由用户确认 |
 | 5 生命周期与可靠性 | NOT_STARTED | 无 |
 | 6 打磨与发布 | NOT_STARTED | 发布密钥库由用户生成并保管；真机/云真机抽检渠道 |
@@ -705,6 +705,58 @@ VLESS UDP/XUDP 不匹配、IPv6 上游验收、真实节点与 Android 第 3–6
 基于 `6a10838`，在独立 worktree / 分支 `fix/nodeagent-xudp-target-idle` 修复 NodeAgent 单个 UDP 目标 reader 空闲超时误关共享 carrier 的问题。只退休超时目标并回收槽位，其他活跃目标继续转发；后续 Keep 经原授权/私网检查路径重新连接。退休与上行发包串行化，避免重复发送/计费；carrier 自身空闲、到期、额度和 Remove 的强制停流不变。
 
 同/跨 session 和真实 pinned Mihomo 旧源码负向对照均复现 EOF；NodeAgent 目标生命周期 race 50 轮、真实 integration 全套 race 20 轮通过。完整实现、命令和证据边界见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)。只需重建部署 NodeAgent，不改 AAR/APK、VpnService、Mihomo 或数据库；没有进入 Android 第 3 轮、修改模拟器/系统网络或重新标注历史 TUN 验收结果。
+
+### 第 3 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 3 轮 / 2026-10-15 / Claude（worktree 分支 worktree-android-round3-ui）
+基线 commit / 已有未提交改动：027bf72（PR #35 合并点）；无
+实际修改与契约变化（不含秘密）：
+  无契约 JSON 变化；无 Go Core 变化。后端仅新增测试文件 backend/internal/api/android_world_test.go
+    （TestAndroidAccountWorld：仅在套件设置 ASTERLINK_ANDROID_WORLD 时运行，只监听 127.0.0.1，复用 seedNativeWorld，
+    /__world/ 回环控制：改名/改倍率/停用/启用/删除线路、套餐到期、占用设备名额）。
+  Kotlin：core/Snapshot.kt（snapshot-v1 严格解码，Long，action_error 拆分）；CoreClient 全部会话命令；
+    session/SessionController（按 Windows C# 版移植：操作代次丢弃、旧 generation 丢弃、action_error、stale_generation
+    重读、native_session_* 静默重登一次、内核丢失→重新登录、连接中 1 s / 其它 2 s 轮询；Android 增加：应用级常驻、
+    登录后立即一次 refresh_catalog、回前台节流 10 s 刷新、Core 自行停隧道时同时停前台服务、连接经 TunnelLauncher
+    交给 AsterVpnService 并按用户决定时的 generation 连接、取消连接=停 Core）；ConnectionView/NodeList/Formatting/
+    Diagnostics（脱敏）；security/（Keystore AES-256-GCM 记住密码，账户作 GCM 关联数据，条目名为账户 SHA-256；
+    DataStore 偏好；随机 UUID device_id）；ui/（登录、连接、线路、我的四页 + 空态/错误态、深浅色、SplashScreen、
+    Custom Tabs、系统 VPN/电池设置、复制脱敏诊断、退出登录二次确认）；删除第 1 轮 foundation 页。
+  依赖：datastore 1.2.1、browser 1.10.0、core-splashscreen 1.2.0、lifecycle-process 2.11.0；测试 robolectric 4.17、
+    roborazzi 1.76.0（toolchain.lock.json libraries_round3）。权限、Manifest 基线不变。
+  脚本：test-native-android.py 新增 --suite ui、--suite account；CI android.yml 构建作业加 ui，模拟器作业加 account
+    （私有 PostgreSQL + adb reverse）。docs/android-ui.md。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，公司 VPN 开启，模拟器 API 36 arm64 页 4096）：
+  --suite foundation 19 PASS；--suite unit 3 PASS（Go 168；build-logic 3；app JVM 78：控制器 27、契约/展示 9、截图 30 …）
+  --suite ui 2 PASS（30 张截图，每张同时断言所示状态；目视检查登录/连接/阻断/线路/我的/深色/200% 字号）
+  --suite emulator 5 PASS（新增 SecurityStoreTest 3：真 Keystore 往返、跨账户与篡改拒绝、盘上无明文、device_id 稳定）
+  --suite account 20 PASS / 0 FAIL / 0 BLOCKED（真实 SessionController + Go Core + Keystore + Gin/PostgreSQL）：
+    A01 错误密码（并删除旧保存密码）、记住密码、登录后线路 0 ms 出现、盘上无密码/令牌、重启后在线自动登录、
+      退出登录删除密码与邮箱、不记住时不保存；
+    A02 管理员无套餐不能连接（upgrade_required）、0 额度（quota_exhausted）、打开期间套餐到期约 2.0 s 反映、
+      设备上限（device_limit 中文提示）；
+    A04 套餐白名单（基础套餐只见普通线路）、改名+倍率 1.5× 约 2.0 s、停用约 2.0 s（选中清除）、启用约 2.0 s、
+      删除约 2.0 s；脱敏：UI 状态与诊断无节点地址/凭据/加密方式/密码；logcat 无上述秘密。
+    （约 2 s = 2 s 空闲轮询间隔，Core 侧 watcher 已先拿到变化；这些是本机值，不是生产承诺。）
+  A03：单 watcher、429 退避在 Core（Go 测试已覆盖）；旧代次/竞态丢弃在 SessionControllerTest 覆盖。
+  lint：0 错误。
+APK/AAR 版本 / 模拟器镜像 / Core 与 Mihomo 版本 / 证据路径：
+  0.1.0；Mihomo 70f0570405c3（生命周期补丁 d425c1a0…）；arm64 libgojni.so 44.4 MiB；Debug APK 57.1 MiB；
+  artifacts/native-android/{ui,account,emulator}/（截图、account-report.json、instrument.txt；不提交）
+未解决问题、复现方法与发布限制：
+  ① 截图在 Robolectric 的 Android 15 沙箱渲染（其 Android 16 沙箱需要 JDK 21，锁文件为 JDK 17）；应用本身仍 target 36，
+     并在 API 36 模拟器验证。
+  ② 网站没有“忘记密码”、隐私政策、用户协议页面，App 未放这三个链接（WebPage 枚举一处添加即可）。
+  ③ 连接按钮已接 VPN 授权与 AsterVpnService，但连接/计费/通知速率的验收属第 4 轮，本轮未声明通过。
+  ④ demo 服务器手工确认未做（需要用户自己的测试账号密码，且公司 VPN 下结果不代表国内网络）。步骤见 PR 说明。
+  ⑤ 公司 VPN 影响：本轮全部自动化只走本机回环（后端 127.0.0.1 + adb reverse），不受公司 VPN 影响；
+     只有连 demo.hyshentou.cn 的手工确认会经过公司网络。
+下一位从哪个文件/验收项开始；回退方法：
+  第 4 轮从 session/SessionController.connectNow、vpn/TunnelLauncher、ui/connect/ConnectScreen.TrafficCard 与
+  VpnNotifications（速率、线路名）开始，按 B01/B02/B04 做计费验收；
+  回退：撤销本 PR（Go Core、契约、桌面端无改动；后端只多一个默认跳过的测试）。
+```
 
 ## 附录 A. 源码核验索引
 

@@ -6,7 +6,10 @@ name: Android client CI
 # with the .so stored uncompressed, the env-v1 parser and JVM tests pass, and on a KVM x86_64
 # emulator the app starts the real Core, shows its version and the instrumented binding test
 # passes. Round 2 adds the tun job: a real VpnService TUN inside the emulator only; the
-# runner's own network is never changed.
+# runner's own network is never changed. Round 3 adds the ui suite (Roborazzi screenshots of
+# every page and state on the JVM) to the build job and the account suite (the app's real
+# SessionController + Core + Keystore against the real backend on a private PostgreSQL,
+# reached through adb reverse) to the emulator job.
 # x86_64 is built only so the Linux runner can run the app; the product ABI is arm64-v8a.
 
 on:
@@ -21,6 +24,7 @@ on:
       - 'scripts/build-native-android.py'
       - 'scripts/test-native-android.py'
       - 'scripts/native_env.py'
+      - 'backend/**'
       - '.github/workflows/android.yml'
   push:
     branches: [main]
@@ -34,6 +38,7 @@ on:
       - 'scripts/build-native-android.py'
       - 'scripts/test-native-android.py'
       - 'scripts/native_env.py'
+      - 'backend/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -63,7 +68,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: native/core/go.sum
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -75,7 +82,13 @@ jobs:
           java -version
           echo "ANDROID_HOME=$ANDROID_HOME"
       - name: Android SDK packages from the lock (the runner's single SDK)
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" > /dev/null
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
       - name: Foundation suite (lock, env, Go platform split, manifest baseline)
         run: python3 scripts/test-native-android.py --suite foundation --report artifacts/native-android/foundation-report.json
       - name: Core AAR (gomobile, arm64-v8a + x86_64, bound twice to prove the .so is reproducible)
@@ -84,6 +97,8 @@ jobs:
         run: python3 scripts/build-native-android.py --target apk --abi arm64-v8a --abi x86_64
       - name: Unit suite (Go binding/IPC/network/managed, env-v1 parser, app JVM tests)
         run: python3 scripts/test-native-android.py --suite unit --report artifacts/native-android/unit-report.json
+      - name: UI suite (Roborazzi screenshots of every page and state, dark, 200 % font, 360 dp, English)
+        run: python3 scripts/test-native-android.py --suite ui --report artifacts/native-android/ui-report.json
       - name: Retain the Core AAR for the emulator job
         uses: actions/upload-artifact@v4
         with:
@@ -113,7 +128,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: native/core/go.sum
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -125,7 +142,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Emulator, system image and the NDK (the Go binding tests are cross-compiled for the device)
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
       - uses: actions/download-artifact@v4
         with:
           name: android-core-aar
@@ -133,7 +156,11 @@ jobs:
       - name: Debug APK from the tested Core AAR
         run: python3 scripts/build-native-android.py --target apk --abi arm64-v8a --abi x86_64
       - name: Emulator suite (real AAR in the app process; no VPN, no host network change)
-        run: python3 scripts/test-native-android.py --suite emulator --api 36 --abi x86_64 --report artifacts/native-android/emulator-report.json
+        run: python3 scripts/test-native-android.py --suite emulator --api 36 --abi x86_64 --keep-emulator --report artifacts/native-android/emulator-report.json
+      - name: PostgreSQL binaries for the private test database (the runner's preinstalled server stays stopped)
+        run: echo "$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)" >> "$GITHUB_PATH"
+      - name: Account suite (sign-in, remember password, plans, admin edits; backend on a private PostgreSQL via adb reverse)
+        run: python3 scripts/test-native-android.py --suite account --api 36 --abi x86_64 --report artifacts/native-android/account-report.json
       - name: Retain emulator evidence (screenshot, device facts, report)
         if: always()
         uses: actions/upload-artifact@v4
@@ -159,7 +186,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: native/core/go.sum
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -171,7 +200,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Emulator, system image and the NDK
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
       - name: TUN suite (hooks AAR, VpnService, SS/VLESS/REALITY, DNS, UDP, IPv6, loop, stop, kill, cycles)
         # The runner has no IPv6 upstream and no real node: those two stay BLOCKED in the report.
         run: python3 scripts/test-native-android.py --suite tun --allow-network-changes --api 36 --abi x86_64 --cycles 10 --expect-blocked tun.T04-ipv6,tun.T02-real --report artifacts/native-android/tun/report.json
