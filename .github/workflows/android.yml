@@ -6,7 +6,10 @@ name: Android client CI
 # with the .so stored uncompressed, the env-v1 parser and JVM tests pass, and on a KVM x86_64
 # emulator the app starts the real Core, shows its version and the instrumented binding test
 # passes. Round 2 adds the tun job: a real VpnService TUN inside the emulator only; the
-# runner's own network is never changed.
+# runner's own network is never changed. Round 3 adds the ui suite (Roborazzi screenshots of
+# every page and state on the JVM) to the build job and the account suite (the app's real
+# SessionController + Core + Keystore against the real backend on a private PostgreSQL,
+# reached through adb reverse) to the emulator job.
 # x86_64 is built only so the Linux runner can run the app; the product ABI is arm64-v8a.
 
 on:
@@ -21,6 +24,7 @@ on:
       - 'scripts/build-native-android.py'
       - 'scripts/test-native-android.py'
       - 'scripts/native_env.py'
+      - 'backend/**'
       - '.github/workflows/android.yml'
   push:
     branches: [main]
@@ -34,6 +38,7 @@ on:
       - 'scripts/build-native-android.py'
       - 'scripts/test-native-android.py'
       - 'scripts/native_env.py'
+      - 'backend/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -63,7 +68,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: native/core/go.sum
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -84,6 +91,8 @@ jobs:
         run: python3 scripts/build-native-android.py --target apk --abi arm64-v8a --abi x86_64
       - name: Unit suite (Go binding/IPC/network/managed, env-v1 parser, app JVM tests)
         run: python3 scripts/test-native-android.py --suite unit --report artifacts/native-android/unit-report.json
+      - name: UI suite (Roborazzi screenshots of every page and state, dark, 200 % font, 360 dp, English)
+        run: python3 scripts/test-native-android.py --suite ui --report artifacts/native-android/ui-report.json
       - name: Retain the Core AAR for the emulator job
         uses: actions/upload-artifact@v4
         with:
@@ -113,7 +122,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: native/core/go.sum
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -133,7 +144,11 @@ jobs:
       - name: Debug APK from the tested Core AAR
         run: python3 scripts/build-native-android.py --target apk --abi arm64-v8a --abi x86_64
       - name: Emulator suite (real AAR in the app process; no VPN, no host network change)
-        run: python3 scripts/test-native-android.py --suite emulator --api 36 --abi x86_64 --report artifacts/native-android/emulator-report.json
+        run: python3 scripts/test-native-android.py --suite emulator --api 36 --abi x86_64 --keep-emulator --report artifacts/native-android/emulator-report.json
+      - name: PostgreSQL binaries for the private test database (the runner's preinstalled server stays stopped)
+        run: echo "$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)" >> "$GITHUB_PATH"
+      - name: Account suite (sign-in, remember password, plans, admin edits; backend on a private PostgreSQL via adb reverse)
+        run: python3 scripts/test-native-android.py --suite account --api 36 --abi x86_64 --report artifacts/native-android/account-report.json
       - name: Retain emulator evidence (screenshot, device facts, report)
         if: always()
         uses: actions/upload-artifact@v4
@@ -159,7 +174,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: native/core/go.sum
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

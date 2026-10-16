@@ -2,6 +2,10 @@ package com.asterlink.vpn.vpn
 
 import com.asterlink.vpn.core.CoreClient
 import com.asterlink.vpn.core.CoreException
+import com.asterlink.vpn.core.CoreSnapshot
+import com.asterlink.vpn.session.LocalCodes
+import com.asterlink.vpn.session.TunnelOutcome
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * What [AsterVpnService] runs once it is in the foreground and registered as the VPN host.
@@ -20,12 +24,32 @@ interface TunnelSession {
 class CoreTunnelSession(
     private val startCore: () -> Unit,
     private val client: CoreClient,
+    private val launcher: TunnelLauncher? = null,
 ) : TunnelSession {
-    override suspend fun connect(): String? = try {
-        startCore()
-        client.connect()
-    } catch (error: CoreException) {
-        error.code
+    override suspend fun connect(): String? {
+        // The SessionController's request, at the generation it decided on; without one (a
+        // start nobody in the app asked for) the Core's current generation is used.
+        val claim = launcher?.claim()
+        val outcome: TunnelOutcome = try {
+            startCore()
+            TunnelOutcome.Replied(if (claim != null) client.connect(claim.generation) else client.connectCurrent())
+        } catch (error: CoreException) {
+            TunnelOutcome.Refused(error.code, error.message.orEmpty())
+        } catch (error: CancellationException) {
+            claim?.complete(TunnelOutcome.Refused(LocalCodes.VPN_STOPPING))
+            throw error
+        } catch (error: Exception) {
+            TunnelOutcome.Refused(LocalCodes.VPN_START_FAILED)
+        }
+        claim?.complete(outcome)
+        return when (outcome) {
+            is TunnelOutcome.Replied -> {
+                val reply = outcome.reply
+                if (reply.snapshot.state == CoreSnapshot.State.CONNECTED && reply.actionError == null) null
+                else reply.actionError?.code ?: reply.snapshot.lastError?.code ?: "tunnel_failed"
+            }
+            is TunnelOutcome.Refused -> outcome.code
+        }
     }
 
     override suspend fun disconnect() {

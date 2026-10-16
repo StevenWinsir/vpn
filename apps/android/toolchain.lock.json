@@ -59,7 +59,10 @@
     "system_images": {
       "primary": "system-images;android-36;google_apis;arm64-v8a",
       "page_16k": "system-images;android-36;google_apis_ps16k;arm64-v8a",
-      "older": ["system-images;android-29;google_apis;arm64-v8a", "system-images;android-26;google_apis;arm64-v8a"],
+      "older": [
+        "system-images;android-29;google_apis;arm64-v8a",
+        "system-images;android-26;google_apis;arm64-v8a"
+      ],
       "ci": "system-images;android-36;google_apis;x86_64"
     },
     "verified": "round 1 installs the primary image and the emulator; the 16 KB, API 29 and API 26 images are needed by rounds 2 and 6 (download time on the throttled office network, see docs/android-foundation.md)"
@@ -71,7 +74,20 @@
   },
   "ci": {
     "runner_label": "ubuntu-24.04",
-    "abis": ["arm64-v8a", "x86_64"],
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ],
     "note": "x86_64 exists only so the Linux runner's KVM emulator can run the app; the product ABI is arm64-v8a."
+  },
+  "libraries_round3": {
+    "datastore_preferences": "1.2.1",
+    "browser": "1.10.0",
+    "core_splashscreen": "1.2.0",
+    "lifecycle_process": "2.11.0 (same as the other lifecycle artifacts)",
+    "robolectric": "4.17 (tests only)",
+    "roborazzi": "1.76.0 (tests only)",
+    "verified": "newest stable releases in Google's Maven / Maven Central metadata on 2026-10-15; pinned in gradle/libs.versions.toml",
+    "decision": "Screenshot tests run on Robolectric's Android 15 sandbox (sdk 35): its Android 16 sandbox requires Java 21 and this lock pins JDK 17. Compose rendering does not depend on the sandbox; the app keeps targetSdk 36 and is verified on the API 36 emulator. Navigation Compose and material-icons-extended are not used (four destinations without deep links; only the icons the app shows are packaged as vectors)."
   }
 }
