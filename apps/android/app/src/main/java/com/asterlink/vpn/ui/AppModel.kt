@@ -10,6 +10,18 @@ data class BuildFacts(
     val envFromExample: Boolean,
 )
 
+/**
+ * System settings that change how the VPN behaves in daily use (handoff_app_android.md 7.2,
+ * 7.6), read by the activity whenever it resumes. Both are the user's decision: the app
+ * explains and links to the setting, it never asks for an exemption itself.
+ */
+data class DeviceStatus(
+    /** Android 13+ notification permission and the app's notification switch. */
+    val notificationsAllowed: Boolean = true,
+    /** Exempt from battery optimisation ("unrestricted"); null when it cannot be read. */
+    val batteryUnrestricted: Boolean? = null,
+)
+
 /** Website pages opened in a Custom Tab (registration, purchase and renewal live on the website). */
 enum class WebPage(val path: String) {
     Home("/"),
@@ -36,6 +48,7 @@ data class AppActions(
     val openWebsite: (WebPage) -> Unit = {},
     val openVpnSettings: () -> Unit = {},
     val openBatterySettings: () -> Unit = {},
+    val openNotificationSettings: () -> Unit = {},
     val copyDiagnostics: () -> Unit = {},
     val setTheme: (ThemeMode) -> Unit = {},
     val dismissMessage: () -> Unit = {},

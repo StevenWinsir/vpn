@@ -12,7 +12,9 @@ name: Android client CI
 # reached through adb reverse) to the emulator job. Round 4 adds the billing job: the production
 # APK connects for real (SessionController -> AsterVpnService -> Core gates, first ACK, TUN,
 # Verify) and the server's ledger is checked to the unit, plus the automatic stop paths and the
-# node agent's own billing (scripts/test-native-android.py --suite billing).
+# node agent's own billing (scripts/test-native-android.py --suite billing). Round 5 adds the
+# lifecycle job (--suite lifecycle): the authorization gate, Doze, network changes, a competing
+# VPN and process death on the production build.
 # x86_64 is built only so the Linux runner can run the app; the product ABI is arm64-v8a.
 
 on:
@@ -281,5 +283,64 @@ jobs:
         with:
           name: android-billing-evidence
           path: artifacts/native-android/billing/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  lifecycle:
+    # Round 5: mobile lifecycle on the PRODUCTION build: the authorization gate after a stall,
+    # with the server unreachable and across Wi-Fi/cellular/airplane changes, Doze, the catalog
+    # poll in the background, a second VPN app taking over, the task removed, am kill /
+    # force-stop, cycles and a short soak. Shorter screen-off and soak than the local run; the
+    # reboot (L06) runs locally only. The VPN and every network change exist only inside the emulator.
+    name: Android lifecycle acceptance (API 36 x86_64, KVM)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            native/core/go.sum
+            backend/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      - name: Allow the emulator to use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator, system image and the NDK
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-core-aar
+          path: apps/android/build/core/
+      - name: Debug and test APKs from the tested production Core AAR
+        run: |
+          python3 scripts/build-native-android.py --target apk --abi arm64-v8a --abi x86_64
+          (cd apps/android && ./gradlew --console=plain :app:assembleDebugAndroidTest)
+      - name: PostgreSQL binaries for the private test database (the runner's preinstalled server stays stopped)
+        run: echo "$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)" >> "$GITHUB_PATH"
+      - name: Lifecycle suite (N01, L01-L05, L07 short; L06 reboot and the 8-hour soak run locally)
+        run: python3 scripts/test-native-android.py --suite lifecycle --allow-network-changes --skip-build --api 36 --abi x86_64 --screen-off-seconds 30 --soak-seconds 60 --cycles 10 --no-reboot --report artifacts/native-android/lifecycle/report.json --out artifacts/native-android/lifecycle
+      - name: Retain lifecycle evidence (report, instrumentation output, soak samples, world log)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lifecycle-evidence
+          path: artifacts/native-android/lifecycle/
           retention-days: 14
           if-no-files-found: ignore

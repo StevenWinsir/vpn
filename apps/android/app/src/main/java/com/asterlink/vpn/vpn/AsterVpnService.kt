@@ -173,8 +173,10 @@ class AsterVpnService : VpnService(), VpnHost {
     }
 
     override fun onRevoke() {
-        // The system has already deactivated the interface; the Core must stop forwarding
-        // and settle what was carried.
+        // The system has already deactivated the interface (another VPN app took over, or the
+        // user turned it off in Settings); the Core must stop forwarding and settle what was
+        // carried, and the user is told why (L04).
+        if (!ending) container.onVpnRevoked()
         end()
     }
 

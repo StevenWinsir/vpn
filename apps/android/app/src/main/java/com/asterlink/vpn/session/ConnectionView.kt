@@ -6,7 +6,15 @@ import com.asterlink.vpn.core.NodeView
 import java.util.Locale
 
 /** The fixed status words of handoff_app_android.md 9.3 (the UI owns the text). */
-enum class ConnectionStatus { Disconnected, Preparing, Connecting, Connected, Stopping, Unavailable }
+enum class ConnectionStatus {
+    Disconnected, Preparing, Connecting, Connected, Stopping, Unavailable,
+
+    /** Connected, gate closed: re-confirming the authorization online (正在重新验证). */
+    Reconfirming,
+
+    /** Connected, gate closed, and the server cannot be reached yet (等待网络). */
+    WaitingNetwork,
+}
 
 enum class Tone { Idle, Busy, Good, Bad }
 
@@ -54,7 +62,13 @@ data class ConnectionView(
             if (activity == SessionActivity.Disconnecting) return busyView(ConnectionStatus.Stopping, cancellable = false)
 
             when (snapshot.state) {
-                State.CONNECTED -> return ConnectionView(ConnectionStatus.Connected, Tone.Good, false, true, false, false, false, null, null, false)
+                State.CONNECTED -> {
+                    // The tunnel holds traffic but forwards nothing until the Core re-confirms; it
+                    // can still be disconnected (which settles like any other disconnect).
+                    val gate = snapshot.gate ?: return ConnectionView(ConnectionStatus.Connected, Tone.Good, false, true, false, false, false, null, null, false)
+                    val status = if (gate.waitingNetwork) ConnectionStatus.WaitingNetwork else ConnectionStatus.Reconfirming
+                    return ConnectionView(status, Tone.Busy, false, true, true, false, false, null, null, false)
+                }
                 State.CONNECTING -> return busyView(ConnectionStatus.Connecting, cancellable = false)
                 State.PREPARING -> return busyView(ConnectionStatus.Preparing, cancellable = false)
                 State.STOPPING -> return busyView(ConnectionStatus.Stopping, cancellable = false)

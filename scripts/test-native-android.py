@@ -68,8 +68,23 @@ Round 4:
     * only the emulator's network changes; nothing reaches demo.hyshentou.cn or the remote database
       (Verify still probes its public URLs through the test node, i.e. through this Mac's network)
 
+Round 5:
+  lifecycle   needs Go, PostgreSQL, a JDK, the SDK emulator and a system image; --allow-network-changes
+    * the billing suite's build, test node, sink and TestAndroidBillingWorld (user "life")
+    * runs LifecycleAcceptanceTest in the app, changing the emulator like a phone changes (shell
+      commands through UiAutomation, all undone afterwards): N01 notifications denied, L01 a
+      15 s stall (the process SIGSTOPped and continued, so its clocks jump like after deep sleep),
+      screen off (--screen-off-seconds) and a closed gate holding traffic while the server is
+      unreachable, L02 Doze, 7.6 the catalog poll in the background and a verdict there, L03
+      Wi-Fi <-> cellular and airplane mode, L04 a second VPN app (test APK) taking over, L05 the
+      task removed, L07 cycles and a short soak (--soak-seconds; samples to soak-samples.json)
+    * then from the host: L05 `am kill` (must not touch a foreground service) and force-stop
+      (no VPN, no service left), L06 a reboot (nothing connects by itself; --no-reboot skips it)
+    * L07-8h and L08 (Chrome DoH, WebRTC) are NOT_RUN here: docs/android-lifecycle.md
+    * only the emulator's network changes; nothing reaches demo.hyshentou.cn or the remote database
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
-The grants/lifecycle/release suites arrive in rounds 5-6 and refuse to run here.
+The grants/release suites arrive in round 6 and refuse to run here.
 """
 import argparse
 import json
@@ -1035,6 +1050,198 @@ def run_billing_suite(args):
         emu.close(args.keep_emulator)
 
 
+# ---------------------------------------------------------------- lifecycle (round 5)
+
+LIFECYCLE_CLASS = 'com.asterlink.vpn.LifecycleAcceptanceTest'
+
+
+def write_lifecycle(adb, serial, name, data: bytes):
+    process = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s sh -c "mkdir -p files/lifecycletest && cat > files/lifecycletest/%s"' % (PACKAGE, name)],
+                             input=data, capture_output=True, timeout=60)
+    if process.returncode != 0:
+        raise RuntimeError('writing %s into the app failed' % name)
+
+
+def app_pid(adb, serial):
+    return adb_run(adb, serial, 'shell', 'pidof', PACKAGE, check=False).strip()
+
+
+def lifecycle_host_cases(emu, world_file, config):
+    """L05 (am kill / force-stop) and L06 (reboot): what kills the process, driven from the host."""
+    adb, serial = emu.adb, emu.serial
+    adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+    write_lifecycle(adb, serial, 'world.json', world_file.read_bytes())
+    write_lifecycle(adb, serial, 'config.json', json.dumps(config).encode())
+    write_lifecycle(adb, serial, 'hold', b'1')
+    holder = subprocess.Popen([str(adb), '-s', serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', LIFECYCLE_CLASS + '#holdConnected', RUNNER],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    ready, deadline = None, time.time() + 120
+    try:
+        while time.time() < deadline:
+            line = holder.stdout.readline()
+            if not line:
+                break
+            match = re.search(r'asterlink=life_ready=(\d)', line)
+            if match:
+                ready = match.group(1) == '1'
+                break
+        pid = app_pid(adb, serial)
+        # A process with a foreground service is "perceptible": `am kill` (what the system does
+        # to cached background apps) must leave it and its VPN alone.
+        adb_run(adb, serial, 'shell', 'am', 'kill', PACKAGE, check=False)
+        time.sleep(3)
+        survived = bool(pid) and app_pid(adb, serial) == pid and vpn_up(adb, serial)
+        record('lifecycle.L05-am-kill', bool(ready) and survived,
+               'connected=%s; after `am kill` the process %s and its VPN %s' % (ready, 'is the same' if app_pid(adb, serial) == pid else 'changed', 'remains' if vpn_up(adb, serial) else 'is gone'))
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+        gone_after = None
+        for i in range(20):
+            if not vpn_up(adb, serial):
+                gone_after = i * 0.5
+                break
+            time.sleep(0.5)
+        services = adb_run(adb, serial, 'shell', 'dumpsys', 'activity', 'services', PACKAGE, check=False)
+        record('lifecycle.L05-force-stop', bool(ready) and gone_after is not None and 'AsterVpnService' not in services and not app_pid(adb, serial),
+               'after `am force-stop`: VPN gone %s, no process, no service record; nothing restarts it (START_NOT_STICKY, always-on unsupported)'
+               % ('%.1f s' % gone_after if gone_after is not None else 'NOT within 10 s'))
+    finally:
+        holder.kill()
+        adb_run(adb, serial, 'shell', 'run-as %s rm -rf files/lifecycletest' % PACKAGE, check=False)
+
+
+def reboot_case(emu):
+    """L06: after a reboot nothing connects by itself: no process, no service, no VPN."""
+    adb, serial = emu.adb, emu.serial
+    adb_run(adb, serial, 'reboot', check=False, timeout=60)
+    time.sleep(5)
+    adb_run(adb, serial, 'wait-for-device', timeout=300)
+    deadline = time.time() + 300
+    while time.time() < deadline and adb_run(adb, serial, 'shell', 'getprop', 'sys.boot_completed', check=False).strip() != '1':
+        time.sleep(2)
+    booted = adb_run(adb, serial, 'shell', 'getprop', 'sys.boot_completed', check=False).strip() == '1'
+    time.sleep(20)  # BOOT_COMPLETED receivers and always-on VPN would have run by now
+    pid = app_pid(adb, serial)
+    services = adb_run(adb, serial, 'shell', 'dumpsys', 'activity', 'services', PACKAGE, check=False)
+    always_on = adb_run(adb, serial, 'shell', 'settings', 'get', 'secure', 'always_on_vpn_app', check=False).strip()
+    record('lifecycle.L06-reboot', booted and not vpn_up(adb, serial) and 'AsterVpnService' not in services and always_on in ('', 'null'),
+           'rebooted (boot completed=%s); 20 s later: VPN %s, app process %s, service record %s, always-on VPN app %r'
+           % (booted, 'up' if vpn_up(adb, serial) else 'absent', pid or 'not running', 'present' if 'AsterVpnService' in services else 'absent', always_on))
+
+
+def run_lifecycle_suite(args):
+    if not args.allow_network_changes:
+        record('lifecycle.consent', False, 'pass --allow-network-changes: the suite creates VPNs and toggles Wi-Fi, airplane mode and Doze inside the emulator (the host network is not changed)', status='BLOCKED')
+        return
+    missing = [t for t in ('go', 'initdb', 'pg_ctl') if not shutil.which(t)]
+    if missing:
+        record('lifecycle.tools', False, 'not installed: %s' % ', '.join(missing), status='BLOCKED')
+        return
+    abi = args.abi or host_abi()
+    if not args.skip_build:
+        problem = ensure_plain_build(abi)
+        if problem:
+            record('lifecycle.build', False, problem)
+            return
+    core = json.loads((ANDROID / 'build' / 'core' / 'core-build.json').read_text())
+    record('lifecycle.build', not core.get('tuntest_hooks'), 'production Core AAR (sha256 %s, no acceptance hooks) and the debug + test APKs' % core['aar_sha256'][:16])
+    test_apk = ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'androidTest' / 'debug' / 'app-debug-androidTest.apk'
+
+    emu = open_emulator(args, 'lifecycle', 'lifecycle')
+    if emu is None:
+        return
+    adb, serial = emu.adb, emu.serial
+    scratch = tempfile.mkdtemp(prefix='asterlink-lifecycle-')
+    helpers, pg_data, world, port = [], None, None, None
+    try:
+        node, sink = start_helpers(argparse.Namespace(**dict(vars(args), no_reality=True)), scratch, helpers)
+        extra = {'ASTERLINK_ANDROID_TESTNODE': os.path.join(scratch, 'node.json'), 'ASTERLINK_ANDROID_NODE_HOST': EMULATOR_HOST,
+                 'ASTERLINK_ANDROID_SINK': 'http://%s:%s' % (LOOPBACK, sink['port']), 'ASTERLINK_ANDROID_SINK_TOKEN': sink['token']}
+        pg_data, world, world_file, port = start_world(scratch, 'TestAndroidBillingWorld', 'ASTERLINK_ANDROID_BILLING_WORLD', extra)
+        facts = json.loads(world_file.read_text())
+        record('lifecycle.world', True, 'TestAndroidBillingWorld on 127.0.0.1:%d (private PostgreSQL; report interval %s s); test node + sink on the host loopback'
+               % (port, facts.get('report_interval_seconds')))
+        secrets = [facts['password'], node['ss_password'], node['vless_uuid'], sink['token']]
+
+        adb_run(adb, serial, 'install', '-r', '-t', str(ANDROID / 'app' / 'build' / 'outputs' / 'apk' / 'debug' / 'app-debug.apk'), timeout=300)
+        adb_run(adb, serial, 'install', '-r', '-t', str(test_apk), timeout=300)
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE)
+        adb_run(adb, serial, 'shell', 'appops', 'set', PACKAGE, 'ACTIVATE_VPN', 'allow')
+        # N01: the run starts with notifications denied (revoking kills the app, so it happens now).
+        adb_run(adb, serial, 'shell', 'pm', 'revoke', PACKAGE, 'android.permission.POST_NOTIFICATIONS', check=False)
+        adb_run(adb, serial, 'shell', 'svc', 'wifi', 'enable', check=False)
+        adb_run(adb, serial, 'shell', 'cmd', 'connectivity', 'airplane-mode', 'disable', check=False)
+        if vpn_up(adb, serial):
+            record('lifecycle.clean_start', False, 'a VPN is already up in the emulator', status='BLOCKED')
+            return
+        adb_run(adb, serial, 'reverse', 'tcp:%d' % port, 'tcp:%d' % port)
+        adb_run(adb, serial, 'logcat', '-c', check=False)
+        config = {'sink': {'name': TARGET_NAME, 'port': sink['port'], 'token': sink['token']}, 'cycles': args.cycles,
+                  'screen_off_seconds': args.screen_off_seconds, 'soak_seconds': args.soak_seconds}
+        adb_run(adb, serial, 'shell', 'run-as %s rm -rf files/lifecycletest' % PACKAGE, check=False)
+        write_lifecycle(adb, serial, 'world.json', world_file.read_bytes())
+        write_lifecycle(adb, serial, 'config.json', json.dumps(config).encode())
+        started = time.time()
+        run = subprocess.run([str(adb), '-s', serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', LIFECYCLE_CLASS + '#acceptance', RUNNER],
+                             capture_output=True, text=True, timeout=args.max_seconds)
+        (emu.out_dir / 'instrument.txt').write_text(run.stdout + run.stderr)
+        report = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s cat files/lifecycletest/report.json' % PACKAGE], capture_output=True, text=True, timeout=60).stdout
+        samples = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s cat files/lifecycletest/samples.json' % PACKAGE], capture_output=True, text=True, timeout=60).stdout
+        if samples.strip().startswith('['):
+            (emu.out_dir / 'soak-samples.json').write_text(samples)
+        timeline = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s cat files/lifecycletest/timeline.json' % PACKAGE], capture_output=True, text=True, timeout=60).stdout
+        if timeline.strip().startswith('['):
+            (emu.out_dir / 'timeline.json').write_text(timeline)
+        try:
+            cases = json.loads(report)['cases']
+        except (ValueError, KeyError):
+            record('lifecycle.report', False, 'no report from the device: ' + (run.stdout + run.stderr)[-1200:])
+            return
+        for case in cases:
+            record('lifecycle.' + case['case_id'], case['status'] in ('PASS', 'NOT_RUN'), case['observed'], status=case['status'])
+        record('lifecycle.vpn_gone', not vpn_up(adb, serial), 'no VPN network left in the emulator after the device run (%.0f s)' % (time.time() - started))
+        lifecycle_host_cases(emu, world_file, config)
+        logcat = adb_run(adb, serial, 'logcat', '-d', check=False, timeout=120)
+        leaked = [i for i, secret in enumerate(secrets) if secret and secret in logcat]
+        record('lifecycle.logcat_clean', not leaked, 'logcat (%d lines) holds no password, node secret or sink token' % logcat.count('\n')
+               if not leaked else 'logcat contains secret #%s' % leaked)
+        if args.no_reboot:
+            record('lifecycle.L06-reboot', False, 'skipped (--no-reboot)', status='NOT_RUN')
+        else:
+            reboot_case(emu)
+        (emu.out_dir / 'lifecycle-report.json').write_text(json.dumps({
+            'device': emu.facts, 'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'mihomo_patch', 'aar_sha256', 'tuntest_hooks')},
+            'cases': results}, indent=2) + '\n')
+    finally:
+        if port:
+            try:
+                urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:%d/__world/stop' % port, data=b'{}', method='POST'), timeout=10)
+            except OSError:
+                pass
+            adb_run(adb, serial, 'reverse', '--remove', 'tcp:%d' % port, check=False)
+        adb_run(adb, serial, 'shell', 'am', 'force-stop', PACKAGE, check=False)
+        adb_run(adb, serial, 'shell', 'run-as %s rm -rf files/lifecycletest' % PACKAGE, check=False)
+        adb_run(adb, serial, 'shell', 'appops', 'set', PACKAGE, 'ACTIVATE_VPN', 'default', check=False)
+        adb_run(adb, serial, 'shell', 'pm', 'grant', PACKAGE, 'android.permission.POST_NOTIFICATIONS', check=False)
+        if world:
+            try:
+                world.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                world.kill()
+            log = Path(scratch) / 'world.log'
+            if log.is_file():
+                (emu.out_dir / 'world.log').write_text(log.read_text(errors='replace')[-200_000:])
+        for helper in helpers:
+            helper.terminate()
+            try:
+                helper.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                helper.kill()
+        if pg_data:
+            subprocess.run(['pg_ctl', '-D', str(pg_data), '-m', 'fast', '-w', 'stop'], stdout=subprocess.DEVNULL, check=False)
+        shutil.rmtree(scratch, ignore_errors=True)
+        emu.close(args.keep_emulator)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--suite', required=True)
@@ -1055,6 +1262,9 @@ def main():
     parser.add_argument('--upload-mib', type=int, default=20, help='billing suite: controlled upload per B01 rate (default 20, handoff B01)')
     parser.add_argument('--download-mib', type=int, default=80, help='billing suite: controlled download per B01 rate (default 80)')
     parser.add_argument('--no-node-agent', action='store_true', help='billing suite: no node-reported line (B04 BLOCKED)')
+    parser.add_argument('--screen-off-seconds', type=int, default=120, help='lifecycle suite: L01 screen-off time (handoff: 600)')
+    parser.add_argument('--soak-seconds', type=int, default=180, help='lifecycle suite: connected soak sampled every 15 s')
+    parser.add_argument('--no-reboot', action='store_true', help='lifecycle suite: skip L06 (reboot the emulator)')
     parser.add_argument('--expect-blocked', help='comma-separated case ids the environment cannot run (e.g. CI: no IPv6 upstream, '
                                                   'no real node); they stay BLOCKED in the report, but only they may be BLOCKED for exit 0')
     args = parser.parse_args()
@@ -1092,6 +1302,12 @@ def main():
         except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as error:
             detail = getattr(error, 'stderr', None) or getattr(error, 'output', None) or b''
             record('billing.run', False, (str(error) + ' ' + (detail.decode(errors='replace') if isinstance(detail, bytes) else str(detail)))[-1800:])
+    elif args.suite == 'lifecycle':
+        try:
+            run_lifecycle_suite(args)
+        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as error:
+            detail = getattr(error, 'stderr', None) or getattr(error, 'output', None) or b''
+            record('lifecycle.run', False, (str(error) + ' ' + (detail.decode(errors='replace') if isinstance(detail, bytes) else str(detail)))[-1800:])
     else:
         print('suite %r arrives in a later round (handoff_app_android.md 10)' % args.suite)
         return EXIT_BLOCKED

@@ -80,6 +80,8 @@ type session struct {
 	cancel  context.CancelFunc
 	// closed is read without mu so Start and Call never wait behind a running command.
 	closed atomic.Bool
+	// manager receives the foreground hint directly: it must not wait behind a command.
+	manager *managed.Manager
 }
 
 func newSession(handler ipc.Handler) *session {
@@ -155,8 +157,11 @@ func Start(platform Platform, buildJSON string) error {
 	}
 	network.SetHost(host{platform})
 	engine.SetTunHost(host{platform})
-	manager := managed.New(managed.Options{CoreVersion: version, Engine: engine.New()})
+	// A phone sleeps whenever its screen is off: a lapse closes the authorization gate and
+	// re-confirms instead of dropping the VPN (handoff_app_android.md 7.5).
+	manager := managed.New(managed.Options{CoreVersion: version, Engine: engine.New(), ResumePolicy: managed.ResumeGate})
 	current = newSession(service.New(manager))
+	current.manager = manager
 	return nil
 }
 
@@ -183,7 +188,23 @@ func Stop() {
 // ConnectivityManager callback). It refreshes Mihomo's network-dependent state; whether a
 // running session may continue is the Core's own decision (the watchdog compares network
 // signatures and re-verifies). Safe at any time.
-func NetworkChanged() { engine.NetworkChanged() }
+func NetworkChanged() {
+	engine.NetworkChanged()
+	// A gate waiting for the network retries now rather than after its backoff.
+	if s := active(); s.manager != nil {
+		s.manager.Nudge()
+	}
+}
+
+// SetForeground tells the Core whether a screen of the app is visible
+// (ProcessLifecycleOwner). In the background the catalog long-poll pauses to spare the
+// radio; authorization is unaffected (handoff_app_android.md 7.6). Safe at any time; the
+// Core starts in the foreground.
+func SetForeground(visible bool) {
+	if s := active(); s.manager != nil {
+		s.manager.SetForeground(visible)
+	}
+}
 
 func info() ipc.BuildInfo {
 	return ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}

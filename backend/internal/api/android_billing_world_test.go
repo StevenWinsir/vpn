@@ -26,7 +26,7 @@ import (
 
 // TestAndroidBillingWorld serves a seeded world for the Android connection and billing
 // acceptance (scripts/test-native-android.py --suite billing, handoff_app_android.md round 4:
-// B01, B02, A04, B04). It is skipped unless the suite names an output file in
+// B01, B02, A04, B04; round 5 reuses it for --suite lifecycle). It is skipped unless the suite names an output file in
 // ASTERLINK_ANDROID_BILLING_WORLD, and it only ever listens on 127.0.0.1 (the emulator reaches
 // it through `adb reverse`).
 //
@@ -109,6 +109,7 @@ func TestAndroidBillingWorld(t *testing.T) {
 	makeUser("quota", "user", 64<<20, 4) // A04: the data runs out while connected
 	makeUser("grant", "user", 4<<30, 4)  // B04: node-reported
 	makeUser("idle", "user", 4<<30, 4)   // spare
+	makeUser("life", "user", 4<<30, 4)   // round 5: lifecycle (scripts/test-native-android.py --suite lifecycle)
 
 	// The administrator's web session, as in the console.
 	webCall := func(method, path string, cookies []*http.Cookie, body any) *httptest.ResponseRecorder {
@@ -210,6 +211,9 @@ func TestAndroidBillingWorld(t *testing.T) {
 	}
 	var reports []report
 	dropNext := false
+	// Round 5 (lifecycle): an unreachable client API, and request counts per endpoint.
+	apiOffline := false
+	hits := map[string]int{}
 	grantTokens := map[string]string{} // email-less: the last bearer token that asked for a grant
 	tokenHash := func(header string) string {
 		sum := sha256.Sum256([]byte(strings.TrimPrefix(header, "Bearer ")))
@@ -241,6 +245,7 @@ func TestAndroidBillingWorld(t *testing.T) {
 			Enabled   *bool  `json:"enabled"`
 			User      string `json:"user"`
 			Remaining int64  `json:"remaining_bytes"`
+			Offline   bool   `json:"offline"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		answer := func(v any) {
@@ -328,6 +333,12 @@ func TestAndroidBillingWorld(t *testing.T) {
 			}
 			_ = json.Unmarshal(after.Body.Bytes(), &later)
 			answer(map[string]any{"status": refused.Code, "code": body.Error.Code, "ledger_moved": later.UsedUnits != session.UsedUnits})
+		case "api": // round 5: the client API becomes unreachable (connections closed) or comes back
+			apiOffline = in.Offline
+			w.WriteHeader(http.StatusNoContent)
+		case "hits": // round 5: client API requests per endpoint since the last call (7.6 measurement)
+			answer(hits)
+			hits = map[string]int{}
 		case "stop":
 			once.Do(func() { close(stop) })
 			w.WriteHeader(http.StatusNoContent)
@@ -338,6 +349,22 @@ func TestAndroidBillingWorld(t *testing.T) {
 
 	api := func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		mu.Lock()
+		offline := apiOffline
+		if strings.HasPrefix(path, "/api/v1/client/") {
+			hits[strings.SplitN(strings.TrimPrefix(path, "/api/v1/client/"), "/", 2)[0]]++
+		}
+		mu.Unlock()
+		if offline && strings.HasPrefix(path, "/api/v1/client/") {
+			// What an unreachable server looks like to the client: the connection just ends.
+			if hijacker, ok := w.(http.Hijacker); ok {
+				if conn, _, err := hijacker.Hijack(); err == nil {
+					_ = conn.Close()
+					return
+				}
+			}
+			panic(http.ErrAbortHandler)
+		}
 		if r.Method == http.MethodPost && path == "/api/v1/client/grants" {
 			mu.Lock()
 			grantTokens["last"] = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

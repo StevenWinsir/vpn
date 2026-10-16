@@ -12,11 +12,16 @@ data class TunnelNotice(
     val lineName: String?,
     val uploadBytesPerSecond: Long,
     val downloadBytesPerSecond: Long,
+    /** Connected but the authorization gate is closed: the title says why, without rates. */
+    val gate: GateState = GateState.Open,
 ) {
+    enum class GateState { Open, Reconfirming, WaitingNetwork }
+
     /** "HK 01 · ↑1.20 MiB/s ↓8.40 MiB/s"; null while not connected (the title says it all). */
     val text: String?
         get() {
             if (!connected) return null
+            if (gate != GateState.Open) return lineName
             val rates = "↑" + Formatting.speed(uploadBytesPerSecond) + " ↓" + Formatting.speed(downloadBytesPerSecond)
             return if (lineName.isNullOrEmpty()) rates else "$lineName · $rates"
         }
@@ -28,11 +33,17 @@ data class TunnelNotice(
             val snapshot = state.snapshot
             if (state.phase != AppPhase.SignedIn || snapshot.state != CoreSnapshot.State.CONNECTED) return Connecting
             val metering = snapshot.metering
+            val gate = snapshot.gate
             return TunnelNotice(
                 connected = true,
                 lineName = snapshot.selectedNode?.name,
-                uploadBytesPerSecond = metering?.uploadBytesPerSecond ?: 0,
-                downloadBytesPerSecond = metering?.downloadBytesPerSecond ?: 0,
+                uploadBytesPerSecond = if (gate == null) metering?.uploadBytesPerSecond ?: 0 else 0,
+                downloadBytesPerSecond = if (gate == null) metering?.downloadBytesPerSecond ?: 0 else 0,
+                gate = when {
+                    gate == null -> GateState.Open
+                    gate.waitingNetwork -> GateState.WaitingNetwork
+                    else -> GateState.Reconfirming
+                },
             )
         }
     }

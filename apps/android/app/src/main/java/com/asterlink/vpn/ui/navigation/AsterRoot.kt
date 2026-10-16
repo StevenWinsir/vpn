@@ -36,6 +36,7 @@ import com.asterlink.vpn.session.AppPhase
 import com.asterlink.vpn.session.SessionState
 import com.asterlink.vpn.ui.AppActions
 import com.asterlink.vpn.ui.BuildFacts
+import com.asterlink.vpn.ui.DeviceStatus
 import com.asterlink.vpn.ui.account.AccountScreen
 import com.asterlink.vpn.ui.components.AsterIcon
 import com.asterlink.vpn.ui.components.BrandMark
@@ -63,11 +64,12 @@ fun AsterRoot(
     actions: AppActions,
     clock: Clock,
     initialTab: Tab = Tab.Connect,
+    device: DeviceStatus = DeviceStatus(),
 ) {
     when (state.phase) {
         AppPhase.Starting -> Starting()
         AppPhase.SignedOut, AppPhase.SigningIn -> LoginScreen(state, facts, actions)
-        AppPhase.SignedIn -> SignedIn(state, facts, themeMode, actions, clock, initialTab)
+        AppPhase.SignedIn -> SignedIn(state, facts, themeMode, actions, clock, initialTab, device)
     }
 }
 
@@ -85,7 +87,7 @@ private fun Starting() {
 }
 
 @Composable
-private fun SignedIn(state: SessionState, facts: BuildFacts, themeMode: ThemeMode, actions: AppActions, clock: Clock, initialTab: Tab) {
+private fun SignedIn(state: SessionState, facts: BuildFacts, themeMode: ThemeMode, actions: AppActions, clock: Clock, initialTab: Tab, device: DeviceStatus) {
     var tab by rememberSaveable { mutableStateOf(initialTab) }
     val snackbar = remember { SnackbarHostState() }
     val warning = state.warning?.let { noticeText(it) }
@@ -129,7 +131,7 @@ private fun SignedIn(state: SessionState, facts: BuildFacts, themeMode: ThemeMod
                     onOpenAccount = { tab = Tab.Account },
                 )
                 Tab.Lines -> LinesScreen(state, actions)
-                Tab.Account -> AccountScreen(state, facts, themeMode, actions, clock.now)
+                Tab.Account -> AccountScreen(state, facts, themeMode, actions, clock.now, device = device)
             }
         }
     }

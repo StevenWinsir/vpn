@@ -43,11 +43,39 @@ func (m *Manager) RefreshCatalog(ctx context.Context) (Snapshot, error) {
 		return m.Snapshot(), err
 	}
 	m.applyCatalogLocked(catalog)
+	m.catalogStale = m.background
 	m.mu.Unlock()
 	if err = m.refreshSession(ctx, gen, client, token); err != nil {
 		return m.Snapshot(), err
 	}
 	return m.Snapshot(), nil
+}
+
+// syncCatalog reads the catalog once (no long-poll) and applies it.
+func (m *Manager) syncCatalog(ctx context.Context, gen uint64, client *apiclient.Client, token string) error {
+	m.mu.Lock()
+	pauses := m.pauses
+	m.mu.Unlock()
+	catalog, err := client.Nodes(ctx, token, "")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.generation != gen {
+		return codeError("stale_generation")
+	}
+	if err != nil {
+		var apiErr *apiclient.Error
+		if errors.As(err, &apiErr) && apiclient.TerminatesSession(apiErr.Code) {
+			m.dropSessionLocked(apiErr.Code)
+		} else {
+			m.failLocked(err)
+		}
+		return err
+	}
+	m.applyCatalogLocked(catalog)
+	if m.pauses == pauses {
+		m.catalogStale = m.background
+	}
+	return nil
 }
 
 // SelectNode records the user's choice and fetches, verifies and holds that single
@@ -86,6 +114,16 @@ func (m *Manager) SelectNode(ctx context.Context, nodeID, catalogRevision string
 // bindNode downloads, verifies and stores the config for nodeID. The raw document
 // lives only in this function's frame.
 func (m *Manager) bindNode(ctx context.Context, gen uint64, client *apiclient.Client, token, nodeID string) error {
+	m.mu.Lock()
+	stale := m.catalogStale
+	m.mu.Unlock()
+	if stale {
+		// The long-poll was paused (Android background): the node's metadata may be old, and
+		// a binding made against it would be invalidated as "changed" by the next catalog.
+		if err := m.syncCatalog(ctx, gen, client, token); err != nil {
+			return err
+		}
+	}
 	m.mu.Lock()
 	if m.generation != gen {
 		m.mu.Unlock()

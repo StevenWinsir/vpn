@@ -53,6 +53,11 @@ type Options struct {
 	// GrantTimeout bounds how long Connect waits for a node to confirm a grant;
 	// GrantPoll is the polling interval (node-reported mode).
 	GrantTimeout, GrantPoll time.Duration
+	// ResumePolicy: what a lapse (sleep, a clock or network change, a lapsed lease) does
+	// to a running segment. The zero value, ResumeStop, is the desktop behaviour.
+	ResumePolicy ResumePolicy
+	// GateLimit bounds a closed gate's retries in awake time (ResumeGate only).
+	GateLimit time.Duration
 }
 
 type LoginParams struct {
@@ -107,6 +112,25 @@ type Manager struct {
 	orphan string
 	local  *meter.Meter
 
+	// gate is the closed authorization gate of the live segment (ResumeGate; nil while
+	// open); lastGate and gateClosures describe the gates closed so far in this session.
+	gate         *gateState
+	lastGate     *GateRecord
+	gateClosures int64
+
+	// background: no screen of the app is visible, so the catalog long-poll waits on
+	// foreground (closed while in the foreground). Process-wide, not per session.
+	background bool
+	foreground chan struct{}
+	// catalogStale: the long-poll was paused since the catalog was last read, so nodes may
+	// be out of date; binding a node reads the catalog first. pauses counts the pauses, so a
+	// poll that began before one cannot clear the flag.
+	catalogStale bool
+	pauses       uint64
+	// nudge wakes a closed gate's retry at once (the network changed, the app came to the
+	// foreground) instead of waiting out its backoff. Buffered: a nudge is never lost.
+	nudge chan struct{}
+
 	// stopped, set only by tests before Login, observes the reason of every completed
 	// teardown.
 	stopped func(reason string)
@@ -160,7 +184,12 @@ func New(opts Options) *Manager {
 	if opts.GrantPoll <= 0 {
 		opts.GrantPoll = 300 * time.Millisecond
 	}
-	return &Manager{opts: opts, state: StateSignedOut}
+	if opts.GateLimit <= 0 {
+		opts.GateLimit = DefaultGateLimit
+	}
+	foreground := make(chan struct{})
+	close(foreground)
+	return &Manager{opts: opts, state: StateSignedOut, foreground: foreground, nudge: make(chan struct{}, 1)}
 }
 
 // Generation is the current session generation; commands carry it back so a reply
@@ -269,6 +298,7 @@ func (m *Manager) resetLocked(keepError bool) {
 	m.profileNode = apiclient.NodeChoice{}
 	m.meter = nil
 	m.grant, m.orphan, m.local = nil, "", nil
+	m.gate, m.lastGate, m.gateClosures = nil, nil, 0
 	m.state = StateSignedOut
 	if !keepError {
 		m.lastError = nil

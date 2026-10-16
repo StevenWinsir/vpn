@@ -1,7 +1,7 @@
 {
   "contract": "asterlink-core-snapshot",
   "protocol_version": 1,
-  "note": "Redacted UI state returned by the Core. It never contains a token, password, YAML or any server/port/credential. Decoded by both the Go Core tests and the Swift tests.",
+  "note": "Redacted UI state returned by the Core. It never contains a token, password, YAML or any server/port/credential. Decoded by both the Go Core tests and the Swift tests. gate/last_gate appear only under the Android resume policy (tunnel_health \"gated\": the tunnel is held and forwards nothing).",
   "snapshots": {
     "signed_out_after_expiry": {
       "generation": 4, "state": "signed_out", "user": null, "entitlement": null, "nodes": [],
@@ -78,6 +78,32 @@
         "history": [{"upload": 0, "download": 0}, {"upload": 4096, "download": 8192}]
       },
       "last_error": null, "core_version": "0.0.0-dev"
+    },
+    "connected_gated": {
+      "generation": 13, "state": "connected",
+      "user": {"id": "22222222-2222-4222-8222-222222222222", "email": "fixture@example.invalid", "name": "Fixture", "role": "user"},
+      "entitlement": {
+        "plan_name": "VIP", "subscription_expires_at": "2030-01-01T00:10:00Z", "authorization_expires_at": "2030-01-01T00:01:30Z",
+        "lease_remaining_seconds": 0, "account_authorized": false, "can_connect": false, "reason": "lease_expired", "reason_message": "\u6388\u6743\u5df2\u8fc7\u671f\uff0c\u6b63\u5728\u91cd\u65b0\u9a8c\u8bc1",
+        "total_bytes": 1073741824, "remaining_bytes": 968884224, "used_units": 104857600000
+      },
+      "nodes": [
+        {"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "name": "HK Dedicated", "region": "HK", "line_type": "dedicated", "rate_permille": 1000}
+      ],
+      "selected_node_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "catalog_revision": "191ed7ece6ec8b4ae68e897af41900f7de83ae3cabf80592a1406e97a405547a",
+      "profile_version": "191ed7ece6ec8b4ae68e897af41900f7de83ae3cabf80592a1406e97a405547a",
+      "config_ready": true, "tunnel_health": "gated",
+      "metering": {
+        "source": "client_reported", "upload_bytes": 22020096, "download_bytes": 83886080, "last_sequence": 3,
+        "upload_bytes_per_second": 0, "download_bytes_per_second": 0,
+        "confirmed_upload_bytes": 20971520, "confirmed_download_bytes": 83886080,
+        "confirmed_remaining_bytes": 968884224, "estimated_remaining_bytes": 967835648,
+        "rate_permille": 1000, "pending": true, "history": [{"upload": 0, "download": 0}]
+      },
+      "last_error": null, "core_version": "0.0.0-dev",
+      "gate": {"reason": "lifecycle_reconfirmation_required", "waiting_network": true, "closed_seconds": 42, "attempts": 3},
+      "last_gate": {"reason": "network_changed", "outcome": "reopened", "closed_ms": 1830, "attempts": 1, "total_closures": 2}
     },
     "blocked_no_plan": {
       "generation": 9, "state": "blocked",

@@ -18,7 +18,14 @@ func (m *Manager) watchCatalog(ctx context.Context, gen uint64, client *apiclien
 	revision := ""
 	backoff := m.opts.BackoffMin
 	for {
+		// In the background the long-poll pauses (SetForeground); it resumes at once.
+		if !m.awaitForeground(ctx) {
+			return
+		}
 		began := time.Now()
+		m.mu.Lock()
+		pauses := m.pauses
+		m.mu.Unlock()
 		catalog, err := client.Nodes(ctx, token, revision)
 		if ctx.Err() != nil {
 			return
@@ -52,6 +59,9 @@ func (m *Manager) watchCatalog(ctx context.Context, gen uint64, client *apiclien
 		backoff = m.opts.BackoffMin
 		changed := catalog.Revision != revision
 		m.applyCatalogLocked(catalog)
+		if m.pauses == pauses {
+			m.catalogStale = false
+		}
 		m.mu.Unlock()
 		revision = catalog.Revision
 		if changed {

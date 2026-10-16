@@ -204,6 +204,8 @@ fun statusText(status: ConnectionStatus): String = stringResource(
         ConnectionStatus.Connected -> R.string.status_connected
         ConnectionStatus.Stopping -> R.string.status_stopping
         ConnectionStatus.Unavailable -> R.string.status_unavailable
+        ConnectionStatus.Reconfirming -> R.string.status_reconfirming
+        ConnectionStatus.WaitingNetwork -> R.string.status_waiting_network
     },
 )
 
@@ -213,6 +215,8 @@ private fun detailText(status: ConnectionStatus): String? = when (status) {
     ConnectionStatus.Preparing -> stringResource(R.string.status_detail_preparing)
     ConnectionStatus.Connecting -> stringResource(R.string.status_detail_connecting)
     ConnectionStatus.Stopping -> stringResource(R.string.status_detail_stopping)
+    ConnectionStatus.Reconfirming -> stringResource(R.string.status_detail_reconfirming)
+    ConnectionStatus.WaitingNetwork -> stringResource(R.string.status_detail_waiting_network)
     else -> null
 }
 

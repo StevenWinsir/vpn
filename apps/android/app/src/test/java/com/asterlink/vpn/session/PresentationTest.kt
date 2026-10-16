@@ -2,6 +2,8 @@ package com.asterlink.vpn.session
 
 import com.asterlink.vpn.core.CoreProtocol
 import com.asterlink.vpn.core.CoreSnapshot
+import com.asterlink.vpn.core.GateRecord
+import com.asterlink.vpn.core.GateView
 import com.asterlink.vpn.core.SnapshotReply
 import java.io.File
 import java.time.Instant
@@ -216,5 +218,34 @@ class PresentationTest {
         assertEquals(TileView.Action.Busy, TileView.from(ready.copy(busy = true, activity = SessionActivity.Connecting)).action)
         val noLine = ready.copy(snapshot = ready.snapshot.copy(selectedNodeId = ""))
         assertEquals(TileView.Action.OpenApp, TileView.from(noLine).action)
+    }
+
+    @Test
+    fun aGatedTunnelIsStillConnectedButSaysItIsWaiting() {
+        val gated = fixtures().getValue("connected_gated")
+        assertEquals("gated", gated.tunnelHealth)
+        assertEquals(GateView("lifecycle_reconfirmation_required", waitingNetwork = true, closedSeconds = 42, attempts = 3), gated.gate)
+        assertEquals(GateRecord("network_changed", "reopened", 1_830, 1, 2), gated.lastGate)
+        assertTrue(gated.tunnelBusy)
+        val view = ConnectionView.from(gated, busy = false, activity = SessionActivity.None)
+        assertEquals(ConnectionStatus.WaitingNetwork, view.status)
+        assertEquals(Tone.Busy, view.tone)
+        assertTrue(view.showDisconnect)
+        assertFalse(view.showConnect)
+        val reconfirming = ConnectionView.from(gated.copy(gate = gated.gate!!.copy(waitingNetwork = false)), busy = false, activity = SessionActivity.None)
+        assertEquals(ConnectionStatus.Reconfirming, reconfirming.status)
+        // Every other fixture has no gate: the field is Android-only and optional.
+        fixtures().filterKeys { it != "connected_gated" }.values.forEach { assertNull(it.gate); assertNull(it.lastGate) }
+    }
+
+    @Test
+    fun theNotificationOfAGatedTunnelShowsNoRates() {
+        val gated = fixtures().getValue("connected_gated")
+        val notice = TunnelNotice.from(SessionState(phase = AppPhase.SignedIn, snapshot = gated))
+        assertEquals(TunnelNotice.GateState.WaitingNetwork, notice.gate)
+        assertEquals("HK Dedicated", notice.text)
+        val open = TunnelNotice.from(SessionState(phase = AppPhase.SignedIn, snapshot = fixtures().getValue("connected_metering")))
+        assertEquals(TunnelNotice.GateState.Open, open.gate)
+        assertTrue(open.text!!.contains("↑"))
     }
 }

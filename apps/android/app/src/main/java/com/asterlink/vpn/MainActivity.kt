@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.widget.Toast
@@ -23,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -32,6 +34,7 @@ import com.asterlink.vpn.session.AppPhase
 import com.asterlink.vpn.session.Diagnostics
 import com.asterlink.vpn.ui.AppActions
 import com.asterlink.vpn.ui.BuildFacts
+import com.asterlink.vpn.ui.DeviceStatus
 import com.asterlink.vpn.ui.WebPage
 import com.asterlink.vpn.ui.navigation.AsterRoot
 import com.asterlink.vpn.ui.navigation.Clock
@@ -59,6 +62,9 @@ class MainActivity : ComponentActivity() {
         connectWithConsent()
     }
     private var askedNotifications = false
+
+    /** Re-read on every resume: the user may have just changed either in system settings. */
+    private var device by mutableStateOf(DeviceStatus())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
@@ -98,14 +104,44 @@ class MainActivity : ComponentActivity() {
                     openWebsite = ::openWebsite,
                     openVpnSettings = { openSettings(Settings.ACTION_VPN_SETTINGS) },
                     openBatterySettings = { openSettings(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) },
+                    openNotificationSettings = ::openNotificationSettings,
                     copyDiagnostics = { copyDiagnostics(facts) },
                     setTheme = { mode -> scope.launch { container.preferences.setThemeMode(mode) } },
                     dismissMessage = session::dismissMessage,
                 )
             }
             AsterTheme(darkTheme = themeMode.isDark()) {
-                AsterRoot(state, facts, themeMode, actions, clock)
+                AsterRoot(state, facts, themeMode, actions, clock, device = device)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        device = readDeviceStatus()
+    }
+
+    private fun readDeviceStatus(): DeviceStatus {
+        val permitted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val unrestricted = runCatching { getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName) }.getOrNull()
+        return DeviceStatus(
+            notificationsAllowed = permitted && NotificationManagerCompat.from(this).areNotificationsEnabled(),
+            batteryUnrestricted = unrestricted,
+        )
+    }
+
+    /**
+     * Denied notifications: the VPN works regardless (the system key icon still shows), but
+     * the status and the reason a connection ended only reach the user through them, so the
+     * account page offers this way back. Android asks only once in-app; afterwards the
+     * permission lives in the app's notification settings.
+     */
+    private fun openNotificationSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+        } catch (error: ActivityNotFoundException) {
+            openSettings(Settings.ACTION_SETTINGS)
         }
     }
 
