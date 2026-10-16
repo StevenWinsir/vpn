@@ -70,6 +70,9 @@ class AsterVpnService : VpnService(), VpnHost {
     // the system has already destroyed this instance.
     private var connectAfterEnd = false
     private var destroyed = false
+    // Main thread only: this instance's teardown is complete, and the newest start it was given.
+    private var finished = false
+    private var lastStartId = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -77,6 +80,7 @@ class AsterVpnService : VpnService(), VpnHost {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         when (intent?.action) {
             ACTION_CONNECT -> begin()
             ACTION_DISCONNECT -> end()
@@ -92,6 +96,12 @@ class AsterVpnService : VpnService(), VpnHost {
     private fun begin() {
         // startForegroundService obliges startForeground even when the request is dropped.
         goForeground(TunnelNotice.Connecting)
+        // A start that reached this instance after its teardown finished (it was stopping
+        // itself): it serves the new connect instead of being destroyed.
+        if (finished) {
+            finished = false
+            ending = false
+        }
         // A disconnect of this instance is still settling (a few seconds on a slow network):
         // the connect waits for it in this same foreground service and then runs, instead of
         // being refused or racing the teardown (measured: Disconnect, then Connect at once).
@@ -143,18 +153,23 @@ class AsterVpnService : VpnService(), VpnHost {
 
     /** The teardown is complete: run the connect that waited for it, or leave. Main thread. */
     private fun ended() {
-        ending = false
         if (connectAfterEnd && !destroyed) {
             connectAfterEnd = false
+            ending = false
             begin()
             return
         }
+        // Stays "ending" for good: this instance is finished, and its onDestroy (or a late
+        // disconnect) must not run a second teardown, whose Core disconnect would end a
+        // tunnel a new instance of the service is already bringing up.
         if (connectAfterEnd) {
             connectAfterEnd = false
             container.tunnelLauncher.claim()?.complete(TunnelOutcome.Refused(LocalCodes.VPN_STOPPING))
         }
+        finished = true
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // Only if no newer start arrived meanwhile; otherwise that start (a connect) is delivered here.
+        stopSelfResult(lastStartId)
     }
 
     override fun onRevoke() {

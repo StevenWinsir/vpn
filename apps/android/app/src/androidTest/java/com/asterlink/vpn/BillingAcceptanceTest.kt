@@ -434,16 +434,24 @@ class BillingAcceptanceTest {
                 "during a download the ongoing notification read \"$text\"; removed ${gone} ms after Disconnect")
         }
 
-        // ---- C01: Connect right after Disconnect waits for the old teardown instead of being refused.
+        // ---- C01: Connect right after Disconnect waits for the old teardown instead of being
+        // refused, and the old teardown never ends the new tunnel (five times in a row).
         run {
+            val seen = mutableListOf<String>()
             main { c.connectNow() }
+            repeat(5) {
+                main { c.disconnectNow() }
+                val started = SystemClock.elapsedRealtime()
+                main { c.connectNow() }
+                val connected = c.state.value.snapshot.state == State.CONNECTED
+                // Still connected a moment later: no late teardown of the previous service took it down.
+                delay(1_500)
+                val held = c.state.value.snapshot.state == State.CONNECTED && vpnNetworkUp()
+                seen += if (connected && held) "${SystemClock.elapsedRealtime() - started - 1_500} ms" else "${c.state.value.snapshot.state}/${c.state.value.message?.code}"
+            }
             main { c.disconnectNow() }
-            val started = SystemClock.elapsedRealtime()
-            main { c.connectNow() }
-            val s = c.state.value
-            main { c.disconnectNow() }
-            record("C01-reconnect-at-once", if (s.snapshot.state == State.CONNECTED) "PASS" else "FAIL",
-                "Connect issued the moment Disconnect returned: ${s.snapshot.state} after ${SystemClock.elapsedRealtime() - started} ms (${s.message?.code})")
+            record("C01-reconnect-at-once", if (seen.all { it.endsWith(" ms") }) "PASS" else "FAIL",
+                "Connect issued the moment Disconnect returned, 5 times: ${seen.joinToString()}")
         }
 
         // ---- B02: one real acknowledgement is lost; the identical batch is resent and charged once.

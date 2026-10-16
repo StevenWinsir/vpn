@@ -63,7 +63,7 @@ i.e. through this Mac's own network.
 | B01-n1 / B01-n2 | 1× (dedicated, Shadowsocks) and 0.5× (ordinary, VLESS): connect through the gates, first ACK, TUN and Verify; the sink sees exactly the body; the server's counted bytes cover the body within +10 % + 2 MiB background; `used_units` delta = (up + down) × rate **to the unit**; the server's byte deltas equal the Core's confirmed counters; the app shows the server's used/remaining; the connect page's per-connection usage covers the body and bills physical × rate |
 | B01-rates | both rates measured with the same procedure |
 | N01 | during a download the ongoing notification names the line and shows non-zero rates; it is removed after Disconnect |
-| C01 | Connect issued the moment Disconnect returned connects (no `vpn_stopping`) |
+| C01 | Connect issued the moment Disconnect returned connects (no `vpn_stopping`) and is still up 1.5 s later, five times in a row (a finished service instance must not run a second teardown) |
 | B02 | one real `/traffic` reply lost: the Core resends the identical batch (same sequence, same cumulative counters) and the server charges it once (server deltas = Core counters, formula exact) |
 | A04-rate / rebind | the administrator re-rates the connected line: the tunnel stops by itself with `profile_changed`, the VPN network and service are gone, the tail settles, the whole segment is charged at the **old** rate; the next connection binds the new rate |
 | A04-disable | the line is disabled while connected: stop with `client_config_unavailable` (or `node_unavailable`), segment charged at its own rate, the line leaves the list, Connect disabled |
