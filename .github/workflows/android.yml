@@ -82,7 +82,13 @@ jobs:
           java -version
           echo "ANDROID_HOME=$ANDROID_HOME"
       - name: Android SDK packages from the lock (the runner's single SDK)
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" > /dev/null
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
       - name: Foundation suite (lock, env, Go platform split, manifest baseline)
         run: python3 scripts/test-native-android.py --suite foundation --report artifacts/native-android/foundation-report.json
       - name: Core AAR (gomobile, arm64-v8a + x86_64, bound twice to prove the .so is reproducible)
@@ -136,7 +142,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Emulator, system image and the NDK (the Go binding tests are cross-compiled for the device)
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
       - uses: actions/download-artifact@v4
         with:
           name: android-core-aar
@@ -188,7 +200,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Emulator, system image and the NDK
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null
+        # A corrupt download ("Error on ZipFile unknown archive") is retried; sdkmanager verifies each package.
+        run: |
+          for attempt in 1 2 3; do
+            if yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "$ANDROID_PLATFORM" "ndk;$ANDROID_NDK_VERSION" emulator "$EMULATOR_IMAGE" > /dev/null; then exit 0; fi
+            echo "sdkmanager attempt $attempt failed; retrying"; sleep 20
+          done
+          exit 1
       - name: TUN suite (hooks AAR, VpnService, SS/VLESS/REALITY, DNS, UDP, IPv6, loop, stop, kill, cycles)
         # The runner has no IPv6 upstream and no real node: those two stay BLOCKED in the report.
         run: python3 scripts/test-native-android.py --suite tun --allow-network-changes --api 36 --abi x86_64 --cycles 10 --expect-blocked tun.T04-ipv6,tun.T02-real --report artifacts/native-android/tun/report.json

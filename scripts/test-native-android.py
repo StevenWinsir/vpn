@@ -492,10 +492,13 @@ def run_emulator_suite(args):
         # Instrumented test with the real AAR (builds and installs both APKs).
         connected_results = ANDROID / 'app' / 'build' / 'outputs' / 'androidTest-results' / 'connected'
         shutil.rmtree(connected_results, ignore_errors=True)
-        connected = gradle([':app:connectedDebugAndroidTest'], capture_output=True, text=True, env=dict(os.environ, ANDROID_SERIAL=serial))
+        # AccountAcceptanceTest is the account suite's driver (run by class with its world); the
+        # connected-test reporter would count its "no world" assumption as a failure.
+        connected = gradle([':app:connectedDebugAndroidTest', '-Pandroid.testInstrumentationRunnerArguments.notClass=' + ACCOUNT_CLASS],
+                           capture_output=True, text=True, env=dict(os.environ, ANDROID_SERIAL=serial))
         tests, failures = junit_counts(connected_results)
         record('emulator.core_binding', connected.returncode == 0 and tests > 0 and failures == 0,
-               'instrumented tests on the device: %d (CoreBindingTest ipc-v1 + start/stop, SecurityStoreTest Keystore; AccountAcceptanceTest skips without its world)' % tests
+               'instrumented tests on the device: %d (CoreBindingTest ipc-v1 + start/stop, SecurityStoreTest Keystore)' % tests
                + ('' if tests > 0 else '; Gradle output: ' + connected.stdout[-800:]) if connected.returncode == 0 else gradle_failure(connected))
 
         # The app itself: launch, wait for the Core, read the screen.

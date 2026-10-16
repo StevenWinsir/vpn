@@ -64,9 +64,15 @@ class AccountAcceptanceTest {
     private lateinit var stores: CoroutineScope
 
     @Test
-    fun acceptance() = runBlocking {
+    fun acceptance() {
+        // Outside the coroutine: an assumption thrown from inside runBlocking is reported by
+        // the connected-test runner as a failure, not a skip.
         val worldFile = File(dir, "world.json")
         assumeTrue("run through scripts/test-native-android.py --suite account", worldFile.isFile)
+        runBlocking { runAcceptance(worldFile) }
+    }
+
+    private suspend fun runAcceptance(worldFile: File) {
         val world = Json.parseToJsonElement(worldFile.readText()).jsonObject
         apiBase = world.getValue("api_base").jsonPrimitive.content
         password = world.getValue("password").jsonPrimitive.content
