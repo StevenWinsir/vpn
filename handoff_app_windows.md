@@ -862,6 +862,12 @@ CI 修复（2026-10-15，PR #27 Windows job 的 2 个 FAIL）：
 
 部署需更新 NodeAgent 和验收工具；现有客户端已经默认发 XUDP，无需为本修复改节点 YAML、packet encoding 或数据库。完整设计、限制与复现见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)，操作步骤见 [docs/windows-grants-acceptance.md](docs/windows-grants-acceptance.md)。
 
+## 后续维护：XUDP 目标空闲超时隔离（PR #32 之后）
+
+独立分支 `fix/nodeagent-xudp-target-idle` 修复“一个 UDP 目标不回包超时会关闭整个 carrier”。现在仅退休该目标 socket/reader，释放活跃目标槽位；同一 carrier 的其他目标继续工作，Keep 可重开退休目标。退休与发包串行化，只重试尚未发送/计费的包；共享额度、到期、撤销、最终计数和私网检查不变。
+
+真实 pinned Mihomo 旧源码负向对照复现 EOF；NodeAgent 目标生命周期 race 50 轮、真实 integration race 20 轮通过。现有 Windows CI 会运行新增回归，但本机 macOS loopback 结果不代表 Windows 10/11 TUN 验收。本修复只需部署重建的 NodeAgent，不改 Windows App/Service、Mihomo、安装器、YAML 或数据库。详见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)。
+
 ## 附录 A. 源码核验索引
 
 下列路径在本轮实际阅读或定位，行号以本文基线为准；开发后应以新代码为准更新本表。

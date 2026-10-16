@@ -700,6 +700,12 @@ VLESS UDP/XUDP 不匹配、IPv6 上游验收、真实节点与 Android 第 3–6
 
 实现与复现见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)，商业能力和 Windows `--udp-sink` 说明同步更新。本轮需要部署重建后的 NodeAgent 才能修复已安装客户端的 UDP；无需因此修改客户端 YAML、添加 packet encoding 或迁移数据库。没有部署服务、连接远端测试数据库、修改系统路由/DNS、停止现有模拟器或改写历史 TUN 报告；真实公网 TLS 节点、三平台 OS TUN、IPv6 上游和 Android 第 3–6 轮仍保留原验收门禁。
 
+### 独立维护轮：XUDP 目标空闲超时隔离（PR #32 之后）
+
+基于 `6a10838`，在独立 worktree / 分支 `fix/nodeagent-xudp-target-idle` 修复 NodeAgent 单个 UDP 目标 reader 空闲超时误关共享 carrier 的问题。只退休超时目标并回收槽位，其他活跃目标继续转发；后续 Keep 经原授权/私网检查路径重新连接。退休与上行发包串行化，避免重复发送/计费；carrier 自身空闲、到期、额度和 Remove 的强制停流不变。
+
+同/跨 session 和真实 pinned Mihomo 旧源码负向对照均复现 EOF；NodeAgent 目标生命周期 race 50 轮、真实 integration 全套 race 20 轮通过。完整实现、命令和证据边界见 [docs/nodeagent-xudp.md](docs/nodeagent-xudp.md)。只需重建部署 NodeAgent，不改 AAR/APK、VpnService、Mihomo 或数据库；没有进入 Android 第 3 轮、修改模拟器/系统网络或重新标注历史 TUN 验收结果。
+
 ## 附录 A. 源码核验索引
 
 | 主题 | 依据 |

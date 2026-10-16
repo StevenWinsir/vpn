@@ -153,11 +153,32 @@ func writeDatagram(e *entry, w io.Writer, wire []byte, overhead int, counter *at
 	return err
 }
 
+var errXUDPPeerStopped = errors.New("xudp target reader stopped")
+
 type xudpPeer struct {
 	conn    net.Conn
+	mu      sync.Mutex // serialize retirement with payload admission/write
 	stopped atomic.Bool
 	done    chan struct{}
 }
+
+func (p *xudpPeer) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.stopped.Store(true)
+	_ = p.conn.Close()
+}
+
+func (p *xudpPeer) write(e *entry, payload []byte, idle time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped.Load() {
+		return errXUDPPeerStopped // no payload admitted or written; safe to redial
+	}
+	_ = p.conn.SetWriteDeadline(time.Now().Add(idle))
+	return writeDatagram(e, p.conn, payload, 0, &e.up)
+}
+
 type xudpSession struct {
 	target request
 	peers  map[string]*xudpPeer
@@ -191,12 +212,21 @@ func (x *xudpCarrier) Close() error {
 	return nil
 }
 func (x *xudpCarrier) stopPeer(p *xudpPeer) {
-	p.stopped.Store(true)
-	_ = p.conn.Close()
+	p.close()
 	<-p.done
-	x.mu.Lock()
-	delete(x.peers, p.conn)
-	x.mu.Unlock()
+}
+
+// Only the parser owns session maps. Readers retire their sockets independently;
+// prune their references on the next frame so a long-lived carrier stays bounded.
+func (x *xudpCarrier) prunePeers(sessions map[uint16]*xudpSession) {
+	for _, s := range sessions {
+		for address, p := range s.peers {
+			if p.stopped.Load() {
+				x.stopPeer(p)
+				delete(s.peers, address)
+			}
+		}
+	}
 }
 
 func (v *VLESS) xudp(e *entry, c net.Conn, br *bufio.Reader) {
@@ -223,6 +253,7 @@ func (v *VLESS) xudp(e *entry, c net.Conn, br *bufio.Reader) {
 		if err != nil || !e.live(time.Now()) {
 			return
 		}
+		x.prunePeers(sessions)
 		s := sessions[f.id]
 		switch f.status {
 		case xudpNew:
@@ -255,17 +286,27 @@ func (v *VLESS) xudp(e *entry, c net.Conn, br *bufio.Reader) {
 			target = f.target
 		}
 		address := net.JoinHostPort(target.host, strconv.Itoa(target.port))
-		p := s.peers[address]
-		if p == nil {
-			p, err = x.openPeer(f.id, address)
+		for {
+			p := s.peers[address]
+			if p == nil {
+				p, err = x.openPeer(f.id, address)
+				if err != nil {
+					return
+				}
+				s.peers[address] = p
+			}
+			err = p.write(e, f.payload, v.opts.IdleTimeout)
+			if err == errXUDPPeerStopped {
+				// Retirement raced the lookup. Nothing was sent or billed, so
+				// join this reader and retry through the guarded dial path.
+				x.stopPeer(p)
+				delete(s.peers, address)
+				continue
+			}
 			if err != nil {
 				return
 			}
-			s.peers[address] = p
-		}
-		_ = p.conn.SetWriteDeadline(time.Now().Add(v.opts.IdleTimeout))
-		if err = writeDatagram(e, p.conn, f.payload, 0, &e.up); err != nil {
-			return
+			break
 		}
 	}
 }
@@ -295,13 +336,23 @@ func (x *xudpCarrier) openPeer(id uint16, address string) (*xudpPeer, error) {
 	x.wg.Add(1)
 	go func() {
 		defer x.wg.Done()
-		defer close(p.done)
+		defer func() {
+			p.close()
+			x.mu.Lock()
+			delete(x.peers, pc)
+			x.mu.Unlock()
+			close(p.done)
+		}()
 		b := make([]byte, 65535)
 		for {
 			_ = pc.SetReadDeadline(time.Now().Add(x.v.opts.IdleTimeout))
 			n, err := pc.Read(b)
 			if err != nil {
-				if !p.stopped.Load() {
+				// No reply from this target is not a carrier failure. Retire
+				// only its socket/reader; later data may reopen the same target.
+				// Unexpected errors retain the existing fail-closed behavior.
+				var ne net.Error
+				if !p.stopped.Load() && !(errors.As(err, &ne) && ne.Timeout()) {
 					x.Close()
 				}
 				return
