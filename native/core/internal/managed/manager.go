@@ -106,6 +106,10 @@ type Manager struct {
 	grant  *grantRef
 	orphan string
 	local  *meter.Meter
+
+	// stopped, set only by tests before Login, observes the reason of every completed
+	// teardown. lastError is no record of it: the next successful renewal clears it.
+	stopped func(reason string)
 }
 
 type errorInfo struct {

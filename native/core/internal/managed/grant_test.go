@@ -187,6 +187,7 @@ func newGrantHarness(t *testing.T, mutate func(*fakeAPI), opts func(*Options)) *
 		opts(&o)
 	}
 	h.m = New(o)
+	h.observeStops()
 	t.Cleanup(func() { h.m.Shutdown(t.Context()) })
 	if _, err := h.m.Login(t.Context(), f.params(f.password)); err != nil {
 		t.Fatal(err)
