@@ -539,6 +539,11 @@ def run(ctx, args):
             record(case, False, 'system image %s;%s;%s is not installed' % (api, tag, abi), status='BLOCKED')
             continue
         emu_args = argparse.Namespace(**dict(vars(args), api=api, avd=name, abi=abi))
+        # avdmanager and the emulator must agree on the AVD folder (on the CI runner avdmanager follows
+        # XDG_CONFIG_HOME); set it before the AVD is created, as open_emulator does.
+        avd_home = Path(os.environ.get('ANDROID_AVD_HOME') or Path.home() / '.android' / 'avd')
+        avd_home.mkdir(parents=True, exist_ok=True)
+        os.environ['ANDROID_AVD_HOME'] = str(avd_home)
         ctx.ensure_avd(sdk, name, 'system-images;android-%s;%s;%s' % (api, tag, abi))
         small_data_partition(name)
         emu = open_image(ctx, emu_args, sdk, name, abi)
