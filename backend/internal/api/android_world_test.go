@@ -32,7 +32,22 @@ func TestAndroidAccountWorld(t *testing.T) {
 	if out == "" {
 		t.Skip("set by scripts/test-native-android.py --suite account")
 	}
-	port := os.Getenv("ASTERLINK_ANDROID_WORLD_PORT")
+	serveNativeAccountWorld(t, out, os.Getenv("ASTERLINK_ANDROID_WORLD_PORT"))
+}
+
+// TestClientAccountWorld is the same world for the iOS account acceptance
+// (scripts/test-native-ios.py --suite account): an iOS Simulator shares the Mac's loopback, so
+// nothing needs forwarding. The world is platform neutral; only the names differ.
+func TestClientAccountWorld(t *testing.T) {
+	out := os.Getenv("ASTERLINK_CLIENT_WORLD")
+	if out == "" {
+		t.Skip("set by scripts/test-native-ios.py --suite account")
+	}
+	serveNativeAccountWorld(t, out, os.Getenv("ASTERLINK_CLIENT_WORLD_PORT"))
+}
+
+func serveNativeAccountWorld(t *testing.T, out, port string) {
+	t.Helper()
 	db, cfg := newIsolatedNativeDatabase(t)
 	cfg.ClientNodeCatalog = true
 	cfg.NodeEncryptionKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
