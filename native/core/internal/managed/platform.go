@@ -17,6 +17,9 @@ func clientPlatformFor(goos string) string {
 	case "android":
 		// GOOS=android also satisfies the "linux" build tag; it must not fall through.
 		return "android"
+	case "ios":
+		// GOOS=ios also satisfies the "darwin" build tag; it must not fall through.
+		return "ios"
 	default:
 		// Linux builds exist only for CI; the server accepts "linux" for them.
 		return "linux"

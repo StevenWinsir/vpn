@@ -161,6 +161,32 @@ func TestNativePostgres(t *testing.T) {
 		}
 		want(call(router, "POST", "/login", "", map[string]any{"email": u.Email, "password": "wrong", "device_id": uuid.NewString(), "platform": "macos"}), 401)
 	})
+	t.Run("login_platform_allow_list", func(t *testing.T) {
+		u := newUser("platforms")
+		for _, platform := range []string{"android", "ios", "macos", "windows", "linux"} {
+			w := call(router, "POST", "/login", "", map[string]any{"email": u.Email, "password": "Native-Test-Password!", "device_id": uuid.NewString(), "platform": platform, "app_version": "test"})
+			want(w, 200)
+			var data struct {
+				Session struct {
+					ID string `json:"session_id"`
+				} `json:"session"`
+			}
+			if e := json.Unmarshal(w.Body.Bytes(), &data); e != nil {
+				t.Fatal(e)
+			}
+			var stored model.NativeSession
+			if e := db.First(&stored, "id = ?", data.Session.ID).Error; e != nil || stored.Platform != platform {
+				t.Fatalf("platform %q stored as %q: %v", platform, stored.Platform, e)
+			}
+		}
+		for _, platform := range []string{"ipados", ""} {
+			w := call(router, "POST", "/login", "", map[string]any{"email": u.Email, "password": "Native-Test-Password!", "device_id": uuid.NewString(), "platform": platform, "app_version": "test"})
+			want(w, 400)
+			if !strings.Contains(w.Body.String(), "invalid_client_login") {
+				t.Fatalf("platform %q: %s", platform, w.Body.String())
+			}
+		}
+	})
 	t.Run("paid_profile_sessions_and_accounting", func(t *testing.T) {
 		u := newUser("vip")
 		sub := subscribe(u, 1000, false)

@@ -1,0 +1,448 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+		C310585F5F92FFC1CD9FF624 = {isa = PBXBuildFile; productRef = 45CF27383AD28B66AEAFE1CC; };
+		7D4B194B71E21E76F2A5D9C1 = {isa = PBXBuildFile; productRef = 0CBCC1F55BD7236BB99BE662; };
+		4AECBF84C24824F8A7BDAFC1 = {isa = PBXBuildFile; fileRef = 0F614BA7BAE73E22C1F31F59; };
+		D77F7B2DBE2819EEE75D3565 = {isa = PBXBuildFile; fileRef = 1ADA60A2E67468B48C55114D; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		24236A08113CF3980E23C37F = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 090879AB9DE443ADB3C41F44;
+			proxyType = 1;
+			remoteGlobalIDString = 224405874EE842554AF600BF;
+			remoteInfo = AsterLinkTunnel;
+		};
+		DAEB3A1B2E84B7CA1348636A = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AsterLink.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1ADA60A2E67468B48C55114D = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AsterLinkTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		988D68F29FCE65A9B22DD82B = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		0F614BA7BAE73E22C1F31F59 = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = AsterCore.xcframework; sourceTree = "<group>"; };
+		119B190F94E993781B680F1E = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AsterLinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EFA5EB5407C13718805069E4 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 090879AB9DE443ADB3C41F44;
+			proxyType = 1;
+			remoteGlobalIDString = A7C8064523A996C02518D51D;
+			remoteInfo = AsterLink;
+		};
+		E131E85B32D62E3108BDE96C = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AsterLink;
+			sourceTree = "<group>";
+		};
+		1A57B851D18C5F64FD0D73BB = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AsterLinkTunnel;
+			sourceTree = "<group>";
+		};
+		1DDA35FDA8A849F15FD90F9B = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AsterLinkTests;
+			sourceTree = "<group>";
+		};
+		726FED93E0E6B0C0718D039F = {
+			isa = PBXGroup;
+			children = (
+				E131E85B32D62E3108BDE96C,
+				1A57B851D18C5F64FD0D73BB,
+				1DDA35FDA8A849F15FD90F9B,
+				2328EE4F3FCDB73A07CE779B,
+				DDB04E5E492B304B71B26118,
+				378AE0506FEF566D9A3F0499,
+			);
+			sourceTree = "<group>";
+		};
+		2328EE4F3FCDB73A07CE779B = {
+			isa = PBXGroup;
+			children = (
+				988D68F29FCE65A9B22DD82B,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		DDB04E5E492B304B71B26118 = {
+			isa = PBXGroup;
+			children = (
+				0F614BA7BAE73E22C1F31F59,
+			);
+			path = Frameworks;
+			sourceTree = "<group>";
+		};
+		378AE0506FEF566D9A3F0499 = {
+			isa = PBXGroup;
+			children = (
+				DAEB3A1B2E84B7CA1348636A,
+				1ADA60A2E67468B48C55114D,
+				119B190F94E993781B680F1E,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A7C8064523A996C02518D51D = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C73FA6031DB1C44C51A959AA;
+			buildPhases = (
+				9689EC59B2E6550EA2D222FF,
+				09FBF43A9C12CAB58AD917FE,
+				B6532C9714311191A196AF78,
+				90052DAA35405298392E68B4,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FF02390C3E6BA57127C9BE74,
+			);
+			fileSystemSynchronizedGroups = (
+				E131E85B32D62E3108BDE96C,
+			);
+			name = AsterLink;
+			packageProductDependencies = (
+				45CF27383AD28B66AEAFE1CC,
+			);
+			productName = AsterLink;
+			productReference = DAEB3A1B2E84B7CA1348636A;
+			productType = "com.apple.product-type.application";
+		};
+		224405874EE842554AF600BF = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0F564E410F89B3B5084BBCCF;
+			buildPhases = (
+				B67308DDBAFD5C20FF4152A7,
+				E0A57740EF63B5CBA664B554,
+				03831247C2AD6A6A3673C724,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1A57B851D18C5F64FD0D73BB,
+			);
+			name = AsterLinkTunnel;
+			packageProductDependencies = (
+				0CBCC1F55BD7236BB99BE662,
+			);
+			productName = AsterLinkTunnel;
+			productReference = 1ADA60A2E67468B48C55114D;
+			productType = "com.apple.product-type.app-extension";
+		};
+		09960E7FA64720399CC57596 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 81201CD13F8D54BF76F30697;
+			buildPhases = (
+				3A88A9F09F3E867034E76139,
+				261719D31207D23BFF20D25A,
+				447E38B4DAAFD8203F7296C8,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				715C5CED1804E9C79991BB63,
+			);
+			fileSystemSynchronizedGroups = (
+				1DDA35FDA8A849F15FD90F9B,
+			);
+			name = AsterLinkTests;
+			packageProductDependencies = (
+			);
+			productName = AsterLinkTests;
+			productReference = 119B190F94E993781B680F1E;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		090879AB9DE443ADB3C41F44 = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+			};
+			buildConfigurationList = A1AC80455D91E8B04DA3C43A;
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				"zh-Hans",
+				en,
+				Base,
+			);
+			mainGroup = 726FED93E0E6B0C0718D039F;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6D0F88F4C3FCED3F25DDDFE3,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 378AE0506FEF566D9A3F0499;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A7C8064523A996C02518D51D,
+				224405874EE842554AF600BF,
+				09960E7FA64720399CC57596,
+			);
+		};
+		9689EC59B2E6550EA2D222FF = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		09FBF43A9C12CAB58AD917FE = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C310585F5F92FFC1CD9FF624,
+				4AECBF84C24824F8A7BDAFC1,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B6532C9714311191A196AF78 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		90052DAA35405298392E68B4 = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			name = "Embed Foundation Extensions";
+			files = (
+				D77F7B2DBE2819EEE75D3565,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B67308DDBAFD5C20FF4152A7 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E0A57740EF63B5CBA664B554 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7D4B194B71E21E76F2A5D9C1,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		03831247C2AD6A6A3673C724 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3A88A9F09F3E867034E76139 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		261719D31207D23BFF20D25A = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		447E38B4DAAFD8203F7296C8 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		715C5CED1804E9C79991BB63 = {
+			isa = PBXTargetDependency;
+			target = A7C8064523A996C02518D51D;
+			targetProxy = EFA5EB5407C13718805069E4;
+		};
+		FF02390C3E6BA57127C9BE74 = {
+			isa = PBXTargetDependency;
+			target = 224405874EE842554AF600BF;
+			targetProxy = 24236A08113CF3980E23C37F;
+		};
+		0F92C6CABF4407CC46C1C1B7 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 988D68F29FCE65A9B22DD82B /* Base.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		8A309389626C5EF30E6CE07C = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 988D68F29FCE65A9B22DD82B /* Base.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+		15085877D210D268876688A4 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/App.entitlements;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				INFOPLIST_FILE = Config/App-Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink";
+				PRODUCT_NAME = AsterLink;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		EE7D6C2EC2A8EA0D7EE89250 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/App.entitlements;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				INFOPLIST_FILE = Config/App-Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink";
+				PRODUCT_NAME = AsterLink;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6A42AA19B1694713BC7E1362 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/Tunnel.entitlements;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				INFOPLIST_FILE = Config/Tunnel-Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink.tunnel";
+				PRODUCT_NAME = AsterLinkTunnel;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		BE32B404C6909B8D1356F3CD = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/Tunnel.entitlements;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				INFOPLIST_FILE = Config/Tunnel-Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink.tunnel";
+				PRODUCT_NAME = AsterLinkTunnel;
+				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		7B711761BFE72306AADAEC69 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GENERATE_INFOPLIST_FILE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink.tests";
+				PRODUCT_NAME = AsterLinkTests;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AsterLink.app/AsterLink";
+			};
+			name = Debug;
+		};
+		C8C0C73E0942A510158AE3B9 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink.tests";
+				PRODUCT_NAME = AsterLinkTests;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AsterLink.app/AsterLink";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		81201CD13F8D54BF76F30697 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B711761BFE72306AADAEC69,
+				C8C0C73E0942A510158AE3B9,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1AC80455D91E8B04DA3C43A = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0F92C6CABF4407CC46C1C1B7,
+				8A309389626C5EF30E6CE07C,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C73FA6031DB1C44C51A959AA = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				15085877D210D268876688A4,
+				EE7D6C2EC2A8EA0D7EE89250,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0F564E410F89B3B5084BBCCF = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6A42AA19B1694713BC7E1362,
+				BE32B404C6909B8D1356F3CD,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6D0F88F4C3FCED3F25DDDFE3 = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AsterLinkKit;
+		};
+		45CF27383AD28B66AEAFE1CC = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6D0F88F4C3FCED3F25DDDFE3;
+			productName = AsterLinkKit;
+		};
+		0CBCC1F55BD7236BB99BE662 = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6D0F88F4C3FCED3F25DDDFE3;
+			productName = AsterLinkKit;
+		};
+	};
+	rootObject = 090879AB9DE443ADB3C41F44;
+}

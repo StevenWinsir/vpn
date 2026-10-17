@@ -1,0 +1,68 @@
+name: iOS client CI
+
+# Scope (round 1, handoff_app_ios.md 11): the toolchain lock agrees with the build, the Go Core's
+# iOS platform split is right (an iOS build never links the macOS route/networksetup files),
+# gomobile binds the Core + pinned Mihomo into AsterCore.xcframework, the app and its packet
+# tunnel extension build unsigned for the iOS Simulator, and in a simulator the real linked Core
+# answers the shared ipc-v1 contract, starts and stops. Nothing is signed: there is no Apple
+# team yet, so device cases are not part of CI. The Xcode here is the CI baseline recorded in
+# apps/ios/toolchain.lock.json (xcode.ci), not the local 27.0.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  GO_VERSION: '1.26.6'
+
+jobs:
+  ios:
+    name: iOS app / tunnel extension / Core xcframework
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Prepare the hash-locked Mihomo lifecycle patch
+        run: python3 scripts/prepare_mihomo.py
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            native/core/go.mod
+            native/core/go.sum
+      - name: Toolchain versions (recorded, not assumed)
+        run: |
+          test -x "$DEVELOPER_DIR/usr/bin/xcodebuild"
+          xcodebuild -version
+          xcrun simctl list runtimes
+          swift --version
+          go version
+          sw_vers
+      - name: Foundation suite (lock, env contract, project, entitlements, Go platform split, vet)
+        run: python3 scripts/test-native-ios.py --suite foundation
+      - name: Unit suite (iOS cross-build, Go host tests, AsterLinkKit)
+        run: python3 scripts/test-native-ios.py --suite unit
+      - name: Build xcframework and the unsigned simulator app
+        run: python3 scripts/build-native-ios.py --target app
+      - name: Simulator suite (Core contract in the simulator, one Go runtime, launch)
+        run: |
+          # Exit 3 = BLOCKED (no iOS simulator runtime on the image). Only 0 or 3 may pass.
+          set +e
+          python3 scripts/test-native-ios.py --suite simulator --runtime latest
+          code=$?
+          test $code -eq 0 -o $code -eq 3
+      - name: Retain reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-reports
+          path: |
+            artifacts/native-ios/*/*-report.json
+            artifacts/native-ios/simulator/foundation.png
+            apps/ios/Frameworks/core-build.json
+          if-no-files-found: ignore

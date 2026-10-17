@@ -1,0 +1,54 @@
+{
+  "contract": "asterlink-ios-toolchain-lock",
+  "locked_on": "2026-10-16",
+  "round": 1,
+  "note": "Versions are pinned here so a build never silently upgrades (handoff_app_ios.md round 1). 'verified' says how each fact was established; 'status' NOT_VERIFIED/NOT_INSTALLED means the fact is still open and must not be read as passing.",
+  "go": {
+    "version": "1.26.6",
+    "verified": "the version ci.yml, windows.yml and android.yml use; dev machine runs go1.26.6 darwin/arm64"
+  },
+  "x_mobile": {
+    "version": "v0.0.0-20250218173823-21e291c9c26e",
+    "commit": "21e291c9c26e620157cc44792253ce737982a4c5",
+    "pinned_by": "native/core/go.mod tool block (gomobile, gobind), the same pin Android uses; built into a private tools directory, never a global install",
+    "decision": "Same commit as Android (apps/android/toolchain.lock.json x_mobile.decision): newer x/mobile would move the desktop Core onto newer golang.org/x modules.",
+    "ios_bind": {
+      "targets": "ios,iossimulator",
+      "iosversion": "17.0",
+      "status": "VERIFIED",
+      "verified": "2026-10-16: gomobile bind of native/core/mobile with Go 1.26.6 and Xcode 27.0 succeeds without extra flags in about 44 s. Slices: ios-arm64 (arm64 only, 27 MiB) and ios-arm64_x86_64-simulator (x86_64 + arm64, 53 MiB; iossimulator includes x86_64 by default). Headers export MobileStart/Call/Stop/NetworkChanged/SetForeground and the MobilePlatform protocol. The device binary contains the Mihomo revision and no '/sbin/route', 'networksetup' or 'asterlink_tuntest' strings; the same scan finds both macOS strings in a darwin asterlink-core build (negative control)."
+    }
+  },
+  "xcode": {
+    "version": "27.0",
+    "build": "27A266a",
+    "sdks": [
+      "iphoneos27.0",
+      "iphonesimulator27.0"
+    ],
+    "verified": "2026-10-16: xcodebuild -version and xcodebuild -showsdks on the dev machine",
+    "ci": {
+      "version": "26.3",
+      "build": null,
+      "developer_dir": "/Applications/Xcode_26.3.app/Contents/Developer",
+      "runner": "macos-15",
+      "status": "NOT_VERIFIED",
+      "note": "the Xcode ci.yml already uses for the macOS job; build number to be recorded from the first ios.yml run, not guessed. The simulator suite there uses the newest iOS runtime the image ships (--runtime latest)."
+    }
+  },
+  "ios": {
+    "deployment_target": "17.0",
+    "reason": "@Observable needs iOS 17; NEVPNConnection.fetchLastDisconnectError needs iOS 16",
+    "simulator_runtime": {
+      "wanted": "iOS 27.0",
+      "build": "24A434",
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+      "status": "INSTALLED",
+      "verified": "2026-10-16: xcodebuild -downloadPlatform iOS installed iOS 27.0 Simulator (24A434, arm64, 8.05 GB) after go clean -cache freed about 23 GiB"
+    }
+  },
+  "signing": {
+    "status": "NOT_AVAILABLE",
+    "detail": "no Apple Developer Program team and no iPhone yet; simulator builds are unsigned and every device case is BLOCKED (handoff_app_ios.md P1, P2)"
+  }
+}
