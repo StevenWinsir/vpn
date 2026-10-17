@@ -1,0 +1,66 @@
+{
+  "contract": "asterlink-ios-session-handoff",
+  "version": 1,
+  "description": "Moving one signed-in session between the iOS app's Core and the packet tunnel extension's Core (handoff_app_ios.md 4.2, 4.3). Exactly one process holds the token and writes to the server at any moment. The Go side (native/core/internal/managed/handoff.go, native/core/mobile/handoff.go) must accept every 'accept' ticket and refuse every 'reject' ticket with the given code as of 'now', and must produce the 'adopt' outcomes. The Swift side (apps/ios/Packages/AsterLinkKit) must encode and decode the provider messages exactly. The ticket is a secret (it carries the bearer token): it travels only in memory, never in providerConfiguration, an App Group, a file or a log. Swift treats it as an opaque string. The token below is a test value.",
+  "ticket_fields": ["version", "api_base", "channel", "session_id", "token", "device_id", "selected_node_id", "generation", "last_sequence", "issued_at", "user"],
+  "ttl_seconds": 300,
+  "now": "2026-10-16T12:00:00Z",
+  "accept": [
+    {
+      "name": "release channel, a line selected",
+      "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"
+    },
+    {
+      "name": "development loopback, no line, issued 299 s ago",
+      "ticket": "{\"version\":1,\"api_base\":\"http://127.0.0.1:8080/api/v1/client\",\"channel\":\"development\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":7,\"last_sequence\":42,\"issued_at\":\"2026-10-16T11:55:01Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"\",\"role\":\"user\"}}"
+    }
+  ],
+  "reject": [
+    {"name": "not json", "code": "handoff_invalid", "ticket": "ticket"},
+    {"name": "unknown field", "code": "handoff_invalid", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"},\"password\":\"x\"}"},
+    {"name": "other version", "code": "handoff_invalid", "ticket": "{\"version\":2,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"},
+    {"name": "plain http outside loopback", "code": "handoff_invalid", "ticket": "{\"version\":1,\"api_base\":\"http://demo.hyshentou.cn/api/v1/client\",\"channel\":\"development\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"},
+    {"name": "generation zero", "code": "handoff_invalid", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":0,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"},
+    {"name": "token with spaces", "code": "handoff_invalid", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAA AAAA AAAA AAAA AAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"},
+    {"name": "session id not a uuid", "code": "handoff_invalid", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"session-1\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"},
+    {"name": "negative sequence", "code": "handoff_invalid", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":-1,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"},
+    {"name": "trailing data", "code": "handoff_invalid", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:59:30Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}{}"},
+    {"name": "expired (301 s old)", "code": "handoff_expired", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T11:54:59Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"},
+    {"name": "issued in the future", "code": "handoff_expired", "ticket": "{\"version\":1,\"api_base\":\"https://demo.hyshentou.cn/api/v1/client\",\"channel\":\"release\",\"session_id\":\"11111111-1111-4111-8111-111111111111\",\"token\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"device_id\":\"33333333-3333-4333-8333-333333333333\",\"selected_node_id\":\"\",\"generation\":1,\"last_sequence\":0,\"issued_at\":\"2026-10-16T12:05:00Z\",\"user\":{\"id\":\"22222222-2222-4222-8222-222222222222\",\"email\":\"test@test.com\",\"name\":\"T\",\"role\":\"admin\"}}"}
+  ],
+  "adopt": [
+    {"name": "round trip", "expect": "ok", "note": "app exports generation 1 (the app is then 'released'); the extension adopts it, connects and exports generation 2 after settling; the app adopts generation 2. The server sees one session and one continuous ledger."},
+    {"name": "session_id mismatch", "expect": "handoff_mismatch", "note": "GET /session names another session id than the ticket"},
+    {"name": "server behind the ledger", "expect": "handoff_conflict", "note": "the server's last_sequence is below the ticket's"},
+    {"name": "duplicate adopt", "expect": "handoff_busy", "note": "the receiver already holds a session"},
+    {"name": "older generation", "expect": "handoff_stale", "note": "a generation at or below the highest this process adopted (a replay)"},
+    {"name": "session revoked", "expect": "native_session_required", "note": "the server refused the token: the receiver is signed out and the user signs in again"},
+    {"name": "unacknowledged batch", "expect": "handoff_unsettled", "note": "export refuses while a traffic batch is unacknowledged; the sender keeps the session"},
+    {"name": "own ticket back", "expect": "ok", "note": "the extension never adopted (start failed before adopt): the app adopts the ticket it exported itself"}
+  ],
+  "start_options_key": "handoff",
+  "provider_messages": {
+    "note": "NETunnelProviderSession.sendProviderMessage bodies (UTF-8 JSON) and the extension's replies. 'ipc' wraps one ipc-v1 request document; the reply is the ipc-v1 response document itself. Unknown kinds are refused with {\"kind\":\"error\",\"code\":\"invalid_request\"}. The extension offers nothing else (no YAML, path or URL).",
+    "requests": [
+      {"name": "ipc", "message": "{\"kind\":\"ipc\",\"request\":{\"request_id\":\"r1\",\"protocol_version\":1,\"generation\":0,\"command\":\"read_snapshot\"}}"},
+      {"name": "release", "message": "{\"kind\":\"release\"}"},
+      {"name": "foreground", "message": "{\"kind\":\"foreground\",\"visible\":true}"},
+      {"name": "background", "message": "{\"kind\":\"foreground\",\"visible\":false}"},
+      {"name": "route probe result", "message": "{\"kind\":\"route_probe\",\"ok\":true}"}
+    ],
+    "replies": [
+      {"name": "released", "reply": "{\"kind\":\"released\",\"ticket\":\"<opaque ticket document>\"}"},
+      {"name": "release refused", "reply": "{\"kind\":\"error\",\"code\":\"handoff_unsettled\"}"},
+      {"name": "ack", "reply": "{\"kind\":\"ack\"}"},
+      {"name": "unknown kind", "reply": "{\"kind\":\"error\",\"code\":\"invalid_request\"}"}
+    ],
+    "reject": [
+      {"name": "not json", "message": "release"},
+      {"name": "unknown kind", "message": "{\"kind\":\"exec\",\"yaml\":\"proxies: []\"}"},
+      {"name": "ipc without request", "message": "{\"kind\":\"ipc\"}"},
+      {"name": "foreground without visible", "message": "{\"kind\":\"foreground\"}"},
+      {"name": "extra field", "message": "{\"kind\":\"release\",\"path\":\"/tmp/x\"}"}
+    ]
+  },
+  "error_codes": ["handoff_invalid", "handoff_expired", "handoff_stale", "handoff_busy", "handoff_mismatch", "handoff_conflict", "handoff_unsettled", "handoff_required"]
+}

@@ -134,6 +134,15 @@ func (s *Service) Handle(parent context.Context, request ipc.Request) (any, *ipc
 	return nil, &ipc.Error{Code: ipc.CodeNotImplemented, Message: "command not implemented in this build"}
 }
 
+// Reply is reply for the mobile binding's iOS handoff functions (they are not commands).
+func Reply(snapshot managed.Snapshot, err error) any {
+	result, _ := reply(snapshot, err)
+	return result
+}
+
+// ErrorFor maps an action failure to its stable code and Chinese message.
+func ErrorFor(err error) *ipc.Error { return fromError(err) }
+
 // reply reports a failed action as ok=true with the new snapshot plus an action_error,
 // so the UI always receives the up-to-date state alongside the reason.
 func reply(snapshot managed.Snapshot, err error) (any, *ipc.Error) {

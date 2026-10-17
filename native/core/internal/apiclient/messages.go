@@ -53,6 +53,14 @@ var messages = map[string]string{
 	"client_upgrade_required":           "应用版本过低，请升级后再连接",
 	"grant_not_found":                   "连接授权不存在，请重新连接",
 	"idempotency_conflict":              "请求标识冲突，请重试",
+	"handoff_invalid":                   "会话交接数据无效，请重新登录",
+	"handoff_expired":                   "会话交接已过期，请重新登录",
+	"handoff_stale":                     "会话已在别处接管，请重新登录",
+	"handoff_busy":                      "当前已有登录会话，无法接管",
+	"handoff_mismatch":                  "会话状态不一致，请重新登录",
+	"handoff_conflict":                  "会话账本不一致，请重新登录",
+	"handoff_unsettled":                 "最近的流量尚未结清，暂时无法切换，请稍后重试",
+	"handoff_required":                  "请在 AsterLink App 内连接",
 }
 
 // Message returns the Chinese text for code, or a generic line for unknown codes.

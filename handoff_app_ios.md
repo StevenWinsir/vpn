@@ -1,6 +1,6 @@
 # AsterLink iOS 原生客户端开发交接计划
 
-> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围，2026-10-16）；真机项因无付费账号与 iPhone 为 BLOCKED**。实际进度见第 15 节。
+> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
 > 勘察基线：`1c9d64b`（PR #39 合并点，Android 第 6 轮）；Mihomo 固定提交 `70f0570405c3c2c47bb113b88db95006d239b346`（`native/third_party/Clash.Meta`）+ 生命周期补丁 `d425c1a0…`。
 > 项目根目录：`/Users/stevenlee/Desktop/vpn`；开发机：Mac mini M4（arm64，32 GiB，macOS 26.6.2，Xcode 27.0 / iOS 27.0 SDK）。
 > 规划轮只新增本文件：没有改代码，没有部署，没有连接远端数据库，也没有提交或推送。第 1 轮起的实际进度写在第 15 节。
@@ -764,8 +764,8 @@ python3 scripts/test-native-ios.py --suite release
 
 | 轮次 | 状态 | 下一步与前置条件 |
 | --- | --- | --- |
-| 1 环境与骨架 | DONE（模拟器范围；分支 worktree-ios-round1-foundation，未提交）| 本机 foundation 11/11、unit 3/3、simulator 6 PASS + E-SIM-NE 实测记录；CI `ios.yml` 未运行（需推送）；P1/P2 缺失，真机项 BLOCKED；demo 服务器需部署后端 `ios` 白名单后才能登录 |
-| 2 扩展与真实 TUN | NOT_STARTED | 前置：P1 + P2；真实 SS/VLESS 测试节点；断开公司 VPN |
+| 1 环境与骨架 | DONE（模拟器范围；PR #40 已合并）| 本机 foundation 11/11、unit 3/3、simulator 6 PASS + E-SIM-NE 实测记录；P1/P2 缺失，真机项 BLOCKED；demo 服务器需部署后端 `ios` 白名单后才能登录 |
+| 2 扩展与真实 TUN | 代码完成，真机待验（分支 worktree-ios-round2-tunnel）| 主机/模拟器项全部 PASS；D-T01–D-T09、D-CYCLES、D-MEM-idle 全部 BLOCKED（0 个签名身份；已配对 iPhone 一台）；真机步骤见 `docs/ios-tun-design.md` 第 9 节 |
 | 3 账号与 UI | NOT_STARTED | 模拟器即可；demo 手工确认需测试账号与已部署后端 |
 | 4 连接与计量 | NOT_STARTED | 模拟器线束即可；真机计费需 P1 + P2 |
 | 5 生命周期与可靠性 | NOT_STARTED | 主要依赖真机 |
@@ -836,6 +836,57 @@ App/扩展/xcframework 版本 / 模拟器或真机（机型、iOS 版本）/ Cor
   第 2 轮需要 P1 + P2；若仍缺失，可先做第 3 轮（模拟器全程可验）。第 2 轮从 AsterLinkTunnel/PacketTunnelProvider.swift、
   engine/platform_ios.go（fd 交接）与 managed 的会话交接（4.2）开始。
   回退：撤销本分支即可；桌面端只多了 !ios 标签（macOS/Windows/Android 构建所选文件不变），后端只多了一个允许的平台值。
+```
+
+### 第 2 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 2 轮 / 2026-10-16 / Claude（worktree 分支 worktree-ios-round2-tunnel）
+基线 commit / 已有未提交改动：d826dd7（PR #40 合并点）；无
+前置条件：P1 仍缺（security find-identity：0 个签名身份）；P2 部分满足（devicectl 显示已配对 iPhone14,5 一台，
+  但无付费团队无法签 packet-tunnel-provider）；用户决定先按“代码完成，真机待验”推进。公司 VPN 开启。
+实际修改与契约变化（不含秘密）：
+  契约：新增 shared/contracts/handoff-v1.json（票据字段、11 个拒绝案例、8 个 adopt 场景、provider 消息与回复）、
+    tun-spec-ios-v1.json（iOS 规格永远 ipv6:true、NE 设置映射、13 个拒绝案例）。ipc-v1 不变（交接不是 ipc 命令）。
+    相对规划：票据多 channel、last_sequence、user 三个字段；新状态 "released"。
+  Go：managed/handoff.go（ExportHandoff/AdoptHandoff/ParseHandoff，脱敏打印）；mobile/handoff.go（ExportSession、
+    AdoptSession、TuneMemory、FreeMemory、RuntimeStats）；engine：iOS 模板（config.go）、platform_ios.go（fd 交接、
+    中继、Verify 第一段经节点进程内拨号）、ipv6filter.go + ipv6relay_unix.go（IPv6 早期拒绝）、ipv6_ios.go、
+    iosTunConf；network_ios.go 控制面引导解析器回退；service.Reply/ErrorFor 导出；apiclient 新增 8 个 handoff_* 文案。
+  Swift：AsterLinkKit 新增 TunnelSpec/NetworkSettingsPlan、ProviderMessage/Reply、UtunDescriptor、HostNetworkReport +
+    PathMonitor、MemoryBudget、RouteProbe、DeviceIdentity、CoreRequest.login/selectNode/command、SnapshotHead，以及 C 目标
+    CAsterResolv（res_getservers）。扩展：PacketTunnelProvider（无票据拒绝、adopt→connect、release、stop、wake、内存看守）、
+    TunnelSettings、TunnelPlatform（openTun：应用设置→找 utun→dup）；扩展现链接 AsterCore。App：TunnelController
+    （安装配置、交接启动、release 取回、provider 消息、fetchLastDisconnectError）、IOSPlatform 报告网络、调试页
+    TunnelDebugView（仅 Debug）。
+  脚本：test-native-ios.py 新增 device-tun 套件（前置不满足时全部 BLOCKED，exit 3）、simulator.extension_core 检查、
+    iOS 文件拆分包含 ipv6filter/ipv6relay。文档：docs/ios-tun-design.md。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，Xcode 27.0，公司 VPN 开启）：
+  go test ./...（native/core 全部 15 个包）PASS；managed/apiclient -race PASS；go vet ios/linux/windows/android 无问题
+  新增 Go 测试：handoff 12 个（含 app→扩展→app 往返：一次会话、无重复登录与撤销、20 MiB 基线后上 1000 B/下 80 MiB
+    逐字节结清）、iOS 模板与 tun-spec-ios 契约、IPv6 拒绝包级 2 个、中继 2 个（9000 B IPv4 透传、IPv6 不达栈、限速、
+    goroutine 零增长、关闭 fd）、mobile handoff/内存 2 个
+  test-native-ios.py --suite foundation：11 PASS；--suite unit：3 PASS（Go 182 个、AsterLinkKit 15 个）
+  --suite simulator（iPhone 18 Pro，iOS 27.0）：6 PASS + E-SIM-NE INFO（模拟器内 4 个测试：ipc-v1、交接经真实框架、
+    App 指向所嵌扩展的 Bundle ID）；扩展二进制含 MobileStart/MobileAdoptSession
+  --suite device-tun：device.iphone PASS，device.signing_identity BLOCKED，D-T01..D-T09/D-CYCLES/D-MEM-idle 10 项 BLOCKED
+  UTUN-SCAN：macOS 非 root 创建 utun 被拒（EPERM），真实 fd 扫描只在真机验证；选择规则单测覆盖
+  回归：test-native-macos.py --suite unit 8/8 PASS（Core 295、policy 5、nodeagent 77、Swift 46；vet、日志检查通过）；
+    scripts/test-native.py（隔离 PostgreSQL + race）exit 0，172 个 PASS / 0 个 FAIL；CI 见 PR
+产物 / 环境 / 版本 / 证据路径：
+  AsterCore.xcframework 设备切片 52,865,920 B（go.o 52.6 MB，无 DWARF；第 1 轮记录 28.5 MB，原因未查明），模拟器切片
+    104,256,656 B；Debug 模拟器扩展 AsterLinkTunnel.debug.dylib 约 90 MiB（含 Core，Debug 未剥离）；
+  artifacts/native-ios/{foundation,unit,simulator,device-tun}/（不提交）
+未解决问题、复现方法与发布限制：
+  ① 全部 D 项 BLOCKED（P1）。② 以下只能真机核实：扩展自身流量绕过隧道（决定 Verify 第二段去留）、system 栈在 NE fd
+    模式下可用、关闭 dup 副本后 NE 接口仍可用、socketpair 中继在真机的吞吐与内存、MTU 1500 与内存阈值初值。
+  ③ 系统侧停止时扩展撤销 token（比规划“丢弃”更严格）；用户在连接中取消也会撤销，App 需重新登录（第 3 轮静默重登）。
+  ④ 调试页只用于验证交接，正式 UI 在第 3 轮；“两段 Verify 都通过才显示已连接”在第 4 轮接入。
+  ⑤ xcframework 体积差异待第 6 轮发布审计复核。
+下一位从哪个文件/验收项开始；回退方法：
+  有付费团队后按 docs/ios-tun-design.md 第 9 节跑真机 D 项并补记录；否则直接进入第 3 轮（模拟器全程可验）。
+  回退：撤销本分支。桌面端与 Android 只多了导出的 service.Reply/ErrorFor、Manager 的 handoff 方法与新文案，
+  原有路径行为不变（上方回归）。
 ```
 
 ## 附录 A. 源码核验索引

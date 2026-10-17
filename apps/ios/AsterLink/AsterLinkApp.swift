@@ -4,7 +4,7 @@ import SwiftUI
 struct AsterLinkApp: App {
     var body: some Scene {
         WindowGroup {
-            FoundationView()
+            NavigationStack { FoundationView() }
         }
     }
 }

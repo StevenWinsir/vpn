@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """iOS client test entry point (handoff_app_ios.md 11, 13).
 
-Implemented suites (round 1):
+Implemented suites (rounds 1-2):
   foundation  needs Go and Xcode; no simulator runtime
     * apps/ios/toolchain.lock.json agrees with native/core/go.mod (x/mobile) and the installed Xcode
     * apps/ios/.env.example is accepted by the env-v1 parser; the xcconfig escaping of '//' holds
@@ -18,8 +18,14 @@ Implemented suites (round 1):
       experiment (whether a packet tunnel configuration can be saved; recorded, not assumed)
     * the test bundle carries no Go code (one Go runtime per process)
     * installs and launches the app, takes a screenshot and requires it to keep running
+    * round 2: the handoff surface answers through the real Core (HandoffBindingTests), the app
+      addresses the extension it embeds, and the extension links the Core
+  device-tun  round 2 device acceptance (D-T01..D-T09, D-CYCLES, D-MEM-idle). Checks the
+      prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
+      paired iPhone. Without them every case is reported BLOCKED (exit 3); the manual procedure is
+      docs/ios-tun-design.md section 9.
 
-Device suites are BLOCKED until there is an Apple Developer team and an iPhone (P1, P2).
+Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 """
 import argparse
@@ -48,7 +54,8 @@ SIMULATOR = 'asterlink-iphone'
 results = []
 
 # iOS builds must pick these platform files and never the macOS ones (handoff_app_ios.md 2.3).
-IOS_FILES = {'internal/engine': {'platform_ios.go', 'sysdns_ios.go', 'ipv6_ios.go'}, 'internal/network': {'network_ios.go'}}
+IOS_FILES = {'internal/engine': {'platform_ios.go', 'sysdns_ios.go', 'ipv6_ios.go', 'ipv6filter.go', 'ipv6relay_unix.go'},
+             'internal/network': {'network_ios.go'}}
 MACOS_FILES = {'internal/engine': {'platform_unix.go', 'sysdns.go', 'ipv6_route.go'}, 'internal/network': {'network_darwin.go'}}
 
 
@@ -151,6 +158,31 @@ def check_unit():
            '%d AsterLinkKit tests passed' % swift_passed if kit.returncode == 0 else (kit.stdout + kit.stderr).strip()[-600:])
 
 
+# ---------------------------------------------------------------- device
+
+DEVICE_CASES = ('D-T01', 'D-T02', 'D-T03', 'D-T04', 'D-T05', 'D-T06', 'D-T07', 'D-T09', 'D-CYCLES', 'D-MEM-idle')
+
+
+def check_device(wanted):
+    identities = subprocess.run(['security', 'find-identity', '-v', '-p', 'codesigning'], capture_output=True, text=True).stdout
+    count = re.search(r'(\d+) valid identities found', identities)
+    signing = bool(count and int(count.group(1)) > 0)
+    record('device.signing_identity', signing, '%s valid code-signing identities' % (count.group(1) if count else '?'),
+           status=None if signing else 'BLOCKED')
+    listing = subprocess.run(['xcrun', 'devicectl', 'list', 'devices'], capture_output=True, text=True).stdout
+    phones = [line for line in listing.splitlines() if 'iPhone' in line and 'simulated' not in line and ('paired' in line or 'connected' in line)]
+    if wanted:
+        phones = [line for line in phones if wanted in line]
+    record('device.iphone', bool(phones), '%d paired iPhone(s)' % len(phones), status=None if phones else 'BLOCKED')
+    if not (signing and phones):
+        for case in DEVICE_CASES:
+            record(case, False, 'not run: needs a paid Apple team (packet-tunnel-provider) and a paired iPhone', status='BLOCKED')
+        return
+    # With both present the provisioning and the run are manual for now (docs/ios-tun-design.md 9).
+    for case in DEVICE_CASES:
+        record(case, False, 'prerequisites present; run the manual procedure in docs/ios-tun-design.md 9 and record it', status='NOT_RUN')
+
+
 # ---------------------------------------------------------------- simulator
 
 def simctl(*args, check=True):
@@ -220,6 +252,12 @@ def check_simulator(out_dir: Path, wanted):
     else:
         record('simulator.one_go_runtime', False, 'test bundle not found at %s' % tests)
 
+    appex = products / 'AsterLink.app/PlugIns/AsterLinkTunnel.appex'
+    linked = [f for f in (appex / 'AsterLinkTunnel.debug.dylib', appex / 'AsterLinkTunnel') if f.exists()]
+    symbols = ''.join(subprocess.run(['nm', '-g', str(f)], capture_output=True, text=True).stdout for f in linked)
+    record('simulator.extension_core', '_MobileAdoptSession' in symbols and '_MobileStart' in symbols,
+           'the tunnel extension links the Core (MobileStart, MobileAdoptSession)')
+
     app = products / 'AsterLink.app'
     bundle_id = subprocess.run(['/usr/libexec/PlistBuddy', '-c', 'Print :CFBundleIdentifier', str(app / 'Info.plist')],
                                capture_output=True, text=True).stdout.strip()
@@ -235,8 +273,9 @@ def check_simulator(out_dir: Path, wanted):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator'))
+    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'device-tun'))
     parser.add_argument('--report', help='write a JSON report here')
+    parser.add_argument('--device', help='device-tun: the iPhone name or UDID to use')
     parser.add_argument('--runtime', default=LOCK['ios']['simulator_runtime']['wanted'].split()[-1],
                         help="simulator suite: iOS runtime major version, or 'latest' (CI)")
     args = parser.parse_args()
@@ -255,6 +294,8 @@ def main():
         check_unit()
     elif args.suite == 'simulator':
         check_simulator(out_dir, args.runtime)
+    elif args.suite == 'device-tun':
+        check_device(args.device)
 
     report = Path(args.report) if args.report else out_dir / ('%s-report.json' % args.suite)
     report.write_text(json.dumps({'suite': args.suite, 'cases': results}, indent=2, ensure_ascii=False) + '\n')
@@ -264,7 +305,7 @@ def main():
         return EXIT_FAIL
     if 'FAIL' in statuses:
         return EXIT_FAIL
-    if 'BLOCKED' in statuses:
+    if 'BLOCKED' in statuses or 'NOT_RUN' in statuses:
         return EXIT_BLOCKED
     return EXIT_PASS
 

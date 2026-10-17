@@ -16,6 +16,11 @@ struct FoundationView: View {
                 .font(.largeTitle.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
             identity
+            #if DEBUG
+            NavigationLink("隧道调试（第 2 轮）") { TunnelDebugView() }
+                .font(.footnote)
+                .accessibilityIdentifier("open-tunnel-debug")
+            #endif
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

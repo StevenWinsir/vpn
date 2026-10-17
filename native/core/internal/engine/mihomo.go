@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -33,6 +34,10 @@ var DefaultProbes = []string{
 	"http://www.gstatic.com/generate_204",
 	"http://captive.apple.com/hotspot-detect.html",
 }
+
+// verifyDial, when set by a platform file, carries Verify's probes instead of the system
+// (iOS: through the node in process, because the extension's own sockets bypass its tunnel).
+var verifyDial func(ctx context.Context, network, address string) (net.Conn, error)
 
 // tunConfig is Mihomo's parsed TUN section; platform files adjust it before the device is
 // created.
@@ -185,7 +190,7 @@ func (e *Mihomo) Verify(ctx context.Context) error {
 		Timeout: e.ProbeTimeout,
 		// No proxy setting and no interface binding: the request must take the same
 		// path as any application, i.e. the TUN.
-		Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSHandshakeTimeout: e.ProbeTimeout},
+		Transport:     &http.Transport{Proxy: nil, DialContext: verifyDial, DisableKeepAlives: true, TLSHandshakeTimeout: e.ProbeTimeout},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	defer client.CloseIdleConnections()
