@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sync"
 )
 
@@ -18,6 +19,16 @@ import (
 // AndroidMTU is the template's tun.mtu and the Builder's setMtu. It is the value sing-tun
 // uses on the desktops when the template leaves the MTU unset.
 const AndroidMTU = 9000
+
+// iOS interface constants (shared/contracts/tun-spec-ios-v1.json). IOSMTU is the initial
+// value for both NEPacketTunnelNetworkSettings.mtu and tun.mtu; rounds 2 and 5 settle it from
+// device throughput and memory. The addresses are the pinned core's defaults, written out
+// because the iOS tunnel must always claim IPv6 (config.go).
+const (
+	IOSMTU   = 1500
+	IOSInet4 = "198.18.0.1/30"
+	IOSInet6 = "fdfe:dcba:9876::1/126"
+)
 
 // TunSpec is the VPN interface the host must establish (shared/contracts/tun-spec-v1.json).
 type TunSpec struct {
@@ -48,7 +59,7 @@ var (
 	tunHost   TunHost
 )
 
-// SetTunHost installs (or, with nil, removes) the host. Only Android builds consult it.
+// SetTunHost installs (or, with nil, removes) the host. Only Android and iOS builds consult it.
 func SetTunHost(h TunHost) {
 	tunHostMu.Lock()
 	tunHost = h
@@ -59,6 +70,16 @@ func currentTunHost() TunHost {
 	tunHostMu.RLock()
 	defer tunHostMu.RUnlock()
 	return tunHost
+}
+
+// iosTunConf is the iOS TUN section as the session runs it: the IPv6 address is restored
+// when the pinned core dropped it on a host without global IPv6, because an iOS tunnel must
+// always claim IPv6 (tun-spec-ios-v1). Declared here so every host tests it.
+func iosTunConf(conf tunConfig) tunConfig {
+	if len(conf.Inet6Address) == 0 {
+		conf.Inet6Address = []netip.Prefix{netip.MustParsePrefix(IOSInet6)}
+	}
+	return conf
 }
 
 var errTunSpec = errors.New("the parsed TUN section cannot be expressed as a VPN interface")

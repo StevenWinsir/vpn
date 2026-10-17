@@ -98,5 +98,22 @@ func buildConfig(profile managed.Profile, goos string) ([]byte, error) {
 		tun["auto-detect-interface"] = false
 		tun["mtu"] = AndroidMTU
 	}
+	if goos == "ios" {
+		// The packet tunnel extension owns the utun, its addresses, routes and resolver
+		// (NEPacketTunnelNetworkSettings, handoff_app_ios.md 8.1, 8.2), applied from the spec the
+		// engine derives from this document; the engine runs Mihomo on a dup() of its
+		// descriptor. Both addresses are fixed rather than left to the pinned core, which drops
+		// the IPv6 one on a host without global IPv6: iOS lets IPv6 leave through the physical
+		// interface unless the tunnel claims ::/0, so the tunnel always carries an IPv6 address
+		// and a node without IPv6 is refused at the tunnel's ingress (ipv6filter.go). There is
+		// no process to attribute flows to inside the sandbox.
+		tun := config["tun"].(map[string]any)
+		tun["auto-route"] = false
+		tun["auto-detect-interface"] = false
+		tun["mtu"] = IOSMTU
+		tun["inet4-address"] = []string{IOSInet4}
+		tun["inet6-address"] = []string{IOSInet6}
+		config["find-process-mode"] = "off"
+	}
 	return yaml.Marshal(config)
 }

@@ -1,10 +1,11 @@
 name: iOS client CI
 
-# Scope (round 1, handoff_app_ios.md 11): the toolchain lock agrees with the build, the Go Core's
+# Scope (rounds 1-2, handoff_app_ios.md 11): the toolchain lock agrees with the build, the Go Core's
 # iOS platform split is right (an iOS build never links the macOS route/networksetup files),
 # gomobile binds the Core + pinned Mihomo into AsterCore.xcframework, the app and its packet
 # tunnel extension build unsigned for the iOS Simulator, and in a simulator the real linked Core
-# answers the shared ipc-v1 contract, starts and stops. Nothing is signed: there is no Apple
+# answers the shared ipc-v1 contract, starts and stops, and answers the session handoff surface
+# (handoff-v1); the tunnel extension links the Core. Nothing is signed: there is no Apple
 # team yet, so device cases are not part of CI. The Xcode here is the CI baseline recorded in
 # apps/ios/toolchain.lock.json (xcode.ci), not the local 27.0.
 

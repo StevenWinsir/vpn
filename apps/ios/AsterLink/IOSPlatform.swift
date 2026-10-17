@@ -1,14 +1,26 @@
 import AsterCore
+import AsterLinkKit
 import Foundation
 
-/// The Core's platform callbacks in the app process (handoff_app_ios.md 4.1). In round 1
-/// there is no tunnel: protect refuses, openTun fails and the network snapshot is empty, so
-/// any attempt to connect ends in a Core error rather than an apparent connection. The tunnel
-/// extension gets its own implementation in round 2.
-final class IOSPlatform: NSObject, MobilePlatformProtocol {
+/// The Core's platform callbacks in the app process (handoff_app_ios.md 4.1). The app never
+/// owns a tunnel: protect and openTun refuse, so a connect attempted here ends in a Core error
+/// (tun_unavailable) rather than an apparent connection. Connecting means handing the session
+/// to the packet tunnel extension (TunnelController). The network report lets the Core resolve
+/// its API host with the network's own resolvers.
+final class IOSPlatform: NSObject, MobilePlatformProtocol, @unchecked Sendable {
+    let monitor = PathMonitor()
+
+    override init() {
+        super.init()
+        monitor.onChange = { MobileNetworkChanged() }
+        monitor.start()
+    }
+
+    deinit { monitor.cancel() }
+
     func protect(_ fd: Int32) -> Bool { false }
     func openTun(_ specJSON: String?) -> Int32 { -1 }
-    func networkSnapshot() -> String { "" }
+    func networkSnapshot() -> String { monitor.latestJSON }
 }
 
 enum CoreLifecycle {

@@ -29,6 +29,9 @@ const (
 	StateStopping      State = "stopping"
 	StateBlocked       State = "blocked"
 	StateError         State = "error"
+	// StateReleased: this process handed its session to another one (handoff.go, iOS) and
+	// holds no token; the receiver is the session's only writer until it hands it back.
+	StateReleased State = "released"
 )
 
 // Options are injected by the entry point; tests replace the clock and the HTTP client.
@@ -80,6 +83,13 @@ type Manager struct {
 	cancel     context.CancelFunc
 	client     *apiclient.Client
 	token      string
+	// login is what the session was opened with, minus the password: a handoff ticket
+	// (handoff.go) carries it so the receiver talks to the same API as the same device.
+	login handoffOrigin
+	// handoffGen is the handoff generation this session arrived with (0 after a login);
+	// adopted is the highest generation this process ever adopted, so an old or replayed
+	// ticket is refused. adopted survives every teardown.
+	handoffGen, adopted uint64
 
 	state    State
 	user     *apiclient.User
@@ -219,6 +229,8 @@ func (m *Manager) Login(ctx context.Context, p LoginParams) (Snapshot, error) {
 	m.lastError = nil
 	client := m.opts.NewClient(base)
 	m.client = client
+	m.login = handoffOrigin{APIBase: p.APIBase, Channel: p.Channel, DeviceID: p.DeviceID}
+	m.handoffGen = 0
 	m.mu.Unlock()
 
 	start := m.opts.Now()
@@ -292,7 +304,7 @@ func (m *Manager) teardown(keepError bool) {
 }
 
 func (m *Manager) resetLocked(keepError bool) {
-	m.client, m.token = nil, ""
+	m.client, m.token, m.login, m.handoffGen = nil, "", handoffOrigin{}, 0
 	m.user, m.session, m.lease = nil, nil, lease{}
 	m.nodes, m.revision, m.selected, m.profile, m.catalogReady, m.catalogReason = nil, "", "", nil, false, ""
 	m.profileNode = apiclient.NodeChoice{}

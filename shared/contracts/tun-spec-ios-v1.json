@@ -1,0 +1,52 @@
+{
+  "contract": "asterlink-ios-tun-spec",
+  "description": "The tunnel description the Go Core (native/core/internal/engine/tunspec.go, iOS template in config.go) passes to the iOS packet tunnel extension's Platform.openTun, and the extension applies as NEPacketTunnelNetworkSettings (apps/ios/AsterLinkTunnel/TunnelSettings.swift via AsterLinkKit TunnelSpec). Same document format as tun-spec-v1 (Android), different rule: an iOS tunnel without NEIPv6Settings lets IPv6 leave through the physical interface, so 'ipv6' must always be true and the extension refuses a spec without it. A node without IPv6 is refused inside the tunnel (ingress relay, handoff_app_ios.md 8.4), not by leaving IPv6 out. Go must produce exactly the 'produced' documents from the iOS template for both node kinds; Swift must accept every 'accept' case, refuse every 'reject' case and map accepted specs to exactly 'network_settings'. Never carries node or account data.",
+  "fields": ["address4", "prefix4", "dns", "mtu", "ipv6", "address6", "prefix6"],
+  "produced": [
+    {
+      "name": "node without IPv6: IPv6 is still claimed (refused at the ingress)",
+      "node_ipv6": false,
+      "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"
+    },
+    {
+      "name": "node that carries IPv6",
+      "node_ipv6": true,
+      "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"
+    }
+  ],
+  "network_settings": {
+    "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}",
+    "tunnel_remote_address": "127.0.0.1",
+    "ipv4_addresses": ["198.18.0.1"],
+    "ipv4_subnet_masks": ["255.255.255.252"],
+    "ipv4_included_routes": ["0.0.0.0/0"],
+    "ipv6_addresses": ["fdfe:dcba:9876::1"],
+    "ipv6_prefix_lengths": [126],
+    "ipv6_included_routes": ["::/0"],
+    "dns_servers": ["198.18.0.2"],
+    "dns_match_domains": [""],
+    "mtu": 1500,
+    "include_all_networks": false,
+    "note": "tunnel_remote_address is a fixed placeholder so no node address appears in Settings > VPN. includeAllNetworks stays off (handoff_app_ios.md 8.2); excludeLocalNetworks keeps the system default."
+  },
+  "accept": [
+    {"name": "the iOS template", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "largest mtu, /64", "spec": "{\"address4\":\"10.111.0.1\",\"prefix4\":24,\"dns\":\"10.111.0.2\",\"mtu\":9000,\"ipv6\":true,\"address6\":\"fd00:1::1\",\"prefix6\":64}"},
+    {"name": "smallest mtu", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1280,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"}
+  ],
+  "reject": [
+    {"name": "not json", "spec": "utun4"},
+    {"name": "no IPv6 (would leak on iOS)", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":false}"},
+    {"name": "ipv6 flag without an address", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true}"},
+    {"name": "unknown field (e.g. a node address)", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126,\"server\":\"192.0.2.1\"}"},
+    {"name": "missing dns", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "public resolver instead of the tunnel's", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"8.8.8.8\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "ipv4 prefix out of range", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":31,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "ipv6 prefix out of range", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":127}"},
+    {"name": "mtu below the IPv6 minimum", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1000,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "mtu above the iOS ceiling", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":16000,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "hostname instead of address", "spec": "{\"address4\":\"tun.example\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}"},
+    {"name": "ipv4 in the ipv6 field", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"198.18.0.5\",\"prefix6\":126}"},
+    {"name": "trailing data", "spec": "{\"address4\":\"198.18.0.1\",\"prefix4\":30,\"dns\":\"198.18.0.2\",\"mtu\":1500,\"ipv6\":true,\"address6\":\"fdfe:dcba:9876::1\",\"prefix6\":126}{}"}
+  ]
+}

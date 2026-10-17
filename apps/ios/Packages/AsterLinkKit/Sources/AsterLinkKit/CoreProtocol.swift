@@ -57,6 +57,69 @@ public enum CoreRequest {
     public static func hello(requestID: String, generation: UInt64 = 0) -> String {
         #"{"request_id":"\#(requestID)","protocol_version":\#(protocolVersion),"generation":\#(generation),"command":"hello"}"#
     }
+
+    /// Any ipc-v1 command. The payload is serialised by JSONSerialization, so user input (an
+    /// email, a password) can never break the document.
+    public static func command(_ command: String, requestID: String, generation: UInt64 = 0, payload: [String: String]? = nil) -> String {
+        var object: [String: Any] = ["request_id": requestID, "protocol_version": protocolVersion, "generation": generation, "command": command]
+        if let payload { object["payload"] = payload }
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    public static func login(requestID: String, email: String, password: String, apiBase: String, channel: BuildChannel,
+                             deviceID: String, appVersion: String) -> String {
+        command("login", requestID: requestID, payload: [
+            "email": email, "password": password, "api_base": apiBase, "channel": channel.rawValue,
+            "device_id": deviceID, "app_version": appVersion,
+        ])
+    }
+
+    public static func selectNode(requestID: String, generation: UInt64, nodeID: String, catalogRevision: String) -> String {
+        command("select_node", requestID: requestID, generation: generation, payload: ["node_id": nodeID, "catalog_revision": catalogRevision])
+    }
+}
+
+/// The parts of a snapshot (shared/contracts/snapshot-v1.json) the session plumbing needs;
+/// the full view model arrives with the round-3 interface. `released` means this process handed
+/// its session to the other one (handoff-v1).
+public struct SnapshotHead: Decodable, Sendable, Equatable {
+    public struct Node: Decodable, Sendable, Equatable {
+        public let id: String
+        public let name: String
+    }
+
+    public let generation: UInt64
+    public let state: String
+    public let selectedNodeID: String
+    public let catalogRevision: String
+    public let tunnelHealth: String
+    public let nodes: [Node]
+    public let lastError: CoreResponse.Failure?
+    public let actionError: CoreResponse.Failure?
+
+    enum CodingKeys: String, CodingKey {
+        case generation, state, nodes
+        case selectedNodeID = "selected_node_id", catalogRevision = "catalog_revision", tunnelHealth = "tunnel_health"
+        case lastError = "last_error", actionError = "action_error"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generation = try c.decode(UInt64.self, forKey: .generation)
+        state = try c.decode(String.self, forKey: .state)
+        selectedNodeID = try c.decodeIfPresent(String.self, forKey: .selectedNodeID) ?? ""
+        catalogRevision = try c.decodeIfPresent(String.self, forKey: .catalogRevision) ?? ""
+        tunnelHealth = try c.decodeIfPresent(String.self, forKey: .tunnelHealth) ?? ""
+        nodes = try c.decodeIfPresent([Node].self, forKey: .nodes) ?? []
+        lastError = try c.decodeIfPresent(CoreResponse.Failure.self, forKey: .lastError)
+        actionError = try c.decodeIfPresent(CoreResponse.Failure.self, forKey: .actionError)
+    }
+}
+
+/// The result of ExportSession: the opaque, secret ticket (memory only).
+public struct ExportedTicket: Decodable, Sendable {
+    public let ticket: String
 }
 
 /// Keeps a nested JSON value as raw bytes so it can be decoded later into its own type.

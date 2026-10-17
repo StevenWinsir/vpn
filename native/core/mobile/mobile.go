@@ -1,5 +1,5 @@
-// Package mobile is the in-process binding the Android app links through gomobile
-// (handoff_app_android.md 3.3). The Kotlin side gets Start, Call, Stop, the NetworkChanged
+// Package mobile is the in-process binding the Android app and the iOS app and packet tunnel
+// extension link through gomobile (handoff_app_android.md 3.3, handoff_app_ios.md 4, 7). The Kotlin side gets Start, Call, Stop, the NetworkChanged
 // hint and one callback interface; everything else (session, configuration, lease, metering, grants)
 // stays in the same Go Core that macOS and Windows run behind their pipes.
 //
@@ -40,14 +40,16 @@ var (
 // and shutdown do not need a running Core and answer as usual.
 const CodeNotStarted = "core_not_started"
 
-// Platform is implemented in Kotlin by the VpnService owner.
+// Platform is implemented in Kotlin by the VpnService owner, and in Swift by the iOS packet
+// tunnel provider (the iOS app's own implementation refuses OpenTun: it never owns a tunnel).
 type Platform interface {
 	// Protect is VpnService.protect(fd): the socket bypasses the VPN.
 	Protect(fd int32) bool
 	// OpenTun establishes the VPN interface described by specJSON (engine.TunSpec:
 	// addresses, prefixes, MTU, DNS, whether IPv6 is carried; never any node data) and
-	// returns the detached file descriptor, which the Core owns and closes from then on, or
-	// -1 when no VpnService is running or the system refused.
+	// returns the detached file descriptor (iOS: a dup() of the utun descriptor), which the
+	// Core owns and closes from then on, or -1 when no VpnService/provider is running or the
+	// system refused.
 	OpenTun(specJSON string) int32
 	// NetworkSnapshot reports the default network (network.ParseHostSnapshot format).
 	NetworkSnapshot() string
