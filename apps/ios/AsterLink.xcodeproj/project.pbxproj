@@ -23,6 +23,19 @@
 		988D68F29FCE65A9B22DD82B = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		0F614BA7BAE73E22C1F31F59 = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = AsterCore.xcframework; sourceTree = "<group>"; };
 		119B190F94E993781B680F1E = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AsterLinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1B2C3D4E5F60718293A4B5C = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AsterLinkUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0718293A4B5C6D7E8F90A1B2 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 090879AB9DE443ADB3C41F44;
+			proxyType = 1;
+			remoteGlobalIDString = A7C8064523A996C02518D51D;
+			remoteInfo = AsterLink;
+		};
+		B2C3D4E5F60718293A4B5C6D = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AsterLinkUITests;
+			sourceTree = "<group>";
+		};
 		EFA5EB5407C13718805069E4 = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 090879AB9DE443ADB3C41F44;
@@ -51,6 +64,7 @@
 				E131E85B32D62E3108BDE96C,
 				1A57B851D18C5F64FD0D73BB,
 				1DDA35FDA8A849F15FD90F9B,
+				B2C3D4E5F60718293A4B5C6D,
 				2328EE4F3FCDB73A07CE779B,
 				DDB04E5E492B304B71B26118,
 				378AE0506FEF566D9A3F0499,
@@ -79,6 +93,7 @@
 				DAEB3A1B2E84B7CA1348636A,
 				1ADA60A2E67468B48C55114D,
 				119B190F94E993781B680F1E,
+				A1B2C3D4E5F60718293A4B5C,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -154,6 +169,29 @@
 			productReference = 119B190F94E993781B680F1E;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		C3D4E5F60718293A4B5C6D7E = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 293A4B5C6D7E8F90A1B2C3D4;
+			buildPhases = (
+				D4E5F60718293A4B5C6D7E8F,
+				E5F60718293A4B5C6D7E8F90,
+				F60718293A4B5C6D7E8F90A1,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				18293A4B5C6D7E8F90A1B2C3,
+			);
+			fileSystemSynchronizedGroups = (
+				B2C3D4E5F60718293A4B5C6D,
+			);
+			name = AsterLinkUITests;
+			packageProductDependencies = (
+			);
+			productName = AsterLinkUITests;
+			productReference = A1B2C3D4E5F60718293A4B5C;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		090879AB9DE443ADB3C41F44 = {
 			isa = PBXProject;
 			attributes = {
@@ -182,6 +220,7 @@
 				A7C8064523A996C02518D51D,
 				224405874EE842554AF600BF,
 				09960E7FA64720399CC57596,
+				C3D4E5F60718293A4B5C6D7E,
 			);
 		};
 		9689EC59B2E6550EA2D222FF = {
@@ -262,6 +301,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D4E5F60718293A4B5C6D7E8F = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E5F60718293A4B5C6D7E8F90 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F60718293A4B5C6D7E8F90A1 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		18293A4B5C6D7E8F90A1B2C3 = {
+			isa = PBXTargetDependency;
+			target = A7C8064523A996C02518D51D;
+			targetProxy = 0718293A4B5C6D7E8F90A1B2;
+		};
 		715C5CED1804E9C79991BB63 = {
 			isa = PBXTargetDependency;
 			target = A7C8064523A996C02518D51D;
@@ -301,6 +366,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Config/App.entitlements;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				INFOPLIST_FILE = Config/App-Info.plist;
@@ -317,6 +383,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Config/App.entitlements;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				INFOPLIST_FILE = Config/App-Info.plist;
@@ -394,6 +461,45 @@
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
+		};
+		3A4B5C6D7E8F90A1B2C3D4E5 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GENERATE_INFOPLIST_FILE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink.uitests";
+				PRODUCT_NAME = AsterLinkUITests;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				TEST_TARGET_NAME = AsterLink;
+			};
+			name = Debug;
+		};
+		4B5C6D7E8F90A1B2C3D4E5F6 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASTER_BUNDLE_PREFIX).asterlink.uitests";
+				PRODUCT_NAME = AsterLinkUITests;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				TEST_TARGET_NAME = AsterLink;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		293A4B5C6D7E8F90A1B2C3D4 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3A4B5C6D7E8F90A1B2C3D4E5,
+				4B5C6D7E8F90A1B2C3D4E5F6,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 		81201CD13F8D54BF76F30697 = {
 			isa = XCConfigurationList;

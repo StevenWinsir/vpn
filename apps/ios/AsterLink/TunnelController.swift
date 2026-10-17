@@ -35,6 +35,13 @@ final class TunnelController {
         manager = all.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.providerBundleID }
     }
 
+    /// Removes our configuration from the system (the user asked in 我的). Never touches other VPNs.
+    func remove() async throws {
+        guard let manager else { return }
+        try await manager.removeFromPreferences()
+        self.manager = nil
+    }
+
     /// Installs the configuration; the system asks the user once ("Add VPN Configurations").
     /// No ticket, token or node data is stored in it; On Demand stays off.
     func install() async throws {

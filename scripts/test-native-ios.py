@@ -20,6 +20,12 @@ Implemented suites (rounds 1-2):
     * installs and launches the app, takes a screenshot and requires it to keep running
     * round 2: the handoff surface answers through the real Core (HandoffBindingTests), the app
       addresses the extension it embeds, and the extension links the Core
+  ui          round 3; needs the simulator runtime. Runs AsterLinkUITests (scheme AsterLinkUI): every
+      screen of the interface is launched from a prepared state, asserted, and captured (at least
+      24 screenshots, light, dark, AX3 text). No Core and no network are involved.
+  account     round 3; needs the simulator runtime, Go, initdb and pg_ctl. Starts the backend world
+      (isolated PostgreSQL, loopback only) and runs AccountAcceptanceTests in the simulator against
+      the real Core and Keychain: A01 login/remember/relaunch/sign-out, A02 plans, A04 admin edits.
   device-tun  round 2 device acceptance (D-T01..D-T09, D-CYCLES, D-MEM-idle). Checks the
       prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
       paired iPhone. Without them every case is reported BLOCKED (exit 3); the manual procedure is
@@ -271,9 +277,156 @@ def check_simulator(out_dir: Path, wanted):
            'app running after 4 s; screenshot %s' % screenshot.relative_to(ROOT) if running else 'launch: %s' % (launch.stderr.strip() or 'not running'))
 
 
+# ---------------------------------------------------------------- ui (round 3)
+
+# At least this many distinct screens must be captured and asserted (handoff_app_ios.md round 3).
+MIN_SCREENSHOTS = 24
+
+
+def xcodebuild_test(udid, scheme, result, extra_env=None, only=None, log_name=None, adhoc_sign=False):
+    """Runs one scheme's tests in the simulator. TEST_RUNNER_<NAME> variables reach the test process as <NAME>."""
+    if result.exists():
+        shutil.rmtree(result)
+    command = ['xcodebuild', 'test', '-project', str(IOS / 'AsterLink.xcodeproj'), '-scheme', scheme, '-destination', 'id=' + udid,
+               '-derivedDataPath', str(DERIVED), '-resultBundlePath', str(result)]
+    if adhoc_sign:
+        # An unsigned simulator binary has no application identifier, so the Keychain refuses it
+        # (-34018). Ad-hoc signing ("Sign to Run Locally") needs no Apple team and fixes that.
+        command += ['CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-', 'DEVELOPMENT_TEAM=']
+    else:
+        command += ['CODE_SIGNING_ALLOWED=NO']
+    for item in only or []:
+        command += ['-only-testing:' + item]
+    env = dict(os.environ, **{'TEST_RUNNER_' + k: v for k, v in (extra_env or {}).items()})
+    run = subprocess.run(command, capture_output=True, text=True, env=env)
+    (result.parent / (log_name or scheme + '-xcodebuild.log')).write_text(run.stdout + run.stderr)
+    return run
+
+
+def test_cases(result):
+    """Every executed test case of an xcresult as (name, status)."""
+    out = subprocess.run(['xcrun', 'xcresulttool', 'get', 'test-results', 'tests', '--path', str(result)], capture_output=True, text=True)
+    cases = []
+
+    def walk(node):
+        if node.get('nodeType') == 'Test Case':
+            cases.append((node.get('name', '?'), node.get('result', '?')))
+        for child in node.get('children', []):
+            walk(child)
+    try:
+        for node in json.loads(out.stdout).get('testNodes', []):
+            walk(node)
+    except ValueError:
+        pass
+    return cases
+
+
+def check_ui(out_dir: Path, wanted):
+    udid = simulator_udid(wanted)
+    if udid is None:
+        return
+    shots = out_dir / 'screenshots'
+    if shots.exists():
+        shutil.rmtree(shots)
+    shots.mkdir(parents=True)
+    result = out_dir / 'ui.xcresult'
+    run = xcodebuild_test(udid, 'AsterLinkUI', result, {'ASTER_SCREENSHOT_DIR': str(shots)})
+    cases = test_cases(result)
+    for name, status in cases:
+        record('ui.' + name.rstrip('()'), status == 'Passed', status)
+    failed = [n for n, s in cases if s != 'Passed']
+    record('ui.suite', run.returncode == 0 and bool(cases) and not failed, '%d UI test cases, %d failed' % (len(cases), len(failed)))
+    count = len(list(shots.glob('*.png')))
+    record('ui.screenshots', count >= MIN_SCREENSHOTS,
+           '%d screenshots captured under %s (>= %d required); each one is taken after its state assertion' % (count, shots.relative_to(ROOT), MIN_SCREENSHOTS))
+
+
+# ---------------------------------------------------------------- account (round 3)
+
+def free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def start_world(scratch):
+    """Private PostgreSQL (Unix socket only) + the backend's TestClientAccountWorld on 127.0.0.1."""
+    data, sock = Path(scratch) / 'pg', Path(scratch) / 'sock'
+    sock.mkdir(mode=0o700)
+    env = dict(os.environ, LC_ALL='C', LANG='C')
+    subprocess.run(['initdb', '-D', str(data), '-U', 'postgres', '--auth-local=trust', '--auth-host=reject', '--no-locale', '-E', 'UTF8'],
+                   check=True, stdout=subprocess.DEVNULL, env=env)
+    subprocess.run(['pg_ctl', '-D', str(data), '-l', str(Path(scratch) / 'postgres.log'), '-o', "-k %s -c listen_addresses=''" % sock, '-w', 'start'],
+                   check=True, stdout=subprocess.DEVNULL, env=env)
+    port = free_port()
+    world_file = Path(scratch) / 'world.json'
+    log = open(Path(scratch) / 'world.log', 'wb')
+    world = subprocess.Popen(['go', 'test', '-count=1', '-timeout', '70m', '-run', '^TestClientAccountWorld$', '-v', './internal/api'], cwd=ROOT / 'backend',
+                             env=dict(env, NATIVE_TEST_DSN='host=%s user=postgres dbname=postgres sslmode=disable' % sock, RUN_DB_TESTS='0',
+                                      ASTERLINK_CLIENT_WORLD_PORT=str(port), GOFLAGS='-buildvcs=false', ASTERLINK_CLIENT_WORLD=str(world_file)),
+                             stdout=log, stderr=subprocess.STDOUT)
+    for _ in range(3000):
+        if world_file.is_file() and world_file.stat().st_size > 0:
+            return data, world, world_file, port
+        if world.poll() is not None:
+            break
+        time.sleep(0.1)
+    raise RuntimeError('the backend world did not start: ' + (Path(scratch) / 'world.log').read_text(errors='replace')[-1200:])
+
+
+def check_account(out_dir: Path, wanted):
+    missing = [t for t in ('go', 'initdb', 'pg_ctl') if not shutil.which(t)]
+    if missing:
+        record('account.tools', False, 'not installed: %s' % ', '.join(missing), status='BLOCKED')
+        return
+    udid = simulator_udid(wanted)
+    if udid is None:
+        return
+    import tempfile
+    import urllib.request
+    scratch = tempfile.mkdtemp(prefix='asterlink-ios-account-')
+    pg_data, world, port = None, None, None
+    try:
+        pg_data, world, world_file, port = start_world(scratch)
+        facts = json.loads(world_file.read_text())
+        secrets = [facts['password'], 'metadata-private.example.invalid', 'never-reaches-the-ui', 'aes-256-gcm']
+        record('account.world', True, 'backend TestClientAccountWorld on 127.0.0.1:%d (private PostgreSQL on a Unix socket, synthetic accounts)' % port)
+        report_file = Path(scratch) / 'report.json'
+        result = out_dir / 'account.xcresult'
+        run = xcodebuild_test(udid, 'AsterLink', result, {'ASTERLINK_WORLD_FILE': str(world_file), 'ASTERLINK_REPORT_FILE': str(report_file)},
+                              only=['AsterLinkTests/AccountAcceptanceTests'], log_name='account-xcodebuild.log', adhoc_sign=True)
+        if not report_file.is_file():
+            record('account.report', False, 'no report from the simulator: ' + (run.stdout + run.stderr)[-1200:])
+            return
+        cases = json.loads(report_file.read_text())['cases']
+        for case in cases:
+            record('account.' + case['case_id'], case['status'] == 'PASS', case['observed'], status=case['status'])
+        (out_dir / 'account-report.json').write_text(json.dumps({'cases': cases}, indent=2, ensure_ascii=False) + '\n')
+        # The simulator's system log must not carry the password or a node secret either.
+        log = simctl('spawn', udid, 'log', 'show', '--last', '15m', '--style', 'compact', check=False).stdout
+        leaked = [i for i, secret in enumerate(secrets) if secret in log]
+        record('account.log_clean', not leaked, 'simulator log (%d lines) holds no password, node address, node secret or cipher' % log.count('\n')
+               if not leaked else 'log contains secret #%s' % leaked)
+    finally:
+        if port:
+            try:
+                urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:%d/__world/stop' % port, data=b'{}', method='POST'), timeout=10)
+            except OSError:
+                pass
+        if world:
+            try:
+                world.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                world.kill()
+        if pg_data:
+            subprocess.run(['pg_ctl', '-D', str(pg_data), '-m', 'immediate', 'stop'], capture_output=True)
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'device-tun'))
+    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'device-tun'))
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--device', help='device-tun: the iPhone name or UDID to use')
     parser.add_argument('--runtime', default=LOCK['ios']['simulator_runtime']['wanted'].split()[-1],
@@ -294,6 +447,10 @@ def main():
         check_unit()
     elif args.suite == 'simulator':
         check_simulator(out_dir, args.runtime)
+    elif args.suite == 'ui':
+        check_ui(out_dir, args.runtime)
+    elif args.suite == 'account':
+        check_account(out_dir, args.runtime)
     elif args.suite == 'device-tun':
         check_device(args.device)
 
