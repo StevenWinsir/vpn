@@ -67,7 +67,7 @@ func (s *Server) nativeLogin(c *gin.Context) {
 	}
 	email, valid := validEmail(in.Email)
 	device, deviceErr := uuid.Parse(in.DeviceID)
-	platformOK := in.Platform == "android" || in.Platform == "macos" || in.Platform == "windows" || in.Platform == "linux"
+	platformOK := in.Platform == "android" || in.Platform == "ios" || in.Platform == "macos" || in.Platform == "windows" || in.Platform == "linux"
 	if !valid || len(in.Password) > 72 || deviceErr != nil || device == uuid.Nil || !platformOK || len(in.AppVersion) > 64 {
 		fail(c, 400, "invalid_client_login", "客户端登录参数无效")
 		return

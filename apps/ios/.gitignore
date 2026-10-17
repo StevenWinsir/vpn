@@ -1,0 +1,4 @@
+Frameworks/
+Config/Generated.xcconfig
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/

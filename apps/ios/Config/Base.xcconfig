@@ -1,0 +1,17 @@
+// Settings shared by every target (handoff_app_ios.md 5). Public build parameters come
+// from Generated.xcconfig, which scripts/build-native-ios.py writes from apps/ios/.env after
+// validating it against shared/contracts/env-v1.json. It is not committed.
+#include? "Generated.xcconfig"
+
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+TARGETED_DEVICE_FAMILY = 1
+SWIFT_VERSION = 6.0
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+// Placeholder until the bundle ids are registered in the user's Apple team (round 1, P1).
+ASTER_BUNDLE_PREFIX = com.asterlink.dev
+
+// The Go Core is a static archive that resolves names through libresolv and verifies TLS
+// through Security.
+OTHER_LDFLAGS = -lresolv -framework Security -framework CoreFoundation
