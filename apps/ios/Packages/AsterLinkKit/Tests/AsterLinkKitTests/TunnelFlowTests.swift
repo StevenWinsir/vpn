@@ -224,10 +224,7 @@ struct TunnelBridgeTests {
 
     @Test func aStuckExtensionTimesOutInsteadOfBlockingForever() {
         struct Stuck: ExtensionChannel {
-            func send(_ request: String) async throws -> String {
-                try await Task.sleep(for: .seconds(30))
-                return ""
-            }
+            func send(_ request: String, completion: @escaping @Sendable (String?) -> Void) {}
         }
         let bridge = TunnelBridge(local: ScriptedCore { _ in .snapshot(.empty) }, timeout: 0.2)
         bridge.useTunnel(Stuck())

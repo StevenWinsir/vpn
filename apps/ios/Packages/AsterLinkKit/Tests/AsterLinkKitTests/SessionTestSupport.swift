@@ -103,15 +103,13 @@ func makeController(core: ScriptedCore, credentials: MemoryCredentials = MemoryC
 
 /// Answers the extension channel from a scripted Core, or fails like a stopped extension.
 final class CoreChannel: ExtensionChannel, @unchecked Sendable {
-    struct Down: Error {}
     let core: ScriptedCore
     private let lock = NSLock()
     private var down = false
     init(_ core: ScriptedCore) { self.core = core }
     func setDown(_ value: Bool) { lock.withLock { down = value } }
-    func send(_ request: String) async throws -> String {
-        if lock.withLock({ down }) { throw Down() }
-        return core.call(request)
+    func send(_ request: String, completion: @escaping @Sendable (String?) -> Void) {
+        completion(lock.withLock({ down }) ? nil : core.call(request))
     }
 }
 

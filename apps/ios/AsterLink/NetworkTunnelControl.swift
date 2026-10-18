@@ -148,5 +148,8 @@ final class NetworkTunnelControl: TunnelControl {
 struct ProviderChannel: ExtensionChannel {
     let controller: TunnelController
 
-    func send(_ request: String) async throws -> String { try await controller.call(request) }
+    func send(_ request: String, completion: @escaping @Sendable (String?) -> Void) {
+        let controller = controller
+        Task { @MainActor in completion(try? await controller.call(request)) }
+    }
 }

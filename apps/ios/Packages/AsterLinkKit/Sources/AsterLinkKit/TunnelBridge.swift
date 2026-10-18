@@ -3,8 +3,11 @@ import Foundation
 /// The app's way to reach the Core that currently owns the session (handoff_app_ios.md 4.1, 4.3).
 /// The extension, while it runs.
 public protocol ExtensionChannel: Sendable {
-    /// One ipc-v1 request document to the extension's Core; the answer is the ipc-v1 response document.
-    func send(_ request: String) async throws -> String
+    /// One ipc-v1 request document to the extension's Core; `completion` gets the ipc-v1 response
+    /// document, or nil when the extension could not be reached. Callback-based on purpose: the
+    /// bridge waits on a plain thread, and an async API would need the very cooperative-pool
+    /// thread the waiting caller occupies (starvation on a device with few cores).
+    func send(_ request: String, completion: @escaping @Sendable (String?) -> Void)
 }
 
 /// Routes every ipc-v1 request to the process that owns the session: the app's own Core while no
@@ -47,8 +50,8 @@ public final class TunnelBridge: CoreTransport, @unchecked Sendable {
         guard current == .tunnel, let channel else { return local.call(request) }
         let answer = Answer()
         let finished = DispatchSemaphore(value: 0)
-        Task.detached {
-            answer.set(try? await channel.send(request))
+        channel.send(request) { text in
+            answer.set(text)
             finished.signal()
         }
         if finished.wait(timeout: .now() + timeout) == .success, let text = answer.value { return text }
