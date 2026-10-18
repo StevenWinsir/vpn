@@ -52,6 +52,8 @@ public enum LocalCodes {
     public static let tunnelEnded = "tunnel_ended"
     public static let vpnRevoked = "vpn_revoked"
     public static let networkUnreachable = "network_unreachable"
+    public static let tunnelUnreachable = TunnelBridge.unreachableCode
+    public static let routeProbeFailed = "route_probe_failed"
 }
 
 /// Everything the screens render. Derived from the Core's snapshot; nothing here decides authorization.
@@ -67,6 +69,8 @@ public struct SessionState: Sendable, Equatable {
     /// Prefills the login form: the remembered email, or the one last typed.
     public var email = ""
     public var rememberPassword = false
+    /// The first connect needs the system to add the VPN configuration: explain it before asking.
+    public var needsVPNSetup = false
     public var identity: CoreHello?
     /// Monotonic milliseconds when the Core first reported this tunnel connected (display only).
     public var connectedSinceMillis: Int64?
@@ -91,6 +95,8 @@ public struct ConnectionUsage: Sendable, Equatable {
     public let ratePermille: Int64
 
     public var physicalBytes: Int64 { uploadBytes + downloadBytes }
+    /// What the server deducts: bytes x permille, in units of 1/1000 byte (handoff_app_ios.md 9).
+    public var chargedUnits: Int64 { Formatting.chargedUnits(physical: physicalBytes, ratePermille: ratePermille) }
     public var billedBytes: Int64 { Formatting.billedBytes(physical: physicalBytes, ratePermille: ratePermille) }
 
     public static func of(_ snapshot: CoreSnapshot, baseline: MeterSample?) -> ConnectionUsage? {

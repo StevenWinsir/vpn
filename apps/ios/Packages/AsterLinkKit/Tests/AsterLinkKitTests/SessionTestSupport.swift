@@ -100,3 +100,70 @@ func makeController(core: ScriptedCore, credentials: MemoryCredentials = MemoryC
                              devices: FixedDevice(), tunnel: DirectCoreTunnel(client: client), alerts: alerts, clock: clock,
                              idleInterval: .seconds(3600), liveInterval: .seconds(3600))
 }
+
+/// Answers the extension channel from a scripted Core, or fails like a stopped extension.
+final class CoreChannel: ExtensionChannel, @unchecked Sendable {
+    struct Down: Error {}
+    let core: ScriptedCore
+    private let lock = NSLock()
+    private var down = false
+    init(_ core: ScriptedCore) { self.core = core }
+    func setDown(_ value: Bool) { lock.withLock { down = value } }
+    func send(_ request: String) async throws -> String {
+        if lock.withLock({ down }) { throw Down() }
+        return core.call(request)
+    }
+}
+
+/// The app side of the handoff with two scripted Cores: the app's own and the extension's, joined
+/// by a TunnelBridge exactly as in the app. Mirrors NetworkTunnelControl's contract.
+final class FakeTunnel: TunnelControl, @unchecked Sendable {
+    let bridge: TunnelBridge
+    let channel: CoreChannel
+    private let extensionCore: ScriptedCore
+    private let lock = NSLock()
+    private var isConfigured: Bool
+    private(set) var connects = 0
+    private(set) var stops = 0
+    private var failure: (String, String)?
+
+    init(app: ScriptedCore, tunnelCore: ScriptedCore, configured: Bool = true) {
+        bridge = TunnelBridge(local: app, timeout: 5)
+        channel = CoreChannel(tunnelCore)
+        extensionCore = tunnelCore
+        isConfigured = configured
+    }
+
+    var configured: Bool { get async { lock.withLock { isConfigured } } }
+    func failNextConnect(code: String, message: String = "") { lock.withLock { failure = (code, message) } }
+
+    func connect(generation: UInt64) async -> TunnelOutcome {
+        lock.withLock { connects += 1; isConfigured = true }
+        if let (code, message) = lock.withLock({ let value = failure; failure = nil; return value }) { return .refused(code: code, message: message) }
+        bridge.useTunnel(channel)
+        let client = CoreClient(transport: bridge)
+        guard let snapshot = try? await client.readSnapshot() else { return .refused(code: LocalCodes.tunnelUnreachable) }
+        return .replied(SnapshotReply(snapshot: snapshot))
+    }
+
+    func stop() async -> Bool {
+        guard bridge.currentRoute == .tunnel else { return false }
+        lock.withLock { stops += 1 }
+        bridge.useApp()
+        return true
+    }
+}
+
+@MainActor
+func makeTunnelController(app: ScriptedCore, tunnel: FakeTunnel, credentials: MemoryCredentials = MemoryCredentials(),
+                          preferences: MemoryPreferences = MemoryPreferences(), alerts: RecordingAlerts = RecordingAlerts()) -> SessionController {
+    SessionController(client: CoreClient(transport: tunnel.bridge), core: NoopHost(), target: testTarget, credentials: credentials,
+                      preferences: preferences, devices: FixedDevice(), tunnel: tunnel, alerts: alerts, clock: { 0 },
+                      idleInterval: .seconds(3600), liveInterval: .seconds(3600))
+}
+
+func connectedSnapshot(generation: UInt64, rate: Int64 = 1000, upload: Int64 = 0, download: Int64 = 0) -> CoreSnapshot {
+    var snapshot = vipSnapshot(generation: generation, state: CoreSnapshot.State.connected, selected: "a")
+    snapshot.metering = MeteringView(source: "client_reported", uploadBytes: upload, downloadBytes: download, ratePermille: rate)
+    return snapshot
+}

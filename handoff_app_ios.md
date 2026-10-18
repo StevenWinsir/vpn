@@ -1,6 +1,6 @@
 # AsterLink iOS 原生客户端开发交接计划
 
-> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；第 3 轮完成（模拟器全程，2026-10-17）；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
+> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；第 3 轮完成（模拟器全程，2026-10-17）；第 4 轮代码完成、harness 与真机计费待验（2026-10-17）；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
 > 勘察基线：`1c9d64b`（PR #39 合并点，Android 第 6 轮）；Mihomo 固定提交 `70f0570405c3c2c47bb113b88db95006d239b346`（`native/third_party/Clash.Meta`）+ 生命周期补丁 `d425c1a0…`。
 > 项目根目录：`/Users/stevenlee/Desktop/vpn`；开发机：Mac mini M4（arm64，32 GiB，macOS 26.6.2，Xcode 27.0 / iOS 27.0 SDK）。
 > 规划轮只新增本文件：没有改代码，没有部署，没有连接远端数据库，也没有提交或推送。第 1 轮起的实际进度写在第 15 节。
@@ -767,7 +767,7 @@ python3 scripts/test-native-ios.py --suite release
 | 1 环境与骨架 | DONE（模拟器范围；PR #40 已合并）| 本机 foundation 11/11、unit 3/3、simulator 6 PASS + E-SIM-NE 实测记录；P1/P2 缺失，真机项 BLOCKED；demo 服务器需部署后端 `ios` 白名单后才能登录 |
 | 2 扩展与真实 TUN | 代码完成，真机待验（分支 worktree-ios-round2-tunnel）| 主机/模拟器项全部 PASS；D-T01–D-T09、D-CYCLES、D-MEM-idle 全部 BLOCKED（0 个签名身份；已配对 iPhone 一台）；真机步骤见 `docs/ios-tun-design.md` 第 9 节 |
 | 3 账号与 UI | DONE（模拟器范围；分支 worktree-ios-round3-account-ui）| unit 42 个 Swift + 182 个 Go；ui 44 用例/45 截图；account 19 项真实 Core+Keychain+隔离后端全 PASS；demo 手工确认 NOT_RUN（需用户测试账号与已部署后端） |
-| 4 连接与计量 | NOT_STARTED | 模拟器线束即可；真机计费需 P1 + P2 |
+| 4 连接与计量 | 代码完成，模拟器范围内的证明通过；线束版计费与真机 BLOCKED/NOT_RUN（分支 worktree-ios-round4-connect-loop）| unit Go 182 + Swift 63；ui 48 用例/50 截图；account 19 项回归全 PASS；billing 套餐 3 PASS + 5 个 harness NOT_RUN + device-billing BLOCKED；进程内注入线束（8.8）未写，是第 5 轮之前最值得补的一项 |
 | 5 生命周期与可靠性 | NOT_STARTED | 主要依赖真机 |
 | 6 打磨与发布 | NOT_STARTED | 需要组织开发者账号、Logo、隐私政策/用户协议页面、GPL 法务结论 |
 
@@ -928,6 +928,40 @@ App/扩展/xcframework 版本 / 模拟器或真机（机型、iOS 版本）/ Cor
 下一位从哪个文件/验收项开始；回退方法：
   第 4 轮从 AsterLinkKit/Ports.swift 的 TunnelControl 接缝开始：把 DirectCoreTunnel 换成基于 TunnelController 的实现，
   接入首次配置引导、交接、两段 Verify 与通知。回退：撤销本分支；后端只多了一个测试世界入口。
+```
+
+### 第 4 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 4 轮 / 2026-10-17 / Claude（worktree 分支 worktree-ios-round4-connect-loop）
+基线 commit / 已有未提交改动：a7b059a（PR #42 合并点）；无
+实际修改与契约变化（不含秘密）：
+  契约：无变化（handoff-v1、ipc-v1 不变）。Go：无改动。
+  AsterLinkKit：TunnelBridge（按会话所有者路由 ipc，扩展不可达返回 tunnel_unreachable）、TunnelWatch（扩展自行停连的判定）、
+    TunnelNotifier/NotificationAlerts（本地通知，固定标识，只带原因文字）、TunnelControl 增加 configured/foreground/lastEndReason
+    且 stop() 返回“是否换了主”；SessionController：首次配置说明（needsVPNSetup、continueVPNSetup）、tunnelGone（扩展不可达→取回会话、
+    用扩展给出的原因）、released 状态视为会话丢失并静默重登一次、换主后首个快照不比 generation（newOwner）、断开后重读 App Core；
+    Formatting.chargedUnits（逐单位、溢出饱和）、ConnectionUsage.chargedUnits、CoreSnapshot.State.released、新文案。
+  App：NetworkTunnelControl（安装/启用配置→交出→startVPNTunnel→等 connected→桥指向扩展→Verify 第二段→才返回已连接；停止=release+停+取回）、
+    ProviderChannel、VPNSetupSheet、TunnelController 补 lastDisconnectNotice/stopAndWait 等、AppModel 接线与前后台提示。
+    扩展：连接成功后每 5 s 的结束监视（只一次：本地通知 + cancelTunnelWithError 带原因；App 要求的停止不报）。
+  脚本/CI：test-native-ios.py 新增 --suite billing；ios.yml 增加该步骤（0 或 3 通过）。docs/ios-billing-acceptance.md。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，Xcode 27.0，iPhone 18 Pro 模拟器 iOS 27.0，公司 VPN 开启）：
+  foundation 11 PASS；unit：Go 182、AsterLinkKit 63（新增 21 个）全 PASS；simulator 6 PASS + E-SIM-NE（INFO，同前）；
+  ui：48 用例、50 张截图全 PASS（新增首次配置说明页、拒绝、被系统收走、探测失败）；
+  account（模拟器 + 真实 Core + Keychain + 隔离后端）：19 项全 PASS，用以确认请求改走 TunnelBridge 后无回归；
+  billing：Go 账本 7/7 与交接 5/5（B01 逐单位 1×=104,857,600,000、0.5×=52,428,800,000 units；B02 丢 ACK 只扣一次；H01 往返）PASS，
+    Swift 21 PASS；B01/B02/B04/A04/C01 的 harness 版 NOT_RUN；device-billing BLOCKED。
+产物 / 环境 / 版本：artifacts/native-ios/{unit,ui,account,billing,simulator,foundation}/（不提交）；Core 0.1.0、Mihomo 70f0570405c3。
+未解决问题、复现方法与发布限制：
+  ① 进程内注入线束（8.8）没有写：B01/B02/B04/A04/C01 在“真实 Mihomo + 真实后端”下的 iOS 证明仍缺，单元证明不冒充。
+  ② 真机全部 BLOCKED（P1/P2）：扩展侧整条连接、Verify 第二段、后台通知出现一次、fetchLastDisconnectError 是否带回码都未在真机验证。
+  ③ 模拟器拒绝保存 NE 配置的错误码与用户拒绝同为 NEVPNErrorDomain 5，所以模拟器上会提示“需要允许添加 VPN 配置”。
+  ④ 扩展自行停连会撤销会话（既有行为），App 回来后依赖记住的密码静默重登。⑤ 本轮没有部署后端，demo 手工确认仍 NOT_RUN。
+下一位从哪个文件/验收项开始；回退方法：
+  先补线束（native/core 加 asterlink_harness 构建标签，AsterLinkHarness 目标），再把 billing 套餐里 5 个 NOT_RUN 变成真测；
+  有付费团队后按 docs/ios-tun-design.md 第 9 节与 docs/ios-billing-acceptance.md 第 3 节核真机项；然后进入第 5 轮（闸门/生命周期）。
+  回退：撤销本分支；Go 与后端无改动。
 ```
 
 ## 附录 A. 源码核验索引

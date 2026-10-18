@@ -32,7 +32,10 @@ public enum ErrorText {
         case LocalCodes.tunnelEnded: "连接已断开"
         case LocalCodes.vpnRevoked: "VPN 已被系统设置或其它 VPN 应用关闭，本次流量已结算"
         case LocalCodes.networkUnreachable: "无法连接服务器，请检查网络"
-        case "tun_unavailable": "此设备暂时无法建立系统隧道（连接功能将在后续版本开放）"
+        case LocalCodes.tunnelUnreachable: "VPN 已断开，请重新连接"
+        case LocalCodes.routeProbeFailed: "隧道已建立，但系统流量没有经过隧道，已自动断开。请重试"
+        case "handoff_required": "请在 AsterLink App 内连接"
+        case "tun_unavailable": "此设备暂时无法建立系统隧道"
         default: "操作失败，请稍后重试"
         }
     }

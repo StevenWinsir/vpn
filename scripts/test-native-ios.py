@@ -26,6 +26,14 @@ Implemented suites (rounds 1-2):
   account     round 3; needs the simulator runtime, Go, initdb and pg_ctl. Starts the backend world
       (isolated PostgreSQL, loopback only) and runs AccountAcceptanceTests in the simulator against
       the real Core and Keychain: A01 login/remember/relaunch/sign-out, A02 plans, A04 admin edits.
+  billing     round 4; needs Go and Xcode, no simulator, no network, no account. The metering and
+      hand-over ledger proofs that do not need a data path: the Core's exact-unit tests at 1x and 0.5x
+      (20 MiB up + 80 MiB down), the lost-ACK replay, the unsettled-tail refusals, the app -> extension
+      -> app hand-over with its 20 MiB baseline and 80 MiB settle, and the Swift connect-loop tests
+      (hand-over routing, extension-ended alert once, session-lost silent re-login, per-connection
+      usage). The harness cases B01/B02/B04 (real Mihomo, real backend, in-process injection) and the
+      device-billing cases are reported NOT_RUN / BLOCKED: they need the harness build (not written)
+      or a signed device; they are never reported PASS from these unit proofs.
   device-tun  round 2 device acceptance (D-T01..D-T09, D-CYCLES, D-MEM-idle). Checks the
       prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
       paired iPhone. Without them every case is reported BLOCKED (exit 3); the manual procedure is
@@ -162,6 +170,52 @@ def check_unit():
     swift_passed = len(re.findall(r'✔ Test \S+ passed', kit.stdout + kit.stderr))
     record('swift.kit', kit.returncode == 0 and swift_passed > 0,
            '%d AsterLinkKit tests passed' % swift_passed if kit.returncode == 0 else (kit.stdout + kit.stderr).strip()[-600:])
+
+
+# ---------------------------------------------------------------- billing
+
+# Go tests that prove the ledger arithmetic and the hand-over without a data path (names are pinned so a
+# renamed or deleted test fails the suite instead of silently shrinking it).
+BILLING_GO = (
+    ('./internal/meter', ('TestExactIntegerChargeAtBothRates', 'TestLostAckRetriesOriginalBatchAndNeverDoubleCharges',
+                          'TestCounterRegressionIsFatalAndNothingIsReported', 'TestRebaseAcrossSettledSegments',
+                          'TestBeginRefusesUnsettledOrDisagreeingLedger', 'TestRateChangeIsReportedAfterBytesAreSettledAtTheBoundRate',
+                          'TestEstimatedRemainingUsesIntegerUnitsAndFloorsAtZero')),
+    ('./internal/managed', ('TestLostAcknowledgementReplaysTheSameBatch', 'TestLogoutSettlesTailBeforeRevoking',
+                            'TestUnconfirmedTailBlocksReconnectUntilAcknowledged', 'TestHandoffRoundTrip',
+                            'TestHandoffExportRefusesUnsettled')),
+)
+BILLING_SWIFT = ('MeteringArithmeticTests', 'TunnelFlowTests', 'TunnelBridgeTests', 'TunnelWatchTests')
+HARNESS_CASES = (
+    ('B01.harness', '20 MiB up + 80 MiB down through real Mihomo at 1x and 0.5x against the real backend'),
+    ('B02.harness', 'ACK lost, the original batch retried once, charged once, with the real engine'),
+    ('B04.harness', 'node_reported line: NodeAgent counts, /traffic refused'),
+    ('A04.harness', 'rate change / disabled line / plan end / quota end stop the real connection and settle the tail'),
+    ('C01.harness', 'disconnect then immediate reconnect through a real extension hand-over'),
+)
+
+
+def check_billing():
+    for package, names in BILLING_GO:
+        pattern = '^(%s)$' % '|'.join(names)
+        run = subprocess.run(['go', 'test', '-count=1', '-v', '-run', pattern, package], cwd=CORE,
+                             env=dict(os.environ, GOFLAGS='-buildvcs=false'), capture_output=True, text=True)
+        ran = set(re.findall(r'^--- PASS: (\w+)', run.stdout, re.M))
+        missing = [name for name in names if name not in ran]
+        record('billing.go.' + package.rsplit('/', 1)[-1], run.returncode == 0 and not missing,
+               '%d/%d pinned Go tests passed' % (len(ran), len(names)) if not missing and run.returncode == 0
+               else ('missing or failed: %s %s' % (', '.join(missing), run.stdout.strip()[-400:])))
+    kit = subprocess.run(['swift', 'test'] + [arg for suite in BILLING_SWIFT for arg in ('--filter', suite)],
+                         cwd=IOS / 'Packages/AsterLinkKit', capture_output=True, text=True)
+    swift_passed = len(re.findall(r'✔ Test \S+ passed', kit.stdout + kit.stderr))
+    record('billing.swift.kit', kit.returncode == 0 and swift_passed >= 20,
+           '%d Swift tests passed (hand-over routing, alerts, usage, exact units)' % swift_passed if kit.returncode == 0
+           else (kit.stdout + kit.stderr).strip()[-600:])
+    for case_id, what in HARNESS_CASES:
+        record(case_id, False, 'NOT_RUN: ' + what + '. Needs the in-process injection harness (handoff_app_ios.md 8.8), which is not '
+               'built yet; the unit proofs above do not stand in for it', status='NOT_RUN')
+    record('device-billing', False, 'BLOCKED: 20 MiB + 80 MiB through a real TUN needs a paid Apple team (packet-tunnel-provider) and a paired iPhone',
+           status='BLOCKED')
 
 
 # ---------------------------------------------------------------- device
@@ -426,7 +480,7 @@ def check_account(out_dir: Path, wanted):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'device-tun'))
+    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'billing', 'device-tun'))
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--device', help='device-tun: the iPhone name or UDID to use')
     parser.add_argument('--runtime', default=LOCK['ios']['simulator_runtime']['wanted'].split()[-1],
@@ -451,6 +505,8 @@ def main():
         check_ui(out_dir, args.runtime)
     elif args.suite == 'account':
         check_account(out_dir, args.runtime)
+    elif args.suite == 'billing':
+        check_billing()
     elif args.suite == 'device-tun':
         check_device(args.device)
 

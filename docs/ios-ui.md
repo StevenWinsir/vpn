@@ -1,6 +1,6 @@
 # AsterLink iOS 界面与账号层（第 3 轮）
 
-> 范围：登录、记住密码、套餐与线路同步、正式三页界面。连接按钮此轮只走到 App 自己的 Core（iOS 上没有隧道，Core 如实返回 `tun_unavailable`）；与扩展的交接和“已连接”验证在第 4 轮接入。
+> 范围：登录、记住密码、套餐与线路同步、正式三页界面。连接按钮在第 3 轮只走到 App 自己的 Core（如实返回 `tun_unavailable`）；第 4 轮起接入首次配置说明页、与扩展的交接和两段 Verify，见 `docs/ios-billing-acceptance.md`。
 
 ## 1. 结构
 

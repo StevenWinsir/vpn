@@ -132,6 +132,37 @@ final class TunnelController {
         }
     }
 
+    /// The extension's own reason for its last stop (a stable code and the Core's Chinese text),
+    /// or nil when the system stopped it without one.
+    func lastDisconnectNotice() async -> Notice? {
+        guard let connection = manager?.connection else { return nil }
+        return await withCheckedContinuation { continuation in
+            connection.fetchLastDisconnectError { error in
+                guard let error = error as NSError?, error.domain == PacketTunnelErrors.domain,
+                      let code = error.userInfo["code"] as? String else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: .core(code, error.localizedDescription))
+            }
+        }
+    }
+
+    /// True while the system is starting or running our tunnel.
+    var isActive: Bool { [.connecting, .connected, .reasserting].contains(status) }
+
+    /// Closes the system tunnel and waits until it is down.
+    func stopAndWait() async {
+        manager?.connection.stopVPNTunnel()
+        await waitUntilDown()
+    }
+
+    /// Whether the user has already allowed our VPN configuration.
+    var isInstalled: Bool { manager != nil }
+
+    /// The ticket given to the extension has not been accounted for yet.
+    var hasHandedOut: Bool { handedOut != nil }
+
     private func waitUntilDown() async {
         for _ in 0..<150 where status != .disconnected && status != .invalid {
             try? await Task.sleep(for: .milliseconds(100))
