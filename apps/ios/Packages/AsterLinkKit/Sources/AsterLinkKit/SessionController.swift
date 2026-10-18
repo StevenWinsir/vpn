@@ -307,8 +307,12 @@ public final class SessionController {
     /// While visible it is repeated: the extension treats the hint as a lease, so an app that is
     /// killed or suspended stops renewing it and the extension drops to the background rhythm.
     public func setForeground(_ visible: Bool) async {
+        // Let a repeat that is already on its way finish first, so "hidden" is always the last word.
+        let running = heartbeat
+        stopHeartbeat()
+        await running?.value
         await tunnel.foreground(visible)
-        if visible { startHeartbeat() } else { stopHeartbeat() }
+        if visible { startHeartbeat() }
     }
 
     private func startHeartbeat() {
