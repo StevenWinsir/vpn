@@ -1,6 +1,6 @@
 # AsterLink iOS 原生客户端开发交接计划
 
-> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；第 3 轮完成（模拟器全程，2026-10-17）；第 4 轮完成：模拟器与 harness 范围（2026-10-17），真机计费待验；第 5 轮代码与 App 侧测试完成（2026-10-18），真机 D 项待验；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
+> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；第 3 轮完成（模拟器全程，2026-10-17）；第 4 轮完成：模拟器与 harness 范围（2026-10-17），真机计费待验；第 5 轮代码与 App 侧测试完成（2026-10-18），真机 D 项待验；第 6 轮不依赖付费账号的部分完成（2026-10-18：未签名 IPA、重签工具、发布审计、网站 iPhone 入口），签名与真机待验；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
 > 勘察基线：`1c9d64b`（PR #39 合并点，Android 第 6 轮）；Mihomo 固定提交 `70f0570405c3c2c47bb113b88db95006d239b346`（`native/third_party/Clash.Meta`）+ 生命周期补丁 `d425c1a0…`。
 > 项目根目录：`/Users/stevenlee/Desktop/vpn`；开发机：Mac mini M4（arm64，32 GiB，macOS 26.6.2，Xcode 27.0 / iOS 27.0 SDK）。
 > 规划轮只新增本文件：没有改代码，没有部署，没有连接远端数据库，也没有提交或推送。第 1 轮起的实际进度写在第 15 节。
@@ -769,7 +769,7 @@ python3 scripts/test-native-ios.py --suite release
 | 3 账号与 UI | DONE（模拟器范围；分支 worktree-ios-round3-account-ui）| unit 42 个 Swift + 182 个 Go；ui 44 用例/45 截图；account 19 项真实 Core+Keychain+隔离后端全 PASS；demo 手工确认 NOT_RUN（需用户测试账号与已部署后端） |
 | 4 连接与计量 | DONE（模拟器与 harness 范围；分支 worktree-ios-round4-connect-loop）| unit Go 182 + Swift 63；ui 48 用例/50 截图；account 19 项回归全 PASS；billing --harness both：B01/B02/B04/A04/C01 在 Go 宿主与 iOS 模拟器进程里各 28 项全 PASS（真实 Core + Mihomo + 后端 + 节点 + NodeAgent）；device-billing 与扩展侧整条连接 BLOCKED（无付费 Apple 团队） |
 | 5 生命周期与可靠性 | DONE（代码与 App 侧测试；分支 worktree-ios-round5-lifecycle）| unit Go 182 + Swift 78；lifecycle S-L01 15 个 PASS；ui 48 用例/50 截图与 account 全 PASS（回归）；D-L01..D-L07、D-MEM 全部 BLOCKED（无付费 Apple 团队），步骤见 `docs/ios-lifecycle.md` 第 5 节 |
-| 6 打磨与发布 | NOT_STARTED | 需要组织开发者账号、Logo、隐私政策/用户协议页面、GPL 法务结论 |
+| 6 打磨与发布 | DONE（不依赖付费账号的部分；分支 worktree-ios-round6-release）| 未签名 IPA 27.7 MiB + 许可/源码/清单/哈希；`resign-ipa.py`；`--suite release` 11 PASS + 4 BLOCKED（R01/R02/R04/R03.signed）；网站 iPhone 入口；签名、TestFlight/商店、真机、UI 打磨（VoiceOver/SE/英文/正式图标）、法务、隐私政策页仍未做 |
 
 每轮追加：
 
@@ -998,6 +998,40 @@ App/扩展/xcframework 版本 / 模拟器或真机（机型、iOS 版本）/ Cor
 下一位从哪个文件/验收项开始；回退方法：
   有付费团队后按 docs/ios-lifecycle.md 第 5 节跑 D-L01..D-L07、D-MEM，用 summarize-samples.py 汇总并补记录；其后进入第 6 轮。
   回退：撤销本分支；Go/后端/契约无改动。
+```
+
+### 第 6 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 6 轮（不依赖付费账号的部分）/ 2026-10-18 / Claude（worktree 分支 worktree-ios-round6-release）
+基线 commit / 已有未提交改动：e044dac（PR #44 合并点）；无
+范围说明：规划中的第 6 轮含 TestFlight/App Store 签名与上架。用户目前没有付费账号，目标是“先出未签名 IPA，之后买账号签名，通过链接下载安装、不上架”。
+  所以本轮做完所有不需要账号的部分，并为“拿到账号后签名”写好工具与步骤；TestFlight/App Store 提交不在本轮。
+实际修改与契约变化（不含秘密）：
+  契约：无变化。Go 与后端：无改动（只有 scripts/collect_licenses.py 增加 ios 的模块集，用于许可文本）。
+  构建/打包：scripts/package-native-ios.py（Release、generic/platform=iOS、CODE_SIGNING_ALLOWED=NO 的 xcodebuild archive → 未签名 IPA；
+    许可文本、CycloneDX 清单、GPL 对应源码包、release-info.json（signed:false、trusted_release:false、未关闭门槛）、SHA256SUMS、dSYM 私有目录）；
+    apps/ios/.env.release.example（APP_ENV=release）；build-native-ios.py 的 env 文件可由 ASTERLINK_IOS_ENV_FILE 指定。
+  签名：scripts/ios_release.py + scripts/ios/resign-ipa.py（换包 ID 前缀、校验描述文件的 App ID/Network Extension/有效期/同一团队、entitlements 取自描述文件、
+    先签扩展再签 App、codesign 验证、重新打包；--ipa-url 同时生成 OTA 的 manifest.plist 和网站 IOS_* 配置）。
+  合规：两个 PrivacyInfo.xcprivacy（来自对二进制的符号扫描：文件时间戳、系统启动时间，App 另有 UserDefaults）；ITSAppUsesNonExemptEncryption=true。
+  审计：test-native-ios.py --suite release（R03.files/structure/config/entitlements/no_debug_code/privacy/secrets/core_identity/licenses/profile_checks/resign；
+    篡改 IPA 一个字节会使 R03.files 失败，已验证）。
+  网站：/download 增加 iPhone 区块（itms-services 安装链接，仅 HTTPS），lib/downloads.ts 的 iosDownload/iosInstallLink 与 6 个 node 测试，.env.example 增 IOS_*。
+  CI：ios.yml 增加打包、审计（0 或 3 通过）与 ios-unsigned-ipa 工件（保留 30 天）。文档：docs/ios-release.md。
+执行命令 / 测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，Xcode 27.0，公司 VPN 开启）：
+  package-native-ios.py --channel internal：成功，IPA 约 27.7 MiB（arm64，iOS 17.0，com.asterlink.dev.asterlink + .tunnel）
+  test-native-ios.py --suite release：11 PASS，4 BLOCKED（R01、R02、R04、R03.signed）
+  foundation 15 PASS；unit PASS（Go 182、Swift 78）；lifecycle 2 PASS + 8 BLOCKED；simulator 全 PASS（含新增隐私清单后的启动）
+  frontend：npm run typecheck、lint 无问题；test:downloads 6 个全过
+产物 / 环境：artifacts/native-ios/release/（不提交；CI 工件 ios-unsigned-ipa）；Core 0.1.0、Mihomo 70f0570405c3。
+未解决问题、复现方法与发布限制：
+  ① IPA 未签名，装不上手机；需要付费团队 → docs/ios-release.md 第 4 节。② R03.resign 用伪造描述文件 + ad hoc 身份，只证明工具链，不证明苹果接受（R01 才证明）。
+  ③ 所有真机项（第 2、4、5 轮 D 项与 R01/R02/R04）BLOCKED。④ 未做：UI 打磨（VoiceOver 全屏、iPhone SE、英文本地化）、正式 Logo/图标、/privacy 与 /terms 页、
+    IOS_PURCHASE_ENTRY 构建开关（界面本来就没有购买入口）、TestFlight/App Store 提交。⑤ 法务（GPL 与分发渠道）、出口合规问卷。⑥ OTA 安装（itms-services）依赖 Apple 当时行为，首次要实机验证。
+下一位从哪个文件/验收项开始；回退方法：
+  买到账号后：docs/ios-release.md 第 4 节生成签名包 → 真机跑 docs/ios-tun-design.md 第 9 节、docs/ios-billing-acceptance.md 第 3 节、docs/ios-lifecycle.md 第 5 节 → R01/R02/R04。
+  回退：撤销本分支；Go/后端/契约无改动，网站只多了一个区块。
 ```
 
 ## 附录 A. 源码核验索引

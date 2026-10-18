@@ -81,6 +81,22 @@ jobs:
           python3 scripts/test-native-ios.py --suite lifecycle
           code=$?
           test $code -eq 0 -o $code -eq 3
+      - name: Package the unsigned IPA (round 6, Release configuration, no signing)
+        run: python3 scripts/package-native-ios.py --channel internal
+      - name: Release audit (round 6 package checks, signed-build cases reported blocked)
+        run: |
+          # Exit 3 is expected: R01, R02, R04 and the signed-build check need a paid Apple team and an iPhone.
+          set +e
+          python3 scripts/test-native-ios.py --suite release
+          code=$?
+          test $code -eq 0 -o $code -eq 3
+      - name: Retain the unsigned IPA and its release folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: artifacts/native-ios/release/
+          retention-days: 30
+          if-no-files-found: error
       - name: Retain reports
         if: always()
         uses: actions/upload-artifact@v4

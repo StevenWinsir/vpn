@@ -52,6 +52,10 @@ def xcconfig_value(value: str) -> str:
 
 
 def env_file() -> Path:
+    # The release packager points this at .env.release.example (or the operator's own file).
+    override = os.environ.get('ASTERLINK_IOS_ENV_FILE')
+    if override:
+        return Path(override)
     path = IOS / '.env'
     if path.exists():
         return path
