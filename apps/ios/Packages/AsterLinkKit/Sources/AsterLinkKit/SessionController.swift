@@ -31,6 +31,8 @@ public final class SessionController {
     @ObservationIgnored private let idleInterval: Duration
     @ObservationIgnored private let liveInterval: Duration
     @ObservationIgnored private let refreshThrottleMillis: Int64
+    @ObservationIgnored private let heartbeatInterval: Duration
+    @ObservationIgnored private var heartbeat: Task<Void, Never>?
 
     @ObservationIgnored private var polling: Task<Void, Never>?
     @ObservationIgnored private var autoRelogins = 0
@@ -48,11 +50,12 @@ public final class SessionController {
     public init(client: CoreClient, core: any CoreHost, target: LoginTarget, credentials: any CredentialStore,
                 preferences: any LoginPreferences, devices: any DeviceIDProvider, tunnel: any TunnelControl,
                 alerts: any SessionAlerts = NoAlerts(), clock: @escaping @Sendable () -> Int64 = SessionController.monotonicMillis,
-                idleInterval: Duration = .seconds(2), liveInterval: Duration = .seconds(1), refreshThrottleMillis: Int64 = 10_000) {
+                idleInterval: Duration = .seconds(2), liveInterval: Duration = .seconds(1), refreshThrottleMillis: Int64 = 10_000,
+                heartbeatInterval: Duration = ForegroundLease.heartbeat) {
         self.client = client; self.core = core; self.target = target; self.credentials = credentials
         self.preferences = preferences; self.devices = devices; self.tunnel = tunnel; self.alerts = alerts
         self.clock = clock; self.idleInterval = idleInterval; self.liveInterval = liveInterval
-        self.refreshThrottleMillis = refreshThrottleMillis
+        self.refreshThrottleMillis = refreshThrottleMillis; self.heartbeatInterval = heartbeatInterval
     }
 
     public nonisolated static let monotonicMillis: @Sendable () -> Int64 = { Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000) }
@@ -67,6 +70,9 @@ public final class SessionController {
         guard state.phase == .starting else { return }
         state.email = preferences.rememberedEmail() ?? ""
         let started = await startCore()
+        // The extension may still hold a live session from before the app was closed or killed
+        // (D-L05): rejoin it. Signing in again here would open a second session for the device.
+        if started, await rejoinRunningTunnel() { return }
         state.phase = .signedOut
         guard started, !state.email.isEmpty else { return }
         let email = state.email
@@ -79,6 +85,26 @@ public final class SessionController {
             state.rememberPassword = true
             await signIn(email: email, password: saved, remember: true, automatic: true)
         }
+    }
+
+    /// A tunnel left running by an earlier launch: no login, the extension's snapshot is the truth.
+    /// Anything short of a connected session with a known user closes that tunnel instead, so the
+    /// ordinary sign-in below starts from a clean state.
+    private func rejoinRunningTunnel() async -> Bool {
+        guard await tunnel.resume() else { return false }
+        guard let latest = try? await client.readSnapshot(), latest.state == CoreSnapshot.State.connected, latest.user != nil else {
+            await tunnel.stop()
+            return false
+        }
+        state.rememberPassword = preferences.rememberedEmail() != nil
+        if let email = latest.user?.email, !email.isEmpty { state.email = email }
+        state.phase = .signedIn
+        apply(latest, newOwner: true)
+        tunnelUp = true
+        startPolling()
+        await tunnel.foreground(true)
+        startHeartbeat()
+        return true
     }
 
     /// Starts the Core (idempotent) and reads its identity once. False when it cannot run.
@@ -258,6 +284,14 @@ public final class SessionController {
             else { state.message = .local(code) }
         }
         state.busy = false; state.activity = .none
+        if state.snapshot.state == CoreSnapshot.State.connected { await warnIfNotificationsOff() }
+    }
+
+    /// A VPN that stops in the background (quota, plan, another VPN) tells the user by notification;
+    /// with permission refused it can only say so on the next launch, so say that up front.
+    private func warnIfNotificationsOff() async {
+        if await tunnel.notificationsAllowed() { return }
+        if state.warning == nil { state.warning = .local(LocalCodes.notificationsOff) }
     }
 
     /// The user read the explanation and chose to continue: connect, which raises the system dialog.
@@ -270,7 +304,33 @@ public final class SessionController {
     public func cancelVPNSetup() { state.needsVPNSetup = false }
 
     /// The app moved to or from the foreground (the extension only polls the catalog while seen).
-    public func setForeground(_ visible: Bool) async { await tunnel.foreground(visible) }
+    /// While visible it is repeated: the extension treats the hint as a lease, so an app that is
+    /// killed or suspended stops renewing it and the extension drops to the background rhythm.
+    public func setForeground(_ visible: Bool) async {
+        // Let a repeat that is already on its way finish first, so "hidden" is always the last word.
+        let running = heartbeat
+        stopHeartbeat()
+        await running?.value
+        await tunnel.foreground(visible)
+        if visible { startHeartbeat() }
+    }
+
+    private func startHeartbeat() {
+        stopHeartbeat()
+        heartbeat = Task { [weak self, heartbeatInterval] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: heartbeatInterval)
+                if Task.isCancelled { return }
+                guard let self else { return }
+                await self.tunnel.foreground(true)
+            }
+        }
+    }
+
+    private func stopHeartbeat() {
+        heartbeat?.cancel()
+        heartbeat = nil
+    }
 
     /// The user declined the system dialog for adding the VPN configuration: stay ready and say why.
     public func vpnConsentDenied() { state.message = .local(LocalCodes.vpnPermissionDenied) }

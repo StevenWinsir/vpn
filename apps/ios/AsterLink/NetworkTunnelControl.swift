@@ -81,8 +81,6 @@ final class NetworkTunnelControl: TunnelControl {
             await stop()
             return .refused(code: LocalCodes.routeProbeFailed)
         }
-        // Asked only now that the user has seen the VPN work, and explained on the setup sheet.
-        Task { await TunnelNotifier.requestAuthorizationIfNeeded() }
         return .replied(SnapshotReply(snapshot: snapshot))
     }
 
@@ -142,6 +140,34 @@ final class NetworkTunnelControl: TunnelControl {
     }
 
     func lastEndReason() async -> Notice? { await controller.lastDisconnectNotice() }
+
+    /// Asked only once the user has seen the VPN work (the setup sheet explains why); a refusal is
+    /// reported so the connect page can say reminders will not arrive.
+    func notificationsAllowed() async -> Bool { await TunnelNotifier.requestAuthorizationIfNeeded() }
+
+    /// The app was killed or relaunched while the extension kept the tunnel (D-L05). Rejoins a
+    /// tunnel that is up and whose Core says connected; closes one that is half-started, since its
+    /// session cannot be known from here.
+    func resume() async -> Bool {
+        if stopping { return false }
+        if controller.manager == nil { try? await controller.load() }
+        switch controller.status {
+        case .connected, .reasserting:
+            bridge.useTunnel(ProviderChannel(controller: controller))
+            if let snapshot = try? await CoreClient(transport: bridge).readSnapshot(), snapshot.state == CoreSnapshot.State.connected {
+                return true
+            }
+            // Up but not carrying a session: nothing to rejoin.
+            bridge.useApp()
+            await controller.stopAndWait()
+            return false
+        case .connecting, .disconnecting:
+            await controller.stopAndWait()
+            return false
+        default:
+            return false
+        }
+    }
 }
 
 /// Provider messages as the bridge's channel to the extension's Core.

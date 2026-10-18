@@ -24,6 +24,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// The app asked for this stop (disconnect, release, logout) or the system did: no alert.
     private var stopRequested = false
     private var endReported = false
+    /// The app's foreground hint as a lease (see ForegroundLease): a killed app stops renewing it.
+    private var lease = ForegroundLease(startedAt: ProcessInfo.processInfo.systemUptime)
+    private var gateLog = GateLog()
+    private var startedAt = ProcessInfo.processInfo.systemUptime
+    private var sampleTick = 0
 
     static let errorDomain = PacketTunnelErrors.domain
 
@@ -51,7 +56,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         let done = UncheckedBox(completionHandler)
-        log.notice("stop: reason \(reason.rawValue, privacy: .public)")
+        let why = TunnelStopReason(raw: reason.rawValue)
+        log.notice("stop: reason \(why.name, privacy: .public)")
+        // A stop nobody in the app asked for (another VPN took over, the configuration was
+        // disabled or removed, the user switched, the app was updated): the data path closes and
+        // the tail settles below; say why now, because the app may be suspended or gone.
+        if !stopRequested, !endReported, let notice = why.notice {
+            endReported = true
+            TunnelNotifier.post(TunnelEnd(notice: notice))
+        }
         stopRequested = true
         // MobileStop is safe from any thread and interrupts a connect still running on the work
         // queue (a cancelled start), so the stop never waits out the 90-second connect budget.
@@ -72,11 +85,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {
+        log.notice("sleep")
         completionHandler()
     }
 
     override func wake() {
-        // The Core's clock watch sees the sleep; this makes a closed gate retry at once.
+        log.notice("wake")
+        // The Core's clock watch sees the sleep and closes the gate itself; this makes a closed
+        // gate re-verify at once instead of after its backoff.
         work.async { MobileNetworkChanged() }
     }
 
@@ -94,6 +110,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         MobileTuneMemory(MemoryBudget.goHeapLimit, MemoryBudget.goGCPercent)
         startMemoryWatch()
         stopRequested = false; endReported = false
+        lease = ForegroundLease(startedAt: ProcessInfo.processInfo.systemUptime)
+        gateLog = GateLog()
+        startedAt = ProcessInfo.processInfo.systemUptime
+        sampleTick = 0
 
         let adopted = MobileAdoptSession(ticket)
         guard let head = Self.snapshot(adopted), head.actionError == nil, head.state == "ready" else {
@@ -158,7 +178,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             }
             return ProviderReply.error(code: response.error?.code ?? "handoff_unsettled").encoded()
         case .foreground(let visible):
-            MobileSetForeground(visible)
+            if let applied = lease.hint(visible: visible, at: ProcessInfo.processInfo.systemUptime) { MobileSetForeground(applied) }
             return ProviderReply.ack.encoded()
         case .routeProbe(let ok):
             log.notice("route probe from the app: \(ok, privacy: .public)")
@@ -177,6 +197,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         timer.setEventHandler { [self] in
             guard !stopRequested, !endReported else { return }
             let raw = MobileCall(CoreRequest.command("read_snapshot", requestID: "tunnel-watch"))
+            if let document = try? JSONDecoder().decode(CoreResponse.self, from: Data(raw.utf8)),
+               let snapshot = try? document.decodeResult(CoreSnapshot.self) {
+                for line in gateLog.observe(snapshot) { log.notice("\(line, privacy: .public)") }
+            }
             guard case .ended(let end) = TunnelWatch.evaluate(response: raw) else { return }
             endReported = true
             log.notice("tunnel ended by the core: \(end.notice.code, privacy: .public)")
@@ -198,7 +222,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: work)
         timer.schedule(deadline: .now() + 5, repeating: 5)
         timer.setEventHandler { [self] in
+            // A hint that stopped being renewed means the app is gone or suspended.
+            if let applied = lease.tick(at: ProcessInfo.processInfo.systemUptime) {
+                MobileSetForeground(applied)
+                log.notice("foreground lease expired")
+            }
             guard let footprint = MemoryBudget.footprint() else { return }
+            sampleTick += 1
+            if sampleTick % 12 == 0 {
+                let sample = ResourceSample.capture(uptime: Int(ProcessInfo.processInfo.systemUptime - startedAt), footprint: footprint,
+                                                    peak: max(budget.peak, footprint), stats: MobileRuntimeStats())
+                log.notice("\(sample.logLine, privacy: .public)")
+            }
             switch budget.observe(footprint) {
             case .none: break
             case .release: MobileFreeMemory()

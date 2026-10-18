@@ -12,6 +12,8 @@ public enum PacketTunnelErrors {
 public struct TunnelEnd: Sendable, Equatable {
     public let notice: Notice
 
+    public init(notice: Notice) { self.notice = notice }
+
     public var text: String { ErrorText.text(for: notice) }
 }
 
@@ -57,13 +59,26 @@ public enum TunnelWatch {
 public enum TunnelNotifier {
     public static let identifier = "asterlink.tunnel.ended"
 
+    /// Posts once per stop: the extension raises the alert first (the app may be suspended), and
+    /// the app, finding the same stop later, must not replace its text with a vaguer one or ring
+    /// again, so an alert that is already delivered is left as it is.
     public static func post(_ end: TunnelEnd, center: UNUserNotificationCenter = .current()) {
         let content = UNMutableNotificationContent()
         content.title = "VPN 已断开"
         content.body = end.text
         content.sound = .default
         content.interruptionLevel = .timeSensitive
-        center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        let pending = UncheckedRequest(request)
+        center.getDeliveredNotifications { delivered in
+            if delivered.contains(where: { $0.request.identifier == identifier }) { return }
+            center.add(pending.request)
+        }
+    }
+
+    private struct UncheckedRequest: @unchecked Sendable {
+        let request: UNNotificationRequest
+        init(_ request: UNNotificationRequest) { self.request = request }
     }
 
     /// Withdraws a stale alert (a new connection, an explicit sign-out).

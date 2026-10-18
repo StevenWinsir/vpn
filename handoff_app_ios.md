@@ -1,6 +1,6 @@
 # AsterLink iOS 原生客户端开发交接计划
 
-> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；第 3 轮完成（模拟器全程，2026-10-17）；第 4 轮完成：模拟器与 harness 范围（2026-10-17），真机计费待验；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
+> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；第 3 轮完成（模拟器全程，2026-10-17）；第 4 轮完成：模拟器与 harness 范围（2026-10-17），真机计费待验；第 5 轮代码与 App 侧测试完成（2026-10-18），真机 D 项待验；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
 > 勘察基线：`1c9d64b`（PR #39 合并点，Android 第 6 轮）；Mihomo 固定提交 `70f0570405c3c2c47bb113b88db95006d239b346`（`native/third_party/Clash.Meta`）+ 生命周期补丁 `d425c1a0…`。
 > 项目根目录：`/Users/stevenlee/Desktop/vpn`；开发机：Mac mini M4（arm64，32 GiB，macOS 26.6.2，Xcode 27.0 / iOS 27.0 SDK）。
 > 规划轮只新增本文件：没有改代码，没有部署，没有连接远端数据库，也没有提交或推送。第 1 轮起的实际进度写在第 15 节。
@@ -768,7 +768,7 @@ python3 scripts/test-native-ios.py --suite release
 | 2 扩展与真实 TUN | 代码完成，真机待验（分支 worktree-ios-round2-tunnel）| 主机/模拟器项全部 PASS；D-T01–D-T09、D-CYCLES、D-MEM-idle 全部 BLOCKED（0 个签名身份；已配对 iPhone 一台）；真机步骤见 `docs/ios-tun-design.md` 第 9 节 |
 | 3 账号与 UI | DONE（模拟器范围；分支 worktree-ios-round3-account-ui）| unit 42 个 Swift + 182 个 Go；ui 44 用例/45 截图；account 19 项真实 Core+Keychain+隔离后端全 PASS；demo 手工确认 NOT_RUN（需用户测试账号与已部署后端） |
 | 4 连接与计量 | DONE（模拟器与 harness 范围；分支 worktree-ios-round4-connect-loop）| unit Go 182 + Swift 63；ui 48 用例/50 截图；account 19 项回归全 PASS；billing --harness both：B01/B02/B04/A04/C01 在 Go 宿主与 iOS 模拟器进程里各 28 项全 PASS（真实 Core + Mihomo + 后端 + 节点 + NodeAgent）；device-billing 与扩展侧整条连接 BLOCKED（无付费 Apple 团队） |
-| 5 生命周期与可靠性 | NOT_STARTED | 主要依赖真机 |
+| 5 生命周期与可靠性 | DONE（代码与 App 侧测试；分支 worktree-ios-round5-lifecycle）| unit Go 182 + Swift 78；lifecycle S-L01 15 个 PASS；ui 48 用例/50 截图与 account 全 PASS（回归）；D-L01..D-L07、D-MEM 全部 BLOCKED（无付费 Apple 团队），步骤见 `docs/ios-lifecycle.md` 第 5 节 |
 | 6 打磨与发布 | NOT_STARTED | 需要组织开发者账号、Logo、隐私政策/用户协议页面、GPL 法务结论 |
 
 每轮追加：
@@ -966,6 +966,38 @@ App/扩展/xcframework 版本 / 模拟器或真机（机型、iOS 版本）/ Cor
 下一位从哪个文件/验收项开始；回退方法：
   有付费团队后按 docs/ios-tun-design.md 第 9 节与 docs/ios-billing-acceptance.md 第 3 节核真机项；然后进入第 5 轮（闸门/生命周期）。
   回退：撤销本分支；Go 与后端无改动。
+```
+
+### 第 5 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 5 轮 / 2026-10-18 / Claude（worktree 分支 worktree-ios-round5-lifecycle）
+基线 commit / 已有未提交改动：d79cf73（PR #43 合并点）；无
+实际修改与契约变化（不含秘密）：
+  契约：无变化（handoff-v1、ipc-v1 不变）。Go 与后端：无改动，所以未做 macOS/Windows/Android 回归。
+  AsterLinkKit：Lifecycle.swift（ForegroundLease 30 s 租约/10 s 心跳；TunnelStopReason 把 NEProviderStopReason 映射成文案；
+    GateLog 把 Core 的 gate/last_gate 变成日志行；ResourceSample 每分钟采样行及解析）；TunnelControl 增加 resume() 与
+    notificationsAllowed()；SessionController：launch 先接回仍在运行的隧道（D-L05，不再用密码登录第二次）、前台心跳、
+    通知被拒提示；TunnelNotifier 同一次停止只发一条通知；新文案 5 条。
+  App/扩展：NetworkTunnelControl.resume()（connected/reasserting 且扩展 Core 报告 connected 才接回，半启动的隧道关闭）；
+    PacketTunnelProvider：租约代替直通的前台提示、系统自行停止（抢占/配置禁用或移除/用户切换/App 更新）发一次通知、
+    sleep/wake 与闸门日志、每 60 s 资源采样。
+  脚本/CI/文档：scripts/ios/summarize-samples.py；test-native-ios.py 新增 --suite lifecycle；ios.yml 增加该步骤（0 或 3 通过）；
+    docs/ios-lifecycle.md（行为表、故障矩阵、真机步骤、已知限制）。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，Xcode 27.0，iPhone 18 Pro 模拟器 iOS 27.0，公司 VPN 开启）：
+  foundation 11+ PASS；unit：Go 182、AsterLinkKit 78（新增 15 个）全 PASS；simulator 6 PASS + E-SIM-NE（INFO，同前）；
+  ui：48 用例/50 张截图全 PASS；account：全 PASS（21 项 PASS，0 FAIL），确认 launch 增加 resume 后无回归；
+  lifecycle：S-L01.kit 15 PASS、S-L01.summarizer PASS；D-L01..D-L07、D-MEM 8 项 BLOCKED（exit 3）。
+内存与性能基线：无真机数据，阈值（38/44 MiB、Go 堆 22 MiB、GOGC 60）仍是第 2 轮初值，未“定值”。电量未测。
+未解决问题、复现方法与发布限制：
+  ① 全部 D 项 BLOCKED（P1：无付费团队；免费 Personal Team 不能签 packet-tunnel-provider，所以“未签名 IPA 自签”装不出可用的 VPN）。
+  ② 以下行为由单测/代码约束保证，未在系统里观察过：sleep/wake 关闸、切网重验（Core 的 Go 逻辑在 Android 已验）、抢占与设置关闭时的
+    stopTunnel 原因值、划掉 App 后扩展继续运行并可被接回、重启不自动连接。
+  ③ includeAllNetworks 未启用：启动前已有的长连接可能不迁移（影响未测）。
+  ④ 设置里手动关闭时系统不给原因，文案为概括性的“被系统设置或其它 VPN 应用关闭”。
+下一位从哪个文件/验收项开始；回退方法：
+  有付费团队后按 docs/ios-lifecycle.md 第 5 节跑 D-L01..D-L07、D-MEM，用 summarize-samples.py 汇总并补记录；其后进入第 6 轮。
+  回退：撤销本分支；Go/后端/契约无改动。
 ```
 
 ## 附录 A. 源码核验索引

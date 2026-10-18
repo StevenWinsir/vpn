@@ -19,6 +19,7 @@ scripts/*
 !scripts/*.json
 !scripts/windows/
 !scripts/android/
+!scripts/ios/
 !scripts/third_party_licenses/
 **/__pycache__/
 FlClClash/
