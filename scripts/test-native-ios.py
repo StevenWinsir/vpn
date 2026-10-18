@@ -169,7 +169,8 @@ def check_unit():
     kit = subprocess.run(['swift', 'test'], cwd=IOS / 'Packages/AsterLinkKit', capture_output=True, text=True)
     swift_passed = len(re.findall(r'✔ Test \S+ passed', kit.stdout + kit.stderr))
     record('swift.kit', kit.returncode == 0 and swift_passed > 0,
-           '%d AsterLinkKit tests passed' % swift_passed if kit.returncode == 0 else (kit.stdout + kit.stderr).strip()[-600:])
+           '%d AsterLinkKit tests passed' % swift_passed if kit.returncode == 0
+           else '; '.join(re.findall(r'✘[^\n]*', kit.stdout + kit.stderr)[:8]) or (kit.stdout + kit.stderr).strip()[-600:])
 
 
 # ---------------------------------------------------------------- billing
