@@ -59,7 +59,7 @@ jobs:
           python3 scripts/test-native-ios.py --suite simulator --runtime latest
           code=$?
           test $code -eq 0 -o $code -eq 3
-      - name: UI suite (round 3 screens: prepared states asserted and captured)
+      - name: UI suite (round 3 screens, prepared states asserted and captured)
         run: |
           # Same rule as above: 0 = PASS, 3 = BLOCKED (no runtime). The account acceptance needs
           # PostgreSQL's initdb and stays a local suite.
