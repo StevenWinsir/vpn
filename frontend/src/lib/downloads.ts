@@ -48,6 +48,46 @@ export function androidDownload(env: Env): AndroidDownload | null {
   };
 }
 
+export type IosDownload = {
+  /** The signed IPA (also offered as a plain download, e.g. for Apple Configurator or a MDM). */
+  ipaUrl: string;
+  /** manifest.plist, which iOS needs to install an IPA from a web page. */
+  manifestUrl: string;
+  version: string;
+  sha256: string;
+  sizeBytes: number | null;
+  sourceUrl: string | null;
+};
+
+/**
+ * The signed iOS build, from IOS_* in frontend/.env (printed by scripts/ios/resign-ipa.py). Over-the-air
+ * installs only work over HTTPS, so unlike Android no loopback exception exists here.
+ */
+export function iosDownload(env: Env): IosDownload | null {
+  const ipaUrl = safeURL(env.IOS_IPA_URL?.trim());
+  const manifestUrl = safeURL(env.IOS_MANIFEST_URL?.trim());
+  const version = env.IOS_IPA_VERSION?.trim() ?? '';
+  const sha256 = env.IOS_IPA_SHA256?.trim().toLowerCase() ?? '';
+  if (!ipaUrl || !manifestUrl || !VERSION.test(version) || !HEX64.test(sha256)) return null;
+  if (!ipaUrl.startsWith('https://') || !manifestUrl.startsWith('https://')) return null;
+  if (!ipaUrl.toLowerCase().endsWith('.ipa') || !manifestUrl.toLowerCase().endsWith('.plist'))
+    return null;
+  const size = Number(env.IOS_IPA_SIZE_BYTES?.trim());
+  return {
+    ipaUrl,
+    manifestUrl,
+    version,
+    sha256,
+    sizeBytes: Number.isSafeInteger(size) && size > 0 ? size : null,
+    sourceUrl: safeURL(env.IOS_SOURCE_URL?.trim()),
+  };
+}
+
+/** The link that makes Safari on an iPhone offer to install the app. */
+export function iosInstallLink(download: IosDownload): string {
+  return `itms-services://?action=download-manifest&url=${encodeURIComponent(download.manifestUrl)}`;
+}
+
 export function megabytes(bytes: number): string {
   return `${(bytes / 2 ** 20).toFixed(1)} MB`;
 }

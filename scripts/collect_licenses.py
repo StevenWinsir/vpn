@@ -29,6 +29,8 @@ def shipped_packages(goos):
     """What is linked into the product for this platform, and whether cgo is on (gomobile needs it)."""
     if goos == 'android':
         return ['./mobile', 'golang.org/x/mobile/bind/java'], '1'
+    if goos == 'ios':
+        return ['./mobile', 'golang.org/x/mobile/bind/objc'], '1'
     return ['./cmd/asterlink-core'], '0'
 
 
@@ -89,7 +91,7 @@ def collect(goos='darwin', goarch='arm64'):
         'The proxy core embeds Mihomo (Clash.Meta fork, GNU GPL v3). The corresponding source of the\n'
         'exact build, with the instructions to rebuild it, is described in SOURCE.txt and shipped\n'
         'beside the installer. The other modules below are linked into %s under their own licenses.\n\n'
-        % ('libgojni.so (the Android Core)' if goos == 'android' else 'asterlink-core'))
+        % {'android': 'libgojni.so (the Android Core)', 'ios': 'AsterCore (inside the app and its tunnel extension)'}.get(goos, 'asterlink-core'))
     return preface + '\n'.join(sections), missing, len(sections)
 
 

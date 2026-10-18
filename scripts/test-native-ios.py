@@ -42,6 +42,14 @@ Implemented suites (rounds 1-2):
       prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
       paired iPhone. Without them every case is reported BLOCKED (exit 3); the manual procedure is
       docs/ios-tun-design.md section 9.
+  release     round 6; needs Xcode, no simulator, no network, no account and no Apple team. Audits the unsigned
+      package that scripts/package-native-ios.py wrote (artifacts/native-ios/release, or --release-dir):
+      R03 files, IPA structure, release configuration (HTTPS, no ATS exception), entitlements, no debug or
+      harness code, privacy manifests against the required-reason APIs the binaries import, secret scan
+      (with a planted-secret self-check), Core identity, licenses and source archives, the provisioning
+      profile checks, and a full re-sign of the IPA (ad hoc, with fabricated profiles, with a new bundle
+      prefix). R01 and R02 (install and upgrade on an iPhone), R04 (two device/OS combinations) and the
+      signed-build checks are BLOCKED (exit 3): they need a paid Apple team and a signed build.
   lifecycle   round 5; needs Xcode's swift only. S-L01: the app-side lifecycle tests (foreground lease,
       system stop reasons, gate log, resource samples, rejoining a running tunnel after the app was killed,
       the heartbeat) and the sample summarizer's own checks. The device cases D-L01..D-L07 and D-MEM are
@@ -446,6 +454,234 @@ def check_lifecycle():
                + ' (docs/ios-lifecycle.md)', status='NOT_RUN' if signing else 'BLOCKED')
 
 
+# ---------------------------------------------------------------- release
+
+def fabricated_profile(scratch, name, **overrides):
+    """A CMS-signed provisioning profile made up for the tests (a throwaway certificate; nothing Apple signs)."""
+    import plistlib
+    content = {'Name': name, 'TeamIdentifier': ['ABCDE12345'], 'ExpirationDate': __import__('datetime').datetime(2099, 1, 1),
+               'ProvisionedDevices': ['00008110-000000000000401E'],
+               'Entitlements': {'application-identifier': 'ABCDE12345.cn.example.asterlink', 'get-task-allow': False,
+                                'com.apple.developer.team-identifier': 'ABCDE12345',
+                                'com.apple.developer.networking.networkextension': ['packet-tunnel-provider']}}
+    for key, value in overrides.items():
+        if key.startswith('ent_'):
+            content['Entitlements'][key[4:].replace('_', '-') if key != 'ent_ne' else 'com.apple.developer.networking.networkextension'] = value
+        else:
+            content[key] = value
+    plist = scratch / (name + '.plist')
+    plist.write_bytes(plistlib.dumps(content))
+    key, cert = scratch / 'k.pem', scratch / 'c.pem'
+    if not key.exists():
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(key), '-out', str(cert), '-subj', '/CN=asterlink-test', '-days', '2'],
+                       capture_output=True, check=True)
+    profile = scratch / (name + '.mobileprovision')
+    subprocess.run(['openssl', 'smime', '-sign', '-signer', str(cert), '-inkey', str(key), '-in', str(plist), '-outform', 'DER', '-nodetach', '-out', str(profile)],
+                   capture_output=True, check=True)
+    return profile
+
+
+def check_release(release_dir):
+    import plistlib
+    import tarfile
+    import tempfile
+    import zipfile
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import ios_release
+    import windows_release
+    rel = Path(release_dir).resolve() if release_dir else ARTIFACTS / 'release'
+    info_path = rel / 'release-info.json'
+    if not info_path.is_file():
+        record('R03.package', False, 'no package at %s: run python3 scripts/package-native-ios.py --channel internal first' % rel, status='BLOCKED')
+        return
+    info = json.loads(info_path.read_text())
+    ipa = rel / info['ipa']['file']
+    problems = windows_release.verify_checksums(rel) if (rel / 'SHA256SUMS').is_file() else ['SHA256SUMS missing']
+    needed = ['THIRD_PARTY_LICENSES.txt', 'SOURCE.txt', 'dependencies.cdx.json', 'release-info.json', ipa.name]
+    problems += ['missing ' + name for name in needed if not (rel / name).is_file()]
+    if ipa.is_file() and (ipa.stat().st_size != info['ipa']['bytes'] or ios_release.sha256(ipa) != info['ipa']['sha256']):
+        problems.append('the IPA differs from release-info.json')
+    if info.get('trusted_release') is not False or info.get('signed') is not False or info.get('channel') != 'internal' or len(info.get('open_gates', [])) < 5:
+        problems.append('release-info.json must say unsigned, internal, trusted_release=false with the open gates listed')
+    for name in info.get('source_archives', []):
+        try:
+            with tarfile.open(rel / name) as archive:
+                if not archive.getnames():
+                    problems.append(name + ' is empty')
+        except (OSError, tarfile.TarError) as error:
+            problems.append('%s unreadable: %s' % (name, error))
+    record('R03.files', not problems, 'package files, hashes and release-info agree (%d source archives)' % len(info.get('source_archives', []))
+           if not problems else '; '.join(problems))
+    if not ipa.is_file():
+        return
+
+    with tempfile.TemporaryDirectory(prefix='asterlink-audit-') as scratch:
+        scratch = Path(scratch)
+        root = scratch / 'ipa'
+        root.mkdir()
+        app = ios_release.unpack_ipa(ipa, root)
+        extension = app / ios_release.EXTENSION_PATH
+        app_info, ext_info = ios_release.read_plist(app / 'Info.plist'), ios_release.read_plist(extension / 'Info.plist')
+        executables = (app / app_info['CFBundleExecutable'], extension / ext_info['CFBundleExecutable'])
+
+        bad = []
+        names = zipfile.ZipFile(ipa).namelist()
+        if not names or not names[0].startswith('Payload/'):
+            bad.append('Payload is not first')
+        if ext_info['CFBundleIdentifier'] != app_info['CFBundleIdentifier'] + '.tunnel':
+            bad.append('extension id %s does not extend %s' % (ext_info['CFBundleIdentifier'], app_info['CFBundleIdentifier']))
+        if (app_info['CFBundleIdentifier'], ext_info['CFBundleIdentifier']) != (info['bundle_ids']['app'], info['bundle_ids']['tunnel']):
+            bad.append('bundle ids differ from release-info.json')
+        if app_info['MinimumOSVersion'] != LOCK['ios']['deployment_target'] or app_info['DTPlatformName'] != 'iphoneos':
+            bad.append('minimum OS %s / platform %s' % (app_info.get('MinimumOSVersion'), app_info.get('DTPlatformName')))
+        if app_info['CFBundleShortVersionString'] != info['version'] or app_info['CFBundleVersion'] != str(info['build']):
+            bad.append('version %s (%s) differs from release-info' % (app_info['CFBundleShortVersionString'], app_info['CFBundleVersion']))
+        if ext_info.get('NSExtension', {}).get('NSExtensionPointIdentifier') != 'com.apple.networkextension.packet-tunnel':
+            bad.append('the extension is not a packet tunnel provider')
+        for binary in executables:
+            archs = subprocess.run(['lipo', '-archs', str(binary)], capture_output=True, text=True).stdout.split()
+            if archs != ['arm64']:
+                bad.append('%s architectures %s, want arm64 only' % (binary.name, archs))
+        record('R03.structure', not bad, 'unsigned IPA: %s + %s, arm64, iOS %s, version %s (%s)' % (
+            app_info['CFBundleIdentifier'], ext_info['CFBundleIdentifier'], app_info['MinimumOSVersion'], app_info['CFBundleShortVersionString'],
+            app_info['CFBundleVersion']) if not bad else '; '.join(bad))
+
+        bad = []
+        for label, plist in (('app', app_info), ('extension', ext_info)):
+            if plist.get('AsterAppEnv') != 'release':
+                bad.append('%s APP_ENV is %s' % (label, plist.get('AsterAppEnv')))
+            for key in ('AsterAPIBaseURL', 'AsterWebsiteBaseURL'):
+                value = plist.get(key, '')
+                if not value.startswith('https://') or any(host in value for host in ('localhost', '127.0.0.1', '[::1]')):
+                    bad.append('%s %s = %s is not a public https URL' % (label, key, value))
+            if 'NSAppTransportSecurity' in plist:
+                bad.append('%s declares an ATS exception' % label)
+            if plist.get('UIBackgroundModes'):
+                bad.append('%s declares background modes %s' % (label, plist['UIBackgroundModes']))
+        if app_info.get('ITSAppUsesNonExemptEncryption') is not True:
+            bad.append('ITSAppUsesNonExemptEncryption must be declared true (a VPN uses non-exempt encryption)')
+        record('R03.config', not bad, 'release config baked in: https only, no ATS exception, no background modes, export-compliance key declared'
+               if not bad else '; '.join(bad))
+
+        bad = []
+        for name in ('App.entitlements', 'Tunnel.entitlements'):
+            entitlements = ios_release.read_plist(IOS / 'Config' / name)
+            if entitlements != {ios_release.NETWORK_EXTENSION_KEY: [ios_release.NETWORK_EXTENSION_VALUE]}:
+                bad.append('%s is %s' % (name, entitlements))
+        for binary in executables:
+            embedded = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(binary)], capture_output=True)
+            if b'get-task-allow' in embedded.stdout:
+                bad.append('%s carries get-task-allow' % binary.name)
+        record('R03.entitlements', not bad, 'both targets request exactly packet-tunnel-provider; no get-task-allow (debuggable builds cannot ship)'
+               if not bad else '; '.join(bad))
+
+        bad = []
+        for binary in executables:
+            data = binary.read_bytes()
+            bad += ['%s contains %s' % (binary.name, marker.decode()) for marker in ios_release.DEBUG_MARKERS if marker in data]
+        record('R03.no_debug_code', not bad, 'no UI fixtures, debug page, appearance override or harness symbols in either binary' if not bad else '; '.join(bad))
+
+        bad, notes = [], []
+        for label, bundle, binary in (('app', app, executables[0]), ('extension', extension, executables[1])):
+            manifest = bundle / 'PrivacyInfo.xcprivacy'
+            if not manifest.is_file():
+                bad.append('%s has no PrivacyInfo.xcprivacy' % label)
+                continue
+            data = ios_release.read_plist(manifest)
+            if data.get('NSPrivacyTracking') is not False or data.get('NSPrivacyTrackingDomains'):
+                bad.append('%s declares tracking' % label)
+            used, declared = ios_release.required_reason_categories(binary), ios_release.declared_categories(manifest)
+            if used - declared:
+                bad.append('%s imports required-reason APIs it does not declare: %s' % (label, sorted(used - declared)))
+            notes.append('%s uses %d categories, declares %d' % (label, len(used), len(declared)))
+        record('R03.privacy', not bad, 'manifests present, no tracking, every imported required-reason API declared (%s)' % '; '.join(notes)
+               if not bad else '; '.join(bad))
+
+        found = ios_release.secret_findings(root)
+        plant = scratch / 'plant'
+        plant.mkdir()
+        (plant / 'x.txt').write_text('db = postgres://user:pw@host/db\n-----BEGIN PRIVATE KEY-----\n')
+        planted = {kind for _, kind in ios_release.secret_findings(plant)}
+        selfcheck = {'database url', 'private key'} <= planted
+        record('R03.secrets', not found and selfcheck, 'no secret-looking string in %d files (the scanner finds a planted database url and private key)'
+               % sum(1 for p in root.rglob('*') if p.is_file()) if not found and selfcheck else
+               ('scanner self-check failed' if not selfcheck else 'secret-looking strings: %s' % found))
+
+        revision = info['core']['mihomo_revision'].encode()
+        missing_core = [binary.name for binary in executables if revision not in binary.read_bytes()]
+        patch_ok = bool(info.get('mihomo_patch'))
+        record('R03.core_identity', not missing_core and patch_ok and info['core']['mihomo_revision'] == info['mihomo_commit'][:len(info['core']['mihomo_revision'])],
+               'both binaries embed Mihomo %s; the patch %s is recorded' % (info['core']['mihomo_revision'][:12], (info.get('mihomo_patch') or {}).get('id', '?'))
+               if not missing_core and patch_ok else 'revision missing from %s, or patch not recorded' % missing_core)
+
+        notices = (rel / 'THIRD_PARTY_LICENSES.txt').read_text(encoding='utf-8')
+        source = (rel / 'SOURCE.txt').read_text(encoding='utf-8')
+        bad = []
+        if 'GNU GENERAL PUBLIC LICENSE' not in notices or 'github.com/metacubex/mihomo' not in notices:
+            bad.append('Mihomo GPL text missing from THIRD_PARTY_LICENSES.txt')
+        if info['go_modules_without_license_file']:
+            bad.append('modules without a license file: %s' % info['go_modules_without_license_file'])
+        if info.get('source_archives') and (info['source_commit'] not in source or info['mihomo_commit'] not in source):
+            bad.append('SOURCE.txt does not name the commits')
+        if not info.get('source_archives'):
+            bad.append('no source archives (a --skip-source-archives package is for local iteration only)')
+        record('R03.licenses', not bad, '%d Go modules licensed, GPL text and corresponding-source archives present' % info['third_party_go_modules']
+               if not bad else '; '.join(bad))
+
+        profiles = scratch / 'profiles'
+        profiles.mkdir()
+        good = fabricated_profile(profiles, 'good')
+        cases = {
+            'good profile accepted': (good, 'cn.example.asterlink', True),
+            'wrong bundle id refused': (good, 'cn.other.asterlink', False),
+            'no Network Extension refused': (fabricated_profile(profiles, 'noext', ent_ne=[]), 'cn.example.asterlink', False),
+            'expired refused': (fabricated_profile(profiles, 'old', ExpirationDate=__import__('datetime').datetime(2001, 1, 1)), 'cn.example.asterlink', False),
+            'wildcard accepted': (fabricated_profile(profiles, 'wild', ent_application_identifier='ABCDE12345.cn.example.*'), 'cn.example.asterlink.tunnel', True),
+        }
+        bad = []
+        for label, (profile, bundle, expect_ok) in cases.items():
+            try:
+                ios_release.check_profile(profile, bundle)
+                accepted = True
+            except ios_release.ReleaseError:
+                accepted = False
+            if accepted != expect_ok:
+                bad.append(label)
+        record('R03.profile_checks', not bad, 'provisioning profile checks: ' + ', '.join(cases) if not bad else 'wrong verdict for: ' + ', '.join(bad))
+
+        # The whole re-sign path with fabricated profiles and the ad-hoc identity: new bundle prefix, entitlements
+        # from the profiles, extension signed first, codesign verification, repacked IPA.
+        app_profile = fabricated_profile(profiles, 'app', ent_application_identifier='ABCDE12345.cn.example.asterlink')
+        tunnel_profile = fabricated_profile(profiles, 'tunnel', ent_application_identifier='ABCDE12345.cn.example.asterlink.tunnel')
+        signed = scratch / 'signed.ipa'
+        try:
+            result = ios_release.resign(ipa, signed, '-', app_profile, tunnel_profile, 'cn.example')
+            check_root = scratch / 'check'
+            check_root.mkdir()
+            signed_app = ios_release.unpack_ipa(signed, check_root)
+            ids = ios_release.bundle_ids(signed_app)
+            ent = ios_release.signed_entitlements(signed_app)
+            ok = (ids == ('cn.example.asterlink', 'cn.example.asterlink.tunnel') and ent.get('application-identifier') == 'ABCDE12345.cn.example.asterlink'
+                  and (signed_app / 'embedded.mobileprovision').is_file() and (signed_app / ios_release.EXTENSION_PATH / 'embedded.mobileprovision').is_file()
+                  and result['team'] == 'ABCDE12345')
+            note = 'ids %s, entitlements from the profile, both profiles embedded, codesign --verify --deep --strict passed' % (ids,)
+        except Exception as error:  # a failure here is the finding
+            ok, note = False, 're-sign failed: %s' % (getattr(error, 'stderr', None) or error)
+        refused = False
+        try:
+            ios_release.resign(ipa, scratch / 'refused.ipa', 'Apple Distribution: nobody', None, None, None)
+        except ios_release.ReleaseError:
+            refused = True
+        record('R03.resign', ok and refused, note + '; a real identity without profiles is refused' if ok and refused else
+               (note if not ok else 'a real identity without profiles was not refused'))
+
+    for case_id, what in (('R01', 'a signed build installs on a clean iPhone, adds the VPN configuration, logs in and connects'),
+                          ('R02', 'an upgrade over the installed copy keeps the remembered password and the VPN configuration; deleting the app removes the configuration'),
+                          ('R04', 'two device/OS combinations spot-checked'),
+                          ('R03.signed', 'signature, provisioning profile and entitlements of the SIGNED build match the extension and bundle ids (the checks above ran on the unsigned package)')):
+        record(case_id, False, 'BLOCKED: needs a paid Apple team, a signed build and an iPhone. ' + what, status='BLOCKED')
+
+
 # ---------------------------------------------------------------- simulator
 
 def simctl(*args, check=True):
@@ -686,10 +922,11 @@ def check_account(out_dir: Path, wanted):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'billing', 'device-tun', 'lifecycle'))
+    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'billing', 'device-tun', 'lifecycle', 'release'))
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--harness', choices=('host', 'simulator', 'both'),
                         help='billing suite: also run the harness acceptance (needs initdb and pg_ctl; changes no network setting)')
+    parser.add_argument('--release-dir', help='release suite: the package folder (default artifacts/native-ios/release)')
     parser.add_argument('--device', help='device-tun: the iPhone name or UDID to use')
     parser.add_argument('--runtime', default=LOCK['ios']['simulator_runtime']['wanted'].split()[-1],
                         help="simulator suite: iOS runtime major version, or 'latest' (CI)")
@@ -697,7 +934,8 @@ def main():
 
     import prepare_mihomo
     prepare_mihomo.prepare()
-    out_dir = ARTIFACTS / args.suite
+    # The release suite audits ARTIFACTS/release; its own report must not land inside the folder it checks.
+    out_dir = ARTIFACTS / ('release-audit' if args.suite == 'release' else args.suite)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.suite == 'foundation':
@@ -720,6 +958,8 @@ def main():
         check_device(args.device)
     elif args.suite == 'lifecycle':
         check_lifecycle()
+    elif args.suite == 'release':
+        check_release(args.release_dir)
 
     report = Path(args.report) if args.report else out_dir / ('%s-report.json' % args.suite)
     report.write_text(json.dumps({'suite': args.suite, 'cases': results}, indent=2, ensure_ascii=False) + '\n')

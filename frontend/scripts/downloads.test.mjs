@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { androidDownload, grouped, megabytes } from '../src/lib/downloads.ts';
+import {
+  androidDownload,
+  grouped,
+  iosDownload,
+  iosInstallLink,
+  megabytes,
+} from '../src/lib/downloads.ts';
 
 const good = {
   ANDROID_APK_URL: 'https://test.hyshentou.cn/downloads/AsterLink-0.1.0-android-arm64-v8a.apk',
@@ -53,4 +59,38 @@ test('optional facts degrade to null instead of hiding the APK', () => {
 test('formatting', () => {
   assert.equal(megabytes(48128121), '45.9 MB');
   assert.equal(grouped('abcd1234ef'), 'abcd 1234 ef');
+});
+
+const ios = {
+  IOS_IPA_URL: 'https://test.hyshentou.cn/downloads/AsterLink-0.1.0-ios.ipa',
+  IOS_MANIFEST_URL: 'https://test.hyshentou.cn/downloads/manifest.plist',
+  IOS_IPA_VERSION: '0.1.0',
+  IOS_IPA_SHA256: 'AB'.repeat(32),
+  IOS_IPA_SIZE_BYTES: '29177674',
+};
+
+test('a complete iOS release is offered with an itms-services install link', () => {
+  const download = iosDownload(ios);
+  assert.equal(download.sha256, 'ab'.repeat(32));
+  assert.equal(download.sizeBytes, 29177674);
+  assert.equal(
+    iosInstallLink(download),
+    'itms-services://?action=download-manifest&url=https%3A%2F%2Ftest.hyshentou.cn%2Fdownloads%2Fmanifest.plist',
+  );
+});
+
+test('anything missing or unsafe hides the iOS download', () => {
+  assert.equal(iosDownload({}), null);
+  for (const [key, value] of [
+    ['IOS_IPA_URL', 'http://test.hyshentou.cn/a.ipa'],
+    ['IOS_IPA_URL', 'http://localhost:3000/a.ipa'],
+    ['IOS_IPA_URL', 'https://test.hyshentou.cn/a.apk'],
+    ['IOS_MANIFEST_URL', 'http://test.hyshentou.cn/manifest.plist'],
+    ['IOS_MANIFEST_URL', 'https://test.hyshentou.cn/manifest.json'],
+    ['IOS_MANIFEST_URL', ''],
+    ['IOS_IPA_VERSION', 'latest'],
+    ['IOS_IPA_SHA256', 'abc'],
+  ]) {
+    assert.equal(iosDownload({ ...ios, [key]: value }), null, `${key}=${value}`);
+  }
 });
