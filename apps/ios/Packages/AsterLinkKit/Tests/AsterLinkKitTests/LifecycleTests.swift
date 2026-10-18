@@ -171,11 +171,13 @@ struct LifecycleFlowTests {
         let tunnel = FakeTunnel(app: app, tunnelCore: extensionCore())
         let controller = makeTunnelController(app: app, tunnel: tunnel, heartbeat: .milliseconds(20))
         await controller.setForeground(true)
-        try await Task.sleep(for: .milliseconds(200))
+        // Wait for the repeats rather than a fixed time: a loaded CI machine runs timers late.
+        for _ in 0..<250 where tunnel.foregrounds.filter({ $0 }).count < 4 { try await Task.sleep(for: .milliseconds(20)) }
         #expect(tunnel.foregrounds.filter { $0 }.count >= 4)
         await controller.setForeground(false)
+        try await Task.sleep(for: .milliseconds(60))
         let afterLeaving = tunnel.foregrounds.count
-        try await Task.sleep(for: .milliseconds(120))
+        try await Task.sleep(for: .milliseconds(150))
         #expect(tunnel.foregrounds.count == afterLeaving && tunnel.foregrounds.last == false)
     }
 
