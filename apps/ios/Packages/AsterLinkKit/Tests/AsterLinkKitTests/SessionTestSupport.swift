@@ -124,6 +124,10 @@ final class FakeTunnel: TunnelControl, @unchecked Sendable {
     private(set) var connects = 0
     private(set) var stops = 0
     private var failure: (String, String)?
+    private var foregroundCalls: [Bool] = []
+    var resumable = false
+    var notifications = true
+    var foregrounds: [Bool] { lock.withLock { foregroundCalls } }
 
     init(app: ScriptedCore, tunnelCore: ScriptedCore, configured: Bool = true) {
         bridge = TunnelBridge(local: app, timeout: 5)
@@ -133,6 +137,13 @@ final class FakeTunnel: TunnelControl, @unchecked Sendable {
     }
 
     var configured: Bool { get async { lock.withLock { isConfigured } } }
+    func foreground(_ visible: Bool) async { lock.withLock { foregroundCalls.append(visible) } }
+    func notificationsAllowed() async -> Bool { notifications }
+    func resume() async -> Bool {
+        guard resumable else { return false }
+        bridge.useTunnel(channel)
+        return true
+    }
     func failNextConnect(code: String, message: String = "") { lock.withLock { failure = (code, message) } }
 
     func connect(generation: UInt64) async -> TunnelOutcome {
@@ -154,10 +165,11 @@ final class FakeTunnel: TunnelControl, @unchecked Sendable {
 
 @MainActor
 func makeTunnelController(app: ScriptedCore, tunnel: FakeTunnel, credentials: MemoryCredentials = MemoryCredentials(),
-                          preferences: MemoryPreferences = MemoryPreferences(), alerts: RecordingAlerts = RecordingAlerts()) -> SessionController {
+                          preferences: MemoryPreferences = MemoryPreferences(), alerts: RecordingAlerts = RecordingAlerts(),
+                          heartbeat: Duration = .seconds(3600)) -> SessionController {
     SessionController(client: CoreClient(transport: tunnel.bridge), core: NoopHost(), target: testTarget, credentials: credentials,
                       preferences: preferences, devices: FixedDevice(), tunnel: tunnel, alerts: alerts, clock: { 0 },
-                      idleInterval: .seconds(3600), liveInterval: .seconds(3600))
+                      idleInterval: .seconds(3600), liveInterval: .seconds(3600), heartbeatInterval: heartbeat)
 }
 
 func connectedSnapshot(generation: UInt64, rate: Int64 = 1000, upload: Int64 = 0, download: Int64 = 0) -> CoreSnapshot {

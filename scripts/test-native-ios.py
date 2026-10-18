@@ -42,6 +42,10 @@ Implemented suites (rounds 1-2):
       prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
       paired iPhone. Without them every case is reported BLOCKED (exit 3); the manual procedure is
       docs/ios-tun-design.md section 9.
+  lifecycle   round 5; needs Xcode's swift only. S-L01: the app-side lifecycle tests (foreground lease,
+      system stop reasons, gate log, resource samples, rejoining a running tunnel after the app was killed,
+      the heartbeat) and the sample summarizer's own checks. The device cases D-L01..D-L07 and D-MEM are
+      BLOCKED without a signed device (exit 3); the procedure is docs/ios-lifecycle.md.
 
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
@@ -400,6 +404,48 @@ def check_device(wanted):
         record(case, False, 'prerequisites present; run the manual procedure in docs/ios-tun-design.md 9 and record it', status='NOT_RUN')
 
 
+# ---------------------------------------------------------------- lifecycle
+
+LIFECYCLE_SWIFT = ('ForegroundLeaseTests', 'TunnelStopReasonTests', 'GateLogTests', 'ResourceSampleTests', 'LifecycleFlowTests')
+LIFECYCLE_DEVICE_CASES = (
+    ('D-L01', 'screen off 10 minutes, unlock: no manual reconnect, no forwarding while gated, gate length and reason logged'),
+    ('D-L02', 'Wi-Fi <-> cellular and airplane mode: gate closes first, then re-verifies'),
+    ('D-L03', 'another VPN takes over: traffic settled, notification names the other VPN'),
+    ('D-L04', 'switched off in Settings: traffic settled, the app says why'),
+    ('D-L05', 'app swiped away: tunnel stays up; reopened app shows connected without a login'),
+    ('D-L06', 'phone restart: no automatic connection'),
+    ('D-MEM', '30 minutes of heavy load without a jetsam kill; footprint peak recorded'),
+    ('D-L07', '20 start/stop cycles and an 8 hour connection with samples (no guessed numbers)'),
+)
+
+
+def check_lifecycle():
+    kit = subprocess.run(['swift', 'test'] + [arg for suite in LIFECYCLE_SWIFT for arg in ('--filter', suite)],
+                         cwd=IOS / 'Packages/AsterLinkKit', capture_output=True, text=True)
+    passed = len(re.findall(r'✔ Test \S+ passed', kit.stdout + kit.stderr))
+    record('S-L01.kit', kit.returncode == 0 and passed >= 15,
+           '%d Swift lifecycle tests passed' % passed if kit.returncode == 0 else (kit.stdout + kit.stderr).strip()[-600:])
+    summarizer = ROOT / 'scripts' / 'ios' / 'summarize-samples.py'
+    spec = importlib.util.spec_from_file_location('summarize_samples', summarizer)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    lines = ['sample t=%d footprint=%d peak=%d fds=40 threads=18 goroutines=80 heap=1 sys=2 gc=3' % (60 * i, (30 + i) << 20, (31 + i) << 20)
+             for i in range(1, 6)]
+    fine, code_fine = module.summarize(lines + ['gate reopened reason=wake outcome=reopened closed_ms=4200 attempts=2 total=1'])
+    over, code_over = module.summarize(lines[:-1] + ['sample t=360 footprint=%d peak=%d fds=40 threads=18 goroutines=80 heap=1 sys=2 gc=3' % (46 << 20, 46 << 20)])
+    leak, code_leak = module.summarize([l.replace('fds=40', 'fds=%d' % (40 + 10 * i)) for i, l in enumerate(lines)])
+    _, code_none = module.summarize(['nothing here'])
+    ok = (code_fine == 0 and fine['gate']['longest_closed_ms'] == 4200 and code_over == 1 and code_leak == 1 and code_none == 2)
+    record('S-L01.summarizer', ok, 'within limits=%d, over the footprint limit=%d, open-file growth=%d, no samples=%d (expected 0,1,1,2)'
+           % (code_fine, code_over, code_leak, code_none))
+    identities = subprocess.run(['security', 'find-identity', '-v', '-p', 'codesigning'], capture_output=True, text=True).stdout
+    count = re.search(r'(\d+) valid identities found', identities)
+    signing = bool(count and int(count.group(1)) > 0)
+    for case_id, what in LIFECYCLE_DEVICE_CASES:
+        record(case_id, False, ('NOT_RUN: ' if signing else 'BLOCKED: needs a paid Apple team (packet-tunnel-provider) and a paired iPhone. ') + what
+               + ' (docs/ios-lifecycle.md)', status='NOT_RUN' if signing else 'BLOCKED')
+
+
 # ---------------------------------------------------------------- simulator
 
 def simctl(*args, check=True):
@@ -640,7 +686,7 @@ def check_account(out_dir: Path, wanted):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'billing', 'device-tun'))
+    parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'billing', 'device-tun', 'lifecycle'))
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--harness', choices=('host', 'simulator', 'both'),
                         help='billing suite: also run the harness acceptance (needs initdb and pg_ctl; changes no network setting)')
@@ -672,6 +718,8 @@ def main():
         check_billing(args.harness, args.runtime)
     elif args.suite == 'device-tun':
         check_device(args.device)
+    elif args.suite == 'lifecycle':
+        check_lifecycle()
 
     report = Path(args.report) if args.report else out_dir / ('%s-report.json' % args.suite)
     report.write_text(json.dumps({'suite': args.suite, 'cases': results}, indent=2, ensure_ascii=False) + '\n')

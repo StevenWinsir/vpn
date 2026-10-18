@@ -54,6 +54,11 @@ public enum LocalCodes {
     public static let networkUnreachable = "network_unreachable"
     public static let tunnelUnreachable = TunnelBridge.unreachableCode
     public static let routeProbeFailed = "route_probe_failed"
+    public static let vpnSuperseded = "vpn_superseded"
+    public static let vpnUserSwitch = "vpn_user_switch"
+    public static let vpnAppUpdate = "vpn_app_update"
+    public static let vpnSystemStopped = "vpn_system_stopped"
+    public static let notificationsOff = "notifications_off"
 }
 
 /// Everything the screens render. Derived from the Core's snapshot; nothing here decides authorization.

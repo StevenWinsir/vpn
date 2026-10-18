@@ -70,12 +70,20 @@ public protocol TunnelControl: Sendable {
     /// Why the system VPN last stopped on its own, when the extension said (a quota or plan
     /// verdict, a line change), so the app can show the real reason instead of a generic one.
     func lastEndReason() async -> Notice?
+    /// The app was killed or relaunched while the extension kept the tunnel and the session
+    /// (D-L05): attach to that tunnel, so requests go to its Core, and say whether it really is
+    /// connected. False leaves the tunnel closed and the app on its own Core (a normal launch).
+    func resume() async -> Bool
+    /// Whether a background stop can reach the user (notification permission). Asks the first time.
+    func notificationsAllowed() async -> Bool
 }
 
 public extension TunnelControl {
     var configured: Bool { get async { true } }
     func foreground(_ visible: Bool) async {}
     func lastEndReason() async -> Notice? { nil }
+    func resume() async -> Bool { false }
+    func notificationsAllowed() async -> Bool { true }
 }
 
 /// Tells the user that the VPN ended without them asking (quota used up, plan ended, line
