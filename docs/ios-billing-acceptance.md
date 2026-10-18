@@ -33,7 +33,7 @@ App 回到前台时，下一次请求发现隧道已不在，显示扩展给出�
 
 ## 3. 验收结果（2026-10-17，本机 macOS arm64，Xcode 27.0，iPhone 18 Pro 模拟器 iOS 27.0，公司 VPN 开启）
 
-运行 `python3 scripts/test-native-ios.py --suite billing`（退出码 3 = 有 NOT_RUN/BLOCKED，没有 FAIL）：
+运行 `python3 scripts/test-native-ios.py --suite billing --harness both`（退出码 3 = 有 BLOCKED，没有 FAIL；不带 `--harness` 时 harness 用例为 NOT_RUN，CI 就是这样跑的，因为 CI 镜像没有 Postgres）：
 
 | 项 | 环境 | 结果 |
 | --- | --- | --- |
@@ -44,9 +44,28 @@ App 回到前台时，下一次请求发现隧道已不在，显示扩展给出�
 | 交出/取回/换主/系统收走/Core 自行停连/拒绝弹窗/路由探测失败等 App 侧状态机 | host（Swift，两个脚本化 Core + 真桥） | PASS（`TunnelFlowTests`、`TunnelBridgeTests`、`TunnelWatchTests`） |
 | 首次连接说明页、拒绝、被系统收走、探测失败四个界面 | simulator（XCUITest，固定状态） | PASS（ui 套件 48 例、50 张截图） |
 | 回归：A01–A04 账号套件（真实 Core + Keychain + 隔离后端，请求现经 TunnelBridge） | simulator | PASS（19 项） |
-| **B01/B02/B04/A04/C01 的 harness 版本**（真实 Mihomo、真实后端、进程内注入） | harness | **NOT_RUN**：进程内注入线束（规划 8.8）未编写，上面的单元证明不冒充它 |
+| **B01 逐单位（真实 Mihomo + 真实后端）**：同一 20 MiB 上 + 80 MiB 下经节点到受控 sink，1×（专线 SS）与 0.5×（普通 VLESS）；sink 实收与客户端发送逐字节相等，服务器扣量 = (上 + 下) × 倍率，Core 确认计数 = 服务器计数 | harness（Go 宿主）与 harness（模拟器进程） | PASS（两处各 `B01-n1/n2`：1× 扣 104,858,514,000 units、0.5× 扣 52,429,257,000 units；上行比 sink 实收多 440 B、下行多 474 B，来自 HTTP 报文头与 Verify 探测，host 与模拟器两处完全一致） |
+| **B02** 丢一次真实 ACK：同一批原样重发，只扣一次 | harness（两处） | PASS（`B02-retry`、`B02-once`；丢弃由后端世界注入，App 内没有开关） |
+| **A04** 管理员改倍率 / 停用线路 / 套餐到期 / 额度耗尽：约 1 s 内自行停连，尾账按旧倍率结清，旧段旧倍率，之后不可再连 | harness（两处） | PASS（`A04-rate`、`-rebind`、`-disable`、`-disable-gone`、`-expire`、`-expire-blocked`、`-quota`、`-quota-blocked`） |
+| **C01** 断开后立即重连 5 次，旧引擎的收尾不影响新连接 | harness（两处） | PASS（每次 4–13 ms，1.5 s 后仍为已连接） |
+| **B04** node_reported：真实 NodeAgent 记账、客户端上报被拒（409 `metering_source_mismatch`，账本不动）、无 /traffic 上报 | harness（两处） | PASS |
+| 运行输出与报告不含密码、节点秘密、sink 令牌 | harness | PASS（`log_clean`） |
+| 负向对照：把引擎的上行计数故意减半 | harness（Go 宿主） | 如期 FAIL（`B01-*-sink-and-body`、`B01-*-ui`），已还原 |
 | **device-billing**（真实 TUN 的 20+80 MiB） | device | **BLOCKED**：无付费 Apple 团队 / 签名身份 |
 | **扩展侧的整条连接、通知真正在后台出现一次、fetchLastDisconnectError 能否带回码** | device | **BLOCKED**（模拟器不能运行 Packet Tunnel） |
+
+## 3.1 进程内注入线束（规划 8.8）怎么工作
+
+```text
+python3 scripts/test-native-ios.py --suite billing --harness host|simulator|both
+```
+
+- **引擎**：`engine.Harness`（Go 标签 `asterlink_harness`）实现 `managed.Engine`，套用生产的 iOS 配置文档，但不开 TUN；受控客户端的 TCP 连接以回环对子形式交给 Mihomo 的 `tunnel.HandleTCPConn`（utun 监听器对每条流做的同一调用），经生产代理链到生产节点。计量读同一个“仅代理”计数器，所以被扣的就是穿过节点的字节。
+- **场景**：`internal/harness` 用生产的 `managed.Manager`（ResumeGate，Core 自己的时钟）逐项移植 Android 的 BillingAcceptanceTest，后端是同一个 Gin/PostgreSQL 世界（`TestAndroidBillingWorld`，平台无关，每次运行新建，因为场景会改套餐和线路），节点是 `asterlink-testnode`，字节落到 `asterlink-trafficsink`，B04 用真实 NodeAgent（mTLS）。
+- **两处运行**：`host` 是 Go 宿主测试；`simulator` 把同一份 Core 用 `-tags asterlink_harness` 绑成**仅模拟器切片、放在 `.runtime/ios/harness/` 的测试专用 xcframework**，再用 `swiftc` 编一个小命令行（`apps/ios/Harness/main.swift`），由 `simctl spawn` 在 iOS 模拟器进程里调用 `MobileHarnessRun`。
+- **隔离**：这个框架和命令行都不被 Xcode 工程引用；foundation 套件检查生产 Core 的依赖里没有 `internal/harness`、带标签才有（所以检查会失败）、工程里没有 Harness、生产 xcframework 的二进制里没有 `HarnessRun`；simulator 套件在构建后再查一次。
+- **它不覆盖的**（只能真机）：utun、系统 DNS、IPv6、扩展进程、通知。报告里这些用例的环境写 `harness`，从不写 `device`。
+- **不覆盖 Swift 侧**：Swift 的 SessionController / 桥由 AsterLinkKit 的 63 个测试与 ui、account 套件覆盖；线束用 Go 直接驱动 Manager，所以“界面显示的每连接用量”在这里按同一公式在 Go 里核对（`B01-*-ui`），不是截图。
 
 ## 4. 已知限制与待真机核实
 

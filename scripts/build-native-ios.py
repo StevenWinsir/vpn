@@ -32,6 +32,9 @@ CORE = ROOT / 'native/core'
 RUNTIME = ROOT / '.runtime/ios'
 TOOLS = RUNTIME / 'bin'
 FRAMEWORK = IOS / 'Frameworks/AsterCore.xcframework'
+# The billing acceptance's test-only Core (tag asterlink_harness, handoff_app_ios.md 8.8): simulator slice only, in a
+# directory no Xcode project references, so it can never be mixed with the production framework.
+HARNESS_FRAMEWORK = RUNTIME / 'harness/AsterCore.xcframework'
 GENERATED = IOS / 'Config/Generated.xcconfig'
 LOCK = json.loads((IOS / 'toolchain.lock.json').read_text(encoding='utf-8'))
 SLICES = ('ios-arm64', 'ios-arm64_x86_64-simulator')
@@ -84,31 +87,35 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def bind(app_version: str) -> dict:
+def bind(app_version: str, harness: bool = False) -> dict:
+    framework = HARNESS_FRAMEWORK if harness else FRAMEWORK
+    slices = ('ios-arm64_x86_64-simulator',) if harness else SLICES
     patch = prepare_mihomo.prepare()
     revision = subprocess.run(['git', '-C', str(ROOT / 'native/third_party/Clash.Meta'), 'rev-parse', 'HEAD'],
                               capture_output=True, text=True, check=True).stdout.strip()
     build_gomobile()
-    if FRAMEWORK.exists():
-        shutil.rmtree(FRAMEWORK)
-    FRAMEWORK.parent.mkdir(parents=True, exist_ok=True)
+    if framework.exists():
+        shutil.rmtree(framework)
+    framework.parent.mkdir(parents=True, exist_ok=True)
     ldflags = '-s -w -X asterlink/core/mobile.version=%s -X asterlink/core/mobile.mihomoRevision=%s' % (app_version, revision)
     bind_lock = LOCK['x_mobile']['ios_bind']
     env = dict(os.environ, PATH=str(TOOLS) + os.pathsep + os.environ.get('PATH', ''))
-    run([TOOLS / 'gomobile', 'bind', '-target=' + bind_lock['targets'], '-iosversion', bind_lock['iosversion'],
-         '-trimpath', '-ldflags', ldflags, '-o', FRAMEWORK, './mobile'], cwd=CORE, env=env)
-    found = sorted(p.name for p in FRAMEWORK.iterdir() if p.is_dir())
-    if found != sorted(SLICES):
-        raise RuntimeError('unexpected xcframework slices %s, want %s' % (found, sorted(SLICES)))
+    run([TOOLS / 'gomobile', 'bind', '-target=' + ('iossimulator' if harness else bind_lock['targets']), '-iosversion', bind_lock['iosversion']]
+        + (['-tags', 'asterlink_harness'] if harness else [])
+        + ['-trimpath', '-ldflags', ldflags, '-o', framework, './mobile'], cwd=CORE, env=env)
+    found = sorted(p.name for p in framework.iterdir() if p.is_dir())
+    if found != sorted(slices):
+        raise RuntimeError('unexpected xcframework slices %s, want %s' % (found, sorted(slices)))
     record = {
         'core_version': app_version,
         'mihomo_revision': revision,
         'mihomo_patch': patch,
         'x_mobile': LOCK['x_mobile']['version'],
-        'slices': {name: {'sha256': sha256(FRAMEWORK / name / 'AsterCore.framework/AsterCore'),
-                          'bytes': (FRAMEWORK / name / 'AsterCore.framework/AsterCore').stat().st_size} for name in SLICES},
+        'harness': harness,
+        'slices': {name: {'sha256': sha256(framework / name / 'AsterCore.framework/AsterCore'),
+                          'bytes': (framework / name / 'AsterCore.framework/AsterCore').stat().st_size} for name in slices},
     }
-    (FRAMEWORK.parent / 'core-build.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
+    (framework.parent / 'core-build.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(record, indent=2), flush=True)
     return record
 
@@ -121,12 +128,15 @@ def build_app(configuration: str):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--target', choices=('xcconfig', 'xcframework', 'app'), required=True)
+    parser.add_argument('--target', choices=('xcconfig', 'xcframework', 'harness-framework', 'app'), required=True)
     parser.add_argument('--configuration', choices=('Debug', 'Release'), default='Debug')
     parser.add_argument('--app-version', default='0.1.0')
     parser.add_argument('--reuse-framework', action='store_true',
                         help='with --target app: keep an existing xcframework whose core-build.json is present')
     args = parser.parse_args()
+    if args.target == 'harness-framework':
+        bind(args.app_version, harness=True)
+        return
     if args.target in ('xcconfig', 'app'):
         write_xcconfig()
     if args.target == 'xcframework' or (args.target == 'app' and not (args.reuse_framework and (FRAMEWORK.parent / 'core-build.json').exists())):

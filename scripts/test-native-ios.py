@@ -31,9 +31,13 @@ Implemented suites (rounds 1-2):
       (20 MiB up + 80 MiB down), the lost-ACK replay, the unsettled-tail refusals, the app -> extension
       -> app hand-over with its 20 MiB baseline and 80 MiB settle, and the Swift connect-loop tests
       (hand-over routing, extension-ended alert once, session-lost silent re-login, per-connection
-      usage). The harness cases B01/B02/B04 (real Mihomo, real backend, in-process injection) and the
-      device-billing cases are reported NOT_RUN / BLOCKED: they need the harness build (not written)
-      or a signed device; they are never reported PASS from these unit proofs.
+      usage). With --harness host|simulator|both it also runs the harness acceptance B01/B02/B04/A04/C01
+      (handoff_app_ios.md 8.8): the real Core and pinned Mihomo with the in-process injection engine in
+      place of a utun (Go tag asterlink_harness, a test-only framework that no app links), the real
+      Gin/PostgreSQL backend world, the controlled test node, the traffic sink and (B04) the real node
+      agent, all on the Mac's loopback; "simulator" runs the Core inside an iOS Simulator process. Needs
+      initdb and pg_ctl; changes no network setting. Without --harness those cases are NOT_RUN. The
+      device-billing cases are BLOCKED without a signed device; unit proofs never stand in for either.
   device-tun  round 2 device acceptance (D-T01..D-T09, D-CYCLES, D-MEM-idle). Checks the
       prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
       paired iPhone. Without them every case is reported BLOCKED (exit 3); the manual procedure is
@@ -50,6 +54,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 
@@ -140,6 +145,36 @@ def check_project():
         record('project.entitlements_' + name.lower(), ok, 'exactly packet-tunnel-provider' if ok else 'unexpected: %s' % data)
 
 
+def check_harness_isolation():
+    """The test-only harness (handoff_app_ios.md 8.8) can never ship: no production Core build links it,
+    the app project does not reference it, and the production framework carries none of its symbols."""
+    env = dict(ios_env(), GOFLAGS='-buildvcs=false')
+    listing = subprocess.run(['go', 'list', '-deps', './mobile'], cwd=CORE, env=env, capture_output=True, text=True)
+    linked = [line for line in listing.stdout.splitlines() if line.endswith('internal/harness')]
+    record('harness.not_in_production_core', listing.returncode == 0 and not linked,
+           'go list -deps ./mobile (ios/arm64, no tags) does not include internal/harness' if not linked else 'production Core links ' + ', '.join(linked))
+    tagged = subprocess.run(['go', 'list', '-tags', 'asterlink_harness', '-deps', './mobile'], cwd=CORE, env=env, capture_output=True, text=True)
+    record('harness.tag_is_what_adds_it', any(l.endswith('internal/harness') for l in tagged.stdout.splitlines()),
+           'with -tags asterlink_harness the same list does include it (the check above can fail)')
+    project = (IOS / 'AsterLink.xcodeproj/project.pbxproj').read_text()
+    record('harness.not_in_project', 'Harness' not in project and 'runtime/ios/harness' not in project,
+           'the Xcode project references neither apps/ios/Harness nor the harness framework')
+    check_framework_clean(required=False)
+
+
+def check_framework_clean(required):
+    """The production xcframework carries no harness symbol. Foundation runs before the framework exists
+    (CI), so it only checks one that is already there; the simulator suite, which follows the build, requires it."""
+    framework = IOS / 'Frameworks/AsterCore.xcframework'
+    binaries = sorted(framework.glob('*/AsterCore.framework/AsterCore')) if framework.exists() else []
+    if not binaries:
+        if required:
+            record('harness.not_in_framework', False, 'no production xcframework to check')
+        return
+    leaked = [b.parent.parent.name for b in binaries if b'HarnessRun' in b.read_bytes()]
+    record('harness.not_in_framework', not leaked, 'no production framework slice carries HarnessRun' if not leaked else 'harness symbols in ' + ', '.join(leaked))
+
+
 def check_platform_split():
     env = ios_env()
     for package in IOS_FILES:
@@ -162,6 +197,10 @@ def count_go_tests(output):
 def check_unit():
     build = subprocess.run(['go', 'build', './internal/...', './mobile'], cwd=CORE, env=ios_env(), capture_output=True, text=True)
     record('go.build_ios', build.returncode == 0, 'Core builds for ios/arm64' if build.returncode == 0 else build.stderr.strip()[-400:])
+    # The test-only harness stays compilable for the simulator and the host (its acceptance runs under --suite billing).
+    tagged = subprocess.run(['go', 'vet', '-tags', 'asterlink_harness', './internal/engine', './internal/harness', './mobile'], cwd=CORE,
+                            env=dict(ios_env(), GOARCH='arm64'), capture_output=True, text=True)
+    record('go.harness_vet_ios', tagged.returncode == 0, 'the harness (tag asterlink_harness) vets for ios/arm64' if tagged.returncode == 0 else tagged.stderr.strip()[-400:])
     test = subprocess.run(['go', 'test', '-count=1', '-v', './mobile', './internal/managed', './internal/network', './internal/engine'],
                           cwd=CORE, env=dict(os.environ, GOFLAGS='-buildvcs=false'), capture_output=True, text=True)
     passed = count_go_tests(test.stdout)
@@ -196,7 +235,7 @@ HARNESS_CASES = (
 )
 
 
-def check_billing():
+def check_billing(harness=None, wanted=None):
     for package, names in BILLING_GO:
         pattern = '^(%s)$' % '|'.join(names)
         run = subprocess.run(['go', 'test', '-count=1', '-v', '-run', pattern, package], cwd=CORE,
@@ -212,11 +251,128 @@ def check_billing():
     record('billing.swift.kit', kit.returncode == 0 and swift_passed >= 20,
            '%d Swift tests passed (hand-over routing, alerts, usage, exact units)' % swift_passed if kit.returncode == 0
            else (kit.stdout + kit.stderr).strip()[-600:])
-    for case_id, what in HARNESS_CASES:
-        record(case_id, False, 'NOT_RUN: ' + what + '. Needs the in-process injection harness (handoff_app_ios.md 8.8), which is not '
-               'built yet; the unit proofs above do not stand in for it', status='NOT_RUN')
+    stages = {'host': ('host',), 'simulator': ('simulator',), 'both': ('host', 'simulator')}.get(harness or '', ())
+    for stage in stages:
+        check_harness(stage, wanted)
+    if not stages:
+        for case_id, what in HARNESS_CASES:
+            record(case_id, False, 'NOT_RUN: ' + what + '. Run with --harness host|simulator|both (needs initdb and pg_ctl); '
+                   'the unit proofs above do not stand in for it', status='NOT_RUN')
     record('device-billing', False, 'BLOCKED: 20 MiB + 80 MiB through a real TUN needs a paid Apple team (packet-tunnel-provider) and a paired iPhone',
            status='BLOCKED')
+
+
+def load_script(file_name, module_name):
+    spec = importlib.util.spec_from_file_location(module_name, ROOT / 'scripts' / file_name)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_harness_runner(work):
+    """The harness framework (tag asterlink_harness, simulator slice) and the Swift runner compiled against it."""
+    build = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'build-native-ios.py'), '--target', 'harness-framework'], capture_output=True, text=True)
+    if build.returncode != 0:
+        record('billing.simulator.build', False, 'harness framework: ' + (build.stdout + build.stderr)[-600:])
+        return None
+    framework = RUNTIME / 'harness/AsterCore.xcframework/ios-arm64_x86_64-simulator'
+    sdk = subprocess.run(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], capture_output=True, text=True, check=True).stdout.strip()
+    runner = Path(work) / 'harness-runner'
+    compiled = subprocess.run(['swiftc', '-sdk', sdk, '-target', 'arm64-apple-ios17.0-simulator', '-F', str(framework),
+                               str(IOS / 'Harness/main.swift'), '-Xlinker', '-lresolv', '-o', str(runner)], capture_output=True, text=True)
+    if compiled.returncode != 0:
+        record('billing.simulator.build', False, 'runner: ' + (compiled.stdout + compiled.stderr)[-600:])
+        return None
+    record('billing.simulator.build', True, 'test-only Core framework (iOS Simulator slice, tag asterlink_harness) and the Swift runner built; '
+           'neither is referenced by the app project')
+    return runner
+
+
+def check_harness(stage, wanted):
+    """One full run of the harness acceptance in a fresh backend world (it mutates plans and lines)."""
+    prefix = 'billing.%s.' % stage
+    missing = [t for t in ('go', 'initdb', 'pg_ctl') if not shutil.which(t)]
+    if missing:
+        record(prefix + 'tools', False, 'not installed: %s' % ', '.join(missing), status='BLOCKED')
+        return
+    scratch = tempfile.mkdtemp(prefix='asterlink-ios-billing-')
+    runner = udid = None
+    if stage == 'simulator':
+        udid = simulator_udid(wanted)
+        if udid is None:
+            shutil.rmtree(scratch, ignore_errors=True)
+            return
+        runner = build_harness_runner(scratch)
+        if runner is None:
+            shutil.rmtree(scratch, ignore_errors=True)
+            return
+    android = load_script('test-native-android.py', 'android_suite')
+    helpers, pg_data, world, port = [], None, None, None
+    try:
+        # No REALITY inbound: the lines are Shadowsocks and plain VLESS (the TUN rounds cover REALITY).
+        node, sink = android.start_helpers(argparse.Namespace(no_reality=True, reality_dest=''), scratch, helpers)
+        agent = os.path.join(scratch, 'asterlink-nodeagent')
+        subprocess.run(['go', 'build', '-o', agent, './cmd/asterlink-nodeagent'], cwd=ROOT / 'native' / 'nodeagent',
+                       env=android.go_env(CGO_ENABLED='0'), check=True, capture_output=True)
+        # The Android billing world is platform-neutral; the loopback is shared with the simulator.
+        extra = {'ASTERLINK_ANDROID_TESTNODE': os.path.join(scratch, 'node.json'), 'ASTERLINK_ANDROID_NODE_HOST': '127.0.0.1',
+                 'ASTERLINK_ANDROID_SINK': 'http://127.0.0.1:%s' % sink['port'], 'ASTERLINK_ANDROID_SINK_TOKEN': sink['token'],
+                 'ASTERLINK_NODEAGENT_BIN': agent}
+        pg_data, world, world_file, port = android.start_world(scratch, 'TestAndroidBillingWorld', 'ASTERLINK_ANDROID_BILLING_WORLD', extra)
+        facts = json.loads(world_file.read_text())
+        record(prefix + 'world', True, 'backend billing world on 127.0.0.1:%d (private PostgreSQL), test node + sink on the loopback; node agent: %s%s'
+               % (port, 'yes' if facts.get('node_reported') else 'no',
+                  '' if facts.get('agent_target_resolves') or not facts.get('node_reported') else ' (B04 target does not resolve here)'))
+        cache = Path(scratch) / 'cache'
+        cache.mkdir()
+        config = {'world': facts, 'sink': {'host': '127.0.0.1', 'port': int(sink['port']), 'token': sink['token']},
+                  'upload_mib': 20, 'download_mib': 80, 'background_bytes': 2 << 20, 'cache_dir': str(cache)}
+        config_file, report_file = Path(scratch) / 'config.json', Path(scratch) / 'report.json'
+        config_file.write_text(json.dumps(config))
+        config_file.chmod(0o600)
+        started = time.time()
+        if stage == 'host':
+            run = subprocess.run(['go', 'test', '-tags', 'asterlink_harness', '-count=1', '-timeout', '45m', '-run', '^TestAcceptance$', '-v', './internal/harness'],
+                                 cwd=CORE, capture_output=True, text=True, timeout=3000,
+                                 env=dict(os.environ, GOFLAGS='-buildvcs=false', ASTERLINK_HARNESS_CONFIG=str(config_file), ASTERLINK_HARNESS_REPORT=str(report_file)))
+        else:
+            run = subprocess.run(['xcrun', 'simctl', 'spawn', udid, str(runner), str(config_file), str(report_file)],
+                                 capture_output=True, text=True, timeout=3000)
+        log = run.stdout + run.stderr
+        out = ARTIFACTS / 'billing'
+        out.mkdir(parents=True, exist_ok=True)
+        if not report_file.is_file():
+            record(prefix + 'report', False, 'no report: ' + log[-800:])
+            return
+        report = json.loads(report_file.read_text())
+        for case in report['cases']:
+            record(prefix + case['case_id'], case['status'] == 'PASS', case['observed'], status=case['status'] if case['status'] == 'BLOCKED' else None)
+        secrets = [facts['password'], node['ss_password'], node['vless_uuid'], sink['token']]
+        leaked = [i for i, secret in enumerate(secrets) if secret and (secret in log or secret in report_file.read_text())]
+        record(prefix + 'log_clean', not leaked, 'the run output (%d lines) and the report hold no password, node secret or sink token' % log.count('\n')
+               if not leaked else 'the output contains secret #%s' % leaked)
+        (out / ('harness-%s-report.json' % stage)).write_text(json.dumps({
+            'environment': 'harness (%s)' % ('Go host test' if stage == 'host' else 'iOS Simulator process'),
+            'seconds': round(time.time() - started), 'cases': report['cases']}, indent=2, ensure_ascii=False) + '\n')
+    except (subprocess.SubprocessError, OSError, RuntimeError, KeyError, ValueError) as error:
+        record(prefix + 'run', False, '%s: %s' % (type(error).__name__, str(error)[-600:]))
+    finally:
+        if port:
+            try:
+                import urllib.request
+                urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:%d/__world/stop' % port, data=b'{}', method='POST'), timeout=10)
+            except OSError:
+                pass
+        if world:
+            try:
+                world.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                world.kill()
+        for helper in helpers:
+            helper.terminate()
+        if pg_data:
+            subprocess.run(['pg_ctl', '-D', str(pg_data), '-m', 'fast', '-w', 'stop'], stdout=subprocess.DEVNULL, check=False)
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- device
@@ -318,6 +474,9 @@ def check_simulator(out_dir: Path, wanted):
     symbols = ''.join(subprocess.run(['nm', '-g', str(f)], capture_output=True, text=True).stdout for f in linked)
     record('simulator.extension_core', '_MobileAdoptSession' in symbols and '_MobileStart' in symbols,
            'the tunnel extension links the Core (MobileStart, MobileAdoptSession)')
+    record('simulator.harness_not_linked', 'HarnessRun' not in symbols and not any(
+        b'HarnessRun' in f.read_bytes() for f in linked), 'neither the app extension nor the production framework carries the test-only harness')
+    check_framework_clean(required=True)
 
     app = products / 'AsterLink.app'
     bundle_id = subprocess.run(['/usr/libexec/PlistBuddy', '-c', 'Print :CFBundleIdentifier', str(app / 'Info.plist')],
@@ -483,6 +642,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--suite', required=True, choices=('foundation', 'unit', 'simulator', 'ui', 'account', 'billing', 'device-tun'))
     parser.add_argument('--report', help='write a JSON report here')
+    parser.add_argument('--harness', choices=('host', 'simulator', 'both'),
+                        help='billing suite: also run the harness acceptance (needs initdb and pg_ctl; changes no network setting)')
     parser.add_argument('--device', help='device-tun: the iPhone name or UDID to use')
     parser.add_argument('--runtime', default=LOCK['ios']['simulator_runtime']['wanted'].split()[-1],
                         help="simulator suite: iOS runtime major version, or 'latest' (CI)")
@@ -498,6 +659,7 @@ def main():
         check_env()
         check_project()
         check_platform_split()
+        check_harness_isolation()
     elif args.suite == 'unit':
         check_unit()
     elif args.suite == 'simulator':
@@ -507,7 +669,7 @@ def main():
     elif args.suite == 'account':
         check_account(out_dir, args.runtime)
     elif args.suite == 'billing':
-        check_billing()
+        check_billing(args.harness, args.runtime)
     elif args.suite == 'device-tun':
         check_device(args.device)
 
