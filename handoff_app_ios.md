@@ -1,6 +1,6 @@
 # AsterLink iOS 原生客户端开发交接计划
 
-> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
+> 编制日期：2026-10-16。状态：**第 1 轮完成（模拟器范围）；第 2 轮代码完成、真机待验（2026-10-16）；第 3 轮完成（模拟器全程，2026-10-17）；真机项因无付费 Apple 团队为 BLOCKED**。实际进度见第 15 节。
 > 勘察基线：`1c9d64b`（PR #39 合并点，Android 第 6 轮）；Mihomo 固定提交 `70f0570405c3c2c47bb113b88db95006d239b346`（`native/third_party/Clash.Meta`）+ 生命周期补丁 `d425c1a0…`。
 > 项目根目录：`/Users/stevenlee/Desktop/vpn`；开发机：Mac mini M4（arm64，32 GiB，macOS 26.6.2，Xcode 27.0 / iOS 27.0 SDK）。
 > 规划轮只新增本文件：没有改代码，没有部署，没有连接远端数据库，也没有提交或推送。第 1 轮起的实际进度写在第 15 节。
@@ -766,7 +766,7 @@ python3 scripts/test-native-ios.py --suite release
 | --- | --- | --- |
 | 1 环境与骨架 | DONE（模拟器范围；PR #40 已合并）| 本机 foundation 11/11、unit 3/3、simulator 6 PASS + E-SIM-NE 实测记录；P1/P2 缺失，真机项 BLOCKED；demo 服务器需部署后端 `ios` 白名单后才能登录 |
 | 2 扩展与真实 TUN | 代码完成，真机待验（分支 worktree-ios-round2-tunnel）| 主机/模拟器项全部 PASS；D-T01–D-T09、D-CYCLES、D-MEM-idle 全部 BLOCKED（0 个签名身份；已配对 iPhone 一台）；真机步骤见 `docs/ios-tun-design.md` 第 9 节 |
-| 3 账号与 UI | NOT_STARTED | 模拟器即可；demo 手工确认需测试账号与已部署后端 |
+| 3 账号与 UI | DONE（模拟器范围；分支 worktree-ios-round3-account-ui）| unit 42 个 Swift + 182 个 Go；ui 44 用例/45 截图；account 19 项真实 Core+Keychain+隔离后端全 PASS；demo 手工确认 NOT_RUN（需用户测试账号与已部署后端） |
 | 4 连接与计量 | NOT_STARTED | 模拟器线束即可；真机计费需 P1 + P2 |
 | 5 生命周期与可靠性 | NOT_STARTED | 主要依赖真机 |
 | 6 打磨与发布 | NOT_STARTED | 需要组织开发者账号、Logo、隐私政策/用户协议页面、GPL 法务结论 |
@@ -887,6 +887,47 @@ App/扩展/xcframework 版本 / 模拟器或真机（机型、iOS 版本）/ Cor
   有付费团队后按 docs/ios-tun-design.md 第 9 节跑真机 D 项并补记录；否则直接进入第 3 轮（模拟器全程可验）。
   回退：撤销本分支。桌面端与 Android 只多了导出的 service.Reply/ErrorFor、Manager 的 handoff 方法与新文案，
   原有路径行为不变（上方回归）。
+```
+
+### 第 3 轮记录
+
+```text
+轮次 / 日期 / 执行者：第 3 轮 / 2026-10-17 / Claude（worktree 分支 worktree-ios-round3-account-ui）
+基线 commit / 已有未提交改动：a1df84b（PR #41 合并点）；无
+实际修改与契约变化（不含秘密）：
+  契约：无变化。后端：android_world_test.go 抽出 serveNativeAccountWorld，新增 TestClientAccountWorld（环境变量
+    ASTERLINK_CLIENT_WORLD[_PORT]），与 Android 的 TestAndroidAccountWorld 共用同一世界。
+  AsterLinkKit：Snapshot（全字段 Int64）、CoreClient、SessionState/ConnectionView/NodeList、Formatting、ErrorText、
+    Ports、Diagnostics、SessionController（@MainActor @Observable，Android 版语义：操作代次、旧代次丢弃、action_error、
+    stale_generation、静默重登一次、内核丢失、1 s/2 s 轮询、回前台 10 s 节流）；DirectCoreTunnel 为第 4 轮交接接口留的接缝。
+  App：Platform（AppConfig→env-v1、Keychain 密码库、UserDefaults 偏好、设备 ID、Core 宿主）、登录/连接/线路/我的页、
+    资源目录（AccentColor、占位 AppIcon 三外观、启动画面）、仅 Debug 的 UIFixtures；删除第 1 轮的 FoundationView。
+  工程：新增 AsterLinkUITests 目标与 AsterLinkUI scheme（默认 AsterLink scheme 不跑 UI 用例）。
+  脚本：test-native-ios.py 新增 --suite ui、--suite account；ios.yml 增加 ui 套件。docs/ios-ui.md。
+执行命令 / 实际测试数 / PASS、FAIL、BLOCKED（本机 macOS arm64，Xcode 27.0，iPhone 18 Pro 模拟器 iOS 27.0，公司 VPN 开启）：
+  foundation 11 PASS；unit：Go 182 个、AsterLinkKit 42 个（新增 27 个：快照契约解码、>2^53 整数、格式化、ConnectionView、
+    线路过滤、SessionController 脚本化 15 个）全 PASS；simulator 6 PASS + E-SIM-NE（INFO，同第 1 轮）。
+  ui（simulator）：44 个用例，每个先断言状态再截图，截图 45 张（登录 5、连接 19、线路 7、我的 6、深色 4、AX3 4）。
+  account（simulator + 真实 Core + 真实 Keychain + Gin/隔离 PostgreSQL，回环）：19 项全 PASS——A01 错误/正确密码、保存、
+    不保存、重启后在线自动登录、退出遗忘、文件中无密码/Bearer；A02 管理员无套餐、0 额度、套餐过期（2.0 s）、设备上限；
+    A04 套餐过滤、改名+倍率（2.1 s，原绑定配置被丢弃）、停用（2.0 s）、启用（2.0 s）、删除（2.0 s）；脱敏；模拟器日志无密码/节点秘密。
+  回归：go vet、native/core go test（unit 套件）PASS。
+产物 / 环境 / 版本 / 证据路径：artifacts/native-ios/{ui,account,unit,simulator,foundation}/（不提交）；Core 0.1.0、Mihomo 70f0570405c3。
+发现并修复的问题（记录以便复现）：
+  ① 无签名的模拟器二进制没有 application-identifier，Keychain 返回 -34018；account 套件改用 ad-hoc 签名（不需要 Apple 团队）。
+  ② 模拟器的系统深色外观在测试中没有传到 App（系统设置本身也仍是浅色），所以深色截图改由 App 自己的“外观”偏好
+    （调试环境变量 ASTER_APPEARANCE）驱动，并加了像素亮度断言防止“标了深色其实是浅色”。
+  ③ 个别 SwiftUI 容器的 accessibilityIdentifier 不下传（需要 .contain / 显式元素），已在界面与用例里处理。
+未解决问题、复现方法与发布限制：
+  ① demo.hyshentou.cn 手工确认：NOT_RUN（需要部署第 1 轮的后端 ios 白名单，并由用户用测试账号登录一次）。
+  ② 无 iPhone SE 镜像，小屏用例 NOT_RUN；动态字体最大测到 AX3。
+  ③ 连接按钮在 iOS 上如实返回 tun_unavailable（App 进程不持有隧道）；首次“添加 VPN 配置”引导、两段 Verify、
+    交接启动在第 4 轮。④ 网站尚无 /privacy、/terms、找回密码页，界面不放这些入口（第 6 轮门槛）。
+  ⑤ 英文本地化、正式图标与启动画面留给第 6 轮；现为矢量占位。⑥ A03（单 watcher、429 退避）由 Go 测试与 Swift
+    “旧代次丢弃”单测覆盖，没有为它另做 iOS 端到端用例。⑦ 真机项仍全部 BLOCKED（P1、P2 同第 2 轮）。
+下一位从哪个文件/验收项开始；回退方法：
+  第 4 轮从 AsterLinkKit/Ports.swift 的 TunnelControl 接缝开始：把 DirectCoreTunnel 换成基于 TunnelController 的实现，
+  接入首次配置引导、交接、两段 Verify 与通知。回退：撤销本分支；后端只多了一个测试世界入口。
 ```
 
 ## 附录 A. 源码核验索引
