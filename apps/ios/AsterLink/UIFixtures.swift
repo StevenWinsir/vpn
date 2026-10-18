@@ -130,6 +130,10 @@ enum UIFixtures {
         case "connect-error": return UIFixture(apply: signedIn({ var s = ready(); s.state = "error"; s.lastError = ErrorView(code: "verify_failed", message: "隧道验证未通过，请稍后重试或更换线路"); return s }()))
         case "connect-update-required": return UIFixture(apply: signedIn({ var s = ready(); s.lastError = ErrorView(code: ConnectionView.updateRequired, message: "当前版本过低，请更新到最新版本后使用"); return s }()))
         case "connect-tun-unavailable": return UIFixture(apply: signedIn(ready(), message: .core("tun_unavailable", ErrorText.local("tun_unavailable"))))
+        case "connect-vpn-setup": return UIFixture(apply: { state in signedIn(ready())(&state); state.needsVPNSetup = true })
+        case "connect-vpn-denied": return UIFixture(apply: signedIn(ready(), message: .local(LocalCodes.vpnPermissionDenied)))
+        case "connect-vpn-revoked": return UIFixture(apply: signedIn(ready(), message: .local(LocalCodes.vpnRevoked)))
+        case "connect-probe-failed": return UIFixture(apply: signedIn(ready(), message: .local(LocalCodes.routeProbeFailed)))
         case "connect-ended": return UIFixture(apply: signedIn({ var s = ready(); s.lastError = ErrorView(code: "quota_exhausted", message: "流量已用完，连接已断开"); return s }(),
                                                                 message: .core("quota_exhausted", "流量已用完，连接已断开")))
         // Lines

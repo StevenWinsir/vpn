@@ -415,4 +415,38 @@ final class ScreenshotTests: XCTestCase {
         present("line-row-香港 01")
         capture("47-ax3-lines")
     }
+
+    // MARK: round 4: the connect loop's own screens
+
+    func test47_vpnSetupSheetExplainsTheSystemDialog() {
+        launch("connect-vpn-setup")
+        present("vpn-setup-sheet")
+        said("vpn-setup-title", "首次连接需要添加 VPN 配置")
+        present("vpn-setup-continue"); present("vpn-setup-later")
+        capture("48-vpn-setup")
+        el("vpn-setup-later").tap()
+        XCTAssertTrue(el("vpn-setup-sheet").waitForNonExistence(timeout: 5))
+        said("status-text", "未连接")
+        capture("49-vpn-setup-dismissed")
+    }
+
+    func test48_vpnPermissionDenied() {
+        launch("connect-vpn-denied")
+        said("message-banner", "需要允许 AsterLink 添加 VPN 配置", contains: true)
+        XCTAssertTrue(el("connect-button").isEnabled)
+        capture("50-vpn-permission-denied")
+    }
+
+    func test49_vpnTakenAwayBySystem() {
+        launch("connect-vpn-revoked")
+        said("message-banner", "VPN 已被系统设置或其它 VPN 应用关闭", contains: true)
+        said("status-text", "未连接")
+        capture("51-vpn-revoked")
+    }
+
+    func test50_routeProbeFailed() {
+        launch("connect-probe-failed")
+        said("message-banner", "系统流量没有经过隧道", contains: true)
+        capture("52-route-probe-failed")
+    }
 }

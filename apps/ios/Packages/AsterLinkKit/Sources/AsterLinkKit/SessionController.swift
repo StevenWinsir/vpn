@@ -39,6 +39,11 @@ public final class SessionController {
     @ObservationIgnored private var lastRefreshMillis: Int64?
     /// The Core reported this tunnel connected and nobody here has asked it to stop since.
     @ObservationIgnored private var tunnelUp = false
+    /// The user has read the explanation of the system's "add VPN configuration" dialog.
+    @ObservationIgnored private var setupExplained = false
+    /// The session is moving from the extension back to the app's Core: reading either now would
+    /// mistake the hand-over for a lost session.
+    @ObservationIgnored private var reclaiming = false
 
     public init(client: CoreClient, core: any CoreHost, target: LoginTarget, credentials: any CredentialStore,
                 preferences: any LoginPreferences, devices: any DeviceIDProvider, tunnel: any TunnelControl,
@@ -205,6 +210,7 @@ public final class SessionController {
         } catch let error as CoreException {
             if version != operationVersion { return }
             if error.code == CoreCodes.notStarted { coreLost() }
+            else if error.code == LocalCodes.tunnelUnreachable { await tunnelGone() }
             // Anything else (stale_generation, a network refusal) is left to the next poll.
         } catch {}
     }
@@ -227,6 +233,11 @@ public final class SessionController {
 
     public func connect() async {
         guard state.phase == .signedIn, !state.busy, state.connection.canConnect else { return }
+        // The system asks once to add the VPN configuration: say why before it does.
+        if !setupExplained, !(await tunnel.configured) {
+            state.needsVPNSetup = true
+            return
+        }
         cancelRequested = false
         operationVersion += 1
         alerts.clear()
@@ -236,7 +247,7 @@ public final class SessionController {
             if cancelRequested {
                 cancelledByUser()
             } else {
-                apply(reply.snapshot)
+                apply(reply.snapshot, newOwner: reply.snapshot.state == CoreSnapshot.State.connected)
                 state.message = reply.actionError.map { .core($0.code, $0.message) }
             }
         case .refused(let code, let message):
@@ -248,6 +259,18 @@ public final class SessionController {
         }
         state.busy = false; state.activity = .none
     }
+
+    /// The user read the explanation and chose to continue: connect, which raises the system dialog.
+    public func continueVPNSetup() async {
+        setupExplained = true
+        state.needsVPNSetup = false
+        await connect()
+    }
+
+    public func cancelVPNSetup() { state.needsVPNSetup = false }
+
+    /// The app moved to or from the foreground (the extension only polls the catalog while seen).
+    public func setForeground(_ visible: Bool) async { await tunnel.foreground(visible) }
 
     /// The user declined the system dialog for adding the VPN configuration: stay ready and say why.
     public func vpnConsentDenied() { state.message = .local(LocalCodes.vpnPermissionDenied) }
@@ -278,8 +301,11 @@ public final class SessionController {
         } catch let error as CoreException {
             if error.code == CoreCodes.notStarted { coreLost() } else { state.message = describe(error) }
         } catch {}
+        // Hands the session back to this process (and closes the system tunnel); the Core the
+        // controller talks to is then the app's own again, so read its state.
+        let moved = await tunnel.stop()
+        if moved, state.phase == .signedIn, let latest = try? await client.readSnapshot() { apply(latest, newOwner: true) }
         state.busy = false; state.activity = .none
-        await tunnel.stop()
     }
 
     /// Abandons a connect that takes too long. The command is already inside the Core, so the
@@ -292,6 +318,24 @@ public final class SessionController {
         stopPolling()
         await core.stop()
         await tunnel.stop()
+    }
+
+    /// A request could not reach the extension: the system took the VPN away (Settings, another
+    /// VPN, a crash). The extension already closed the data path; take the session back if the
+    /// server still honours it, otherwise the released Core is noticed on the next read.
+    private func tunnelGone() async {
+        let wasUp = tunnelUp || state.snapshot.tunnelBusy
+        tunnelUp = false
+        state.connectedSinceMillis = nil; state.connectionBaseline = nil
+        let reason = await tunnel.lastEndReason()
+        await tunnel.stop()
+        guard state.phase == .signedIn else { return }
+        if wasUp {
+            let notice = reason ?? Notice.local(LocalCodes.vpnRevoked)
+            alerts.tunnelStopped(notice)
+            state.message = notice
+        }
+        if let latest = try? await client.readSnapshot() { apply(latest, newOwner: true) }
     }
 
     public func dismissMessage() { state.message = nil; state.warning = nil }
@@ -307,6 +351,7 @@ public final class SessionController {
         } catch let error as CoreException {
             if error.code == CoreCodes.staleGeneration { await staleGeneration(error.message) }
             else if error.code == CoreCodes.notStarted { coreLost() }
+            else if error.code == LocalCodes.tunnelUnreachable { await tunnelGone() }
             else { state.message = describe(error) }
         } catch {}
         state.busy = false
@@ -340,7 +385,7 @@ public final class SessionController {
 
     /// One snapshot read. A result that raced a user action is discarded, never applied over newer state.
     public func poll() async {
-        guard state.phase == .signedIn, !state.busy else { return }
+        guard state.phase == .signedIn, !state.busy, !reclaiming else { return }
         let version = operationVersion
         do {
             let latest = try await client.readSnapshot()
@@ -349,7 +394,9 @@ public final class SessionController {
             apply(latest)
         } catch let error as CoreException {
             if version != operationVersion { return }
-            if error.code == CoreCodes.notStarted { coreLost() } else { state.coreProblem = describe(error) }
+            if error.code == CoreCodes.notStarted { coreLost() }
+            else if error.code == LocalCodes.tunnelUnreachable { await tunnelGone() }
+            else { state.coreProblem = describe(error) }
         } catch {}
     }
 
@@ -364,6 +411,17 @@ public final class SessionController {
         Task { await tunnel.stop() }
     }
 
+    /// The tunnel ended by itself: close the system VPN and take the session back (a no-op when
+    /// the app's own Core already holds it), then show the Core that now owns the session.
+    private func reclaimTunnel() {
+        reclaiming = true
+        Task {
+            let moved = await tunnel.stop()
+            reclaiming = false
+            if moved, state.phase == .signedIn, let latest = try? await client.readSnapshot() { apply(latest, newOwner: true) }
+        }
+    }
+
     private func cancelledByUser() {
         stopPolling()
         tunnelUp = false
@@ -372,10 +430,12 @@ public final class SessionController {
         Task { await tunnel.stop() }
     }
 
-    private func apply(_ latest: CoreSnapshot) {
+    /// `owner` is true for the first snapshot after the session moved between the app's Core and
+    /// the extension's: the two count generations separately, so the old number says nothing.
+    private func apply(_ latest: CoreSnapshot, newOwner: Bool = false) {
         let previous = state.snapshot
         // A snapshot from an older generation of the same session is late news, not state.
-        if state.phase == .signedIn && latest.state != CoreSnapshot.State.signedOut && latest.generation < previous.generation { return }
+        if !newOwner && state.phase == .signedIn && latest.state != CoreSnapshot.State.signedOut && latest.generation < previous.generation { return }
         let continuing = latest.state == CoreSnapshot.State.connected && previous.state == CoreSnapshot.State.connected
         let since: Int64? = latest.state != CoreSnapshot.State.connected ? nil
             : (continuing ? state.connectedSinceMillis : nil) ?? clock()
@@ -394,16 +454,22 @@ public final class SessionController {
             else if let verdict { alerts.tunnelStopped(.core(verdict.reason, verdict.reasonMessage)) }
             else if latest.state == CoreSnapshot.State.signedOut { alerts.tunnelStopped(.local(LocalCodes.sessionEnded)) }
             else { alerts.tunnelStopped(.local(LocalCodes.tunnelEnded)) }
+            // The extension holds the session: close the system VPN and take it back.
+            if state.activity == .none { reclaimTunnel() }
         }
-        if state.activity == .none && !latest.tunnelBusy { Task { await tunnel.stop() } }
-        guard state.phase == .signedIn, latest.state == CoreSnapshot.State.signedOut, previous.state != CoreSnapshot.State.signedOut else { return }
+        // "released": this process handed its session to the extension and the extension could not
+        // hand it back (the system stopped it and the server no longer honours the session).
+        let released = latest.state == CoreSnapshot.State.released
+        guard state.phase == .signedIn, latest.state == CoreSnapshot.State.signedOut || released,
+              previous.state != latest.state else { return }
 
         // The Core ended the session (expired, revoked, plan changed).
         stopPolling()
         let error = latest.lastError
         state.phase = .signedOut
-        state.message = (error.map { !$0.message.isEmpty } ?? false) ? .core(error!.code, error!.message) : .local(LocalCodes.sessionEnded)
-        guard let code = error?.code, code.hasPrefix("native_session_"), autoRelogins < 1 else { return }
+        let kept = released ? state.message : nil
+        state.message = kept ?? ((error.map { !$0.message.isEmpty } ?? false) ? .core(error!.code, error!.message) : .local(LocalCodes.sessionEnded))
+        guard released || (error?.code.hasPrefix("native_session_") ?? false), autoRelogins < 1 else { return }
         autoRelogins += 1
         Task {
             // One silent re-login for an expired session; a refused password is never retried.
@@ -420,6 +486,7 @@ public final class SessionController {
     private static let ipcCodes: Set<String> = [
         CoreCodes.invalidRequest, CoreCodes.notStarted, "payload_too_large", "unknown_command", "protocol_unsupported",
         "not_implemented", LocalCodes.vpnStartFailed, LocalCodes.vpnStopping, LocalCodes.connectTimeout,
+        LocalCodes.tunnelUnreachable, LocalCodes.routeProbeFailed, "handoff_required",
     ]
 
     private func describe(_ error: CoreException) -> Notice {

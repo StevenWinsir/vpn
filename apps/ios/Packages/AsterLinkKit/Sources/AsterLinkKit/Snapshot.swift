@@ -237,6 +237,8 @@ public struct CoreSnapshot: Codable, Sendable, Equatable {
         public static let stopping = "stopping"
         public static let blocked = "blocked"
         public static let error = "error"
+        /// This process handed its session to the other one (handoff-v1) and holds none.
+        public static let released = "released"
     }
 
     public var generation: UInt64 = 0

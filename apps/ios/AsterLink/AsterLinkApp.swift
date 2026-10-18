@@ -36,7 +36,7 @@ struct RootView: View {
         .animation(.snappy(duration: 0.25), value: model.session?.state.phase)
         .task { await model.launchIfNeeded() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, !model.fixtureMode, let session = model.session { Task { await session.onForeground() } }
+            model.sceneChanged(active: phase == .active)
         }
         .sheet(item: Bindable(model).web) { page in
             SafariView(url: page.url).ignoresSafeArea().accessibilityLabel(page.title)

@@ -35,6 +35,14 @@ public enum Formatting {
         return (physical / 1000) * ratePermille + (physical % 1000) * ratePermille / 1000
     }
 
+    /// The server's deduction in units (1 unit = 1/1000 byte): physical bytes x permille, exact.
+    /// Saturates instead of overflowing, so a corrupt counter can never wrap into a refund.
+    public static func chargedUnits(physical: Int64, ratePermille: Int64) -> Int64 {
+        if physical <= 0 || ratePermille <= 0 { return 0 }
+        let (units, overflow) = physical.multipliedReportingOverflow(by: ratePermille)
+        return overflow ? Int64.max : units
+    }
+
     /// RFC 3339 as Go writes it (with or without fractional seconds); nil when absent or unreadable.
     public static func parseInstant(_ value: String?) -> Date? {
         guard let value, !value.isEmpty else { return nil }

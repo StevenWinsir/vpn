@@ -19,8 +19,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var memory: DispatchSourceTimer?
     private var budget = MemoryBudget()
     private var coreStarted = false
+    /// Ends the tunnel when the Core stops it by itself (quota, plan, line); see startEndWatch.
+    private var endWatch: DispatchSourceTimer?
+    /// The app asked for this stop (disconnect, release, logout) or the system did: no alert.
+    private var stopRequested = false
+    private var endReported = false
 
-    static let errorDomain = "com.asterlink.tunnel"
+    static let errorDomain = PacketTunnelErrors.domain
 
     /// A start failure the app can read back (fetchLastDisconnectError): a stable code, the
     /// Chinese message and nothing else.
@@ -47,6 +52,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         let done = UncheckedBox(completionHandler)
         log.notice("stop: reason \(reason.rawValue, privacy: .public)")
+        stopRequested = true
         // MobileStop is safe from any thread and interrupts a connect still running on the work
         // queue (a cancelled start), so the stop never waits out the 90-second connect budget.
         DispatchQueue.global(qos: .userInitiated).async { [self] in
@@ -87,6 +93,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
         MobileTuneMemory(MemoryBudget.goHeapLimit, MemoryBudget.goGCPercent)
         startMemoryWatch()
+        stopRequested = false; endReported = false
 
         let adopted = MobileAdoptSession(ticket)
         guard let head = Self.snapshot(adopted), head.actionError == nil, head.state == "ready" else {
@@ -96,6 +103,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
         let connected = MobileCall(CoreRequest.command("connect", requestID: "tunnel-connect", generation: head.generation))
         if let after = Self.snapshot(connected), after.actionError == nil, after.state == "connected" {
+            startEndWatch()
             return .success(())
         }
         let failure = Self.failureFrom(connected) ?? Self.failure("tunnel_failed", "隧道启动失败")
@@ -123,6 +131,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func stopCore() {
         memory?.cancel()
         memory = nil
+        endWatch?.cancel()
+        endWatch = nil
         monitor.cancel()
         if coreStarted {
             MobileStop()
@@ -135,8 +145,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         guard let message = try? ProviderMessage.decode(data) else { return ProviderReply.invalidRequest.encoded() }
         switch message {
         case .ipc(let request):
+            if Self.endsTheTunnel(request) { stopRequested = true }
             return Data(MobileCall(request).utf8)
         case .release:
+            stopRequested = true
             let exported = MobileExportSession()
             guard let response = try? JSONDecoder().decode(CoreResponse.self, from: Data(exported.utf8)) else {
                 return ProviderReply.invalidRequest.encoded()
@@ -152,6 +164,34 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             log.notice("route probe from the app: \(ok, privacy: .public)")
             return ProviderReply.ack.encoded()
         }
+    }
+
+    /// The Core can end the data path by itself while the app is suspended (quota used up, plan
+    /// ended, line disabled or changed, lease lost). The utun would then stay up and carry nothing,
+    /// so this watches the Core's state and, once, tells the user with a local notification and
+    /// closes the tunnel with the reason (the app reads it back when it next opens). A stop the
+    /// app asked for never alerts.
+    private func startEndWatch() {
+        let timer = DispatchSource.makeTimerSource(queue: work)
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler { [self] in
+            guard !stopRequested, !endReported else { return }
+            let raw = MobileCall(CoreRequest.command("read_snapshot", requestID: "tunnel-watch"))
+            guard case .ended(let end) = TunnelWatch.evaluate(response: raw) else { return }
+            endReported = true
+            log.notice("tunnel ended by the core: \(end.notice.code, privacy: .public)")
+            TunnelNotifier.post(end)
+            cancelTunnelWithError(Self.failure(end.notice.code, end.text))
+        }
+        timer.resume()
+        endWatch = timer
+    }
+
+    /// An ipc-v1 request that ends the tunnel on purpose.
+    private static func endsTheTunnel(_ request: String) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(request.utf8)) as? [String: Any],
+              let command = object["command"] as? String else { return false }
+        return command == "disconnect" || command == "logout"
     }
 
     private func startMemoryWatch() {

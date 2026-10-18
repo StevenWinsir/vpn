@@ -40,9 +40,12 @@ final class AppModel {
         appearance = Appearance(rawValue: UserDefaults.standard.string(forKey: "appearance") ?? "") ?? .system
         config = AppConfig.load()
         if case .success(let config) = self.config {
-            let client = CoreClient(transport: MobileTransport())
+            // Requests go to the app's own Core until a VPN runs, then to the extension's (TunnelBridge).
+            let bridge = TunnelBridge(local: MobileTransport())
+            let client = CoreClient(transport: bridge)
             session = SessionController(client: client, core: AppCoreHost(), target: config.target, credentials: KeychainCredentialStore(),
-                                        preferences: DefaultsPreferences(), devices: KeychainDeviceID(), tunnel: DirectCoreTunnel(client: client))
+                                        preferences: DefaultsPreferences(), devices: KeychainDeviceID(),
+                                        tunnel: NetworkTunnelControl(controller: TunnelController(), bridge: bridge), alerts: NotificationAlerts())
         } else {
             session = nil
         }
@@ -70,6 +73,15 @@ final class AppModel {
         launched = true
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
         await session.launch()
+    }
+
+    /// The app came to the front or went away; the tunnel extension polls the catalog only while it is seen.
+    func sceneChanged(active: Bool) {
+        guard !fixtureMode, let session else { return }
+        Task {
+            await session.setForeground(active)
+            if active { await session.onForeground() }
+        }
     }
 
     func openWebsite(_ path: String, title: String) {

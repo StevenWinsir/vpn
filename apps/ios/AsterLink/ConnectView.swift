@@ -30,6 +30,10 @@ struct ConnectView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { planBadge } }
         .refreshable { await session.refresh() }
+        .sheet(isPresented: Binding(get: { state.needsVPNSetup }, set: { if !$0 { session.cancelVPNSetup() } })) {
+            VPNSetupSheet(proceed: { Task { await session.continueVPNSetup() } }, later: { session.cancelVPNSetup() })
+                .presentationDetents([.medium, .large])
+        }
     }
 
     // MARK: pieces

@@ -53,13 +53,29 @@ public enum TunnelOutcome: Sendable, Equatable {
     case refused(code: String, message: String = "")
 }
 
-/// The system VPN. In round 3 the connect goes straight to the app's own Core, which on iOS has
-/// no tunnel and answers with an honest refusal (the packet-tunnel handoff arrives with the
-/// round-4 connect flow); the controller already routes every connect through this seam.
+/// The system VPN: the packet-tunnel handoff (the app's TunnelControl implementation) or, in tests
+/// and the screenshot fixtures, a stand-in. The controller routes every connect through this seam.
 public protocol TunnelControl: Sendable {
     func connect(generation: UInt64) async -> TunnelOutcome
-    /// Stops the system tunnel, if one is up. Always safe.
-    func stop() async
+    /// Ends the system tunnel, if one is up, and takes the session back into the app's own Core.
+    /// Always safe and cheap when nothing runs (the controller calls it after every idle
+    /// snapshot). True when a tunnel or a handed-out session was ended, so the Core the
+    /// controller talks to has changed.
+    @discardableResult func stop() async -> Bool
+    /// Whether the system VPN configuration already exists. When it does not, the first connect
+    /// explains the system dialog before asking for it.
+    var configured: Bool { get async }
+    /// The app came to the front or went away (the extension only polls the catalog while the app is seen).
+    func foreground(_ visible: Bool) async
+    /// Why the system VPN last stopped on its own, when the extension said (a quota or plan
+    /// verdict, a line change), so the app can show the real reason instead of a generic one.
+    func lastEndReason() async -> Notice?
+}
+
+public extension TunnelControl {
+    var configured: Bool { get async { true } }
+    func foreground(_ visible: Bool) async {}
+    func lastEndReason() async -> Notice? { nil }
 }
 
 /// Tells the user that the VPN ended without them asking (quota used up, plan ended, line
@@ -70,9 +86,8 @@ public protocol SessionAlerts: Sendable {
     func clear()
 }
 
-/// Round 3's connect: straight to the app's own Core. On iOS the app process owns no tunnel, so
-/// the Core answers `tun_unavailable` and the UI says so honestly; round 4 replaces this with the
-/// packet-tunnel handoff (TunnelController) behind the same seam.
+/// A connect straight to the app's own Core. On iOS the app process owns no tunnel, so a real Core
+/// answers `tun_unavailable`; used by the Kit tests (a scripted Core) and fixtures only.
 public struct DirectCoreTunnel: TunnelControl {
     private let client: CoreClient
 
@@ -88,7 +103,7 @@ public struct DirectCoreTunnel: TunnelControl {
         }
     }
 
-    public func stop() async {}
+    public func stop() async -> Bool { false }
 }
 
 public struct NoAlerts: SessionAlerts {

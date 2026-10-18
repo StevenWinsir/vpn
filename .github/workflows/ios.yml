@@ -67,6 +67,13 @@ jobs:
           python3 scripts/test-native-ios.py --suite ui --runtime latest
           code=$?
           test $code -eq 0 -o $code -eq 3
+      - name: Billing proofs (round 4 ledger and hand-over tests, harness and device cases reported not run)
+        run: |
+          # Exit 3 is expected: the harness and device cases are NOT_RUN / BLOCKED by design. A FAIL is exit 1.
+          set +e
+          python3 scripts/test-native-ios.py --suite billing
+          code=$?
+          test $code -eq 0 -o $code -eq 3
       - name: Retain reports
         if: always()
         uses: actions/upload-artifact@v4
