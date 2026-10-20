@@ -169,10 +169,17 @@ class AccountAcceptanceTest {
     private suspend fun runCases() {
         val vip = emails.getValue("vip")
 
-        // A01: a wrong password is refused online and a stale saved one is forgotten.
+        // A01: a wrong password is refused online. A typo leaves the saved item alone; the saved
+        // password itself, once refused (changed on the website), is forgotten (handoff_auth.md 9.2).
         var c = newController()
         credentials.save(key("vip"), "stale-password")
         main { c.launchNow(); c.signInNow(vip, "definitely-wrong", remember = true, automatic = false) }
+        record(
+            "A01.typo_keeps_saved",
+            c.state.value.phase == AppPhase.SignedOut && c.state.value.message?.code == "invalid_credentials" && credentials.read(key("vip")) == "stale-password",
+            "phase ${c.state.value.phase}, message ${c.state.value.message?.code}, saved item kept ${credentials.read(key("vip")) == "stale-password"}",
+        )
+        main { c.signInNow(vip, "stale-password", remember = true, automatic = false) }
         record(
             "A01.wrong_password",
             c.state.value.phase == AppPhase.SignedOut && c.state.value.message?.code == "invalid_credentials" && credentials.read(key("vip")) == null,
