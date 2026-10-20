@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,10 @@ func TestConsoleReadinessAndAdministratorPostgres(t *testing.T) {
 	}
 	if !checkedReadOnly {
 		t.Fatal("read-only transaction assertion did not execute")
+	}
+	// Without SMTP the probe reports mail as unavailable; it never sends mail.
+	if report.Mail.Configured || report.Mail.RegistrationOpen || report.Mail.PendingJobs != 0 || report.Mail.OldestPendingSecs != 0 || !slices.Contains(report.Warnings, "auth_mail_not_configured") {
+		t.Fatalf("auth mail readiness wrong: %+v %v", report.Mail, report.Warnings)
 	}
 	cfg.ClientAllowTestEntitlements = false
 	if report = inspect(); report.DevelopmentReady || report.AccountReason != "paid_vip_required" {

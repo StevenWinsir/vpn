@@ -38,6 +38,21 @@ type ReadinessReport struct {
 	AgentsOnline       int   `json:"agents_online"`
 	AuthoritativeNodes int   `json:"authoritative_nodes"`
 	GrantsToReconcile  int64 `json:"grants_needing_reconcile"`
+	// Registration and mail (handoff_auth.md 3.1). Configuration facts and queue
+	// counts only: the probe never sends mail and never prints SMTP settings.
+	Mail MailReadiness `json:"auth_mail"`
+}
+
+type MailReadiness struct {
+	Configured          bool     `json:"configured"`
+	RegistrationOpen    bool     `json:"registration_open"`
+	PasswordReset       bool     `json:"password_reset_available"`
+	ImplicitTLS         bool     `json:"smtp_implicit_tls"`
+	RegistrationDomains []string `json:"registration_email_domains"`
+	TrustedProxies      int      `json:"trusted_proxy_entries"`
+	PendingJobs         int64    `json:"pending_jobs"`
+	FailedJobs24h       int64    `json:"failed_jobs_24h"`
+	OldestPendingSecs   int64    `json:"oldest_pending_seconds"`
 }
 
 // Inspect uses a PostgreSQL read-only repeatable-read transaction. It cannot
@@ -50,6 +65,13 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		CatalogEnabled: cfg.ClientNodeCatalog, EncryptionKeyValid: nodes.ValidateKey(cfg.NodeEncryptionKey),
 		TestAccessEnabled: cfg.Env != "production" && cfg.TestPurchase && cfg.ClientAllowTestEntitlements,
 		AccountReason:     "account_not_checked",
+		Mail:              MailReadiness{Configured: cfg.MailEnabled(), RegistrationOpen: cfg.RegistrationOpen(), PasswordReset: cfg.MailEnabled(), ImplicitTLS: cfg.MailEnabled() && cfg.SMTPSecure, RegistrationDomains: cfg.RegistrationDomains, TrustedProxies: len(cfg.TrustedProxies)},
+	}
+	if !cfg.MailEnabled() {
+		report.Warnings = append(report.Warnings, "auth_mail_not_configured")
+	}
+	if len(cfg.TrustedProxies) == 0 {
+		report.Warnings = append(report.Warnings, "no_trusted_proxy_client_ip_is_tcp_peer")
 	}
 	if email != "" {
 		var valid bool
@@ -69,7 +91,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -100,10 +122,21 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Model(&model.ConnectionGrant{}).Where("needs_reconcile = ?", true).Count(&report.GrantsToReconcile).Error; err != nil {
 			return err
 		}
+		if err := tx.Model(&model.AuthMailJob{}).Where("status IN ?", []string{"queued", "retry", "sending"}).Count(&report.Mail.PendingJobs).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.AuthMailJob{}).Where("status = ? AND finished_at > ?", "failed", report.CheckedAt.Add(-24*time.Hour)).Count(&report.Mail.FailedJobs24h).Error; err != nil {
+			return err
+		}
+		var oldest time.Time
+		if err := tx.Model(&model.AuthMailJob{}).Where("status IN ?", []string{"queued", "retry"}).Select("COALESCE(MIN(created_at), ?)", report.CheckedAt).Scan(&oldest).Error; err != nil {
+			return err
+		}
+		report.Mail.OldestPendingSecs = max(0, int64(report.CheckedAt.Sub(oldest).Seconds()))
 		// Node-authoritative means a live agent governs a node; it does not certify that
 		// enforcement was accepted on that protocol (the warning above stays).
 		report.NodeAuthoritative = report.AuthoritativeNodes > 0
-		report.ProductionReady = cfg.Env == "production" && report.NodeAuthoritative && cfg.AgentEnabled() && cfg.SSLMode == "verify-full" && report.GrantsToReconcile == 0 && report.Administrators > 0 && report.EncryptionKeyValid
+		report.ProductionReady = cfg.Env == "production" && report.NodeAuthoritative && cfg.AgentEnabled() && cfg.SSLMode == "verify-full" && report.GrantsToReconcile == 0 && report.Administrators > 0 && report.EncryptionKeyValid && report.Mail.Configured
 		if report.AccountChecked == "" {
 			return nil
 		}

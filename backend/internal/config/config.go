@@ -32,6 +32,15 @@ type Config struct {
 	CookieSecure, TestPurchase, AutoMigrate                                       bool
 	AccessTTL, SessionTTL, RememberTTL                                            time.Duration
 	MaxOpen, MaxIdle, BcryptCost, AuthRate, APIRate                               int
+	// Registration and mail (handoff_auth.md 3.1). Secrets never leave the backend.
+	AllowRegistration                   bool
+	SMTPHost, SMTPUser, SMTPPass        string
+	SMTPFromName                        string
+	SMTPPort                            int
+	SMTPSecure                          bool
+	WebsiteBaseURL                      string
+	AuthMailSecret                      []byte
+	RegistrationDomains, TrustedProxies []string
 }
 
 func Load() (Config, error) {
@@ -127,6 +136,9 @@ func Load() (Config, error) {
 			return c, fmt.Errorf("invalid ALLOWED_ORIGINS")
 		}
 		c.Origins = append(c.Origins, origin)
+	}
+	if err := loadMail(&c); err != nil {
+		return c, err
 	}
 	if c.Host == "" || c.Database == "" || c.User == "" || c.Password == "" {
 		return c, fmt.Errorf("database environment variables are required")
