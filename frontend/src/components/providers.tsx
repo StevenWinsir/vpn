@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { MantineProvider, createTheme } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
-import { api, APIError, message } from '@/lib/api';
+import { api, APIError, message, onSessionEnded } from '@/lib/api';
 import type { User } from '@/lib/types';
 
 type Auth = {
@@ -103,6 +103,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       active = false;
     };
   }, []);
+  // A final 401 anywhere ends the signed-in state at once. setUser bumps the generation, so a
+  // late /auth/me or business response cannot bring the old account back; RequireAuth then
+  // unmounts the protected views (and their dialogs and editors) and redirects to login.
+  useEffect(() => onSessionEnded(() => setUser(null)), [setUser]);
   const logout = useCallback(async () => {
     await api('/auth/logout', { method: 'POST', body: '{}' }, false);
     setUser(null);

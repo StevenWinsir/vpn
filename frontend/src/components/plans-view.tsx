@@ -29,7 +29,12 @@ export function PlansView() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Plan | null>(null);
+  // The confirmation belongs to the account that opened it: when the session ends (or another
+  // account signs in) it disappears instead of submitting for whoever is current.
+  const [choice, setChoice] = useState<{ plan: Plan; userId: string } | null>(null);
+  const selected = choice && user && choice.userId === user.id ? choice.plan : null;
+  const setSelected = (plan: Plan | null) =>
+    setChoice(plan && user ? { plan, userId: user.id } : null);
   const [busy, setBusy] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const requestKey = useRef<string | null>(null);

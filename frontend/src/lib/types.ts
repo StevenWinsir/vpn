@@ -78,6 +78,19 @@ export type RegisterCodeReceipt = {
   expires_in_seconds: number;
   resend_after_seconds: number;
 };
+export type ForgotPasswordReceipt = {
+  message: string;
+  next_send_at: string;
+  resend_after_seconds: number;
+};
+// Returned only for a usable reset token; validation never consumes it.
+export type ResetRules = {
+  valid: true;
+  expires_at: string;
+  expires_in_seconds: number;
+  password_min_bytes: number;
+  password_max_bytes: number;
+};
 // Account password rules, measured in UTF-8 bytes exactly like the backend.
 export const passwordMinBytes = 10;
 export const passwordMaxBytes = 72;

@@ -21,9 +21,25 @@ const noRefreshPaths = [
   '/auth/login',
   '/auth/register',
   '/auth/register-code',
+  '/auth/forgot-password',
+  '/auth/reset-password/validate',
+  '/auth/reset-password',
   '/auth/logout',
   '/auth/refresh',
 ];
+// Final 401 notification (handoff_auth.md 9.1): a protected request that still fails after the
+// single refresh means the server ended this session, for example after a password reset on
+// another device. Listeners clear the signed-in state; network errors and 5xx never fire it.
+const sessionEndedListeners = new Set<() => void>();
+export function onSessionEnded(listener: () => void) {
+  sessionEndedListeners.add(listener);
+  return () => {
+    sessionEndedListeners.delete(listener);
+  };
+}
+function sessionEnded() {
+  for (const listener of [...sessionEndedListeners]) listener();
+}
 let timeoutInFlight: Promise<number> | null = null;
 function requestTimeout(): Promise<number> {
   if (!timeoutInFlight) {
@@ -101,8 +117,13 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
         .finally(() => {
           refreshInFlight = null;
         });
-    await refreshInFlight;
-    return request<T>(path, init);
+    try {
+      await refreshInFlight;
+      return await request<T>(path, init);
+    } catch (final) {
+      if (final instanceof APIError && final.status === 401) sessionEnded();
+      throw final;
+    }
   }
 }
 export function message(error: unknown) {

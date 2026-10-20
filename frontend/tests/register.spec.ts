@@ -80,7 +80,8 @@ test('email code registration end to end through Next.js and the real API', asyn
   await page.getByLabel('姓名 / 昵称').fill('重复注册');
   await page.getByLabel('邮箱地址').fill(email);
   await page.getByRole('button', { name: '获取验证码' }).click();
-  await expect(page.getByText(/发送过于频繁，请在 0:\d\d 后重试/)).toBeVisible();
+  // Up to the full 60-second cooldown remains when the flow above finishes within a second.
+  await expect(page.getByText(/发送过于频繁，请在 (0:\d\d|1:00) 后重试/)).toBeVisible();
   expect((await control('/fixture/account?email=' + encodeURIComponent(email))).body.count).toBe(1);
   expect(errors).toEqual([]);
 });

@@ -69,6 +69,16 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 4. **回滚**：回滚到第 1 轮或更早的二进制会**重新开放无验证码注册**（旧接口不认识验证码）。如必须回滚，先在入口层阻断 `/api/v1/auth/register` 与 `/api/v1/auth/register-code`，再替换二进制（handoff_auth.md 12.2）。
 5. **接口细节**：请求/响应与错误码见 docs/auth-mail.md“注册接口”。
 
+## 邮件链接找回与密码重置（handoff_auth.md 第 3 轮）
+
+本轮新增 `POST /api/v1/auth/forgot-password`、`/auth/reset-password/validate`、`/auth/reset-password`，以及网站 `/forgot-password`、`/reset-password` 页面；网站与客户端登录、网站刷新的内部加锁顺序随之调整（外部契约不变）。无新迁移。
+
+1. **所有实例同一版本后才开放重置**：重置依赖“登录/刷新在锁内复核 `auth_version`”。滚动发布期间若仍有旧实例承接登录或刷新，可能在重置后创建旧密码会话。多实例部署时，先让全部 API 实例升级到本版本，再发布包含找回入口的网站；或在全部实例升级前于入口层阻断 `/api/v1/auth/forgot-password` 与 `/api/v1/auth/reset-password`。
+2. **找回可用性**：`/meta` 的 `password_reset_enabled` 等于“邮件配置完整”。邮件未配置时找回页显示“暂不可用”，接口返回 503 `mail_unavailable`。找回与 `ALLOW_REGISTRATION` 无关：关闭注册不影响已有用户找回。
+3. **代理与日志**：重置链接的 token 在 URL fragment 中，不会出现在 Nginx/Next.js 访问日志；它只出现在 `/api/v1/auth/reset-password*` 的 POST 请求体中。不要开启记录请求体的访问日志或 APM 采样。`/reset-password` 页面响应 `Referrer-Policy: no-referrer`、`X-Robots-Tag: noindex` 并按请求渲染（no-store）。
+4. **回滚**：回滚到第 2 轮或更早的二进制时，旧二进制没有找回接口，网站找回页会显示请求失败；更早版本还缺少登录竞态复核。先在入口层关闭网站找回入口与上述接口，再替换二进制。已完成的重置不会被回滚：新密码哈希、递增的 `auth_version`、已撤销的会话都保持（handoff_auth.md 12.2）。
+5. **接口细节**：见 docs/auth-mail.md“找回与重置接口”。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：
