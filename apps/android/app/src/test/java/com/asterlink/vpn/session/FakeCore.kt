@@ -18,6 +18,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.CompletableDeferred
 
 /**
  * A scripted stand-in for the Go Core behind the binding: the same ipc-v1 documents, the same
@@ -39,6 +40,9 @@ class FakeCore : CoreTransport {
     var connectFailure: ErrorView? = null
     val calls = mutableListOf<String>()
     val loginPasswords = mutableListOf<String>()
+    val loginEmails = mutableListOf<String>()
+    /** Runs while a login is "on the wire" (before the reply), to place a race exactly there. */
+    var onLogin: (String) -> Unit = {}
     val deviceIds = mutableListOf<String>()
 
     fun count(command: String) = calls.count { it == command }
@@ -101,6 +105,8 @@ class FakeCore : CoreTransport {
         val email = payload.getValue("email").jsonPrimitive.content
         val password = payload.getValue("password").jsonPrimitive.content
         loginPasswords += password
+        loginEmails += email
+        onLogin(password)
         deviceIds += payload.getValue("device_id").jsonPrimitive.content
         val account = accounts[email.lowercase()]
         if (account == null || account.password != password) {
@@ -179,7 +185,16 @@ class FakeCredentials : CredentialStore {
         items[account] = password
     }
 
+    /** While set, reads wait for it: a user action can be placed exactly while a read is in flight. */
+    var readGate: CompletableDeferred<Unit>? = null
+    var pendingReads = 0
+
     override suspend fun read(account: String): String? {
+        readGate?.let { gate ->
+            pendingReads++
+            gate.await()
+            pendingReads--
+        }
         if (failRead) throw CredentialStoreException("keystore unavailable")
         return items[account]
     }

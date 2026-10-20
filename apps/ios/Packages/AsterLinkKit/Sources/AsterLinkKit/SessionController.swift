@@ -76,11 +76,14 @@ public final class SessionController {
         state.phase = .signedOut
         guard started, !state.email.isEmpty else { return }
         let email = state.email
+        let version = operationVersion
         let saved: String?
         do { saved = try await credentials.read(account: accountFor(email)) } catch {
             state.warning = .local(LocalCodes.credentialReadFailed)
             return
         }
+        // The user may have signed in by hand while the Keychain was being read: that login wins.
+        guard version == operationVersion, state.phase == .signedOut else { return }
         if let saved, !saved.isEmpty {
             state.rememberPassword = true
             await signIn(email: email, password: saved, remember: true, automatic: true)
@@ -140,7 +143,7 @@ public final class SessionController {
                     state.phase = .signedOut
                     state.message = .core(failure.code, failure.message)
                     // A saved password the server rejects is stale: stop offering it.
-                    if failure.code == "invalid_credentials" { await tryDelete(accountFor(email)) }
+                    if failure.code == "invalid_credentials" { await forgetRejected(email: email, password: password) }
                 } else {
                     state.phase = .signedIn; state.connectedSinceMillis = nil
                     await persist(email: email, password: password, remember: remember)
@@ -184,6 +187,16 @@ public final class SessionController {
                 preferences.setRememberedEmail(nil)
             }
         }
+    }
+
+    /// A saved password the server rejects is stale (changed on the website, for example): stop
+    /// offering it. Only the item that still holds exactly the rejected password goes, so a typo in
+    /// a manual login never drops a good saved password, and a password saved meanwhile by a newer
+    /// login survives. The email and the device identity are kept.
+    private func forgetRejected(email: String, password: String) async {
+        let key = accountFor(email)
+        guard let saved = try? await credentials.read(account: key), saved == password else { return }
+        await tryDelete(key)
     }
 
     private func tryDelete(_ key: String) async {
@@ -531,12 +544,15 @@ public final class SessionController {
         state.message = kept ?? ((error.map { !$0.message.isEmpty } ?? false) ? .core(error!.code, error!.message) : .local(LocalCodes.sessionEnded))
         guard released || (error?.code.hasPrefix("native_session_") ?? false), autoRelogins < 1 else { return }
         autoRelogins += 1
+        // One silent re-login for an expired session; a refused password is never retried. The
+        // account is fixed now, and a sign-in, sign-out or account switch by the user before the
+        // Keychain answers drops it instead of acting on the newer state.
+        let email = state.email
+        let version = operationVersion
         Task {
-            // One silent re-login for an expired session; a refused password is never retried.
-            let email = state.email
-            if let saved = try? await credentials.read(account: accountFor(email)), !saved.isEmpty {
-                await signIn(email: email, password: saved, remember: true, automatic: true)
-            }
+            guard let saved = try? await credentials.read(account: accountFor(email)), !saved.isEmpty,
+                  version == operationVersion, state.phase == .signedOut, !state.busy else { return }
+            await signIn(email: email, password: saved, remember: true, automatic: true)
         }
     }
 

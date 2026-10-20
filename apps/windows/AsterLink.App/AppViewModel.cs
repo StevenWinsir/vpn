@@ -98,6 +98,7 @@ public sealed class AppViewModel : INotifyPropertyChanged
         CopyDiagnosticsCommand = new RelayCommand(_ => CopyDiagnostics(), _ => true);
         OpenPlansCommand = new RelayCommand(_ => Open(session?.PlansUrl), _ => session is not null);
         OpenRegisterCommand = new RelayCommand(_ => Open(session?.RegisterUrl), _ => session is not null);
+        OpenForgotPasswordCommand = new RelayCommand(_ => Open(session?.ForgotPasswordUrl), _ => session is not null);
         OpenDashboardCommand = new RelayCommand(_ => Open(session?.DashboardUrl), _ => session is not null);
         OpenOrdersCommand = new RelayCommand(_ => Open(session?.OrdersUrl), _ => session is not null);
     }
@@ -131,6 +132,7 @@ public sealed class AppViewModel : INotifyPropertyChanged
     public ICommand CopyDiagnosticsCommand { get; }
     public ICommand OpenPlansCommand { get; }
     public ICommand OpenRegisterCommand { get; }
+    public ICommand OpenForgotPasswordCommand { get; }
     public ICommand OpenDashboardCommand { get; }
     public ICommand OpenOrdersCommand { get; }
 

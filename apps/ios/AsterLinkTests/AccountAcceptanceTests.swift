@@ -94,12 +94,17 @@ struct AccountAcceptanceTests {
         let vip = rig.emails["vip"]!
         let password = rig.password
 
-        // A01: a wrong password is refused online and a stale saved one is forgotten.
+        // A01: a wrong password is refused online. A typo leaves the saved item alone; the saved
+        // password itself, once refused (changed on the website), is forgotten (handoff_auth.md 9.2).
         await rig.restart()
         try await rig.credentials.save(account: rig.key("vip"), password: "stale-password")
         await rig.controller.launch()
         await rig.controller.signIn(email: vip, password: "definitely-wrong", remember: true)
         var stale = try await rig.credentials.read(account: rig.key("vip"))
+        rig.record("A01.typo_keeps_saved", rig.state.phase == .signedOut && rig.state.message?.code == "invalid_credentials" && stale == "stale-password",
+                   "phase \(rig.state.phase), message \(rig.state.message?.code ?? "-"), saved item kept \(stale == "stale-password")")
+        await rig.controller.signIn(email: vip, password: "stale-password", remember: true)
+        stale = try await rig.credentials.read(account: rig.key("vip"))
         rig.record("A01.wrong_password", rig.state.phase == .signedOut && rig.state.message?.code == "invalid_credentials" && stale == nil,
                    "phase \(rig.state.phase), message \(rig.state.message?.code ?? "-"), stale password deleted \(stale == nil)")
 

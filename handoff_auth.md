@@ -596,3 +596,35 @@ iOS 的 APP 和 PacketTunnel Extension 都能运行 Core，但同一时刻只有
 3. 第 2 轮 `register.spec.ts` 末尾的冷却断言假定流程超过 1 秒，本机流程约 1 秒时会显示 `1:00`；已放宽为接受 `0:ss` 或 `1:00`（仅测试）。
 4. `validate`/`reset` 沿用认证入口的进程内 IP 限流，未另设独立参数；长随机 token 不适用六位码的邮箱试错预算。
 5. 四平台“忘记密码”入口、旧保存密码处理与真实 APP 会话终止属第 4 轮；`flow.spec.ts` 与发布演练脚本仍待 R4-09 适配（同第 2 轮记录第 1 条）。
+
+### 第 4 轮记录（2026-10-20）：四平台联调、回归与发布验收
+
+- **分支/基线：** `worktree-auth-round4-platforms`，基于 main `c84de59`（含第 3 轮 PR #48）；PR 与 CI 结果见 PR 页面。
+- **环境：** macOS 26（darwin/arm64），Go 1.26.6，Swift（Xcode 工具链）、Node 26.10.0、Next.js 16.3.6（生产构建 `--webpack`）、Playwright + 本机 Chrome；私有 PostgreSQL 16（Unix socket / 演练为仅 loopback 的 SCRAM 集群，结束销毁）；Fake/捕获 Mailer 经真实 worker 投递。本机**无 JDK/Android SDK、无 .NET、无 Windows、无已签名 iOS 设备或付费 Apple 团队、无 HTTPS 验收域名、未持有真实 SMTP 授权码**；Android 与 Windows 只能由 PR 的平台 CI 编译与运行单测。未连接真实 SMTP、未读取真实 `.env`。
+- **交付：**
+  - 四平台“忘记密码”入口：macOS `SessionController.forgotPasswordURL` + 登录页 `Link`；Windows `ForgotPasswordUrl` + `OpenForgotPasswordCommand` + `LoginView` 按钮；Android `WebPage.ForgotPassword("/forgot-password")` + 登录页按钮（中/英文案）；iOS 登录页按钮复用 `AppModel.openWebsite("forgot-password")`。地址均由既有 `WEBSITE_BASE_URL` 拼接，APP 内无邮箱/验证码/重置逻辑。
+  - 旧保存密码（9.2）：四平台 `invalid_credentials` 改为**比较后删除**——只有保存项仍等于刚被拒绝的密码才删除；邮箱偏好与设备 UUID 保留。**行为变更**：此前手动输错任意密码也会删除已保存的正确密码（Windows/Android/macOS/iOS 单测原本断言该行为），现按 9.2“凭据删除应绑定本次尝试使用的账号和凭据版本”只删被拒绝的那一项；相应旧断言改为“输入的正是保存的旧密码”；Android 模拟器与 iOS 账户验收的 A01 同步拆为 `A01.typo_keeps_saved`（输错保留）与 `A01.wrong_password`（提交保存的旧密码被拒后删除）。
+  - 操作版本保护：macOS 新增 `operationVersion`（登录、退出、动作递增；轮询/动作结果与版本不符即丢弃）；macOS/iOS/Android 的静默重登在调度时固定账号与版本，读取凭据后若用户已登录、切换账号或退出则放弃；iOS/Android 启动时读取保存密码期间若用户已手动登录，启动的自动登录放弃。Windows 的读取为同步调用，无此窗口，未改。
+  - 回归资产（R4-09）：`frontend/tests/flow.spec.ts` 改走验证码注册（从演练收件箱取码）并把 `/forgot-password` 加入移动端页面检查；`playwright.config.ts` 增加 `testMatch: ['flow.spec.ts']`（此前会误跑需要目录夹具的 4 个用例）；`scripts/test-release-rehearsal.py` 重写为三二进制演练（旧版本 `67e7b37` 产生旧数据 → 当前代码迁移 → 回滚到已强制验证的 `c84de59`），按旧表**原有列**比较指纹并单独核对新增列缺省值、按 17 张表集合（非计数）核对，环境清理名单补 `SMTP_`/`AUTH_MAIL_`/`REGISTRATION_`/`ALLOW_REGISTRATION`/`WEBSITE_BASE_URL`/`TRUSTED_PROXIES` 等；浏览器阶段改用新测试装配 `TestReleaseRehearsalFixture`（与 `cmd/api` 同样从环境加载配置，worker 投递到捕获收件箱，取码/取链接只经控制令牌端点）；新增旧账户邮件重置与回滚后核验。
+  - 文档：`backend/DEPLOYMENT.md` 第 4 轮条目、`docs/auth-mail.md`“四平台 APP”、`docs/deployment.md` 演练说明。
+- **整体回归（本机）：** `python3 scripts/test-native.py`（后端全部包，`-race`）exit 0、0 个 FAIL；`go vet ./...` 通过；macOS `swift build` 与 `swift test` 52 个用例 0 失败；iOS `AsterLinkKit` `swift test` 82 个用例 0 失败；`test-release-rehearsal.py` 缺省目标两次 PASS（`/tmp/r4-rehearsal-1`、`-2`）、`--rollback-ref 6bc0742` 一次 PASS（三个不同二进制，`/tmp/r4-rehearsal-3`），演练内含前端 `build --webpack`、`typecheck`、`lint` 与 2 个浏览器用例。Android 单测/UI 截图、Windows 单测、iOS APP 目标编译由 PR CI 执行，结果见 PR。
+
+| 编号 | 证据（测试） | 实际结果 | 结论 |
+| --- | --- | --- | --- |
+| R4-01 | 四平台入口单测：macOS `testWebsiteLinksPointAtConfiguredSite`、Windows `Website_links_come_from_the_build_configuration`（地址断言）；Android/iOS 入口经既有 `openWebsite` 路径 | 四平台“注册账号”“忘记密码”均指向构建配置的 `WEBSITE_BASE_URL` 下 `/register`、`/forgot-password`；APP 内未复制任何邮箱业务；新密码手动登录走既有 `/client/login`（单测：旧保存项失败后新密码登录成功并保存，同一账户，设备 UUID 不变） | 部分：地址与登录状态机 PASS；**四台真实设备/虚拟机上点击入口、完成网站流程再回 APP 登录未执行**（本机无 Android/Windows 运行环境，iOS/macOS 实机需签名） |
+| R4-02 | 共享 Core 与后端：第 3 轮 `TestResetRevokesAllSessionsAndKeepsAccount`（四平台 NativeSession 撤销后 session/nodes/config/traffic 均 401 `native_session_expired`）；本轮演练中旧账户重置后两个真实 HTTP 客户端会话的 session 与 traffic 均 401 | 后端撤销与错误码在 API 层成立，四平台 Core 既有 `TerminatesSession` 路径处理该错误码 | **未执行**（真实平台）：前台/后台连接、应用重启、睡眠恢复/网络切换下的 Android 前台服务、iOS 隧道、桌面守护服务停止时刻需真实设备与签名，本轮无条件 |
+| R4-03 | macOS `PasswordResetTests`（6 例）、iOS `PasswordResetTests`（4 例）、Android `SessionControllerTest` 新增 5 例、Windows `PasswordResetTests`（3 例） | 启动时旧保存密码只在线尝试 1 次 → `invalid_credentials` → 删除该项、保留邮箱，之后无重试 → 新密码手动登录成功并保存；手动输错不删正确保存项；登录途中另一处保存的新密码不被删除；静默重登在用户先退出/先登录另一账号时放弃，且只会把保存密码发给它自己的账号；启动读凭据期间用户手动登录，旧读取不再登录；退出前开始的轮询结果在退出后被丢弃。**变异验证**：把 macOS/iOS 控制器换回本轮前版本，macOS 6 例中 5 例失败（含“把 A 账号的保存密码发给表单里新输入的邮箱”）、iOS 4 例中 3 例失败（含“用户已登录 B 账号后被迟到的静默重登切回已过期的 A 账号”） | 部分：macOS/iOS 本机 PASS；Android/Windows 单测已编写，**以 CI 结果为准**；真实 Keychain/Keystore/凭据管理器上的交错未在设备上执行 |
+| R4-04 | 共享 Core：`native/core/internal/managed/handoff.go` 的 `AdoptHandoff` 先在线核验会话（既有测试）；后端撤销使旧会话 401 | iOS 旧 ticket 在重置后被服务器拒绝的链路由既有 adopt 在线核验保证 | **未执行**：iOS APP/扩展独占 Core、扩展重启、APP 离开前台，Android 前台 VPN 服务，Windows/macOS 守护进程所有权均需真实设备/签名/系统服务 |
+| R4-05 | 演练 `summary.json` 第 4、6 条；第 3 轮 `TestResetRefreshAndTrafficOrdering` | 两个会话已确认报告合计扣费 1,000,000 单位，重置后余额与报告行不变；重置后旧 token 的报告 401 不入账（当前与回滚二进制均如此），无重放 | 部分：服务端账本 PASS；**Core 末次确认得到 401 后不死循环、未确认尾量不计入新会话**依赖既有 Core 终止路径，本轮未在真实隧道上测量 |
+| R4-06 | `flow.spec.ts`（演练，生产构建 + Chrome，1440px 与 390px）；第 2、3 轮 `register.spec.ts`、`reset.spec.ts`、`api-proxy.test.mjs`（429/503、跨标签、Cookie 清理） | 验证码注册、购买、Cookie 轮换、退出/重新登录通过；`/`、`/login`、`/register`、`/forgot-password`、`/plans` 在 390px 无横向溢出；受保护页跳登录；页面错误为 0 | 部分：桌面 Chrome 与移动视口 PASS；**真实手机浏览器与软键盘未执行** |
+| R4-07 | — | 需要部署人员的 QQ SMTP 授权码与验收人员拥有的 QQ/Gmail/163 收件箱 | **未执行**（真实凭据只能由部署人员填写到 `backend/.env`，不由本轮代填） |
+| R4-08 | 第 1/2 轮 `TestClientAddressTrust`、`api-proxy` 来源地址用例（分段） | 分段 PASS（见第 1、2 轮） | **未执行**：HTTPS 验收域名、证书、真实 Nginx → Next.js → Go 整链、Secure Cookie 与 SMTP 故障演练需目标环境 |
+| R4-09 | `test-native.py`；`go vet`；macOS/iOS `swift test`；`test-release-rehearsal.py` ×3（见上） | 后端全部包通过；演练：旧版本数据迁移两次后原有列逐值不变、新增列为缺省值（`auth_version=1`、未验证）、17 张表集合正确；当前二进制关闭注册时旧接口请求 403 `registration_disabled` 且不建号；验证码注册浏览器闭环；旧账户（非白名单域名、未验证）邮件链接重置：token 一次性、两类会话撤销、旧密码 401、新密码可用、`auth_version=2` 且由重置补齐验证时间；全库备份恢复 17 表指纹迁移前后一致；回滚到 `c84de59`（及另测 `6bc0742`）并**开启注册**时无验证码注册 400 `verification_required`、旧密码仍 401、撤销的 token 仍 401、订单与已确认流量保留、新密码可登录 | 部分：本机部分 PASS；Android/Windows/iOS APP 目标以 CI 为准。缺省回滚目标与本轮后端生产二进制相同（`identical_binaries: current=rollback`，本轮未改后端生产代码），跨版本证据来自 `--rollback-ref 6bc0742` 一次 |
+| R4-10 | 审查本轮差异与演练输出 | 差异中无真实凭据；演练的 SMTP 口令、邮件密钥、JWT、数据库口令均为每次随机生成、只存在于临时目录与进程环境；验证码/重置 token 不写入日志或 `summary.json`；演练产物仅含脱敏检查项、二进制与备份的 SHA-256 | 部分：源码差异与演练产物 PASS；**安装包公开配置与发布截图**随各平台发布另行审核，本轮未出包 |
+
+**已知限制与交接：**
+
+1. 本轮无法在本机执行的项目（R4-01 实机、R4-02、R4-04、R4-07、R4-08 及 R4-03/R4-05 的设备部分）均标为“未执行/部分”，按第 10 节通过标准，**Auth 完善尚未达到第 13 节最终完成定义**；需要在具备 Android 模拟器/真机、Windows、已签名 iOS/macOS、HTTPS 验收域名与真实 QQ SMTP 的环境补测后再发布对应平台。
+2. 保存密码删除语义变更（见“交付”）：手动输错不再删除已保存的正确密码。若产品希望“任何一次被拒绝都清除保存项”，需要另行决定，不能与 9.2 的绑定要求同时满足。
+3. 演练浏览器阶段运行的是当前 API 的 Go 测试装配而非 `cmd/api` 二进制（普通二进制只信任系统证书库，无法向本机测试 SMTP 投递；不新增生产 CA 配置项）；迁移、旧账户登录、客户端计量、回滚与恢复仍使用普通二进制。
+4. `docs/deployment.md` 中“最新执行结果见 HANDOFF.md 第 25 节”的引用沿用旧文，未在本轮调整。

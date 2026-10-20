@@ -98,7 +98,7 @@ class SessionControllerTest {
         val rig = rig()
         rig.credentials.items[accountKey] = "stale"
         rig.controller.launchNow()
-        rig.controller.signInNow(email, "wrong", remember = true, automatic = false)
+        rig.controller.signInNow(email, "stale", remember = true, automatic = false)
         assertEquals(AppPhase.SignedOut, rig.state.phase)
         assertEquals("invalid_credentials", rig.state.message?.code)
         assertEquals("邮箱或密码不正确", rig.state.message?.text)
@@ -249,6 +249,98 @@ class SessionControllerTest {
         rig.controller.selectNow("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
         assertNull(rig.state.message)
         assertTrue(rig.state.snapshot.configReady)
+    }
+
+    // ---- handoff_auth.md R4-03: the password was reset on the website ---------------------------
+
+    @Test
+    fun theOldSavedPasswordIsTriedOnceThenForgottenAndTheNewOneSaved() = runTest {
+        val rig = rig() // the server only accepts `password` now
+        rig.credentials.items[accountKey] = "old-password"
+        rig.preferences.email = email
+        rig.controller.launchNow()
+        assertEquals(listOf("old-password"), rig.core.loginPasswords)
+        assertEquals(AppPhase.SignedOut, rig.state.phase)
+        assertEquals("invalid_credentials", rig.state.message?.code)
+        assertTrue(rig.credentials.items.isEmpty())
+        assertEquals(email, rig.preferences.email) // the non-secret email still prefills the form
+        assertEquals(email, rig.state.email)
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(1, rig.core.count("login")) // no retry loop after a refused password
+
+        rig.controller.signInNow(email, password, remember = true, automatic = false)
+        assertEquals(AppPhase.SignedIn, rig.state.phase)
+        assertEquals(mapOf(accountKey to password), rig.credentials.items)
+        assertEquals(listOf("33333333-3333-4333-8333-333333333333", "33333333-3333-4333-8333-333333333333"), rig.core.deviceIds)
+    }
+
+    @Test
+    fun aTypoInAManualLoginKeepsTheSavedPassword() = runTest {
+        val rig = rig()
+        rig.credentials.items[accountKey] = password
+        rig.controller.launchNow()
+        rig.controller.signInNow(email, "typo-password", remember = true, automatic = false)
+        assertEquals(AppPhase.SignedOut, rig.state.phase)
+        assertEquals(mapOf(accountKey to password), rig.credentials.items)
+    }
+
+    @Test
+    fun aRefusalNeverDeletesAPasswordSavedMeanwhile() = runTest {
+        val rig = rig()
+        rig.credentials.items[accountKey] = "old-password"
+        rig.controller.launchNow()
+        // While the old password is on its way to the server, another login saves the new one.
+        rig.core.onLogin = { if (it == "old-password") rig.credentials.items[accountKey] = password }
+        rig.controller.signInNow(email, "old-password", remember = true, automatic = false)
+        assertEquals(AppPhase.SignedOut, rig.state.phase)
+        assertEquals(mapOf(accountKey to password), rig.credentials.items)
+    }
+
+    @Test
+    fun aManualLoginDuringTheLaunchKeystoreReadWins() = runTest {
+        val rig = rig()
+        rig.credentials.items[accountKey] = "old-password"
+        rig.preferences.email = email
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        rig.credentials.readGate = gate
+        rig.controller.launch()
+        runCurrent()
+        assertEquals(1, rig.credentials.pendingReads) // the launch is waiting for the Keystore
+        rig.credentials.readGate = null
+        // The login form is already up: the user types the new password before the Keystore answers.
+        rig.controller.signIn(email, password, remember = true)
+        runCurrent()
+        assertEquals(AppPhase.SignedIn, rig.state.phase)
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(password), rig.core.loginPasswords) // the stale launch read never logs in
+        assertEquals(AppPhase.SignedIn, rig.state.phase)
+        assertEquals(mapOf(accountKey to password), rig.credentials.items)
+    }
+
+    @Test
+    fun aSilentReLoginIsDroppedWhenTheUserSignsInToAnotherAccountFirst() = runTest {
+        val rig = rig()
+        rig.core.accounts["other@example.invalid"] = FakeCore.Account("Other-Fixture-Password", FakeCore.VIP)
+        rig.credentials.items[accountKey] = password
+        rig.preferences.email = email
+        rig.controller.launchNow()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        rig.credentials.readGate = gate
+        rig.core.mutate { it.copy(state = State.SIGNED_OUT, lastError = ErrorView("native_session_expired", "登录已失效，请重新登录")) }
+        advanceTimeBy(2_001)
+        runCurrent()
+        assertEquals(AppPhase.SignedOut, rig.state.phase)
+        assertEquals(1, rig.credentials.pendingReads) // the silent re-login is reading the Keystore
+        rig.credentials.readGate = null
+        rig.controller.signIn("other@example.invalid", "Other-Fixture-Password", remember = false)
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(email, "other@example.invalid"), rig.core.loginEmails)
+        assertEquals(AppPhase.SignedIn, rig.state.phase)
+        assertEquals("other@example.invalid", rig.state.email)
     }
 
     @Test

@@ -80,6 +80,12 @@
 - 已撤销的客户端会话：`/client/*` 全部 401 `native_session_expired`，四平台 Core 已把它作为会话终止处理；旧 token 的流量报告不会入账，撤销前已提交的报告保持不变。
 - 网站登录与客户端登录在 bcrypt 校验后，于创建会话的事务中锁 User 并复核 `auth_version` 与哈希；期间若已重置则返回 401 `invalid_credentials`，不会创建旧密码会话。网站刷新改为“事务外定位候选 → 锁 User → 锁 Session 复核”，与重置的锁顺序一致。
 
+### 四平台 APP（第 4 轮）
+
+- 登录页“注册账号”“忘记密码”只打开 `WEBSITE_BASE_URL` 下的 `/register`、`/forgot-password`（macOS/Windows 系统浏览器、Android Custom Tabs、iOS SFSafariViewController）；APP 内没有邮箱、验证码或重置逻辑，也不做重置后自动登录。
+- 网站重置后，在线 APP 在下一次 Core 会话检查、目录轮询或流量上报得到 `native_session_expired` 时结束会话；至多一次保存密码静默重登，遇到 `invalid_credentials` 即停止并要求手动输入。
+- 保存密码只在“仍等于刚被拒绝的那个密码”时删除：手动输错不会删掉正确的保存项，另一处登录刚保存的新密码也不会被旧结果删除；邮箱与设备 UUID 保留。启动时的自动登录与过期后的静默重登在读取凭据期间若用户已手动登录、切换账号或退出，则放弃，不会覆盖用户的新操作。
+
 ## 数据库变更（附加迁移）
 
 | 对象 | 内容 |

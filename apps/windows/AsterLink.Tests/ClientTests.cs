@@ -355,7 +355,7 @@ public class SessionControllerTests
         harness.Credentials.Items[harness.Key("user@example.com")] = "old";
         harness.Script(Replies.SignedOut(), loginError: new ErrorView { Code = "invalid_credentials", Message = "邮箱或密码不正确" });
         await harness.Session.LaunchAsync(); // no remembered email yet: nothing automatic
-        await harness.Session.SignInAsync("user@example.com", "wrong", remember: true);
+        await harness.Session.SignInAsync("user@example.com", "old", remember: true);
 
         Assert.Equal(AppPhase.SignedOut, harness.Session.Phase);
         Assert.Equal("邮箱或密码不正确", harness.Session.Message);
@@ -712,5 +712,74 @@ public class SessionControllerTests
         var harness = new Harness();
         Assert.Equal("https://site.example.test/plans", harness.Session.PlansUrl.AbsoluteUri);
         Assert.Equal("https://site.example.test/register", harness.Session.RegisterUrl.AbsoluteUri);
+        Assert.Equal("https://site.example.test/forgot-password", harness.Session.ForgotPasswordUrl.AbsoluteUri);
+    }
+}
+
+/// <summary>handoff_auth.md R4-03: the password was reset on the website while the old one was saved here.</summary>
+public class PasswordResetTests
+{
+    private static readonly ErrorView Refused = new() { Code = "invalid_credentials", Message = "邮箱或密码不正确" };
+
+    /// <summary>Logins succeed only with <paramref name="accepted"/>; <paramref name="onLogin"/> runs while a login is on the wire.</summary>
+    private static List<string> Server(Harness harness, string accepted, Action<string>? onLogin = null)
+    {
+        var passwords = new List<string>();
+        harness.Transport.Handler = (command, _, payload) =>
+        {
+            if (command != IpcCommands.Login) return Task.FromResult(Replies.Snapshot(Replies.Plan()));
+            var password = payload!.Value.GetProperty("password").GetString()!;
+            passwords.Add(password);
+            onLogin?.Invoke(password);
+            return Task.FromResult(password == accepted ? Replies.Snapshot(Replies.Plan()) : Replies.Snapshot(Replies.SignedOut(), Refused));
+        };
+        return passwords;
+    }
+
+    [Fact]
+    public async Task The_old_saved_password_is_tried_once_then_forgotten_and_the_new_one_saved()
+    {
+        var harness = new Harness(rememberedEmail: "user@example.com");
+        harness.Credentials.Items[harness.Key("user@example.com")] = "old-password";
+        var passwords = Server(harness, accepted: "new-password");
+        await harness.Session.LaunchAsync();
+
+        Assert.Equal(["old-password"], passwords);
+        Assert.Equal(AppPhase.SignedOut, harness.Session.Phase);
+        Assert.Equal("邮箱或密码不正确", harness.Session.Message);
+        Assert.Empty(harness.Credentials.Items);
+        Assert.Equal("user@example.com", harness.Preferences.RememberedEmail); // the non-secret email still prefills the form
+        Assert.Equal("user@example.com", harness.Session.Email);
+
+        await harness.Session.SignInAsync("user@example.com", "new-password", remember: true);
+        Assert.Equal(AppPhase.SignedIn, harness.Session.Phase);
+        Assert.Equal("new-password", harness.Credentials.Items[harness.Key("user@example.com")]);
+        Assert.Equal(["old-password", "new-password"], passwords);
+    }
+
+    [Fact]
+    public async Task A_typo_in_a_manual_login_keeps_the_saved_password()
+    {
+        var harness = new Harness();
+        harness.Credentials.Items[harness.Key("user@example.com")] = "good-password";
+        Server(harness, accepted: "good-password");
+        await harness.Session.LaunchAsync();
+        await harness.Session.SignInAsync("user@example.com", "typo-password", remember: true);
+        Assert.Equal(AppPhase.SignedOut, harness.Session.Phase);
+        Assert.Equal("good-password", harness.Credentials.Items[harness.Key("user@example.com")]);
+    }
+
+    [Fact]
+    public async Task A_refusal_never_deletes_a_password_saved_meanwhile()
+    {
+        var harness = new Harness();
+        var key = harness.Key("user@example.com");
+        harness.Credentials.Items[key] = "old-password";
+        // While the old password is on its way to the server, another login saves the new one.
+        Server(harness, accepted: "new-password", onLogin: p => { if (p == "old-password") harness.Credentials.Items[key] = "new-password"; });
+        await harness.Session.LaunchAsync();
+        await harness.Session.SignInAsync("user@example.com", "old-password", remember: true);
+        Assert.Equal(AppPhase.SignedOut, harness.Session.Phase);
+        Assert.Equal("new-password", harness.Credentials.Items[key]);
     }
 }

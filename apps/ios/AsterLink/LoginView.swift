@@ -153,10 +153,15 @@ struct LoginView: View {
     }
 
     private var links: some View {
-        Button("注册账号") { model.openWebsite("register", title: "注册账号") }
-            .font(.subheadline.weight(.semibold))
-            .frame(minHeight: 44)
-            .accessibilityIdentifier("login-register")
+        // Both flows run on the website (verification code, reset link); the app only opens it.
+        HStack(spacing: 24) {
+            Button("注册账号") { model.openWebsite("register", title: "注册账号") }
+                .accessibilityIdentifier("login-register")
+            Button("忘记密码") { model.openWebsite("forgot-password", title: "忘记密码") }
+                .accessibilityIdentifier("login-forgot-password")
+        }
+        .font(.subheadline.weight(.semibold))
+        .frame(minHeight: 44)
     }
 
     private var footer: some View {

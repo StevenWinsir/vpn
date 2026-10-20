@@ -32,6 +32,9 @@ public final class SessionController {
     private let devices: DeviceIdentityProvider
     private var pollTask: Task<Void, Never>?
     private var autoRelogins = 0
+    /// Bumped by every user action that changes the session; a result or a scheduled silent
+    /// re-login that started under an older version lost the race and is discarded.
+    private var operationVersion = 0
     private let pollInterval: Duration
 
     public init(client: CoreClient, environment: ClientEnvironment, credentials: CredentialStore,
@@ -48,6 +51,7 @@ public final class SessionController {
     public var websiteBase: URL { environment.websiteBase }
     public var plansURL: URL { environment.websiteBase.appendingPathComponent("plans") }
     public var registerURL: URL { environment.websiteBase.appendingPathComponent("register") }
+    public var forgotPasswordURL: URL { environment.websiteBase.appendingPathComponent("forgot-password") }
 
     private func account(for email: String) -> String { CredentialAccount.key(apiBase: environment.apiBase, email: email) }
 
@@ -92,6 +96,7 @@ public final class SessionController {
             return
         }
         guard !busy else { return }
+        operationVersion += 1
         busy = true
         message = nil
         warning = nil
@@ -106,10 +111,7 @@ public final class SessionController {
             if let failure = reply.actionError {
                 phase = .signedOut
                 message = failure.message
-                if failure.code == "invalid_credentials" {
-                    // A saved password the server rejects is stale; stop offering it.
-                    try? credentials.delete(account: account(for: email))
-                }
+                if failure.code == "invalid_credentials" { forgetRejected(email: email, password: password) }
                 return
             }
             phase = .signedIn
@@ -143,9 +145,20 @@ public final class SessionController {
         }
     }
 
+    /// A saved password the server rejects is stale (changed on the website, for example): stop
+    /// offering it. Only the item that still holds exactly the rejected password goes, so a typo
+    /// in a manual login never drops a good saved password, and a password saved meanwhile by a
+    /// newer login survives. The device identity is stored apart and is never touched.
+    private func forgetRejected(email: String, password: String) {
+        let key = account(for: email)
+        guard let saved = (try? credentials.password(for: key)) ?? nil, saved == password else { return }
+        try? credentials.delete(account: key)
+    }
+
     /// Explicit sign-out also forgets the saved password for this account.
     public func signOut() async {
         stopPolling()
+        operationVersion += 1
         let key = account(for: snapshot.user?.email ?? email)
         phase = .signedOut
         do { snapshot = try await client.logout() } catch { snapshot = .signedOut }
@@ -193,10 +206,13 @@ public final class SessionController {
     }
 
     private func run(_ action: @escaping () async throws -> CoreActionReply) async {
+        operationVersion += 1
+        let version = operationVersion
         busy = true
         defer { busy = false }
         do {
             let reply = try await action()
+            guard version == operationVersion, phase == .signedIn else { return }
             apply(reply.snapshot)
             message = reply.actionError?.message
         } catch let error as CoreCommandError where error.code == HelperErrorCode.workerFailed.rawValue {
@@ -231,13 +247,18 @@ public final class SessionController {
 
     private func poll() async {
         guard phase == .signedIn, !busy else { return }
+        let version = operationVersion
         do {
             let latest = try await client.readSnapshot()
+            // A sign-out, a new sign-in or an action raced this read: its snapshot is old news.
+            guard version == operationVersion, phase == .signedIn else { return }
             serviceProblem = nil
             apply(latest)
         } catch let error as CoreCommandError where error.code == HelperErrorCode.workerFailed.rawValue {
+            guard version == operationVersion else { return }
             workerLost()
         } catch {
+            guard version == operationVersion else { return }
             serviceProblem = Self.describe(error)
         }
     }
@@ -261,11 +282,18 @@ public final class SessionController {
         phase = .signedOut
         message = latest.lastError?.message ?? "登录已失效，请重新登录"
         let code = latest.lastError?.code ?? ""
+        let email = self.email
         guard code.hasPrefix("native_session_"), autoRelogins < 1,
               let saved = (try? credentials.password(for: account(for: email))) ?? nil, !saved.isEmpty else { return }
-        // One silent re-login for an expired session; a refused password is never retried.
+        // One silent re-login for an expired session; a refused password is never retried. The
+        // account and password are fixed now: if the user signs in, switches account or signs out
+        // before it runs, the re-login is dropped instead of acting on the newer state.
         autoRelogins += 1
-        Task { await self.signIn(email: self.email, password: saved, remember: true, automatic: true) }
+        let version = operationVersion
+        Task {
+            guard version == self.operationVersion, self.phase == .signedOut, !self.busy else { return }
+            await self.signIn(email: email, password: saved, remember: true, automatic: true)
+        }
     }
 
     static func describe(_ error: Error) -> String {

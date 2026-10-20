@@ -26,6 +26,9 @@ data class DeviceStatus(
 enum class WebPage(val path: String) {
     Home("/"),
     Register("/register"),
+
+    /** Password recovery: the website mails a one-time reset link; the app never sees the new password. */
+    ForgotPassword("/forgot-password"),
     Plans("/plans"),
     Orders("/orders"),
     Dashboard("/dashboard"),

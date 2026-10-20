@@ -180,6 +180,9 @@ fun LoginScreen(state: SessionState, facts: BuildFacts, actions: AppActions, mod
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = { actions.openWebsite(WebPage.Register) }) { Text(stringResource(R.string.login_register)) }
+                    TextButton(onClick = { actions.openWebsite(WebPage.ForgotPassword) }) { Text(stringResource(R.string.login_forgot_password)) }
+                }
+                Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = { actions.openWebsite(WebPage.Home) }) { Text(stringResource(R.string.login_website)) }
                 }
                 Spacer(Modifier.height(32.dp))

@@ -54,6 +54,8 @@
 
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
                 <Button Content="注册账号" Style="{StaticResource LinkButton}" Command="{Binding OpenRegisterCommand}" />
+                <Button Content="忘记密码" Style="{StaticResource LinkButton}" Command="{Binding OpenForgotPasswordCommand}"
+                        AutomationProperties.AutomationId="ForgotPassword" />
                 <Button Content="购买套餐" Style="{StaticResource LinkButton}" Command="{Binding OpenPlansCommand}" />
             </StackPanel>
         </StackPanel>
