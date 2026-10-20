@@ -46,7 +46,12 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err := tx.Exec(`CREATE SCHEMA IF NOT EXISTS "` + c.Schema + `"`).Error; err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}); err != nil {
+		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}); err != nil {
+			return err
+		}
+		// One active proof per (purpose, email). The predicate is a constant state, never
+		// the current time; expiry is checked when reading (handoff_auth.md 4.1).
+		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_challenge_active ON "` + c.Schema + `".email_auth_challenges (purpose, email) WHERE status = 'active'`).Error; err != nil {
 			return err
 		}
 		const gib = int64(1024 * 1024 * 1024)

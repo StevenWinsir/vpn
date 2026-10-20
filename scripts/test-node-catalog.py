@@ -31,7 +31,8 @@ def main():
         parser.error('Use a new output directory to preserve evidence')
     os.umask(0o077)
     env = {key: value for key, value in os.environ.items() if not key.startswith(
-        ('DATABASE_', 'PG', 'JWT_', 'APP_', 'API_', 'NEXT_PUBLIC_', 'HTTP_', 'CLIENT_', 'NODE_ENCRYPTION_KEY', 'AUTO_MIGRATE', 'COOKIE_', 'TEST_PURCHASE', 'ALLOWED_ORIGINS'))}
+        ('DATABASE_', 'PG', 'JWT_', 'APP_', 'API_', 'NEXT_PUBLIC_', 'HTTP_', 'CLIENT_', 'NODE_ENCRYPTION_KEY', 'AUTO_MIGRATE', 'COOKIE_', 'TEST_PURCHASE', 'ALLOWED_ORIGINS',
+        'SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES'))}
     env.update(PATH='/opt/homebrew/bin:' + env.get('PATH', ''), LC_ALL='C', LANG='C',
         GOPROXY='off', GOTOOLCHAIN='local', CGO_ENABLED='0', NEXT_TELEMETRY_DISABLED='1')
     for tool in ['initdb', 'pg_ctl', 'go', 'node']:

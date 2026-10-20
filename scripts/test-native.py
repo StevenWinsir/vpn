@@ -10,6 +10,7 @@ import tempfile
 import prepare_mihomo
 
 ROOT = Path(__file__).resolve().parents[1]
+AUTH_MAIL_PREFIXES = ('SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES')
 
 
 def main() -> None:
@@ -31,7 +32,9 @@ def main() -> None:
             if startup.returncode:
                 raise SystemExit((directory / "postgres.log").read_text())
             started = True
-            environment = dict(os.environ)
+            # Never inherit real mail settings from the runner (handoff_auth.md 11.1): tests use
+            # synthetic SMTP values, a Fake Mailer and a private SMTP server only.
+            environment = {key: value for key, value in os.environ.items() if not key.startswith(AUTH_MAIL_PREFIXES)}
             # The real Core binary (built with the test-only fake engine: no root, no routes) is exercised against the real API (TestNativeCoreEndToEnd).
             core_bin = directory / "asterlink-core"
             subprocess.run(["go", "build", "-tags", "fakeengine", "-o", str(core_bin), "./cmd/asterlink-core"], cwd=ROOT / "native/core", check=True, env=dict(os.environ, CGO_ENABLED="0"))

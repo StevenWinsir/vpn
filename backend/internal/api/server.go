@@ -38,7 +38,12 @@ func New(db *gorm.DB, cfg config.Config) *gin.Engine {
 	hash, _ := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), cfg.BcryptCost)
 	s := &Server{db: db, cfg: cfg, dummyHash: hash}
 	r := gin.New()
-	_ = r.SetTrustedProxies(nil)
+	// Only explicitly configured proxies (TRUSTED_PROXIES) may supply X-Forwarded-For;
+	// otherwise the TCP peer is the client address and forged headers are ignored.
+	r.RemoteIPHeaders = []string{"X-Forwarded-For"}
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil || len(cfg.TrustedProxies) == 0 {
+		_ = r.SetTrustedProxies(nil)
+	}
 	r.Use(func(c *gin.Context) {
 		c.Header("X-Request-ID", uuid.NewString())
 		c.Header("X-Content-Type-Options", "nosniff")
@@ -79,7 +84,11 @@ func New(db *gorm.DB, cfg config.Config) *gin.Engine {
 	v := r.Group("/api/v1")
 	v.Use(rateLimit(cfg.APIRate))
 	v.GET("/meta", func(c *gin.Context) {
-		c.JSON(200, gin.H{"test_purchase_enabled": cfg.TestPurchase && cfg.Env != "production", "currency": "CNY", "traffic_unit": "GiB", "proxy_service_ready": false})
+		meta := gin.H{"test_purchase_enabled": cfg.TestPurchase && cfg.Env != "production", "currency": "CNY", "traffic_unit": "GiB", "proxy_service_ready": false}
+		for key, value := range authMeta(cfg) {
+			meta[key] = value
+		}
+		c.JSON(200, meta)
 	})
 	v.GET("/plans", s.plans)
 	auth := v.Group("/auth")

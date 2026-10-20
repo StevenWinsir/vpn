@@ -11,6 +11,12 @@ type User struct {
 	Status       string    `gorm:"size:16;not null;default:active" json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"-"`
+	// Backend-only authentication state (handoff_auth.md 4.1). Existing accounts keep a
+	// NULL EmailVerifiedAt: nothing back-fills it except a completed mailbox proof.
+	EmailVerifiedAt   *time.Time `json:"-"`
+	PasswordChangedAt *time.Time `json:"-"`
+	// AuthVersion increments only when the password actually changes.
+	AuthVersion int64 `gorm:"not null;default:1" json:"-"`
 }
 
 type Session struct {

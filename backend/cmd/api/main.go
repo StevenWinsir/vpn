@@ -17,6 +17,7 @@ import (
 
 	"gorm.io/gorm"
 	"vpn/backend/internal/api"
+	"vpn/backend/internal/authmail"
 	"vpn/backend/internal/config"
 	"vpn/backend/internal/operations"
 	"vpn/backend/internal/store"
@@ -106,10 +107,52 @@ func main() {
 		}()
 		go reconcileLoop(ctx, db, c)
 	}
+	mailDone := startAuthMail(ctx, db, c)
 	log.Printf("API listening on http://%s", c.Addr)
 	if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	// The worker cancels in-flight SMTP calls with ctx; never wait on a stuck server.
+	select {
+	case <-mailDone:
+	case <-time.After(authmail.SendTimeout + 5*time.Second):
+		log.Print("auth mail worker did not stop in time; unfinished jobs resume after their lease")
+	}
+}
+
+// startAuthMail runs the mail worker and the auth-data cleanup with the API lifecycle.
+// Without complete mail configuration nothing runs and /meta reports mail as unavailable.
+func startAuthMail(ctx context.Context, db *gorm.DB, c config.Config) <-chan struct{} {
+	done := make(chan struct{})
+	if !c.MailEnabled() {
+		close(done)
+		if c.Env == "production" {
+			log.Print("WARNING: SMTP is not configured; registration is closed and password reset mail is unavailable")
+		}
+		return done
+	}
+	service := authmail.NewService(db, c)
+	worker := authmail.NewWorker(service, authmail.NewSMTPMailer(c))
+	go func() {
+		defer close(done)
+		worker.Run(ctx)
+	}()
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			if _, err := authmail.Cleanup(ctx, db, c.Schema, time.Now()); err != nil && ctx.Err() == nil {
+				log.Print("auth mail cleanup failed (will retry)")
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	log.Printf("auth mail worker started (registration open: %t)", c.RegistrationOpen())
+	return done
 }
 
 // newAgentServer serves the node-agent API. mTLS is mandatory: a connection without a
