@@ -59,6 +59,16 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 6. **运行与检查**：邮件配置完整时 API 进程内启动发送 worker（每实例 2 并发、单次 20 秒硬超时、45 秒租约、最多 3 次尝试）和每小时一次的认证数据清理；正常退出不会等待卡住的 SMTP 连接，未完成任务在租约到期后由任一实例接手。`bin/doctor` 的 `auth_mail` 字段报告配置状态、待投递/24 小时失败数和最老待投递时长，不发送邮件；未配置邮件时 `production_ready` 为 false 并给出 `auth_mail_not_configured` 警告。
 7. **回滚**：本轮只新增表和列，旧二进制可以忽略它们继续运行；不要删除新表或回退 `auth_version`。
 
+## 网站邮箱验证码注册（handoff_auth.md 第 2 轮）
+
+本轮起 **`/api/v1/auth/register` 只接受已消费的邮箱验证码**，原来的无验证码注册不再存在；同时新增 `POST /api/v1/auth/register-code`。网站注册页需要与后端同一批发布。
+
+1. **先后顺序**：需第 1 轮的附加迁移已执行（无新迁移）。发布时先保持 `ALLOW_REGISTRATION=false`，部署后端与网站，确认 `/api/v1/meta` 的 `allow_registration` 为 false 且注册页显示“当前暂未开放注册”；完成一次受控邮件冒烟后再改为 `true` 并重启 API。
+2. **注册开关**：`ALLOW_REGISTRATION=false`、或邮件配置不完整时，发码与最终注册都返回 403 `registration_disabled`，已收到验证码的用户也无法完成注册；已有用户登录不受影响。网站入口（首页、登录页“创建账户”、注册页）都按 `/meta` 实际值显示，读取失败时按关闭处理。
+3. **来源地址**：Next.js 新增可选 `CLIENT_IP_HEADER`，与 Go 的 `TRUSTED_PROXIES` 和 Nginx 覆盖转发头三处一起配置，见 docs/deployment.md“真实来源地址”。不配置时行为与以前相同（所有网站请求按 Next.js 主机地址计 IP 额度）。
+4. **回滚**：回滚到第 1 轮或更早的二进制会**重新开放无验证码注册**（旧接口不认识验证码）。如必须回滚，先在入口层阻断 `/api/v1/auth/register` 与 `/api/v1/auth/register-code`，再替换二进制（handoff_auth.md 12.2）。
+5. **接口细节**：请求/响应与错误码见 docs/auth-mail.md“注册接口”。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：

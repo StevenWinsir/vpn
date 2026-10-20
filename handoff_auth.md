@@ -530,3 +530,36 @@ iOS 的 APP 和 PacketTunnel Extension 都能运行 Core，但同一时刻只有
 6. 指标：仓库无指标系统；本轮提供 worker 进程内计数、脱敏日志和 doctor 队列统计（待投递、24 小时失败、最老等待），验证码错误/锁定计数尚未单独导出。
 7. `scripts/test-release-rehearsal.py` 在本轮之前已失效（写死 10 张表，main 已有 14 张；注册夹具走旧接口），按第 11.1 节在 R4-09 适配；本轮未运行它，CI 也不运行它。
 8. 清理每小时执行一次（规划建议每天），保留期按 4.3 节；关机中断的投递会消耗一次尝试。
+
+### 第 2 轮记录（2026-10-20）：网站邮箱验证码注册
+
+- **分支/基线：** `worktree-auth-round2-register`，基于 main `08e3f40`（含第 1 轮 PR #46）；PR 与 CI 结果见 PR 页面。
+- **环境：** macOS 26.6.2（darwin/arm64），Go 1.26.6，Node 26.10.0，Next.js 16.3.6，Playwright 1.63.0 + 本机 Chrome；私有 PostgreSQL 16.15（仅 Unix socket，测试结束销毁）；Fake Mailer（进程内捕获，经第 1 轮真实 worker 投递）；可注入时钟。未连接真实 SMTP、未读取真实 `.env`。
+- **交付：**
+  - 后端：新增 `POST /api/v1/auth/register-code`；`POST /api/v1/auth/register` 改为必须携带 `verification_id` + `code`，经 `VerifyRegistration` 在同一事务中消费挑战、建号（`email_verified_at` 写入、角色/状态由服务器固定）、建会话；开关与白名单在最终注册时按当前配置重查；错误码按第 5 节映射（`failAuthMail` 供第 3 轮复用）。原无验证码注册路径已删除。
+  - 网站：注册表单增加验证码字段/发送与重发按钮/服务端相对秒数倒计时/允许域名提示/注册关闭与 meta 失败状态；改邮箱即清空验证码与 verification_id，并以请求序号丢弃迟到响应；密码按 UTF-8 字节、昵称按 Unicode 字符校验（去掉 HTML 字符数限制）；验证码输入只保留 ASCII 数字（支持带空格粘贴、`inputmode=numeric`、`autocomplete=one-time-code`）；`APIError.retryAfter` 读取 Retry-After；`/auth/register-code` 不触发自动刷新；首页主按钮与登录页“创建账户”按 `/meta` 显示。
+  - 代理来源地址：Next.js 新增可选 `CLIENT_IP_HEADER`，仅转发该头最后一项且必须是单个 IP，作为 `X-Forwarded-For` 交给只信任 `TRUSTED_PROXIES` 的 Go；文档补充 Nginx 两个入口都必须覆盖转发头（否则 Go 信任 127.0.0.1 后可经后端入口伪造）。
+  - 测试与文档：`auth_register_test.go`（R2-02～R2-08 及字段规则）；集成测试注册夹具改走验证码链路（保留的 `.test` 保留域名经配置覆盖白名单，生产逻辑不放行任何非白名单域名）；目录验收夹具接入 Fake Mailer 并新增 `tests/register.spec.ts`（CI 的 `test-node-catalog.py` 运行）；`api-proxy.test.mjs` 增加注册界面状态与来源地址用例；更新 `docs/auth-mail.md`、`docs/deployment.md`、`backend/DEPLOYMENT.md`、两份 `.env.example`。
+- **整体回归：** `python3 scripts/test-native.py`（后端全部包，`-race`）exit 0；`go vet ./...` 通过；`sync-backend-shared.py --check` 通过；前端 `lint`、`typecheck`、`build --webpack`、`test:api-proxy`（14/14）、`test:nodes`、`test:downloads` 通过；`test-node-catalog.py` PASS（8 个浏览器用例含注册，及 Mihomo 实流量账本）。
+
+| 编号 | 证据（测试） | 实际结果 | 结论 |
+| --- | --- | --- | --- |
+| R2-01 | `api.TestRegistrationCodeFlow`；`tests/register.spec.ts`（真实 Next.js → Go → PostgreSQL，Chrome） | 202 后不建 User；邮件经 worker 投递到 Fake Mailer；先错码提示且不建号，正确码 201、恰好一条 User、`email_verified_at` 非空、角色 user/active；两枚 HttpOnly/Lax/`/api/v1` Cookie；dashboard、刷新页面、退出后用密码重新登录均正常；浏览器存储为空 | PASS |
+| R2-02 | `TestRegistrationCodeFormat`；浏览器用例 | `000000`、`012345` 可注册；5/7 位、全角数字、首尾空白、换行、字母、符号、NUL、空串均为 `invalid_verification_code` 且不计入试错；JSON 数字 `12345` 被严格解码拒绝；网页输入“９９ 99-99x99”只保留 `999999` | PASS |
+| R2-03 | `TestRegistrationGuessingLimits` | 跨两个 API 实例交替 4 次错误后库内 failures=4，第 5 次 `verification_locked`，随后正确码仍锁定；默认预算下 4 次错误 + 重发 + “重启”实例再错 1 次后正确码返回 429 + Retry-After，9 分钟后（验证码到期前）仍 429，未建号 | PASS |
+| R2-04 | `TestRegistrationExpiryAndResend` | 59 秒重发 429、`Retry-After: 1`；60 秒可重发；旧码随即 `verification_expired`；新码在其创建后满 10 分钟过期；另一邮箱在 9:59 成功 | PASS |
+| R2-05 | `TestRegistrationBindingAndConfiguration` | 他人邮箱、随机/非法 verification_id 均 `verification_invalid`；关闭注册、缩小白名单、邮件配置缺失的实例上同一有效验证码分别 403/400/403；配置恢复后原挑战仍可完成；子域与显示名格式拒绝 | PASS |
+| R2-06 | `TestRegistrationConcurrency` | 10 个不同 IP 并发申请同一邮箱：1×202、9×429，仅 1 个 active 挑战；8 个并发正确提交（两实例）：1×201、7×`verification_used`；重放得 `verification_used`；1 个用户、1 个会话、0 个订阅；已有账户先错码 `verification_invalid`，正确码后才 409 | PASS |
+| R2-07 | `TestRegistrationHasNoBypass` | 旧格式请求 `verification_required`；附加 role/status/verified/email_verified/user_id/plan_id/id 均 `invalid_json`；重置 token 当验证码/ID 用均被拒；非白名单域名在最终注册被拒；全程 0 个用户 | PASS |
+| R2-08 | `TestRegistrationCodeDoesNotRevealAccounts` | 已注册与新邮箱各 15 次：状态码、字段集合与类型、verification_id 均为 UUID、提示文案完全一致；中位耗时 1.85ms 对 1.93ms（本机，`-race`）；只有新邮箱收到邮件 | PASS（耗时仅为单机样本，非生产网络测量） |
+| R2-09 | `api-proxy.test.mjs` “registration: …”（模拟后端 + 真实 Next.js 生产构建 + Chrome） | 非白名单域名即时提示且不发请求；慢响应期间改邮箱，旧响应被丢弃；发码后按钮“N 秒后可重发”禁用并显示有效期；429 显示“1:15 后重试”并按 Retry-After 禁用；503 与代理 504 显示对应文案且表单保留；错误码不清空姓名/邮箱；390px 无横向溢出；关闭注册时注册页、首页、登录页一致 | PASS（真实 SMTP 延迟属 R4-07；未在真实手机键盘上测试，仅断言 inputmode/autocomplete） |
+| R2-10 | `TestPostgresIntegration`（注册夹具改走验证码）；目录验收的历史账户用例 | 新注册账户的测试购买幂等、并发、订单、刷新旋转、CSRF/CORS、角色隔离、退出全部通过；数据库直建的历史账户（含 admin）登录与节点用例通过 | PASS |
+| R1-08（第 1 轮遗留） | `api-proxy.test.mjs` “client address …”；`api.TestClientAddressTrust` | 未配置时任何来源头都不转发；配置 `CLIENT_IP_HEADER` 后只转发单个合法 IP（含 IPv6、追加链取最后一项），伪造的 `X-Forwarded-For` 不替代、非法值不转发；非法配置 503 | 部分：Next.js 与 Go 分段 PASS；**真实 Nginx → Next.js → Go 整链未执行**（R4-08） |
+
+**已知限制与交接给后续轮次：**
+
+1. `frontend/tests/flow.spec.ts` 与 `scripts/test-release-rehearsal.py` 仍按旧的无验证码注册编写；二者在本轮之前已失效且不在 CI 中运行（第 1 轮记录第 7 条），随 R4-09 一并按真实发码链路适配（演练需为真实 `cmd/api` 提供测试收件箱）。
+2. 忘记密码入口、`/forgot-password`、`/reset-password` 页面与 `site-shell` 认证路由扩展属第 3 轮；本轮登录页未放置尚不存在页面的链接。
+3. `/meta` 读取失败时注册页显示错误与重试，首页/登录页按“未开放”处理（不默认开放）。
+4. 回滚到第 2 轮之前的二进制会重新开放无验证码注册，见 `backend/DEPLOYMENT.md` 第 2 轮第 4 条。
+5. 浏览器倒计时以服务端返回的相对秒数为准，页面刷新后需重新获取验证码（服务端冷却仍生效并以 429 + Retry-After 提示剩余时间）。

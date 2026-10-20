@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"vpn/backend/internal/authmail"
 	"vpn/backend/internal/config"
 )
 
@@ -20,6 +21,7 @@ type Server struct {
 	db             *gorm.DB
 	cfg            config.Config
 	dummyHash      []byte
+	mail           *authmail.Service
 	catalogUpdates catalogSignal
 }
 type apiError struct {
@@ -34,9 +36,14 @@ func fail(c *gin.Context, status int, code, message string) {
 func (s *Server) database(c *gin.Context) *gorm.DB { return s.db.WithContext(c.Request.Context()) }
 
 func New(db *gorm.DB, cfg config.Config) *gin.Engine {
+	return newServer(db, cfg, authmail.NewService(db, cfg))
+}
+
+// newServer lets tests share a mail service with an injected clock and limits.
+func newServer(db *gorm.DB, cfg config.Config, mail *authmail.Service) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	hash, _ := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), cfg.BcryptCost)
-	s := &Server{db: db, cfg: cfg, dummyHash: hash}
+	s := &Server{db: db, cfg: cfg, dummyHash: hash, mail: mail}
 	r := gin.New()
 	// Only explicitly configured proxies (TRUSTED_PROXIES) may supply X-Forwarded-For;
 	// otherwise the TCP peer is the client address and forged headers are ignored.
@@ -93,6 +100,7 @@ func New(db *gorm.DB, cfg config.Config) *gin.Engine {
 	v.GET("/plans", s.plans)
 	auth := v.Group("/auth")
 	auth.Use(rateLimit(cfg.AuthRate))
+	auth.POST("/register-code", s.registerCode)
 	auth.POST("/register", s.register)
 	auth.POST("/login", s.login)
 	auth.POST("/refresh", s.refresh)

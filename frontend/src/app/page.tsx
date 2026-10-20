@@ -1,10 +1,6 @@
 import Link from 'next/link';
-import {
-  IconArrowRight,
-  IconDeviceLaptop,
-  IconReceipt,
-  IconShieldCheck,
-} from '@tabler/icons-react';
+import { IconDeviceLaptop, IconReceipt, IconShieldCheck } from '@tabler/icons-react';
+import { StartLink } from '@/components/start-link';
 import { appName } from '@/lib/types';
 export default function Home() {
   return (
@@ -22,9 +18,7 @@ export default function Home() {
             管理你的账户、订阅与流量，让连接回归简单。
           </p>
           <div className="hero-actions">
-            <Link href="/register" className="primary-link">
-              创建账户 <IconArrowRight size={19} />
-            </Link>
+            <StartLink />
             <Link href="/plans" className="secondary-link">
               查看套餐
             </Link>

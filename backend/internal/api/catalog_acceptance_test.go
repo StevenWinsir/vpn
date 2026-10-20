@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -62,7 +63,16 @@ func TestNodeCatalogAcceptanceFixture(t *testing.T) {
 	loopback := startNativeLoopbackFixture(t, "")
 	_, nodePort, _ := net.SplitHostPort(loopback.proxyAddress)
 	nodeYAML := fmt.Sprintf("proxies: [{name: Catalog-Half, type: socks5, server: 127.0.0.1, port: %s}]\n", nodePort)
-	router := New(db, cfg)
+	// Registration runs the real code flow; mail goes to the in-process capture Mailer and
+	// codes are read back only through the control-token fixture endpoint below.
+	cfg = withTestMail(cfg)
+	mail := newMailHarness(db, cfg, nil)
+	mail.worker.Poll = 200 * time.Millisecond
+	mailCtx, stopMail := context.WithCancel(context.Background())
+	mailDone := make(chan struct{})
+	go func() { defer close(mailDone); mail.worker.Run(mailCtx) }()
+	defer func() { stopMail(); <-mailDone }()
+	router := newServer(db, cfg, mail.service)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/fixture/") {
 			router.ServeHTTP(w, r)
@@ -73,6 +83,30 @@ func TestNodeCatalogAcceptanceFixture(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
+		case "/fixture/mail":
+			msgs := mail.box.to(r.URL.Query().Get("to"))
+			code, ok := "", false
+			if len(msgs) > 0 {
+				code, ok = codeIn(msgs[len(msgs)-1])
+			}
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "count": len(msgs)})
+		case "/fixture/account":
+			var users []model.User
+			if e := db.Where("email = ?", r.URL.Query().Get("email")).Find(&users).Error; e != nil {
+				w.WriteHeader(500)
+				return
+			}
+			out := map[string]any{"count": len(users)}
+			if len(users) == 1 {
+				out["role"], out["status"], out["verified"] = users[0].Role, users[0].Status, users[0].EmailVerifiedAt != nil
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
 		case "/fixture/state":
 			var totals struct{ Upload, Download, Charged int64 }
 			var subscription model.Subscription

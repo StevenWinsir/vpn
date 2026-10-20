@@ -10,7 +10,6 @@ import (
 	"net/mail"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -26,12 +25,6 @@ type claims struct {
 	jwt.RegisteredClaims
 }
 type loginInput struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Remember bool   `json:"remember"`
-}
-type registerInput struct {
-	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Remember bool   `json:"remember"`
@@ -52,47 +45,6 @@ func randomToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), err
 }
 
-func (s *Server) register(c *gin.Context) {
-	var in registerInput
-	if !decode(c, &in) {
-		return
-	}
-	email, ok := validEmail(in.Email)
-	name := strings.TrimSpace(in.Name)
-	if !ok || utf8.RuneCountInString(name) < 2 || utf8.RuneCountInString(name) > 40 || len(in.Password) < 10 || len(in.Password) > 72 {
-		fail(c, 400, "invalid_registration", "请输入有效邮箱、2–40 字姓名和 10–72 字节密码")
-		return
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), s.cfg.BcryptCost)
-	if err != nil {
-		fail(c, 500, "password_error", "无法处理密码")
-		return
-	}
-	user := model.User{ID: uuid.NewString(), Email: email, Name: name, PasswordHash: string(hash), Role: "user", Status: "active"}
-	var sess model.Session
-	var raw string
-	err = s.database(c).Transaction(func(tx *gorm.DB) error {
-		if e := tx.Create(&user).Error; e != nil {
-			return e
-		}
-		var e error
-		sess, raw, e = s.createSession(tx, user.ID, in.Remember)
-		return e
-	})
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		fail(c, 409, "email_exists", "此邮箱已注册，请直接登录")
-		return
-	}
-	if err != nil {
-		fail(c, 500, "registration_failed", "注册暂时不可用")
-		return
-	}
-	if err = s.writeSession(c, sess, raw); err != nil {
-		fail(c, 500, "session_failed", "创建登录会话失败，请重新登录")
-		return
-	}
-	c.JSON(201, gin.H{"user": user})
-}
 func (s *Server) login(c *gin.Context) {
 	var in loginInput
 	if !decode(c, &in) {

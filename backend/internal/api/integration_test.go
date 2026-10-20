@@ -48,12 +48,16 @@ func TestPostgresIntegration(t *testing.T) {
 	cfg.APIRate = 1000
 	cfg.BcryptCost = 10
 	cfg.TestPurchase = true
-	if !db.Migrator().HasTable(&model.User{}) {
+	// Registration goes through the real code flow with synthetic mail settings and the
+	// capture Mailer, on a reserved undeliverable domain, whatever backend/.env says.
+	cfg = withTestMail(cfg, testMailDomain)
+	if !db.Migrator().HasTable(&model.User{}) || !db.Migrator().HasTable(&model.EmailAuthChallenge{}) {
 		if err = store.Migrate(db, cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
-	handler := New(db, cfg)
+	mail := newMailHarness(db, cfg, nil)
+	handler := newServer(db, cfg, mail.service)
 	var userIDs, nodeIDs []string
 	t.Cleanup(func() {
 		err := db.Transaction(func(tx *gorm.DB) error {
@@ -107,9 +111,15 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 	}
 	register := func() ([]*http.Cookie, model.User, string) {
-		email := "qa-" + uuid.NewString() + "@example.invalid"
-		body := fmt.Sprintf(`{"name":"集成测试","email":%q,"password":"Test-Only-Password-2026!","remember":true}`, email)
-		w := request("POST", "/api/v1/auth/register", body, nil, "")
+		email := "qa-" + uuid.NewString() + "@" + testMailDomain
+		w := request("POST", "/api/v1/auth/register-code", fmt.Sprintf(`{"email":%q}`, email), nil, "")
+		want(w, 202)
+		var receipt struct {
+			VerificationID string `json:"verification_id"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &receipt)
+		body := fmt.Sprintf(`{"name":"集成测试","email":%q,"password":"Test-Only-Password-2026!","remember":true,"verification_id":%q,"code":%q}`, email, receipt.VerificationID, mail.latestCode(t, email))
+		w = request("POST", "/api/v1/auth/register", body, nil, "")
 		want(w, 201)
 		var result struct {
 			User model.User `json:"user"`
@@ -125,7 +135,8 @@ func TestPostgresIntegration(t *testing.T) {
 	}
 	cookies, user, registration := register()
 	t.Run("registration_and_jwt", func(t *testing.T) {
-		want(request("POST", "/api/v1/auth/register", registration, nil, ""), 409)
+		// Replaying a completed registration is not a second account.
+		want(request("POST", "/api/v1/auth/register", registration, nil, ""), 400)
 		want(request("POST", "/api/v1/auth/login", fmt.Sprintf(`{"email":%q,"password":"wrong-password"}`, user.Email), nil, ""), 401)
 		want(request("GET", "/api/v1/auth/me", "", nil, ""), 401)
 		want(request("GET", "/api/v1/auth/me", "", cookies, ""), 200)
@@ -135,7 +146,7 @@ func TestPostgresIntegration(t *testing.T) {
 				t.Fatalf("unsafe remember cookie settings: %s", c.Name)
 			}
 		}
-		want(request("POST", "/api/v1/auth/register", `{"name":"无效用户","email":"invalid@example.invalid","password":"Test-Only-Password!","role":"admin"}`, nil, ""), 400)
+		want(request("POST", "/api/v1/auth/register", `{"name":"无效用户","email":"invalid@`+testMailDomain+`","password":"Test-Only-Password!","role":"admin"}`, nil, ""), 400)
 	})
 	t.Run("csrf_and_cors", func(t *testing.T) {
 		want(call(handler, "POST", "/api/v1/auth/logout", "{}", cookies, "", "https://evil.example"), 403)
