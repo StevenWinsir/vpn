@@ -56,7 +56,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const { user, logout, loading } = useAuth();
   const [opened, { toggle, close }] = useDisclosure();
   const [leaving, setLeaving] = useState(false);
-  const authPage = path === '/login' || path === '/register';
+  const authPage = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
   const workspace =
     ['/dashboard', '/nodes', '/plans', '/orders', '/download'].includes(path) ||
     path.startsWith('/admin/');

@@ -31,6 +31,11 @@ import { useAuth } from './providers';
 import { Logo } from './site-shell';
 
 export function AuthForm({ register = false }: { register?: boolean }) {
+  return <AuthLayout>{register ? <RegisterForm /> : <LoginForm />}</AuthLayout>;
+}
+
+// The two-column frame shared by login, registration and password recovery.
+export function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="auth-layout">
       <section className="auth-story">
@@ -59,13 +64,13 @@ export function AuthForm({ register = false }: { register?: boolean }) {
         <Anchor component={Link} href="/" c="dimmed" size="sm" className="back-link">
           <IconArrowLeft size={16} /> 返回首页
         </Anchor>
-        <div className="auth-form">{register ? <RegisterForm /> : <LoginForm />}</div>
+        <div className="auth-form">{children}</div>
       </section>
     </div>
   );
 }
 
-function Footnote() {
+export function Footnote() {
   return (
     <Text size="xs" c="dimmed" lh={1.8} mt={40}>
       当前为开发测试环境。请勿使用与其他网站相同的密码；测试购买不会产生真实扣款。
@@ -131,15 +136,22 @@ function LoginForm() {
             autoComplete="email"
             size="md"
           />
-          <PasswordInput
-            label="密码"
-            placeholder="输入你的密码"
-            value={password}
-            onChange={(e) => setPassword(e.currentTarget.value)}
-            required
-            autoComplete="current-password"
-            size="md"
-          />
+          <div>
+            <PasswordInput
+              label="密码"
+              placeholder="输入你的密码"
+              value={password}
+              onChange={(e) => setPassword(e.currentTarget.value)}
+              required
+              autoComplete="current-password"
+              size="md"
+            />
+            <Group justify="flex-end" mt={6}>
+              <Anchor component={Link} href="/forgot-password" size="sm">
+                忘记密码？
+              </Anchor>
+            </Group>
+          </div>
           <Checkbox
             checked={remember}
             onChange={(e) => setRemember(e.currentTarget.checked)}

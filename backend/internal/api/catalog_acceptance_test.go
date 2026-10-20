@@ -95,6 +95,31 @@ func TestNodeCatalogAcceptanceFixture(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "count": len(msgs)})
+		case "/fixture/reset-link":
+			// The newest reset link to an address, as its recipient would read it.
+			const marker = "/reset-password#token="
+			msgs := mail.box.to(r.URL.Query().Get("to"))
+			token := ""
+			for i := len(msgs) - 1; i >= 0 && token == ""; i-- {
+				if at := strings.Index(msgs[i].Text, marker); at >= 0 && len(msgs[i].Text) >= at+len(marker)+43 {
+					token = msgs[i].Text[at+len(marker) : at+len(marker)+43]
+				}
+			}
+			if token == "" {
+				w.WriteHeader(404)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": token, "count": len(msgs)})
+		case "/fixture/historical-user":
+			// An account as it existed before mailbox verification: unverified, AuthVersion 1,
+			// signing in with the fixture password.
+			u := model.User{ID: uuid.NewString(), Email: r.URL.Query().Get("email"), Name: "Reset Fixture", PasswordHash: string(hash), Role: "user", Status: "active"}
+			if !strings.HasSuffix(u.Email, ".invalid") || db.Create(&u).Error != nil {
+				w.WriteHeader(400)
+				return
+			}
+			w.WriteHeader(201)
 		case "/fixture/account":
 			var users []model.User
 			if e := db.Where("email = ?", r.URL.Query().Get("email")).Find(&users).Error; e != nil {

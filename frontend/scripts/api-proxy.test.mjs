@@ -21,6 +21,8 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Synthetic reset token (43 URL-safe characters, like the Go token); never a real secret.
+const resetToken = 'ProxyTestResetTokenProxyTestResetToken12345';
 const testUser = {
   id: 'proxy-test-user',
   name: '代理测试',
@@ -73,7 +75,7 @@ async function staticFingerprint(directory) {
 
 function mockBackend(label, origins) {
   const received = [];
-  const settings = { registrationOpen: true };
+  const settings = { registrationOpen: true, resetUsed: false, purchase: false };
   let codeRequests = 0;
   let generation = 0;
   let active = false;
@@ -162,6 +164,50 @@ function mockBackend(label, origins) {
       cookies();
       return json(201, { user: { ...testUser, email: input.email, name: input.name } });
     }
+    // Password recovery mirrors the Go contract; a successful reset revokes every session.
+    if (pathname === '/api/v1/auth/forgot-password') {
+      const { email } = JSON.parse(body || '{}');
+      if (email === 'limited@qq.com') {
+        response.setHeader('Retry-After', '75');
+        return fail(429, 'rate_limited', '请求过于频繁，请稍后重试');
+      }
+      if (email === 'down@qq.com')
+        return fail(503, 'mail_unavailable', '邮件服务暂时不可用，请稍后重试');
+      return json(202, {
+        message: '如果该邮箱已注册，重置密码的链接会在几分钟内送达，请同时检查垃圾邮件箱。',
+        next_send_at: new Date(Date.now() + 60000).toISOString(),
+        resend_after_seconds: 60,
+      });
+    }
+    if (
+      pathname === '/api/v1/auth/reset-password/validate' ||
+      pathname === '/api/v1/auth/reset-password'
+    ) {
+      const input = JSON.parse(body || '{}');
+      if (input.token !== resetToken || settings.resetUsed)
+        return fail(400, 'reset_token_invalid', '重置链接无效或已过期，请重新申请找回密码');
+      if (pathname.endsWith('/validate'))
+        return json(200, {
+          valid: true,
+          expires_at: new Date(Date.now() + 1800000).toISOString(),
+          expires_in_seconds: 1800,
+          password_min_bytes: 10,
+          password_max_bytes: 72,
+        });
+      if (input.password !== input.password_confirmation)
+        return fail(400, 'password_mismatch', '两次输入的新密码不一致');
+      if (input.password === 'proxy-test-password')
+        return fail(400, 'password_unchanged', '新密码不能与当前密码相同');
+      settings.resetUsed = true;
+      active = false;
+      cookies(true);
+      return json(200, { password_reset: true, message: '密码已重置' });
+    }
+    if (pathname === '/api/v1/orders/test-purchase') {
+      if (!active || !cookie.includes(`vpn_access=access-${generation}`))
+        return fail(401, 'unauthorized');
+      return json(200, { order: { id: 'order-1' }, replayed: false });
+    }
     if (pathname === '/api/v1/auth/refresh') {
       if (!active || !cookie.includes(`vpn_refresh=refresh-${generation}`)) {
         cookies(true);
@@ -188,13 +234,32 @@ function mockBackend(label, origins) {
         proxy_service_ready: false,
       });
     }
-    if (pathname === '/api/v1/orders')
+    if (pathname === '/api/v1/orders') {
+      if (!active || !cookie.includes(`vpn_access=access-${generation}`))
+        return fail(401, 'unauthorized');
       return json(200, { orders: [], total: 0, page: 1, page_size: 20 });
-    if (pathname === '/api/v1/plans') return json(200, { plans: [] });
+    }
+    if (pathname === '/api/v1/plans')
+      return json(200, {
+        plans: settings.purchase
+          ? [
+              {
+                id: 'pro',
+                name: '代理测试套餐',
+                description: '仅用于代理测试',
+                price_cents: 100,
+                duration_days: 30,
+                traffic_bytes: 1073741824,
+                max_devices: 2,
+                allow_dedicated: false,
+              },
+            ]
+          : [],
+      });
     if (pathname === '/api/v1/meta')
       return json(200, {
         upstream: label,
-        test_purchase_enabled: false,
+        test_purchase_enabled: settings.purchase,
         allow_registration: settings.registrationOpen,
         registration_email_domains: ['qq.com', 'gmail.com'],
         password_reset_enabled: true,
@@ -580,6 +645,159 @@ test(
           await context.close();
           await browser.close();
           browser = undefined;
+        },
+      );
+
+      await t.test(
+        'password reset: forgot form, fragment token, rules, revocation and final 401 in other tabs',
+        async () => {
+          browser = await chromium.launch({
+            ...(process.env.PLAYWRIGHT_CHROME_PATH
+              ? { executablePath: process.env.PLAYWRIGHT_CHROME_PATH }
+              : {}),
+            args: [
+              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1',
+              '--no-proxy-server',
+            ],
+          });
+          first.settings.purchase = true;
+          try {
+            // A signed-in browser with a dashboard tab and an open purchase confirmation. It uses
+            // the loopback origin: the purchase dialog needs a secure context (crypto.randomUUID).
+            const signedIn = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+            const errors = [];
+            const dashboard = await signedIn.newPage();
+            dashboard.on('pageerror', (error) => errors.push(error.message));
+            await dashboard.goto(nextURL + '/login');
+            await dashboard.getByLabel('邮箱地址').fill(testUser.email);
+            await dashboard.locator('input[type="password"]').fill('proxy-test-password');
+            await dashboard.getByRole('button', { name: '登录', exact: true }).click();
+            await dashboard.waitForURL('**/dashboard');
+            await dashboard.getByRole('heading', { name: '还没有开通套餐' }).waitFor();
+            const plans = await signedIn.newPage();
+            plans.on('pageerror', (error) => errors.push(error.message));
+            await plans.goto(nextURL + '/plans');
+            await plans.getByRole('button', { name: '账户菜单' }).waitFor();
+            await plans.getByRole('button', { name: '测试购买 代理测试套餐' }).click();
+            await plans.getByRole('dialog', { name: '确认测试购买' }).waitFor();
+
+            // Another browser (the mail opened on a phone, say) asks for a link.
+            const mailbox = await browser.newContext({ viewport: { width: 390, height: 844 } });
+            const page = await mailbox.newPage();
+            page.on('pageerror', (error) => errors.push(error.message));
+            const requests = [];
+            page.on('request', (request) =>
+              requests.push({ url: request.url(), body: request.postData() || '' }),
+            );
+            await page.goto(browserURL + '/login');
+            await page.getByRole('link', { name: '忘记密码？' }).click();
+            await page.waitForURL('**/forgot-password');
+            await page.getByRole('heading', { name: '找回密码' }).waitFor();
+            const send = () =>
+              page.getByRole('button', { name: /发送重置链接|重新发送|秒后可重发|发送中/ });
+            await page.getByLabel('邮箱地址').fill('not-an-address');
+            await send().click();
+            await page.getByText('请输入有效的邮箱地址').waitFor();
+            await page.getByLabel('邮箱地址').fill('down@qq.com');
+            await send().click();
+            await page.getByText('邮件服务暂时不可用，请稍后重试').waitFor();
+            await page.getByLabel('邮箱地址').fill('limited@qq.com');
+            await send().click();
+            await page.getByText('请求过于频繁，请在 1:15 后重试。').waitFor();
+            assert.match(await send().textContent(), /^7[45] 秒后可重发$/);
+            assert.equal(await send().isDisabled(), true);
+            await page.getByLabel('邮箱地址').fill(testUser.email);
+            await send().click();
+            await page.getByText('如果该邮箱已注册').waitFor();
+            assert.match(await send().textContent(), /^\d+ 秒后可重发$/);
+            assert.ok(
+              await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+            );
+
+            // Opening a page without the fragment, or with a bad token, explains what to do.
+            await page.goto(browserURL + '/reset-password');
+            await page.getByText('请从邮件中打开重置链接').waitFor();
+            await page.goto(browserURL + '/reset-password#token=not-a-real-token');
+            await page.getByText('重置链接无效或已过期').waitFor();
+            assert.equal(new URL(page.url()).hash, '');
+
+            // The real link: the token leaves the address bar at once and only travels in POST bodies.
+            // (The bad-token step above arrived as a fragment-only change of the open page.)
+            const { headers } = await fetch(nextURL + '/reset-password');
+            assert.equal(headers.get('referrer-policy'), 'no-referrer');
+            assert.match(headers.get('x-robots-tag'), /noindex/);
+            assert.match(headers.get('cache-control'), /no-store/);
+            await page.goto(browserURL + '/forgot-password');
+            await page.goto(browserURL + '/reset-password#token=' + resetToken);
+            await page.getByLabel(/^新密码/).waitFor();
+            assert.equal(new URL(page.url()).hash, '');
+            assert.equal(
+              await page.evaluate(() =>
+                document.querySelector('meta[name="referrer"]')?.getAttribute('content'),
+              ),
+              'no-referrer',
+            );
+            await page.getByLabel(/^新密码/).fill('短密码');
+            await page.getByLabel('确认新密码').fill('短密码');
+            await page.getByRole('button', { name: '设置新密码' }).click();
+            await page.getByText('密码需要 10–72 字节（当前 9 字节）').waitFor();
+            await page.getByLabel(/^新密码/).fill('新的安全密码');
+            await page.getByLabel('确认新密码').fill('新的安全密码!');
+            await page.getByRole('button', { name: '设置新密码' }).click();
+            await page.getByText('两次输入的新密码不一致').waitFor();
+            await page.getByLabel(/^新密码/).fill('proxy-test-password');
+            await page.getByLabel('确认新密码').fill('proxy-test-password');
+            await page.getByRole('button', { name: '设置新密码' }).click();
+            await page.getByText('新密码不能与当前密码相同').waitFor();
+            await page.getByLabel(/^新密码/).fill('新的安全密码');
+            await page.getByLabel('确认新密码').fill('新的安全密码');
+            await page.getByRole('button', { name: '设置新密码' }).click();
+            await page.getByText('密码已重置').waitFor();
+            await page.getByRole('link', { name: '使用新密码登录' }).waitFor();
+            const submitted = first.received
+              .filter((r) => r.url === '/api/v1/auth/reset-password')
+              .at(-1);
+            assert.deepEqual(Object.keys(JSON.parse(submitted.body)).sort(), [
+              'password',
+              'password_confirmation',
+              'token',
+            ]);
+            assert.ok(requests.every((r) => !r.url.includes(resetToken)));
+            assert.ok(
+              requests
+                .filter((r) => r.body.includes(resetToken))
+                .every((r) => /\/api\/v1\/auth\/reset-password(\/validate)?$/.test(r.url)),
+            );
+            assert.ok(
+              requests
+                .filter((r) => /^https?:/.test(r.url))
+                .every((r) => new URL(r.url).origin === browserURL),
+            );
+            assert.ok(first.received.every((r) => !r.url.includes(resetToken)));
+            assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+            // The used link is dead.
+            await page.goto(browserURL + '/reset-password#token=' + resetToken);
+            await page.getByText('重置链接无效或已过期').waitFor();
+
+            // The other browser learns it on its next protected request: the dialog closes and
+            // the old dashboard is gone, without a reload.
+            await plans.getByRole('button', { name: '确认模拟开通' }).click();
+            await plans
+              .getByRole('dialog', { name: '确认测试购买' })
+              .waitFor({ state: 'detached' });
+            await plans.getByRole('link', { name: '登录账户' }).waitFor();
+            await dashboard.getByRole('link', { name: '订单记录', exact: true }).click();
+            await dashboard.waitForURL('**/login');
+            assert.equal(await dashboard.getByText('还没有开通套餐').count(), 0);
+            assert.deepEqual(errors, []);
+            await signedIn.close();
+            await mailbox.close();
+          } finally {
+            first.settings.purchase = false;
+            first.settings.resetUsed = false;
+            await browser.close();
+            browser = undefined;
+          }
         },
       );
 

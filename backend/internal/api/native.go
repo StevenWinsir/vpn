@@ -96,7 +96,8 @@ func (s *Server) nativeLogin(c *gin.Context) {
 	sess := model.NativeSession{ID: uuid.NewString(), UserID: user.ID, TokenHash: refreshHash(token), DeviceID: device.String(), Platform: in.Platform, AppVersion: in.AppVersion, LastSeenAt: now, ExpiresAt: now.Add(s.cfg.SessionTTL)}
 	var status nativeState
 	err = s.database(c).Transaction(func(tx *gorm.DB) error {
-		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, "id = ? AND status = ?", user.ID, "active").Error; e != nil {
+		// Same guard as the web login: a reset that committed after bcrypt wins.
+		if e := lockVerifiedUser(tx, &user); e != nil {
 			return e
 		}
 		if e := tx.Model(&model.NativeSession{}).Where("user_id = ? AND device_id = ? AND revoked_at IS NULL", user.ID, device.String()).Update("revoked_at", now).Error; e != nil {
@@ -112,6 +113,10 @@ func (s *Server) nativeLogin(c *gin.Context) {
 		status = s.nativeSnapshot(sess, sub, now, tx)
 		return nil
 	})
+	if errors.Is(err, errStaleCredentials) {
+		fail(c, 401, "invalid_credentials", "邮箱或密码不正确")
+		return
+	}
 	if s.nativeFailure(c, err) {
 		return
 	}

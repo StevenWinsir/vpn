@@ -563,3 +563,36 @@ iOS 的 APP 和 PacketTunnel Extension 都能运行 Core，但同一时刻只有
 3. `/meta` 读取失败时注册页显示错误与重试，首页/登录页按“未开放”处理（不默认开放）。
 4. 回滚到第 2 轮之前的二进制会重新开放无验证码注册，见 `backend/DEPLOYMENT.md` 第 2 轮第 4 条。
 5. 浏览器倒计时以服务端返回的相对秒数为准，页面刷新后需重新获取验证码（服务端冷却仍生效并以 429 + Retry-After 提示剩余时间）。
+
+### 第 3 轮记录（2026-10-20）：找回链接、密码重置与全部会话撤销
+
+- **分支/基线：** `worktree-auth-round3-reset`，基于 main `6bc0742`（含第 2 轮 PR #47）；PR 与 CI 结果见 PR 页面。
+- **环境：** macOS 26（darwin/arm64），Go 1.26.6，Node 26.10.0，Next.js 16.3.6（生产构建 `--webpack`），Playwright + 本机 Chrome；私有 PostgreSQL 16（仅 Unix socket，测试结束销毁）；Fake Mailer（经真实 worker 投递）；可注入时钟。未连接真实 SMTP、未读取真实 `.env`。
+- **交付：**
+  - 后端：`authmail.CompleteReset`（唯一改密服务，单事务按 User → Challenge → Session/NativeSession → MailJob 加锁：复核账户与挑战 → 写新哈希、`password_changed_at`、`auth_version+1`、补齐空的 `email_verified_at` → 消费本 token 并作废同账户其他重置挑战、取消其未发邮件 → `RevokeAllSessions` 撤销全部 `sessions` 与 `native_sessions` → 写 `admin_audits`（`auth.password_reset`）→ 排入“密码已修改”通知）；新增 `POST /auth/forgot-password`、`/auth/reset-password/validate`（只读）、`/auth/reset-password`（成功后清除发起浏览器 Cookie，不登录）；管理员新密码沿用 16 字节下限（锁内按当前角色复核）。
+  - 竞态修复：网站与客户端登录在 bcrypt 后于建会话事务内锁 User 并复核 `auth_version`/哈希/状态（`lockVerifiedUser`），过期验证返回 401 `invalid_credentials`；网站刷新改为“事务外定位候选 → 锁 User → 锁 Session 复核 → 旋转”，与重置锁顺序一致。原生已有 `nativeTransaction` 顺序不变；撤销沿用 `native_session_expired`。
+  - 网站：`/forgot-password`（通用提示、服务端倒计时、429/503/格式错误）与 `/reset-password`（从 fragment 读 token 到内存后立即 `history.replaceState` 去除；Strict Mode 下用 ref 防止二次初始化丢 token；监听 `hashchange` 处理页面已打开时再点链接；只用 POST 验证/提交；按请求渲染 no-store，`Referrer-Policy: no-referrer`、`X-Robots-Tag: noindex`、`<meta name="referrer" content="no-referrer">`）；登录页“忘记密码？”；`site-shell` 认证路由加入两页；三个新接口不触发自动刷新。
+  - 统一最终 401：受保护请求经一次刷新仍 401 时 `api.ts` 发出会话结束通知，Provider `setUser(null)`（递增 generation，迟到的 `auth/me` 或业务结果不能恢复旧用户）；`RequireAuth` 卸载总览/订单/节点/管理员 YAML 编辑器并跳转登录；套餐页购买确认框绑定打开它的账户 ID，会话结束即关闭。网络错误与 5xx 不触发。
+  - 测试与文档：`auth_reset_test.go`（R3-01～R3-08、R3-10；屏障为测试内 GORM 回调 + 请求 context 标记，故障注入同理，生产代码无测试钩子）；`api-proxy.test.mjs` 新增找回/重置与跨标签最终 401 用例；目录验收夹具新增 `/fixture/reset-link`、`/fixture/historical-user`（控制令牌保护，仅测试装配）与 `tests/reset.spec.ts`（CI 的 `test-node-catalog.py` 运行）；更新 `docs/auth-mail.md`“找回与重置接口”、`backend/DEPLOYMENT.md` 第 3 轮。
+- **整体回归：** `python3 scripts/test-native.py`（后端全部包，`-race`）exit 0；`go vet ./...`、`sync-backend-shared.py --check` 通过；第 3 轮与注册、集成测试 `-race -count=3` 连续通过；前端 `lint`、`typecheck`、`build --webpack`、`test:api-proxy`（15/15）、`test:nodes`、`test:downloads` 通过；`test-node-catalog.py --skip-build` PASS（9 个浏览器用例含注册与重置，及 Mihomo 实流量账本）。
+
+| 编号 | 证据（测试） | 实际结果 | 结论 |
+| --- | --- | --- | --- |
+| R3-01 | `TestResetRequestsRevealNothingAndChangeNothing`；`reset.spec.ts` | 已注册、历史非白名单（`corp.example`）、禁用、未注册四类：同为 202、字段集合/提示/`resend_after_seconds` 完全一致；仅 active 的两类收到链接；申请后密码哈希、状态、`auth_version`、验证时间不变，原会话仍有效，未建账户；格式错误 `invalid_email`、附加字段 `invalid_json`；同邮箱 60 秒内再申请 429 + Retry-After | PASS |
+| R3-02 | `TestResetValidationNeverConsumes`；`api-proxy` 重置用例；`reset.spec.ts` | validate 连续 5 次均 200 且挑战仍 active；GET/HEAD 访问重置接口（含带 query 的 token）一律 404 且不消费；同一链接在浏览器打开两次、来回跳转后仍可用；打开后地址栏无 fragment；浏览器全部请求 URL 与 mock 后端收到的 URL 均不含 token，token 只出现在两个 POST 请求体；页面无第三方请求，`localStorage`/`sessionStorage` 为空；响应头 no-referrer/noindex/no-store | PASS（Nginx 访问日志属 R4-08，未执行；fragment 不发往服务器由浏览器保证） |
+| R3-03 | `TestResetTokenAndPasswordRules` | 缺失、过短、过长、非法字符、UUID、随机合法格式、注册 `verification_id`、注册验证码、被新链接取代、已消费、到期（30 分钟整点失效、前 1 秒可用）、账户禁用后，validate 与 reset 均 `reset_token_invalid`；不一致 `password_mismatch`、同当前密码 `password_unchanged`、9 字节与 73 字节 `invalid_password`，这些都不消耗 token（随后 validate 200 并成功）；4 个汉字（12 字节）被接受；管理员 15 字节拒绝、16 字节成功；网页按 UTF-8 字节提示“当前 9 字节” | PASS |
+| R3-04 | `TestResetRevokesAllSessionsAndKeepsAccount`；`reset.spec.ts` | 两个网站会话 + macOS/Windows/Android/iOS 四个 NativeSession：重置后旧 access 401 `unauthorized`、旧 refresh 401 `session_expired`，四个 token 的 session/nodes/config/traffic 全部 401 `native_session_expired`，库内无未撤销会话；另一账户不受影响；旧密码网站/客户端登录 401，新密码两端均登录到同一 User；发起浏览器两枚 Cookie 被清除；真实浏览器中另一标签页下一次受保护请求后回到登录页 | PASS（四平台以 API 层模拟会话；真实 APP 行为属 R4-02） |
+| R3-05 | `TestResetConcurrentSubmissions` | 同一 token 8 个并发提交（两个 API 实例）：1×200、7×`reset_token_invalid`，`auth_version`=2，审计 1 行；已 validate 的旧链接 A 在新链接 B 使用后仍无效；之后再申请 C 成功；三次成功后 `auth_version`=4，四个历史 token 全部无效 | PASS |
+| R3-06 | `TestResetLoginRaces`（web/native × reset_first/login_first） | 屏障停在 bcrypt 已通过、锁 User 之前：期间完成重置，释放后登录 401 `invalid_credentials`、无 Cookie、0 会话；反向（重置停在锁 User 之前、登录先完成）后重置撤销该会话，随后鉴权 401。变异验证：去掉锁内版本复核后 reset_first 两例即失败（返回 200 并建会话） | PASS |
+| R3-07 | `TestResetRefreshAndTrafficOrdering` | 报告持有 User 锁时重置等待，报告 200 入账后重置完成，下一次报告 401；重置持有 User 锁时刷新与报告都等待，释放后刷新 401、报告 401 且不入账；6 个会话×3 次刷新 + 20 次连续报告 + 重置自由竞争：全部在时限内完成、只有 200/401（无死锁 503）、所有刷新令牌事后 401、报告行数 = 接受数、订阅 `used_units` = 报告扣费之和 | PASS |
+| R3-08 | `TestResetIsAtomic` | 分别在更新密码、消费/作废挑战、撤销网站会话、撤销客户端会话、取消邮件任务、写审计、排入通知 7 处注入数据库错误：均 503，密码/版本/时间字段不变，两类会话仍有效，token 仍可 validate，无审计与通知残留；去掉注入后同一 token 成功 | PASS |
+| R3-09 | `api-proxy` 重置用例（真实 Next.js 生产构建 + Chrome + mock 后端）；`reset.spec.ts`（真实后端） | 另一浏览器打开购买确认框与总览：重置后点击确认 → 最终 401 → 对话框关闭、页头变为“登录账户”；总览标签切到订单 → 跳转登录、旧总览内容消失；在仍登录的浏览器第二个标签中打开找回与重置页面可正常完成，成功页不自动登录并清除 Cookie；页面错误为 0 | 部分：上述 PASS；**开发模式 Strict Mode 双重初始化未在浏览器实测**（生产构建不双调用，实现以 ref 保护）；“后台 APP”属 R4-02 |
+| R3-10 | `TestResetRevokesAllSessionsAndKeepsAccount` | ID、邮箱、姓名、角色、状态、创建时间不变；只变哈希、`password_changed_at`、`auth_version`（1→2）、补齐的 `email_verified_at`；订阅（ID、额度、已用 4242、到期）与订单不变；NativeSession 未删除，设备、平台、节点、序号保持，仅写 `revoked_at`；审计 Actor/Target=该用户、Version=2；通知邮件不含 token/新密码 | PASS |
+
+**已知限制与交接给后续轮次：**
+
+1. 多实例滚动发布时须全部 API 实例为本版本后再开放找回（`backend/DEPLOYMENT.md` 第 3 轮第 1 条）；回滚边界同第 2 条。
+2. 套餐页“确认模拟开通”使用 `crypto.randomUUID()`，在非 HTTPS、非 loopback 的 HTTP 来源下不可用（既有行为，非本轮引入）；代理测试中登录页签改用 loopback 地址。生产为 HTTPS，不受影响。
+3. 第 2 轮 `register.spec.ts` 末尾的冷却断言假定流程超过 1 秒，本机流程约 1 秒时会显示 `1:00`；已放宽为接受 `0:ss` 或 `1:00`（仅测试）。
+4. `validate`/`reset` 沿用认证入口的进程内 IP 限流，未另设独立参数；长随机 token 不适用六位码的邮箱试错预算。
+5. 四平台“忘记密码”入口、旧保存密码处理与真实 APP 会话终止属第 4 轮；`flow.spec.ts` 与发布演练脚本仍待 R4-09 适配（同第 2 轮记录第 1 条）。

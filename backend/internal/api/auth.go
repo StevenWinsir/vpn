@@ -70,7 +70,22 @@ func (s *Server) login(c *gin.Context) {
 		fail(c, 401, "invalid_credentials", "邮箱或密码不正确")
 		return
 	}
-	sess, raw, err := s.createSession(s.database(c), user.ID, in.Remember)
+	// The password was verified without a lock. A reset that commits in between must
+	// win: the session is created only if the locked row is still the verified version.
+	var sess model.Session
+	var raw string
+	err = s.database(c).Transaction(func(tx *gorm.DB) error {
+		if e := lockVerifiedUser(tx, &user); e != nil {
+			return e
+		}
+		var e error
+		sess, raw, e = s.createSession(tx, user.ID, in.Remember)
+		return e
+	})
+	if errors.Is(err, errStaleCredentials) {
+		fail(c, 401, "invalid_credentials", "邮箱或密码不正确")
+		return
+	}
 	if err != nil {
 		fail(c, 500, "session_failed", "无法创建登录会话")
 		return
@@ -81,6 +96,29 @@ func (s *Server) login(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"user": user})
 }
+
+// errStaleCredentials means the password checked outside the lock is no longer the
+// account's current one (or the account was disabled meanwhile).
+var errStaleCredentials = errors.New("credentials changed during login")
+
+// lockVerifiedUser locks the user row (User first, per the fixed lock order) and
+// confirms it still has the status, AuthVersion and hash that bcrypt verified.
+func lockVerifiedUser(tx *gorm.DB, user *model.User) error {
+	var locked model.User
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", user.ID).Take(&locked).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return errStaleCredentials
+	}
+	if err != nil {
+		return err
+	}
+	if locked.Status != "active" || locked.AuthVersion != user.AuthVersion || locked.PasswordHash != user.PasswordHash {
+		return errStaleCredentials
+	}
+	*user = locked
+	return nil
+}
+
 func (s *Server) createSession(db *gorm.DB, userID string, remember bool) (model.Session, string, error) {
 	raw, err := randomToken()
 	if err != nil {
@@ -137,17 +175,24 @@ func (s *Server) refresh(c *gin.Context) {
 		fail(c, 500, "session_failed", "无法更新会话")
 		return
 	}
+	// Lock order is User -> Session, as in password reset: the candidate is located
+	// without a lock, then everything is re-checked under the locks. A reset that commits
+	// first makes this fail; a refresh that commits first is revoked by the reset.
+	current := refreshHash(raw)
 	var sess model.Session
-	err := s.database(c).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("refresh_hash = ? AND revoked_at IS NULL AND expires_at > ?", refreshHash(raw), time.Now().UTC()).First(&sess).Error; err != nil {
-			return err
-		}
-		var u model.User
-		if err := tx.Where("id = ? AND status = ?", sess.UserID, "active").First(&u).Error; err != nil {
-			return err
-		}
-		return tx.Model(&sess).Update("refresh_hash", refreshHash(next)).Error
-	})
+	err := s.database(c).Select("id", "user_id").Where("refresh_hash = ? AND revoked_at IS NULL AND expires_at > ?", current, time.Now().UTC()).Take(&sess).Error
+	if err == nil {
+		err = s.database(c).Transaction(func(tx *gorm.DB) error {
+			var u model.User
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND status = ?", sess.UserID, "active").Take(&u).Error; err != nil {
+				return err
+			}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ? AND refresh_hash = ? AND revoked_at IS NULL AND expires_at > ?", sess.ID, u.ID, current, time.Now().UTC()).Take(&sess).Error; err != nil {
+				return err
+			}
+			return tx.Model(&sess).Update("refresh_hash", refreshHash(next)).Error
+		})
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		s.clearCookies(c)
 		fail(c, 401, "session_expired", "登录已过期，请重新登录")

@@ -1,6 +1,6 @@
 # 认证邮件基础（注册验证码 / 找回链接）
 
-> 对应 [handoff_auth.md](../handoff_auth.md) 第 1 轮。实现位于 `backend/internal/authmail`，配置位于 `backend/internal/config/mail.go`。第 2 轮接入了注册接口（见下方“注册接口”），找回接口在第 3 轮接入。
+> 对应 [handoff_auth.md](../handoff_auth.md) 第 1 轮。实现位于 `backend/internal/authmail`，配置位于 `backend/internal/config/mail.go`。第 2 轮接入了注册接口（见下方“注册接口”），第 3 轮接入找回与重置接口（见下方“找回与重置接口”）。
 
 ## 配置清单
 
@@ -42,6 +42,43 @@
 | 503 `mail_unavailable` / `auth_unavailable` | 邮件队列满或不可用 / 数据库等暂不可用 |
 
 同一验证码并发提交只会成功一次，其余得到 `verification_used`；成功后响应丢失再重试同样是 `verification_used`，网站提示直接登录。
+
+## 找回与重置接口（第 3 轮）
+
+约束同上（严格 JSON、no-store、Origin/Cookie 规则、认证入口 IP 限流）。三个接口都不触发网站的自动刷新。
+
+| 接口 | 请求 | 成功 |
+| --- | --- | --- |
+| `POST /auth/forgot-password` | `{"email"}` | 202：`message`（固定通用提示）、`next_send_at`、`resend_after_seconds`。已注册、未注册、已禁用账户的响应完全相同；只有存在且 active 的账户收到链接。按历史身份规则规范化，不套用注册白名单；与注册共用邮箱冷却和额度 |
+| `POST /auth/reset-password/validate` | `{"token"}` | 200：`valid`、`expires_at`、`expires_in_seconds`、`password_min_bytes`（普通用户 10、管理员 16）、`password_max_bytes`（72）。只读，可重复调用，不消费 token |
+| `POST /auth/reset-password` | `{"token","password","password_confirmation"}` | 200：`password_reset`、`message`；清除发起浏览器的 `vpn_access`/`vpn_refresh`；**不创建新登录会话** |
+
+链接为 `WEBSITE_BASE_URL + /reset-password#token=<43 位 URL 安全字符>`。token 在 fragment 中，浏览器打开、预取、邮件扫描器的 GET/HEAD 都不会把它发到服务器；网站页面读到内存后立即用 `history.replaceState` 从地址栏移除，之后只出现在上述两个 POST 的请求体中。
+
+`reset-password` 的顺序：解析 token（只读）→ 两次密码一致 → 字节规则（按账户角色）→ 与当前密码不同（bcrypt，事务外）→ 计算新哈希（事务外）→ 单一事务 `CompleteReset`：
+
+1. 锁 User，确认 active、邮箱未变、`auth_version` 仍是签发链接时的版本；锁挑战，确认 active、已投递、未过期、属于该用户与版本；
+2. 写新哈希、`password_changed_at`、`auth_version + 1`，`email_verified_at` 为空时补齐（持有邮件链接即证明邮箱）；
+3. 消费本 token，作废该账户其他未完成的重置挑战并取消其未发邮件；
+4. 撤销该用户全部网站 `sessions` 与客户端 `native_sessions`（按主键顺序加锁）；
+5. 写 `admin_audits`（动作 `auth.password_reset`，Actor/Target 为该用户，Version 为新 `auth_version`），排入“密码已修改”通知（无 challenge，通知投递失败不影响已提交的改密）。
+
+任一步失败整体回滚（503 `auth_unavailable`），token 仍可用。字段错误不消费 token。
+
+| 状态 / 错误码 | 含义 |
+| --- | --- |
+| 400 `invalid_json` | 未知字段、类型不符 |
+| 400 `invalid_email` | forgot 的邮箱格式不合法 |
+| 400 `reset_token_invalid` | 缺失、格式错误、不存在、过期、已使用、被新链接取代、账户已禁用或密码已被改过——统一一个答案 |
+| 400 `password_mismatch` / `invalid_password` / `password_unchanged` | 两次不一致 / 字节数不合规则 / 与当前密码相同 |
+| 429 `rate_limited` + `Retry-After` | 邮箱冷却与额度、IP/全局额度（forgot） |
+| 503 `mail_unavailable` / `auth_unavailable` | 邮件未配置或队列满 / 数据库等暂不可用 |
+
+### 会话撤销与登录竞态
+
+- 已撤销的网站会话：下一次 `auth/me` 等请求 401，刷新令牌 401 `session_expired`（沿用原契约）。网站在受保护请求经一次刷新仍 401 时统一清除用户态，受保护页面（总览、订单、节点、管理员编辑器）随之卸载，套餐页的购买确认框关闭。
+- 已撤销的客户端会话：`/client/*` 全部 401 `native_session_expired`，四平台 Core 已把它作为会话终止处理；旧 token 的流量报告不会入账，撤销前已提交的报告保持不变。
+- 网站登录与客户端登录在 bcrypt 校验后，于创建会话的事务中锁 User 并复核 `auth_version` 与哈希；期间若已重置则返回 401 `invalid_credentials`，不会创建旧密码会话。网站刷新改为“事务外定位候选 → 锁 User → 锁 Session 复核”，与重置的锁顺序一致。
 
 ## 数据库变更（附加迁移）
 
