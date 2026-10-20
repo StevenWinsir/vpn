@@ -477,6 +477,134 @@ final class SessionControllerTests: XCTestCase {
         let controller = makeController(FakeTransport())
         XCTAssertEqual(controller.plansURL.absoluteString, "https://test.hyshentou.cn/plans")
         XCTAssertEqual(controller.registerURL.absoluteString, "https://test.hyshentou.cn/register")
+        XCTAssertEqual(controller.forgotPasswordURL.absoluteString, "https://test.hyshentou.cn/forgot-password")
+    }
+}
+
+/// handoff_auth.md R4-03: the password was reset on the website while a password was saved here.
+@MainActor
+final class PasswordResetTests: XCTestCase {
+    private var ready: Any { try! snapshotSamples()["ready_with_selection"]! }
+    private var expired: Any { try! snapshotSamples()["signed_out_after_expiry"]! }
+    private let email = "fixture@example.invalid"
+    private var account: String { CredentialAccount.key(apiBase: environment.apiBase, email: email) }
+    private let refused = ["code": "invalid_credentials", "message": "邮箱或密码不正确"]
+
+    /// Logins succeed only with `accepted`; `refresh_catalog` reports the session revoked.
+    private func server(accepted: String, logins: Counter, onLogin: @escaping (String) -> Void = { _ in }) -> FakeTransport {
+        let transport = FakeTransport()
+        transport.handler = { [self] command, _, payload in
+            switch command {
+            case "login":
+                logins.logins += 1
+                let password = payload["password"] as? String ?? ""
+                onLogin(password)
+                return password == accepted ? reply(ready) : reply(expired, actionError: refused)
+            case "refresh_catalog": return reply(expired)
+            case "logout": return envelope(result: expired)
+            default: return envelope(result: ready)
+            }
+        }
+        return transport
+    }
+
+    func testOldSavedPasswordIsTriedOnceThenForgottenAndNewPasswordIsSaved() async throws {
+        let store = InMemoryCredentialStore()
+        try store.save(account: account, password: "old-password")
+        let prefs = MemoryPreferences()
+        prefs.rememberedEmail = email
+        let logins = Counter()
+        let controller = makeController(server(accepted: "new-password", logins: logins), store: store, preferences: prefs)
+        await controller.launch()
+        XCTAssertEqual(logins.logins, 1, "exactly one online attempt with the saved password")
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertEqual(controller.message, "邮箱或密码不正确")
+        XCTAssertNil(try store.password(for: account), "the stale item is gone")
+        XCTAssertEqual(prefs.rememberedEmail, email, "the email (non-secret) is kept to prefill the form")
+        XCTAssertEqual(controller.email, email)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(logins.logins, 1, "no retry loop after a refused password")
+
+        await controller.signIn(email: email, password: "new-password", remember: true)
+        XCTAssertEqual(controller.phase, .signedIn)
+        XCTAssertEqual(try store.password(for: account), "new-password")
+    }
+
+    func testTypoInAManualLoginKeepsTheSavedPassword() async throws {
+        let store = InMemoryCredentialStore()
+        try store.save(account: account, password: "good-password")
+        let controller = makeController(server(accepted: "good-password", logins: Counter()), store: store)
+        await controller.signIn(email: email, password: "typo-password", remember: true)
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertEqual(try store.password(for: account), "good-password")
+    }
+
+    func testRefusalNeverDeletesAPasswordSavedMeanwhile() async throws {
+        let store = InMemoryCredentialStore()
+        try store.save(account: account, password: "old-password")
+        // While the old password is on its way to the server, another login saves the new one.
+        let transport = server(accepted: "new-password", logins: Counter()) { password in
+            if password == "old-password" { try? store.save(account: self.account, password: "new-password") }
+        }
+        let controller = makeController(transport, store: store)
+        await controller.signIn(email: email, password: "old-password", remember: true)
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertEqual(try store.password(for: account), "new-password")
+    }
+
+    func testSilentReloginIsDroppedWhenTheUserSignsOutFirst() async throws {
+        let store = InMemoryCredentialStore()
+        try store.save(account: account, password: "pw")
+        let logins = Counter()
+        let controller = makeController(server(accepted: "pw", logins: logins), store: store)
+        await controller.signIn(email: email, password: "pw", remember: true)
+        await controller.refresh() // the server revoked the session: one silent re-login is scheduled
+        XCTAssertEqual(controller.phase, .signedOut)
+        await controller.signOut()  // ...but the user signs out before it runs
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(logins.logins, 1, "the re-login scheduled before the sign-out must not sign back in")
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertNil(try store.password(for: account))
+    }
+
+    func testSilentReloginUsesTheAccountThatExpired() async throws {
+        let store = InMemoryCredentialStore()
+        try store.save(account: account, password: "pw")
+        let logins = Counter()
+        let transport = server(accepted: "pw", logins: logins)
+        let controller = makeController(transport, store: store)
+        await controller.signIn(email: email, password: "pw", remember: true)
+        await controller.refresh()
+        controller.email = "someone-else@example.invalid" // typed into the form before the re-login runs
+        for _ in 0..<50 where logins.logins < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(logins.logins, 2)
+        let emails = zip(transport.commands, transport.payloads).filter { $0.0 == "login" }.map { $0.1["email"] as? String }
+        XCTAssertEqual(emails, [email, email], "the saved password is only ever sent for its own account")
+    }
+
+    func testLateSnapshotFromBeforeSignOutIsDiscarded() async throws {
+        let transport = FakeTransport()
+        let gate = DispatchSemaphore(value: 0)
+        let reads = Counter()
+        transport.handler = { [self] command, _, _ in
+            switch command {
+            case "login": return reply(ready)
+            case "read_snapshot":
+                reads.logins += 1
+                if reads.logins == 1 { gate.wait() } // the first poll is still in flight during the sign-out
+                return envelope(result: ready)
+            case "logout": return envelope(result: expired)
+            default: return envelope(result: ready)
+            }
+        }
+        let controller = makeController(transport)
+        await controller.signIn(email: email, password: "pw", remember: false)
+        for _ in 0..<100 where reads.logins < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        await controller.signOut()
+        gate.signal()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertEqual(controller.snapshot.state, .signedOut, "a poll that started before the sign-out cannot bring the old account back")
     }
 }
 

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise local web/native compatibility, additive migration and backup restore.
+"""Exercise local web/native compatibility, additive migration, backup restore and rollback.
+
+Three normal API binaries take part: the legacy release that produced the existing data
+(before mailbox verification), the current tree, and the rollback target (an accepted release
+that already enforces verification and password versions; handoff_auth.md 12.2). The browser
+stage needs a mail inbox, which a normal binary cannot have without trusting a test SMTP server
+in the machine's trust store; it runs the current API as a Go test assembly instead, with the
+real worker delivering into a capture inbox (TestReleaseRehearsalFixture).
 
 Only creates its own PostgreSQL cluster and loopback servers. No external DSN,
 remote URL, deployment command, production environment file or down migration.
@@ -7,6 +14,7 @@ remote URL, deployment command, production environment file or down migration.
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import argparse
+import base64
 import hashlib
 import http.cookiejar
 import json
@@ -24,7 +32,14 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_TABLES = ['users', 'plans', 'sessions', 'subscriptions', 'orders', 'nodes']
-ALL_TABLES = WEB_TABLES + ['native_sessions', 'client_traffic_reports', 'node_configs', 'admin_audits']
+ALL_TABLES = WEB_TABLES + ['native_sessions', 'client_traffic_reports', 'node_configs', 'admin_audits',
+    'node_agents', 'subscription_periods', 'connection_grants', 'node_usage_reports',
+    'email_auth_challenges', 'auth_mail_jobs', 'auth_rate_buckets']
+# main before handoff_auth.md round 1: open registration, no mailbox verification.
+LEGACY_REF = '67e7b37f935e654e4378c14a32bc888ccff2065f'
+# Round 3 merge: verified registration, mail reset, password versions and session revocation.
+ROLLBACK_REF = 'c84de59'
+ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key'}
 
 
 def free_port():
@@ -48,7 +63,7 @@ class Client:
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), NoRedirect(), urllib.request.HTTPCookieProcessor(self.jar))
 
-    def call(self, route, body=None, *, token=None, origin=None, key=None, expected=200):
+    def call(self, route, body=None, *, token=None, origin=None, key=None, expected=200, code=None):
         headers = {'Content-Type': 'application/json'}
         if token:
             headers['Authorization'] = 'Bearer ' + token
@@ -64,16 +79,17 @@ class Client:
             response = error
         with response:
             value = json.loads(response.read())
-            if response.status != expected:
-                code = value.get('error', {}).get('code', 'unknown')
-                raise AssertionError(f'{route}: HTTP {response.status}, expected {expected}; code={code}')
+            actual = value.get('error', {}).get('code', 'unknown') if isinstance(value, dict) else 'unknown'
+            if response.status != expected or (code and actual != code):
+                raise AssertionError(f'{route}: HTTP {response.status}, expected {expected}; code={actual}')
             return value
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--rollback-ref', default='HEAD')
+    parser.add_argument('--legacy-ref', default=LEGACY_REF, help='release that produced the existing data')
+    parser.add_argument('--rollback-ref', default=ROLLBACK_REF, help='accepted release to roll back to (must enforce verification)')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -81,14 +97,15 @@ def main():
         parser.error('Use a new output directory to preserve previous evidence')
     os.umask(0o077)
     env = {key: value for key, value in os.environ.items() if not key.startswith(
-        ('DATABASE_', 'PG', 'JWT_', 'APP_', 'API_', 'NEXT_PUBLIC_', 'HTTP_', 'CLIENT_', 'AUTO_MIGRATE', 'COOKIE_', 'TEST_PURCHASE', 'ALLOWED_ORIGINS'))}
+        ('DATABASE_', 'PG', 'JWT_', 'APP_', 'API_', 'NEXT_PUBLIC_', 'HTTP_', 'CLIENT_', 'AUTO_MIGRATE', 'COOKIE_', 'TEST_PURCHASE', 'ALLOWED_ORIGINS',
+         'SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES', 'CATALOG_', 'REHEARSAL_', 'NATIVE_TEST_'))}
     env.update(PATH='/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:' + env.get('PATH', ''),
         LC_ALL='C', LANG='C', GOPROXY='off', GOTOOLCHAIN='local', CGO_ENABLED='0',
         NEXT_TELEMETRY_DISABLED='1')
     for tool in ['initdb', 'pg_ctl', 'pg_dump', 'pg_restore', 'psql', 'createdb', 'go', 'node']:
         if not shutil.which(tool, path=env['PATH']):
             raise SystemExit('Missing local tool: ' + tool)
-    summary = {'passed': False, 'checks': [], 'scope': 'private synthetic web-only schema; current and Git baseline normal API binaries; real browser/Next/Gin/PostgreSQL',
+    summary = {'passed': False, 'checks': [], 'scope': 'private synthetic web-only schema from the legacy release; legacy, current and rollback normal API binaries; real browser/Next/PostgreSQL against the current API test assembly with a capture inbox',
         'production_modified': False, 'tls_acceptance': False, 'started_at_unix': time.time()}
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix='vpn-release-', dir='/tmp') as temporary:
@@ -105,10 +122,10 @@ def main():
             if result.returncode:
                 raise RuntimeError(name + ' failed; see its local log')
 
-        def spawn(name, command, environment):
+        def spawn(name, command, environment, cwd=None):
             stream = (output / (name + '.log')).open('a')
             streams.append(stream)
-            process = subprocess.Popen(command, cwd=root, env=environment,
+            process = subprocess.Popen(command, cwd=cwd or root, env=environment,
                 stdout=stream, stderr=subprocess.STDOUT)
             processes.append(process)
             return process
@@ -131,13 +148,18 @@ def main():
                 raise RuntimeError('Private database assertion failed (details suppressed)')
             return result.stdout.strip()
 
-        def fingerprint(database, tables):
+        def columns(database, table):
+            return sql(database, f"SELECT string_agg(quote_ident(column_name), ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='rehearsal' AND table_name='{table}'")
+
+        def fingerprint(database, tables, only=None):
+            # `only` restricts each table to the columns it had before (added columns are checked apart).
             return {table: sql(database,
-                f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY {('node_id' if table == 'node_configs' else 'id')}::text),'')) FROM rehearsal.{table} t")
+                f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY {ORDER_COLUMN.get(table, 'id')}::text),'')) "
+                f"FROM (SELECT {only[table] if only else '*'} FROM rehearsal.{table}) t")
                 for table in tables}
 
-        def api_env(database, port):
-            return dict(env, APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
+        def api_env(database, port, mail=False):
+            return dict(env, **(mail_env if mail else {}), APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
                 DATABASE_HOST='127.0.0.1', DATABASE_PORT=str(pg_port), DATABASE_NAME=database,
                 DATABASE_USER='postgres', DATABASE_PASSWORD=secret, DATABASE_SCHEMA='rehearsal',
                 DATABASE_SSLMODE='disable', JWT_SECRET=jwt, ALLOWED_ORIGINS=web_url,
@@ -145,9 +167,9 @@ def main():
                 CLIENT_ALLOW_TEST_ENTITLEMENTS='true', CLIENT_PROFILE_DIR=str(profiles),
                 BCRYPT_COST='10', AUTH_REQUESTS_PER_MINUTE='10000', API_REQUESTS_PER_MINUTE='100000')
 
-        def start_api(binary, database, name):
+        def start_api(binary, database, name, mail=False):
             port = free_port()
-            process = spawn(name, [str(binary)], api_env(database, port))
+            process = spawn(name, [str(binary)], api_env(database, port, mail))
             client = Client(f'http://127.0.0.1:{port}')
             for _ in range(150):
                 if process.poll() is not None:
@@ -163,29 +185,46 @@ def main():
             raise TimeoutError(name + ' readiness timed out')
 
         try:
-            rollback = subprocess.check_output(['git', 'rev-parse', '--verify', args.rollback_ref + '^{commit}'], cwd=ROOT, text=True).strip()
-            summary['rollback_commit'] = rollback
             summary['root_commit'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-            baseline = root / 'baseline'
-            baseline.mkdir()
-            names = subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', rollback, 'backend'], cwd=ROOT, text=True).splitlines()
-            for name in names:
-                if Path(name).name.startswith('.env'):
-                    continue
-                destination = baseline / name
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(subprocess.check_output(['git', 'show', rollback + ':' + name], cwd=ROOT))
-            current_binary, baseline_binary = root / 'api-current', root / 'api-baseline'
+
+            def build_ref(label, ref):
+                commit = subprocess.check_output(['git', 'rev-parse', '--verify', ref + '^{commit}'], cwd=ROOT, text=True).strip()
+                tree = root / label
+                tree.mkdir()
+                for name in subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', commit, 'backend'], cwd=ROOT, text=True).splitlines():
+                    if Path(name).name.startswith('.env'):
+                        continue
+                    destination = tree / name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(subprocess.check_output(['git', 'show', commit + ':' + name], cwd=ROOT))
+                binary = root / ('api-' + label)
+                run('build-api-' + label, ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(binary), './cmd/api'], cwd=tree / 'backend')
+                return commit, binary
+
+            summary['legacy_commit'], legacy_binary = build_ref('legacy', args.legacy_ref)
+            summary['rollback_commit'], rollback_binary = build_ref('rollback', args.rollback_ref)
+            current_binary = root / 'api-current'
             run('build-api-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(current_binary), './cmd/api'], cwd=ROOT / 'backend')
-            run('build-api-baseline', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(baseline_binary), './cmd/api'], cwd=baseline / 'backend')
             summary['binary_sha256'] = {name: hashlib.sha256(binary.read_bytes()).hexdigest()
-                for name, binary in [('current', current_binary), ('baseline', baseline_binary)]}
-            summary['distinct_backend_versions'] = summary['binary_sha256']['current'] != summary['binary_sha256']['baseline']
+                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary)]}
+            # Identical binaries are reported, not hidden: a tree whose production backend equals the
+            # rollback target makes the rollback step a same-binary restart over the newer data.
+            digests = summary['binary_sha256']
+            summary['distinct_backend_versions'] = len(set(digests.values())) == 3
+            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback')]
+                if digests[a] == digests[b])
             secret, jwt = secrets.token_urlsafe(36), secrets.token_urlsafe(48)
             password_file = root / 'pg-password'
             password_file.write_text(secret)
             pg_port, web_port = free_port(), free_port()
             web_url = f'http://127.0.0.1:{web_port}'
+            # Test-only mail settings: complete enough to open registration, never a real account.
+            # The normal binaries are never asked for a code or a reset link; the test assembly's
+            # worker delivers into its capture inbox.
+            mail_env = {'ALLOW_REGISTRATION': 'true', 'SMTP_HOST': 'smtp.rehearsal.invalid', 'SMTP_PORT': '465',
+                'SMTP_SECURE': 'true', 'SMTP_USER': 'sender@rehearsal.invalid', 'SMTP_PASS': secrets.token_urlsafe(18),
+                'SMTP_FROM_NAME': 'AsterLink VPN', 'WEBSITE_BASE_URL': web_url,
+                'AUTH_MAIL_SECRET': base64.b64encode(secrets.token_bytes(32)).decode()}
             pg_env = dict(env, PGHOST=str(socket_dir), PGPORT=str(pg_port), PGUSER='postgres', PGPASSWORD=secret)
             profiles = root / 'profiles'
             profiles.mkdir(mode=0o700)
@@ -201,12 +240,15 @@ def main():
                 raise RuntimeError('Database listener is not isolated')
             summary['checks'].append('new private SCRAM PostgreSQL cluster with verified data_directory and loopback-only listener')
             run('create-seed', ['createdb', 'seed'], environment=pg_env)
-            run('seed-migrate', [str(baseline_binary), '-migrate'], environment=api_env('seed', free_port()))
-            process, client = start_api(baseline_binary, 'seed', 'api-seed')
+            run('seed-migrate', [str(legacy_binary), '-migrate'], environment=api_env('seed', free_port()))
+            process, client = start_api(legacy_binary, 'seed', 'api-seed')
+            # The legacy release registered without any mailbox proof: that is how existing accounts
+            # were created, so it is the honest way to produce one (with a non-allow-listed domain).
             email, password = 'migration-' + str(uuid.uuid4()) + '@example.invalid', secrets.token_urlsafe(24)
             client.call('/auth/register', {'name': 'Migration Drill', 'email': email, 'password': password, 'remember': True}, origin=web_url, expected=201)
             client.call('/orders/test-purchase', {'plan_id': 'pro'}, origin=web_url, key=str(uuid.uuid4()), expected=201)
             seed_fingerprint = fingerprint('seed', WEB_TABLES)
+            legacy_columns = {table: columns('seed', table) for table in WEB_TABLES}
             stop(process)
             legacy_dump = root / 'web-only.dump'
             run('backup-web-only', ['pg_dump', '-Fc', '-d', 'seed', '--schema=rehearsal',
@@ -217,16 +259,27 @@ def main():
                 raise AssertionError('Synthetic web-only fixture still has native tables')
             assert fingerprint('upgrade', WEB_TABLES) == seed_fingerprint
             run('migration-first', [str(current_binary), '-migrate'], environment=api_env('upgrade', free_port()))
-            assert fingerprint('upgrade', WEB_TABLES) == seed_fingerprint
-            first_schema = sql('upgrade', "SELECT count(*) FROM information_schema.tables WHERE table_schema='rehearsal'")
-            assert first_schema == str(len(ALL_TABLES))
+            assert fingerprint('upgrade', WEB_TABLES, legacy_columns) == seed_fingerprint
+            tables = set(sql('upgrade', "SELECT string_agg(table_name, ',') FROM information_schema.tables WHERE table_schema='rehearsal'").split(','))
+            if tables != set(ALL_TABLES):
+                raise AssertionError(f'unexpected tables after migration: missing {sorted(set(ALL_TABLES) - tables)}, extra {sorted(tables - set(ALL_TABLES))}')
+            # Added user columns hold their defaults: nothing pretends an old mailbox was verified.
+            unverified = "SELECT count(*) FROM rehearsal.users WHERE auth_version <> 1 OR email_verified_at IS NOT NULL OR password_changed_at IS NOT NULL"
+            assert sql('upgrade', unverified) == '0'
             run('migration-repeat', [str(current_binary), '-migrate'], environment=api_env('upgrade', free_port()))
-            assert fingerprint('upgrade', WEB_TABLES) == seed_fingerprint
-            summary['checks'].append('web-only fixture upgrade creates native tables; repeated additive migration preserves every pre-existing row')
-            summary['legacy_fixture'] = 'synthetic web-only pg_dump subset from Git baseline, not a production snapshot'
+            assert fingerprint('upgrade', WEB_TABLES, legacy_columns) == seed_fingerprint
+            assert sql('upgrade', unverified) == '0'
+            summary['checks'].append(f'legacy web-only data upgraded to all {len(ALL_TABLES)} tables; every pre-existing column value unchanged after two migrations; added user columns at their defaults (auth_version 1, never verified)')
+            summary['legacy_fixture'] = 'synthetic web-only pg_dump subset produced by the legacy release, not a production snapshot'
             process, client = start_api(current_binary, 'upgrade', 'api-upgraded')
             client.call('/auth/login', {'email': email, 'password': password}, origin=web_url)
             assert client.call('/orders')['total'] == 1
+            users_before = sql('upgrade', 'SELECT count(*) FROM rehearsal.users')
+            # Registration closed (no mail settings): the legacy request shape cannot create an account.
+            Client(client.url).call('/auth/register', {'name': 'Bypass', 'email': 'bypass-' + str(uuid.uuid4()) + '@gmail.com',
+                'password': secrets.token_urlsafe(24), 'remember': False}, origin=web_url, expected=403, code='registration_disabled')
+            assert sql('upgrade', 'SELECT count(*) FROM rehearsal.users') == users_before
+            summary['checks'].append('current binary with registration closed: legacy account signs in with its old password; legacy registration request refused (403 registration_disabled), no account created')
             tokens = []
             for _ in range(2):
                 token = Client(client.url).call('/client/login', {'email': email, 'password': password,
@@ -260,8 +313,34 @@ def main():
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
             (stage / 'node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
+            stop(process)
+            fixture_dir = root / 'fixture'
+            fixture_dir.mkdir(mode=0o700)
+            fixture = spawn('api-fixture', ['go', 'test', '-count=1', '-run', '^TestReleaseRehearsalFixture$', '-timeout=20m', './internal/api'],
+                dict(api_env('upgrade', free_port(), mail=True), REHEARSAL_FIXTURE_DIR=str(fixture_dir)), cwd=ROOT / 'backend')
+            fixture_ready = fixture_dir / 'fixture.json'
+            deadline = time.monotonic() + 180
+            while not fixture_ready.exists():
+                if fixture.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError('Rehearsal API test assembly failed before readiness; see api-fixture.log')
+                time.sleep(0.1)
+            metadata = json.loads(fixture_ready.read_text())
+            client = Client(metadata['api'])
+
+            def inbox(route, to):
+                request = urllib.request.Request(client.url + route + '?to=' + urllib.parse.quote(to), headers={'X-Acceptance-Control': metadata['control']})
+                for _ in range(50):
+                    try:
+                        with client.opener.open(request, timeout=5) as response:
+                            return json.loads(response.read())
+                    except urllib.error.HTTPError as error:
+                        if error.code != 404:
+                            raise
+                    time.sleep(0.2)
+                raise AssertionError('no mail delivered to the rehearsal inbox')
+
             web_env = dict(env, API_INTERNAL_URL=client.url + '/api/v1', PLAYWRIGHT_BASE_URL=web_url,
-                E2E_ISOLATED='private-postgres', E2E_ARTIFACTS_DIR=str(output / 'browser'))
+                E2E_ISOLATED='private-postgres', E2E_ARTIFACTS_DIR=str(output / 'browser'), REHEARSAL_FIXTURE=str(fixture_ready))
             chrome = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
             if chrome.is_file():
                 web_env['PLAYWRIGHT_CHROME_PATH'] = str(chrome)
@@ -286,9 +365,35 @@ def main():
             else:
                 raise TimeoutError('Next.js readiness timed out')
             run('browser-current', ['node', str(stage / 'node_modules/@playwright/test/cli.js'), 'test'], cwd=stage, environment=web_env, timeout=600)
-            summary['checks'].append('real production Next.js / Chromium / Gin / PostgreSQL registration, purchase, cookie rotation, login/logout and responsive pages')
+            summary['checks'].append('real production Next.js / Chromium / PostgreSQL: email-code registration (code from the capture inbox), purchase, cookie rotation, login/logout and responsive public pages incl. /forgot-password')
             stop(web_process)
-            stop(process)
+
+            # The legacy account (non-allow-listed domain, never verified) resets its password by mail link.
+            web = Client(client.url)
+            web.call('/auth/login', {'email': email, 'password': password}, origin=web_url)
+            web.call('/auth/forgot-password', {'email': email}, origin=web_url, expected=202)
+            token = inbox('/fixture/reset-link', email)['token']
+            web.call('/auth/reset-password/validate', {'token': token}, origin=web_url)
+            new_password = secrets.token_urlsafe(24)
+            web.call('/auth/reset-password', {'token': token, 'password': new_password, 'password_confirmation': new_password}, origin=web_url)
+            web.call('/auth/reset-password', {'token': token, 'password': new_password + 'x', 'password_confirmation': new_password + 'x'},
+                origin=web_url, expected=400, code='reset_token_invalid')
+            for token_value in tokens:
+                Client(client.url).call('/client/session', token=token_value, expected=401, code='native_session_expired')
+                Client(client.url).call('/client/traffic', payloads[0], token=token_value, expected=401, code='native_session_expired')
+            Client(client.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
+            Client(client.url).call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            account = f"FROM rehearsal.users WHERE email = '{email}'"
+            assert sql('upgrade', f"SELECT auth_version || ':' || (email_verified_at IS NOT NULL) || ':' || (password_changed_at IS NOT NULL) {account}") == '2:true:true'
+            assert sql('upgrade', f"SELECT count(*) FROM rehearsal.native_sessions WHERE revoked_at IS NULL AND user_id = (SELECT id {account})") == '0'
+            assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == '1000000'
+            assert sql('upgrade', 'SELECT sum(used_units) FROM rehearsal.subscriptions') == '1000000'
+            summary['checks'].append('legacy account mail-link reset: token single use; both native sessions refused (401 native_session_expired) for session and traffic; old password refused, new accepted; auth_version 2 and mailbox verified by the reset; confirmed traffic and balance unchanged')
+            (fixture_dir / 'stop').touch()
+            fixture.wait(timeout=60)
+            processes.remove(fixture)
+            if fixture.returncode:
+                raise RuntimeError('Rehearsal API test assembly failed; see api-fixture.log')
             before_restore = fingerprint('upgrade', ALL_TABLES)
             full_dump = root / 'upgraded.dump'
             run('backup-upgraded', ['pg_dump', '-Fc', '-d', 'upgrade', '--schema=rehearsal', '-f', str(full_dump)], environment=pg_env)
@@ -297,19 +402,27 @@ def main():
             assert fingerprint('restored', ALL_TABLES) == before_restore
             run('restored-migrate', [str(current_binary), '-migrate'], environment=api_env('restored', free_port()))
             assert fingerprint('restored', ALL_TABLES) == before_restore
-            summary['checks'].append('custom-format full backup restored into a second database; all ten table fingerprints match before/after migration')
-            process, old = start_api(baseline_binary, 'upgrade', 'api-rollback')
-            old.call('/auth/login', {'email': email, 'password': password}, origin=web_url)
+            summary['checks'].append(f'custom-format full backup restored into a second database; all {len(ALL_TABLES)} table fingerprints match before/after migration')
+            # Rollback with registration switched on: the accepted release still demands a code.
+            process, old = start_api(rollback_binary, 'upgrade', 'api-rollback', mail=True)
+            users_before = sql('upgrade', 'SELECT count(*) FROM rehearsal.users')
+            Client(old.url).call('/auth/register', {'name': 'Bypass', 'email': 'bypass-' + str(uuid.uuid4()) + '@gmail.com',
+                'password': secrets.token_urlsafe(24), 'remember': False}, origin=web_url, expected=400, code='verification_required')
+            assert sql('upgrade', 'SELECT count(*) FROM rehearsal.users') == users_before
+            Client(old.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
+            old.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
             assert old.call('/orders')['total'] == 1
-            for index, token in enumerate(tokens):
-                assert Client(old.url).call('/client/traffic', payloads[index], token=token)['replayed'] is True
+            for index, token_value in enumerate(tokens):
+                Client(old.url).call('/client/traffic', payloads[index], token=token_value, expected=401, code='native_session_expired')
             assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == '1000000'
+            assert sql('upgrade', f"SELECT auth_version FROM rehearsal.users WHERE email = '{email}'") == '2'
             stop(process)
             process, restored = start_api(current_binary, 'restored', 'api-restored')
-            restored.call('/auth/login', {'email': email, 'password': password}, origin=web_url)
+            Client(restored.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
+            restored.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
             assert restored.call('/orders')['total'] == 1
             stop(process)
-            summary['checks'].append('Git baseline normal binary rollback without down migration preserves web orders and native idempotency; restored current binary remains usable')
+            summary['checks'].append('rollback to the accepted verification release (no down migration, registration on): code-less registration refused (400 verification_required), old password stays dead, revoked native tokens stay revoked, new password, orders and confirmed traffic preserved; restored current binary behaves the same')
             summary['table_fingerprints_before_restore'] = before_restore
             summary['backup_sha256'] = {'web_only': hashlib.sha256(legacy_dump.read_bytes()).hexdigest(),
                                       'upgraded': hashlib.sha256(full_dump.read_bytes()).hexdigest()}

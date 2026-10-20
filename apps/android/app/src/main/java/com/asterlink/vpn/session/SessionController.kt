@@ -93,12 +93,15 @@ class SessionController(
         set { it.copy(phase = AppPhase.SignedOut) }
         val email = current.email
         if (email.isEmpty()) return
+        val version = operationVersion
         val saved = try {
             credentials.read(accountFor(email))
         } catch (error: CredentialStoreException) {
             set { it.copy(warning = Notice.local(LocalCodes.CREDENTIAL_READ_FAILED)) }
             return
         }
+        // The user may have signed in by hand while the Keystore was being read: that login wins.
+        if (version != operationVersion || current.phase != AppPhase.SignedOut) return
         if (!saved.isNullOrEmpty()) {
             set { it.copy(rememberPassword = true) }
             signInNow(email, saved, remember = true, automatic = true)
@@ -144,8 +147,7 @@ class SessionController(
             val failure = reply.actionError
             if (failure != null) {
                 set { it.copy(phase = AppPhase.SignedOut, message = Notice.core(failure.code, failure.message)) }
-                // A saved password the server rejects is stale: stop offering it.
-                if (failure.code == "invalid_credentials") tryDelete(accountFor(email))
+                if (failure.code == "invalid_credentials") forgetRejected(email, password)
                 return
             }
             set { it.copy(phase = AppPhase.SignedIn, connectedSinceMillis = null) }
@@ -187,6 +189,22 @@ class SessionController(
             val remembered = runCatching { preferences.rememberedEmail() }.getOrNull()
             if (remembered != null && remembered.equals(email, ignoreCase = true)) runCatching { preferences.setRememberedEmail(null) }
         }
+    }
+
+    /**
+     * A saved password the server rejects is stale (changed on the website, for example): stop
+     * offering it. Only the item that still holds exactly the rejected password goes, so a typo in
+     * a manual login never drops a good saved password, and a password saved meanwhile by a newer
+     * login survives. The email and the device identity are kept.
+     */
+    private suspend fun forgetRejected(email: String, password: String) {
+        val key = accountFor(email)
+        val saved = try {
+            credentials.read(key)
+        } catch (error: CredentialStoreException) {
+            return
+        }
+        if (saved == password) tryDelete(key)
     }
 
     private suspend fun tryDelete(key: String) {
@@ -516,15 +534,19 @@ class SessionController(
         val code = error?.code.orEmpty()
         if (!code.startsWith("native_session_") || autoRelogins >= 1) return
         autoRelogins++
+        // One silent re-login for an expired session; a refused password is never retried. The
+        // account is fixed now, and a sign-in, sign-out or account switch by the user before the
+        // Keystore answers drops it instead of acting on the newer state.
+        val email = current.email
+        val version = operationVersion
         scope.launch {
-            // One silent re-login for an expired session; a refused password is never retried.
-            val email = current.email
             val saved = try {
                 credentials.read(accountFor(email))
             } catch (error: CredentialStoreException) {
                 null
             }
-            if (!saved.isNullOrEmpty()) signInNow(email, saved, remember = true, automatic = true)
+            if (saved.isNullOrEmpty() || version != operationVersion || current.phase != AppPhase.SignedOut || current.busy) return@launch
+            signInNow(email, saved, remember = true, automatic = true)
         }
     }
 

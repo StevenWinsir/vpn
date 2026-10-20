@@ -13,6 +13,7 @@
     <string name="login_submit">Sign in</string>
     <string name="login_signing_in">Signing in…</string>
     <string name="login_register">Create account</string>
+    <string name="login_forgot_password">Forgot password</string>
     <string name="login_website">Visit website</string>
     <string name="login_footer">Version %1$s · Core %2$s · Mihomo %3$s</string>
     <string name="login_footer_starting">Version %1$s · starting the core</string>

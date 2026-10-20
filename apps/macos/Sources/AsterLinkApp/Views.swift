@@ -80,6 +80,7 @@ struct LoginView: View {
 
             HStack(spacing: 18) {
                 Link("注册账号", destination: session.registerURL)
+                Link("忘记密码", destination: session.forgotPasswordURL)
                 Link("购买套餐", destination: session.plansURL)
                 Button("设置", action: showSettings).buttonStyle(.link)
             }.font(.callout)

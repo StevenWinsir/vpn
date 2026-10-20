@@ -1,21 +1,43 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const artifacts = process.env.E2E_ARTIFACTS_DIR || '../artifacts/qa';
+
+// The rehearsal's test assembly delivers mail into a capture inbox; the code is read back only
+// through its control-token endpoint (test-only, never part of the production API).
+async function inbox() {
+  const filename = process.env.REHEARSAL_FIXTURE;
+  if (!filename?.startsWith('/tmp/vpn-release-')) throw new Error('Private rehearsal fixture required');
+  const fixture = JSON.parse(await readFile(filename, 'utf8')) as { api: string; control: string };
+  return async (to: string) => {
+    for (let i = 0; i < 50; i++) {
+      const response = await fetch(fixture.api + '/fixture/mail?to=' + encodeURIComponent(to), {
+        headers: { 'X-Acceptance-Control': fixture.control },
+      });
+      if (response.ok) return ((await response.json()) as { code: string }).code;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error('No registration code was delivered');
+  };
+}
 
 test('registration, test purchase, persistence, order history and logout', async ({
   page,
   context,
 }) => {
-  const email = `browser-qa-${randomUUID()}@example.invalid`;
+  const codeFor = await inbox();
+  const email = `browser-qa-${randomUUID().slice(0, 12)}@gmail.com`;
   const password = `Test-Only-${randomUUID()}!`;
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/register');
   await page.getByLabel('姓名 / 昵称').fill('浏览器测试');
   await page.getByLabel('邮箱地址').fill(email);
+  await page.getByRole('button', { name: '获取验证码' }).click();
+  await expect(page.getByText('如果该邮箱可以注册')).toBeVisible();
+  await page.getByLabel('邮箱验证码').fill(await codeFor(email));
   await page.locator('input[type="password"]').fill(password);
   await page.getByLabel('记住登录状态（30 天）').check();
   await page.getByRole('button', { name: '注册并进入工作台' }).click();
@@ -100,7 +122,7 @@ test('registration, test purchase, persistence, order history and logout', async
 
 test('public pages fit mobile and protected routes redirect', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const route of ['/', '/login', '/register', '/plans']) {
+  for (const route of ['/', '/login', '/register', '/forgot-password', '/plans']) {
     await page.goto(route);
     await expect(page.locator('h1')).toBeVisible();
     if (route === '/plans')

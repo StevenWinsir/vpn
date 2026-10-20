@@ -88,6 +88,7 @@ public sealed class SessionController
     public Uri WebsiteBase => environment.WebsiteBase;
     public Uri PlansUrl => new(environment.WebsiteBase, "/plans");
     public Uri RegisterUrl => new(environment.WebsiteBase, "/register");
+    public Uri ForgotPasswordUrl => new(environment.WebsiteBase, "/forgot-password");
     public Uri DashboardUrl => new(environment.WebsiteBase, "/dashboard");
     public Uri OrdersUrl => new(environment.WebsiteBase, "/orders");
 
@@ -188,8 +189,7 @@ public sealed class SessionController
             {
                 Phase = AppPhase.SignedOut;
                 Message = failure.Message;
-                // A saved password the server rejects is stale: stop offering it.
-                if (failure.Code == "invalid_credentials") TryDelete(AccountFor(email));
+                if (failure.Code == "invalid_credentials") ForgetRejected(email, password);
                 return;
             }
             Phase = AppPhase.SignedIn;
@@ -238,6 +238,21 @@ public sealed class SessionController
             RememberPassword = false;
             if (string.Equals(preferences.RememberedEmail, email, StringComparison.OrdinalIgnoreCase)) preferences.RememberedEmail = null;
         }
+    }
+
+    /// <summary>
+    /// A saved password the server rejects is stale (changed on the website, for example): stop offering
+    /// it. Only the item that still holds exactly the rejected password goes, so a typo in a manual login
+    /// never drops a good saved password, and a password saved meanwhile by a newer login survives. The
+    /// email and the device identity are kept.
+    /// </summary>
+    private void ForgetRejected(string email, string password)
+    {
+        var key = AccountFor(email);
+        string? saved;
+        try { saved = credentials.Read(key); }
+        catch (CredentialStoreException) { return; }
+        if (string.Equals(saved, password, StringComparison.Ordinal)) TryDelete(key);
     }
 
     private void TryDelete(string key)
