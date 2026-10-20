@@ -1,6 +1,6 @@
 # 认证邮件基础（注册验证码 / 找回链接）
 
-> 对应 [handoff_auth.md](../handoff_auth.md) 第 1 轮。实现位于 `backend/internal/authmail`，配置位于 `backend/internal/config/mail.go`。注册与找回的 HTTP 接口在第 2、3 轮接入。
+> 对应 [handoff_auth.md](../handoff_auth.md) 第 1 轮。实现位于 `backend/internal/authmail`，配置位于 `backend/internal/config/mail.go`。第 2 轮接入了注册接口（见下方“注册接口”），找回接口在第 3 轮接入。
 
 ## 配置清单
 
@@ -17,6 +17,31 @@
 | `TRUSTED_PROXIES` | 空 | IP/CIDR 列表；只有这些对端的 `X-Forwarded-For` 被采用，其余一律使用 TCP 对端地址 |
 
 启动错误只包含变量名与错误类别。`GET /api/v1/meta` 新增 `allow_registration`、`registration_email_domains`、`password_reset_enabled`、`verification_code_ttl_seconds`、`verification_resend_after_seconds`，不包含任何 SMTP、网址或密钥信息。
+
+## 注册接口（第 2 轮）
+
+均经网站同源 `/api/v1` 代理访问，严格 JSON（拒绝未知字段，请求体 ≤ 8 KiB），响应 `Cache-Control: no-store`，沿用现有 Origin/Cookie 规则和认证入口 IP 限流。
+
+| 接口 | 请求 | 成功 |
+| --- | --- | --- |
+| `POST /auth/register-code` | `{"email"}` | 202：`message`（固定通用提示）、`verification_id`（随机 UUID）、`expires_at`、`next_send_at`（UTC）、`expires_in_seconds`、`resend_after_seconds`（服务端计算的相对秒数，网站倒计时只用这两项）。已注册邮箱返回完全相同形态，只是不发邮件 |
+| `POST /auth/register` | `{"name","email","password","remember","verification_id","code"}` | 201：`{"user"}` 与原有 `vpn_access`/`vpn_refresh` Cookie；账户 `email_verified_at` 写入、角色固定 `user`、状态 `active`、不赠送套餐 |
+
+检查顺序：发码为“格式 → 域名白名单 → 注册开关 → 邮件能力 → 共享限流”；注册为“开关 → 姓名（2–40 个 Unicode 字符）与密码（10–72 UTF-8 字节）→ 白名单（按当前配置重查）→ 验证码格式 → bcrypt（事务外）→ 邮箱协调行锁内校验并在同一事务中建号、建会话、消费挑战”。
+
+| 状态 / 错误码 | 含义 |
+| --- | --- |
+| 400 `invalid_json` | 未知字段（如 `role`、`status`、`verified`、`user_id`）、`code` 不是字符串等 |
+| 400 `invalid_email`（发码）/ `invalid_registration`（注册） | 邮箱、姓名或密码格式不合法 |
+| 400 `email_domain_not_allowed` | 不在 `/meta` 的 `registration_email_domains` 中（发码与注册两处都查） |
+| 400 `verification_required` / `invalid_verification_code` | 未带 `verification_id`；`code` 不是恰好 6 个 ASCII 数字（不计入试错） |
+| 400 `verification_invalid` / `verification_expired` / `verification_used` / `verification_locked` | 不匹配（含 ID 与邮箱不对应）/ 过期或已被新验证码取代 / 已使用 / 单挑战 5 次错误已锁定 |
+| 403 `registration_disabled` | 注册关闭或邮件未配置 |
+| 409 `email_exists` | 验证码已正确核对，但该邮箱已有账户 |
+| 429 `rate_limited` + `Retry-After` | 发送冷却、邮箱/IP/全局额度，或同邮箱 30 分钟验证码错误预算用尽 |
+| 503 `mail_unavailable` / `auth_unavailable` | 邮件队列满或不可用 / 数据库等暂不可用 |
+
+同一验证码并发提交只会成功一次，其余得到 `verification_used`；成功后响应丢失再重试同样是 `verification_used`，网站提示直接登录。
 
 ## 数据库变更（附加迁移）
 

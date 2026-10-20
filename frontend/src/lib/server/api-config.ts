@@ -34,7 +34,20 @@ export function readAPIConfig() {
   const timeoutMs = Number(env.API_TIMEOUT_MS ?? env['NEXT_PUBLIC_API_TIMEOUT_MS'] ?? '65000');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 180000)
     throw new APIProxyError(503, 'api_config_invalid', '服务端 API_TIMEOUT_MS 配置无效。');
-  return { internalURL, timeoutMs };
+  // Optional: the header in which the trusted ingress (the reverse proxy in front of Next.js)
+  // passes the browser address. That proxy must overwrite any client-supplied value and
+  // Next.js must not be reachable around it. Unset: no client address is forwarded and Go
+  // sees the Next.js host, so only per-mailbox and global mail limits separate users.
+  const clientIPHeader = (env.CLIENT_IP_HEADER ?? '').trim().toLowerCase();
+  if (
+    clientIPHeader &&
+    (!/^[a-z][a-z0-9-]{1,63}$/.test(clientIPHeader) ||
+      ['host', 'cookie', 'authorization', 'origin', 'content-type', 'content-length'].includes(
+        clientIPHeader,
+      ))
+  )
+    throw new APIProxyError(503, 'api_config_invalid', '服务端 CLIENT_IP_HEADER 配置无效。');
+  return { internalURL, timeoutMs, clientIPHeader };
 }
 
 export function proxyErrorResponse(error: APIProxyError) {

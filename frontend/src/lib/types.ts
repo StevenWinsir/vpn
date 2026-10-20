@@ -63,7 +63,27 @@ export type Meta = {
   proxy_service_ready: boolean;
   currency: string;
   traffic_unit: string;
+  // Registration and mail capabilities: effective server values, never configuration secrets.
+  allow_registration?: boolean;
+  registration_email_domains?: string[];
+  password_reset_enabled?: boolean;
+  verification_code_ttl_seconds?: number;
+  verification_resend_after_seconds?: number;
 };
+export type RegisterCodeReceipt = {
+  message: string;
+  verification_id: string;
+  expires_at: string;
+  next_send_at: string;
+  expires_in_seconds: number;
+  resend_after_seconds: number;
+};
+// Account password rules, measured in UTF-8 bytes exactly like the backend.
+export const passwordMinBytes = 10;
+export const passwordMaxBytes = 72;
+export const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
+// Display names are 2–40 Unicode characters after trimming, as the backend counts them.
+export const nameLength = (value: string) => Array.from(value.trim()).length;
 export const appName = process.env.NEXT_PUBLIC_APP_NAME || 'AsterLink';
 export const money = (cents: number) =>
   new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(cents / 100);

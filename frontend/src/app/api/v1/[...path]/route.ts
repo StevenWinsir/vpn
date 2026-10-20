@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { APIProxyError, proxyErrorResponse, readAPIConfig } from '@/lib/server/api-config';
 
 export const runtime = 'nodejs';
@@ -63,10 +64,20 @@ async function readBody(
   }
 }
 
+// The browser address as reported by the trusted ingress. With "append" style proxies
+// (X-Forwarded-For) only the last entry was written by the ingress itself; anything
+// that is not exactly one IP address is ignored rather than guessed.
+function clientAddress(request: Request, header: string): string | null {
+  const value = request.headers.get(header);
+  if (!value || value.length > 1024) return null;
+  const last = value.split(',').at(-1)!.trim();
+  return isIP(last) ? last : null;
+}
+
 async function proxy(request: Request, context: Context) {
   let timeout: AbortSignal | undefined;
   try {
-    const { internalURL, timeoutMs } = readAPIConfig();
+    const { internalURL, timeoutMs, clientIPHeader } = readAPIConfig();
     const { path } = await context.params;
     // Current API routes use plain path segments. Reject traversal and encoded separators.
     if (!path.length || path.some((segment) => !/^[a-zA-Z0-9_-]+$/.test(segment)))
@@ -83,6 +94,10 @@ async function proxy(request: Request, context: Context) {
       if (value !== null) headers.set(name, value);
     }
     // Do not forward client-controlled Host/Forwarded headers or manufacture a trusted Origin.
+    // The only forwarded address is the one the configured ingress header vouches for; Go
+    // accepts it only from TRUSTED_PROXIES (the Next.js host).
+    const address = clientIPHeader ? clientAddress(request, clientIPHeader) : null;
+    if (address) headers.set('x-forwarded-for', address);
     headers.set('accept-encoding', 'identity');
     timeout = AbortSignal.timeout(timeoutMs);
     const signal = AbortSignal.any([request.signal, timeout]);

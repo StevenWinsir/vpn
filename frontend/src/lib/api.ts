@@ -5,11 +5,25 @@ export class APIError extends Error {
     public status: number,
     public code: string,
     message: string,
+    // Seconds from the server's Retry-After header (429), when present.
+    public retryAfter: number | null = null,
   ) {
     super(message);
     this.name = 'APIError';
   }
 }
+function retryAfterSeconds(response: Response): number | null {
+  const value = response.headers.get('Retry-After');
+  return value && /^\d{1,6}$/.test(value) ? Number(value) : null;
+}
+// Anonymous authentication calls never trigger the cookie refresh-and-retry path.
+const noRefreshPaths = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/register-code',
+  '/auth/logout',
+  '/auth/refresh',
+];
 let timeoutInFlight: Promise<number> | null = null;
 function requestTimeout(): Promise<number> {
   if (!timeoutInFlight) {
@@ -65,6 +79,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       response.status,
       data?.error?.code || 'request_failed',
       data?.error?.message || '请求失败，请稍后重试。',
+      retryAfterSeconds(response),
     );
   return data as T;
 }
@@ -77,7 +92,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
       !(error instanceof APIError) ||
       error.status !== 401 ||
       !retry ||
-      ['/auth/login', '/auth/register', '/auth/logout', '/auth/refresh'].includes(path)
+      noRefreshPaths.includes(path)
     )
       throw error;
     if (!refreshInFlight)

@@ -73,6 +73,8 @@ async function staticFingerprint(directory) {
 
 function mockBackend(label, origins) {
   const received = [];
+  const settings = { registrationOpen: true };
+  let codeRequests = 0;
   let generation = 0;
   let active = false;
   const server = createServer(async (request, response) => {
@@ -117,14 +119,48 @@ function mockBackend(label, origins) {
       response.writeHead(204);
       return response.end();
     }
-    if (pathname === '/api/v1/auth/login' || pathname === '/api/v1/auth/register') {
+    if (pathname === '/api/v1/auth/login') {
       const input = JSON.parse(body || '{}');
       if (input.password !== 'proxy-test-password')
         return fail(401, 'invalid_credentials', '邮箱或密码不正确');
       active = true;
       generation++;
       cookies();
-      return json(pathname.endsWith('register') ? 201 : 200, { user: testUser });
+      return json(200, { user: testUser });
+    }
+    // Registration mirrors the Go contract: code request, then a proof-bound final step.
+    if (pathname === '/api/v1/auth/register-code') {
+      const { email } = JSON.parse(body || '{}');
+      if (!settings.registrationOpen) return fail(403, 'registration_disabled', '当前暂未开放注册');
+      if (email === 'limited@qq.com') {
+        response.setHeader('Retry-After', '75');
+        return fail(429, 'rate_limited', '请求过于频繁，请稍后重试');
+      }
+      if (email === 'down@qq.com')
+        return fail(503, 'mail_unavailable', '邮件服务暂时不可用，请稍后重试');
+      if (email === 'slow@qq.com') await delay(1500);
+      codeRequests++;
+      response.setHeader('X-Request-ID', 'register-code-' + codeRequests);
+      return json(202, {
+        message: '如果该邮箱可以注册，6 位验证码会在几分钟内送达，请同时检查垃圾邮件箱。',
+        verification_id: `verification-${codeRequests}-${email}`,
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+        next_send_at: new Date(Date.now() + 60000).toISOString(),
+        expires_in_seconds: 600,
+        resend_after_seconds: 60,
+      });
+    }
+    if (pathname === '/api/v1/auth/register') {
+      const input = JSON.parse(body || '{}');
+      if (!settings.registrationOpen) return fail(403, 'registration_disabled', '当前暂未开放注册');
+      if (!input.verification_id)
+        return fail(400, 'verification_required', '请先获取并填写邮箱验证码');
+      if (input.code !== '012345')
+        return fail(400, 'verification_invalid', '验证码不正确，请检查后重新输入');
+      active = true;
+      generation++;
+      cookies();
+      return json(201, { user: { ...testUser, email: input.email, name: input.name } });
     }
     if (pathname === '/api/v1/auth/refresh') {
       if (!active || !cookie.includes(`vpn_refresh=refresh-${generation}`)) {
@@ -156,7 +192,15 @@ function mockBackend(label, origins) {
       return json(200, { orders: [], total: 0, page: 1, page_size: 20 });
     if (pathname === '/api/v1/plans') return json(200, { plans: [] });
     if (pathname === '/api/v1/meta')
-      return json(200, { upstream: label, test_purchase_enabled: false });
+      return json(200, {
+        upstream: label,
+        test_purchase_enabled: false,
+        allow_registration: settings.registrationOpen,
+        registration_email_domains: ['qq.com', 'gmail.com'],
+        password_reset_enabled: true,
+        verification_code_ttl_seconds: 600,
+        verification_resend_after_seconds: 60,
+      });
     if (pathname === '/api/v1/oversized-known') {
       response.writeHead(200, { 'Content-Length': (512 << 10) + 1 });
       return response.end(Buffer.alloc((512 << 10) + 1));
@@ -190,7 +234,7 @@ function mockBackend(label, origins) {
     }
     return json(200, record);
   });
-  return { server, received };
+  return { server, received, settings };
 }
 
 test(
@@ -215,6 +259,7 @@ test(
       'API_TIMEOUT_MS',
       'NEXT_PUBLIC_API_URL',
       'NEXT_PUBLIC_API_TIMEOUT_MS',
+      'CLIENT_IP_HEADER',
       '__NEXT_PROCESSED_ENV',
     ])
       delete cleanEnv[name];
@@ -409,6 +454,136 @@ test(
       );
 
       await t.test(
+        'registration: email code request, cooldown, stale responses, field errors and closed state',
+        async () => {
+          browser = await chromium.launch({
+            ...(process.env.PLAYWRIGHT_CHROME_PATH
+              ? { executablePath: process.env.PLAYWRIGHT_CHROME_PATH }
+              : {}),
+            args: [
+              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1',
+              '--no-proxy-server',
+            ],
+          });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+          const page = await context.newPage();
+          const errors = [];
+          page.on('pageerror', (error) => errors.push(error.message));
+          const codeRequests = () =>
+            first.received.filter((record) => record.url === '/api/v1/auth/register-code');
+          const sendButton = () =>
+            page.getByRole('button', { name: /获取验证码|重新发送|秒后可重发|发送中/ });
+          await page.goto(browserURL + '/');
+          await page.getByRole('link', { name: '创建账户' }).click();
+          await page.waitForURL('**/register');
+          await page.getByRole('heading', { name: '创建你的账户' }).waitFor();
+          await page.getByText('支持：qq.com、gmail.com').waitFor();
+
+          // The published allow-list gives immediate feedback; nothing is sent.
+          await page.getByLabel('姓名 / 昵称').fill('注册测试');
+          await page.getByLabel('邮箱地址').fill('someone@example.com');
+          await sendButton().click();
+          await page.getByText('该邮箱服务商暂不支持注册').waitFor();
+          assert.equal(codeRequests().length, 0);
+
+          // A slow answer for an address the user has since changed must not apply.
+          await page.getByLabel('邮箱地址').fill('slow@qq.com');
+          await sendButton().click();
+          await page.getByLabel('邮箱地址').fill('fresh@qq.com');
+          await delay(2000);
+          assert.equal(codeRequests().length, 1);
+          assert.equal(await page.getByRole('status').count(), 0);
+          assert.equal(await sendButton().textContent(), '获取验证码');
+
+          await sendButton().click();
+          await page.getByText('如果该邮箱可以注册').waitFor();
+          await page.getByText(/验证码 \d+:\d\d 内有效/).waitFor();
+          assert.match(await sendButton().textContent(), /^\d+ 秒后可重发$/);
+          assert.equal(await sendButton().isDisabled(), true);
+
+          // Only ASCII digits reach the field; the byte rule is explained, not a character rule.
+          const codeField = page.getByLabel('邮箱验证码');
+          assert.equal(await codeField.getAttribute('inputmode'), 'numeric');
+          assert.equal(await codeField.getAttribute('autocomplete'), 'one-time-code');
+          await codeField.fill('９９ 99-99x99');
+          assert.equal(await codeField.inputValue(), '999999');
+          await page.locator('input[type="password"]').fill('短密码');
+          await page.getByRole('button', { name: '注册并进入工作台' }).click();
+          await page.getByText('密码需要 10–72 字节（当前 9 字节）').waitFor();
+          await page.locator('input[type="password"]').fill('安全密码');
+          await page.getByRole('button', { name: '注册并进入工作台' }).click();
+          await page.getByText('验证码不正确，请检查后重新输入').waitFor();
+          assert.equal(await page.getByLabel('姓名 / 昵称').inputValue(), '注册测试');
+          assert.equal(await page.getByLabel('邮箱地址').inputValue(), 'fresh@qq.com');
+
+          await codeField.fill('012345');
+          await page.getByRole('button', { name: '注册并进入工作台' }).click();
+          await page.waitForURL('**/dashboard');
+          const submitted = first.received.filter((r) => r.url === '/api/v1/auth/register').at(-1);
+          assert.deepEqual(Object.keys(JSON.parse(submitted.body)).sort(), [
+            'code',
+            'email',
+            'name',
+            'password',
+            'remember',
+            'verification_id',
+          ]);
+          assert.equal(JSON.parse(submitted.body).verification_id, 'verification-2-fresh@qq.com');
+          assert.equal(JSON.parse(submitted.body).password, '安全密码');
+          assert.equal(
+            (await context.cookies(browserURL + '/api/v1')).filter((c) => c.name.startsWith('vpn_'))
+              .length,
+            2,
+          );
+          assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+          await context.clearCookies();
+
+          // Server cooldown (429 + Retry-After) and mail outages keep the form intact.
+          const second = await context.newPage();
+          await second.goto(browserURL + '/register');
+          await second.getByLabel('邮箱地址').fill('limited@qq.com');
+          await second.getByRole('button', { name: '获取验证码' }).click();
+          await second.getByText('发送过于频繁，请在 1:15 后重试。').waitFor();
+          const limited = second.getByRole('button', { name: /秒后可重发/ });
+          assert.match(await limited.textContent(), /^7[45] 秒后可重发$/);
+          assert.equal(await limited.isDisabled(), true);
+          await second.getByLabel('邮箱地址').fill('down@qq.com');
+          await second.getByRole('button', { name: '获取验证码' }).click();
+          await second.getByText('邮件服务暂时不可用，请稍后重试').waitFor();
+          // A slow upstream (beyond API_TIMEOUT_MS) surfaces as the proxy's controlled 504.
+          await second.getByLabel('邮箱地址').fill('slow@qq.com');
+          await second.getByRole('button', { name: '获取验证码' }).click();
+          await second.getByText('后端响应超时，请稍后重试。').waitFor();
+          assert.equal(await second.getByLabel('邮箱地址').inputValue(), 'slow@qq.com');
+          await second.setViewportSize({ width: 390, height: 844 });
+          assert.ok(
+            await second.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+          );
+
+          // Closed registration: the page, the landing action and the login link agree.
+          first.settings.registrationOpen = false;
+          try {
+            await second.goto(browserURL + '/register');
+            await second.getByText('当前暂未开放注册').waitFor();
+            assert.equal(await second.getByLabel('邮箱验证码').count(), 0);
+            await second.goto(browserURL + '/');
+            await second.getByRole('main').getByRole('link', { name: '登录账户' }).waitFor();
+            assert.equal(await second.getByRole('link', { name: '创建账户' }).count(), 0);
+            await second.goto(browserURL + '/login');
+            await second.getByRole('heading', { name: '欢迎回来' }).waitFor();
+            await delay(500);
+            assert.equal(await second.getByRole('link', { name: '创建账户' }).count(), 0);
+          } finally {
+            first.settings.registrationOpen = true;
+          }
+          assert.deepEqual(errors, []);
+          await context.close();
+          await browser.close();
+          browser = undefined;
+        },
+      );
+
+      await t.test(
         'method, query, JSON, cookies, bearer and idempotency headers are preserved',
         async () => {
           for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
@@ -515,22 +690,25 @@ test(
         },
       );
 
-      await t.test('upstream response limits include chunked bodies and preserve large client profiles', async () => {
-        for (const route of ['/oversized-known', '/oversized-chunked']) {
-          const response = await api(route);
-          assert.equal(response.status, 502);
-          assert.equal((await response.json()).error.code, 'upstream_response_too_large');
-        }
-        const profile = await api('/client/config');
-        assert.equal(profile.status, 200);
-        assert.equal((await profile.json()).yaml.length, 600 << 10);
-        const imported = await api('/admin/nodes', {
-          method: 'POST',
-          headers: { Origin: browserURL, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ yaml: 'x'.repeat(64 << 10) }),
-        });
-        assert.equal(imported.status, 200);
-      });
+      await t.test(
+        'upstream response limits include chunked bodies and preserve large client profiles',
+        async () => {
+          for (const route of ['/oversized-known', '/oversized-chunked']) {
+            const response = await api(route);
+            assert.equal(response.status, 502);
+            assert.equal((await response.json()).error.code, 'upstream_response_too_large');
+          }
+          const profile = await api('/client/config');
+          assert.equal(profile.status, 200);
+          assert.equal((await profile.json()).yaml.length, 600 << 10);
+          const imported = await api('/admin/nodes', {
+            method: 'POST',
+            headers: { Origin: browserURL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ yaml: 'x'.repeat(64 << 10) }),
+          });
+          assert.equal(imported.status, 200);
+        },
+      );
 
       await t.test('upstream timeouts return a controlled 504', async () => {
         const response = await api('/slow');
@@ -557,6 +735,34 @@ test(
       );
 
       await t.test(
+        'client address: only the configured ingress header, as one IP, reaches Go',
+        async () => {
+          const echo = async (headers) =>
+            (await (await api('/echo', { headers })).json()).headers['x-forwarded-for'];
+          // Default: nothing is forwarded, whatever the browser sends.
+          await startNext(`API_INTERNAL_URL=http://127.0.0.1:${secondPort}/api/v1\n`);
+          assert.equal(
+            await echo({ 'X-Real-IP': '203.0.113.9', 'X-Forwarded-For': '1.2.3.4' }),
+            undefined,
+          );
+          await startNext(
+            `API_INTERNAL_URL=http://127.0.0.1:${secondPort}/api/v1\nCLIENT_IP_HEADER=X-Real-IP\n`,
+          );
+          assert.equal(await echo({ 'X-Real-IP': '203.0.113.9' }), '203.0.113.9');
+          assert.equal(await echo({ 'X-Real-IP': '2001:db8::7' }), '2001:db8::7');
+          // Append-style chains: only the entry written by the ingress (the last) counts.
+          assert.equal(await echo({ 'X-Real-IP': '1.2.3.4, 203.0.113.10' }), '203.0.113.10');
+          // A client-supplied X-Forwarded-For never replaces the vouched address.
+          assert.equal(
+            await echo({ 'X-Real-IP': '203.0.113.11', 'X-Forwarded-For': '1.2.3.4' }),
+            '203.0.113.11',
+          );
+          for (const bad of ['not-an-ip', '203.0.113.9:443', '203.0.113.9, garbage', ''])
+            assert.equal(await echo({ 'X-Real-IP': bad, 'X-Forwarded-For': '1.2.3.4' }), undefined);
+        },
+      );
+
+      await t.test(
         'invalid runtime configuration fails closed without exposing the internal address',
         async () => {
           for (const configuration of [
@@ -564,6 +770,8 @@ test(
             'API_INTERNAL_URL=http://user:password@127.0.0.1:8080/api/v1\n',
             'API_INTERNAL_URL=http://127.0.0.1:8080/api/v1?bad=1\n',
             'API_TIMEOUT_MS=not-a-number\n',
+            'CLIENT_IP_HEADER=cookie\n',
+            'CLIENT_IP_HEADER=x real ip\n',
           ]) {
             await startNext(configuration);
             const response = await fetch(nextURL + '/api/runtime-config');
