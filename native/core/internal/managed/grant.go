@@ -170,7 +170,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		m.mu.Unlock()
 		return m.Snapshot(), "", codeError(code)
 	}
-	m.state = StatePreparing
+	m.state, m.bridge = StatePreparing, false
 	m.mu.Unlock()
 
 	var ref *grantRef

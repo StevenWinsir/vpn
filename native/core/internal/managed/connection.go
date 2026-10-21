@@ -205,6 +205,7 @@ func (m *Manager) releaseStale(client *apiclient.Client, token, id string) {
 // reconnect is the one automatic reconnect after a server-side move. It gives way to any
 // command of the user's (intent) and to a session change (generation).
 func (m *Manager) reconnect(gen, intent uint64) {
+	defer m.settleBridge(gen)
 	if !m.opMu.TryLock() {
 		return // the user is connecting, switching or handing off right now
 	}
@@ -225,6 +226,21 @@ func (m *Manager) reconnect(gen, intent uint64) {
 			m.lastError.stop = true
 		}
 		m.mu.Unlock()
+	}
+}
+
+// settleBridge ends the busy state stopSegment left for an automatic reconnect that did not
+// get as far as starting its own attempt (the user acted, the session changed, or its first
+// request failed): the state goes back to the server's verdict, the stop reason stays.
+func (m *Manager) settleBridge(gen uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.bridge {
+		return
+	}
+	m.bridge = false
+	if m.generation == gen && m.conn == nil && m.state == StatePreparing {
+		m.classifyLocked()
 	}
 }
 
@@ -316,7 +332,7 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	}
 	lastSequence := m.session.LastSequence
 	m.profile = nil
-	m.state = StatePreparing
+	m.state, m.bridge = StatePreparing, false
 	m.mu.Unlock()
 
 	// fail ends an attempt: the engine is closed, the probe's tail (if any) acknowledged, and

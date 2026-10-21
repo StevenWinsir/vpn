@@ -152,6 +152,9 @@ type Manager struct {
 	// stopped, set only by tests before Login, observes the reason of every completed
 	// teardown.
 	stopped func(reason string)
+	// bridge: StatePreparing was set by stopSegment for the automatic reconnect that follows,
+	// not by a connect attempt (settleBridge undoes it if that reconnect never starts).
+	bridge bool
 }
 
 type errorInfo struct {
@@ -321,7 +324,7 @@ func (m *Manager) resetLocked(keepError bool) {
 	m.profileNode = apiclient.NodeChoice{}
 	m.meter = nil
 	m.grant, m.orphan, m.local = nil, "", nil
-	m.admission, m.unreleased = nil, nil
+	m.admission, m.unreleased, m.bridge = nil, nil, false
 	m.gate, m.lastGate, m.gateClosures = nil, nil, 0
 	m.state = StateSignedOut
 	if !keepError {

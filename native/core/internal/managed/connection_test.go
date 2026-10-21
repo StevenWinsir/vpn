@@ -206,6 +206,52 @@ func TestReassignmentReconnectsOnce(t *testing.T) {
 	}
 }
 
+// Between the stop and the automatic reconnect the snapshot never looks like a tunnel that
+// ended by itself: the apps act on that (Android stops its VPN service and the Disconnect
+// cancels the reconnect; the iOS extension cancels the tunnel). A slow GET /session (the
+// reconnect's first request) used to leave the state at ready for a whole round trip.
+func TestReassignmentStaysBusyUntilReconnected(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	h.f.mu.Lock()
+	h.f.sessionDelay = 300 * time.Millisecond
+	h.f.mu.Unlock()
+	h.f.reassign()
+	var idle []State
+	waitFor(t, "automatic reconnect", func() bool {
+		s := h.m.Snapshot()
+		switch s.State {
+		case StateConnected:
+			return h.f.conns.connects.Load() == 2
+		case StatePreparing, StateConnecting, StateStopping:
+		default:
+			idle = append(idle, s.State)
+		}
+		return false
+	})
+	if len(idle) > 0 {
+		t.Fatalf("the reconnect showed an idle tunnel %d times (%v)", len(idle), idle[0])
+	}
+}
+
+// A reconnect that cannot get past its first request settles back to an idle state with its
+// reason instead of staying "preparing".
+func TestReassignmentWithoutASessionSettles(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	h.f.mu.Lock()
+	h.f.sessionErr = &apiError{503, "service_unavailable"}
+	h.f.mu.Unlock()
+	h.f.reassign()
+	waitFor(t, "the reconnect to give up", func() bool {
+		s := h.m.Snapshot()
+		return (s.State == StateReady || s.State == StateBlocked) && s.LastError != nil
+	})
+	if n := h.f.conns.connects.Load(); n != 1 {
+		t.Fatalf("admissions: %d", n)
+	}
+}
+
 // The automatic reconnect is tried once: if it fails, the Core stays disconnected with the
 // reason, and does not loop.
 func TestFailedReconnectAfterReassignmentStops(t *testing.T) {

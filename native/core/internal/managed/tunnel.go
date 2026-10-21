@@ -156,6 +156,15 @@ func (m *Manager) Disconnect(ctx context.Context) Snapshot {
 // guard fired. Order matters: the data path closes first, then the tail is
 // acknowledged, and only then does the state move on. It never starts anything.
 func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
+	return m.stopSegment(ctx, reason, false)
+}
+
+// stopSegment is stopTunnel; with bridge (an automatic reconnect follows at once) a segment
+// that could reconnect ends in StatePreparing instead of Ready, so the apps, which treat a
+// tunnel that left the busy states as "ended by itself" (Android stops its VPN service, the
+// iOS extension cancels the tunnel), never see a gap. The reconnect owns the state from here
+// (settleBridge).
+func (m *Manager) stopSegment(ctx context.Context, reason string, bridge bool) error {
 	m.stopMu.Lock()
 	defer m.stopMu.Unlock()
 
@@ -208,6 +217,9 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 		if m.state == StateStopping { // no session view (should not happen): fall back
 			m.state = StateReady
 		}
+		if bridge && m.state == StateReady {
+			m.state, m.bridge = StatePreparing, true
+		}
 	}
 	switch {
 	case reason != "":
@@ -241,8 +253,9 @@ func (m *Manager) requestStop(gen uint64, reason string) {
 		if !current {
 			return
 		}
-		_ = m.stopTunnel(ctx, reason)
-		if m.reconnects(reason) {
+		again := m.reconnects(reason)
+		_ = m.stopSegment(ctx, reason, again)
+		if again {
 			m.reconnect(gen, intent)
 		}
 	}()

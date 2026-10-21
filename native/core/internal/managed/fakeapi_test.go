@@ -50,6 +50,7 @@ type fakeAPI struct {
 	configYAML   func(name string) string // override to corrupt documents
 	configErr    *apiError
 	sessionErr   *apiError
+	sessionDelay time.Duration // when set, every GET /session answers this much later
 	nodesErr     *apiError
 	loginGate    chan struct{} // when set, /login blocks until closed
 	loginEntered chan struct{}
@@ -169,6 +170,10 @@ func (f *fakeAPI) sessionHandler(w http.ResponseWriter, r *http.Request) {
 	if !f.auth(w, r) {
 		return
 	}
+	f.mu.Lock()
+	delay := f.sessionDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.sessionErr != nil {
