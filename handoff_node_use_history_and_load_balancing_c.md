@@ -628,6 +628,7 @@
 | R5-11 | Android/iOS 账户验收 A02、A04 新语义；四平台 CI | PR 的 CI | 以 PR 的 CI 结果为准（本机无 JDK/Android SDK，iOS 模拟器套件在 CI 运行） |
 | R5-12 | 真实流量重新分配（billtest + 两台受控 Mihomo 节点，账本合计 = 两台节点各自看到的字节数之和） | `asterlink-billtest --presence --use-device-slots --tun --allow-network-changes --reassign-wait-seconds 120 …`（特权） | NOT RUN：需要 root/管理员 TUN 与两台受控节点，本机公司 VPN 常开；控制面部分已由 R5-03/R5-05 覆盖，真实流量留第 6/7 轮在设备上执行 |
 
+- **CI 首次运行（fd80d4e）**：`Android lifecycle acceptance` 的 L01-stall、L01-gate-holds、L03-airplane 失败，其余全绿。原因：手机停顿或断网超过租约后，门禁重新确认收到 `connection_expired`，首版按“停止 → 自动重连”处理，隧道被重建，而验收要求门禁重新打开同一隧道（旧 Core 走 legacy 租约，由 `/traffic` 静默重新接入，因此以前不暴露）。修复：门禁关闭期间对同一线路重新接入（`readmit`），落到同一服务器且文档相同则直接重开门禁、不重启隧道；落到其他服务器才停止并重连一次；`device_limit` 等拒绝照常停止并提示。新增 `TestGateReadmissionElsewhereReconnects`，`TestGateReadmitsAnExpiredLease` 改为断言隧道只启动一次。
 - **关键数据**：3 设备上限 2：第三台被拒、断开后 9 ms 接入；杀进程名额第 90 秒回收（89 s 仍占）；管理员停用到自动改连 1.04 s（真实 Core）/ 51 ms（billtest 观测停止到重连）；Core 新用例 10 次重复零失败。
 - **设计取舍（实施中确定）**：
   - 选择不再预取配置，空闲时也不持有任何服务器的配置；旧的“管理员改名使已绑定配置失效”只在连接期间适用（连接中仍按 `profile_changed` 停止）。
