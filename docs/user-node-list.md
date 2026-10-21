@@ -10,6 +10,8 @@
 
 返回的每个节点仅包含 `id`、`name`、`region`、`line_type`、`rate_permille`、`version`。目录模式的元数据查询不读取 `ciphertext`；页面不调用管理员详情或原生客户端配置接口，不读取、下载或渲染 YAML、端口、服务器地址、密码等连接参数。节点名称与地区是管理员填写的公开文案，请勿把密钥写入这些字段。
 
+每个条目是一个节点组（线路），由管理员在 `/admin/nodes` 中维护，组内可有多台同名服务器。页面只显示组的公开属性；客户端实际连接时才由后端在组内分配一台未满载的服务器，网站不显示服务器数量、负载或任何服务器标识。
+
 ## 同步配置
 
 在 `frontend/.env` 中配置：
@@ -29,5 +31,15 @@ NODE_LIST_REFRESH_MS=30000
 - `bash scripts/node.sh npm --prefix frontend run test:nodes`：配置边界、倍率精度和搜索/类型组合。
 - `python3 scripts/test-native.py`：使用私有临时 PostgreSQL，包含 `TestWebNodeListPostgres` 的字段白名单、套餐过滤、管理员变更同步、到期/额度/登录拒绝回归。
 - `bash scripts/node.sh python3 scripts/test-node-catalog.py --skip-build --output <新目录>`：构建后运行真实 Next.js/Gin/PostgreSQL/浏览器节点同步、搜索和手机布局，以及受控错误/空/失效状态、可见性轮询与并发请求测试；继续执行已有 Mihomo 流量验收。
+
+## 仪表盘：在线设备与 24 小时流量
+
+`/dashboard` 的「连接与客户端」读取 `GET /api/v1/me/devices`（持有有效在线租约的设备 + 已登录未连接的设备，后者不占名额），「近 24 小时流量」读取 `GET /api/v1/me/usage-history`（8 个 3 小时区间，标签按浏览器本地时区显示）。两者与 `/me/dashboard` 分别请求，一个失败不影响其他。刷新间隔：
+
+```dotenv
+DASHBOARD_REFRESH_MS=15000
+```
+
+允许 5000–120000 毫秒的整数，缺失或无效时回退 15000；与节点列表相同，页面可见时轮询，隐藏时暂停，返回页面和网络恢复时立即刷新。单元测试：`npm --prefix frontend run test:dashboard`；真实浏览器验收：`frontend/tests/dashboard-presence.spec.ts`（由 `test-node-catalog.py` 运行）。
 
 新增测试接入现有根目录 CI。测试不读取或修改开发 `.env`、用户数据库或公网代理节点。

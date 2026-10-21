@@ -40,8 +40,8 @@ func TestNodeCatalogAcceptanceFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	emails := map[string]string{}
-	var vip model.User
-	for _, kind := range []string{"admin", "vip"} {
+	var vip, lite model.User
+	for _, kind := range []string{"admin", "vip", "lite"} {
 		role := "user"
 		if kind == "admin" {
 			role = "admin"
@@ -51,6 +51,15 @@ func TestNodeCatalogAcceptanceFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 		emails[kind] = u.Email
+		if kind == "lite" {
+			// A 轻量计划 (starter) customer for the round-4 presence and history pages.
+			lite = u
+			now := time.Now().UTC()
+			sub := model.Subscription{ID: uuid.NewString(), UserID: u.ID, PlanID: "starter", PlanName: "轻量计划", StartsAt: now.Add(-time.Hour), ExpiresAt: now.Add(24 * time.Hour), TrafficLimitBytes: 100 << 30, MaxDevices: 2}
+			if err = db.Create(&sub).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
 		if kind == "vip" {
 			vip = u
 			now := time.Now().UTC()
@@ -145,6 +154,25 @@ func TestNodeCatalogAcceptanceFixture(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"upload_bytes": totals.Upload, "download_bytes": totals.Download, "charged_units": totals.Charged, "used_units": subscription.UsedUnits})
+		case "/fixture/usage-history":
+			// Fixed history for the 轻量计划 customer across 26 hours relative to now: the
+			// oldest row is outside the 24-hour window and must never be shown.
+			now := time.Now().UTC()
+			const mib = 1 << 20
+			rows := []struct {
+				ago              time.Duration
+				upload, download int64
+			}{{26 * time.Hour, 900, 900}, {23*time.Hour + 30*time.Minute, 3, 12}, {20 * time.Hour, 40, 200}, {14 * time.Hour, 1, 0},
+				{9 * time.Hour, 300, 1500}, {4 * time.Hour, 0, 64}, {10 * time.Minute, 2, 8}, {0, 5, 25}}
+			for _, row := range rows {
+				bucket := model.UsageBucket{UserID: lite.ID, BucketStart: model.UsageBaseline(now.Add(-row.ago)), UploadBytes: row.upload * mib, DownloadBytes: row.download * mib,
+					ChargedUnits: (row.upload + row.download) * mib * 500, UpdatedAt: now}
+				if e := db.Omit("User").Save(&bucket).Error; e != nil {
+					w.WriteHeader(500)
+					return
+				}
+			}
+			w.WriteHeader(204)
 		case "/fixture/expire", "/fixture/renew":
 			expires := time.Now().Add(time.Hour)
 			if r.URL.Path == "/fixture/expire" {

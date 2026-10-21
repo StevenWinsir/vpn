@@ -455,7 +455,9 @@ func (s *Server) nativeConfig(c *gin.Context) {
 	}
 	response := gin.H{"yaml": string(data), "version": nativeProfileVersion(data), "session": status}
 	if catalog != nil {
-		response["nodes"], response["node_id"] = catalog.Nodes, catalog.Node.ID
+		// node_id echoes the selected line (the group), which the catalog lists and every
+		// shipped Core checks against its selection; the server stays opaque.
+		response["nodes"], response["node_id"] = catalog.Nodes, catalog.Group.ID
 	}
 	c.JSON(200, response)
 }

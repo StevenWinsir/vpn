@@ -123,7 +123,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
             节点列表
           </Title>
           <Text c="dimmed" size="sm" mt={8}>
-            查看当前套餐的线路与流量倍率，找到适合你的连接。
+            查看当前套餐可用的线路（节点组）与流量倍率，找到适合你的连接。
           </Text>
         </div>
         <Button
@@ -137,8 +137,8 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
       </Group>
       <Stack gap={24}>
         <Alert color="teal" icon={<IconShieldCheck size={20} />} title="线路信息，与管理员配置同步">
-          这里只展示节点名称、地区、线路类型和计费倍率，不提供连接参数或配置下载。
-          节点可见不代表实时在线，请在客户端连接并测试线路。
+          这里只展示线路名称、地区、线路类型和计费倍率，不提供连接参数或配置下载。
+          每条线路由一组服务器提供，客户端连接时会自动分配组内一台可用服务器；线路满载时连接会被拒绝，可稍后再试或选择其他线路。
         </Alert>
         <Group justify="space-between" gap="xs">
           <Text size="xs" c="dimmed">
@@ -184,7 +184,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
         ) : (
           <>
             <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="lg">
-              <NodeCount label="套餐可见节点" count={nodes.length} />
+              <NodeCount label="套餐可见线路" count={nodes.length} />
               <NodeCount label="普通线路" count={nodes.length - dedicated} />
               <NodeCount label="专线" count={dedicated} />
             </SimpleGrid>
@@ -229,7 +229,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
                   暂无可见节点
                 </Title>
                 <Text c="dimmed" size="sm" mt="sm">
-                  当前套餐没有已启用且允许访问的节点，请联系管理员或稍后同步。
+                  当前套餐没有已启用且允许访问的线路，请联系管理员或稍后同步。
                 </Text>
               </Paper>
             ) : visible.length === 0 ? (
