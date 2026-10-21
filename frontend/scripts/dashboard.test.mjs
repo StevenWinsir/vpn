@@ -9,6 +9,8 @@ import {
   elapsedSeconds,
   formatBytes,
   historyEmpty,
+  isDeviceStatus,
+  isUsageHistory,
   intervalLabel,
   platformName,
 } from '../src/lib/dashboard.ts';
@@ -61,9 +63,38 @@ test('empty history and chart scale', () => {
   assert.equal(historyEmpty([]), true);
   assert.equal(historyEmpty(Array(8).fill(zero)), true);
   assert.equal(chartPeak(Array(8).fill(zero)), 1);
-  const busy = [zero, { ...zero, upload_bytes: 3, download_bytes: 7 }, { ...zero, download_bytes: 4 }];
+  const busy = [
+    zero,
+    { ...zero, upload_bytes: 3, download_bytes: 7 },
+    { ...zero, download_bytes: 4 },
+  ];
   assert.equal(historyEmpty(busy), false);
   assert.equal(chartPeak(busy), 10);
+});
+
+test('unexpected presence and history bodies are rejected, real ones accepted', () => {
+  const devices = { server_time: 'x', device_limit: 2, online_count: 0, online: [], signed_in: [] };
+  assert.equal(isDeviceStatus(devices), true);
+  for (const bad of [
+    null,
+    undefined,
+    'x',
+    [],
+    {},
+    { ...devices, online: undefined },
+    { ...devices, device_limit: '2' },
+  ])
+    assert.equal(isDeviceStatus(bad), false);
+  const bucket = { start: 'a', end: 'b', upload_bytes: 0, download_bytes: 0, charged_units: 0 };
+  const history = { buckets: [bucket], total_upload_bytes: 0, total_download_bytes: 0 };
+  assert.equal(isUsageHistory(history), true);
+  for (const bad of [
+    null,
+    {},
+    { ...history, buckets: [{ ...bucket, upload_bytes: null }] },
+    { ...history, buckets: {} },
+  ])
+    assert.equal(isUsageHistory(bad), false);
 });
 
 test('elapsed time uses server timestamps and reads naturally', () => {

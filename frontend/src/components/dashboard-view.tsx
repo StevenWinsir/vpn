@@ -18,6 +18,7 @@ import {
 import { IconArrowRight, IconRefresh, IconShieldCheck } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
 import { date, gib, type Dashboard, type DeviceStatus, type UsageHistory } from '@/lib/types';
+import { isDeviceStatus, isUsageHistory } from '@/lib/dashboard';
 import { usePolling } from '@/lib/use-polling';
 import { DevicesCard } from './devices-card';
 import { UsageChart } from './usage-chart';
@@ -41,14 +42,28 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
       setData(summary.value);
       setError(null);
     } else setError(message(summary.reason));
-    if (presence.status === 'fulfilled') {
+    // A failed or malformed presence/history response clears that card rather than
+    // presenting stale online state as current.
+    if (presence.status === 'fulfilled' && isDeviceStatus(presence.value)) {
       setDevices(presence.value);
       setDevicesError('');
-    } else setDevicesError(message(presence.reason));
-    if (usage.status === 'fulfilled') {
+    } else {
+      setDevices(null);
+      setDevicesError(
+        presence.status === 'rejected'
+          ? message(presence.reason)
+          : '设备状态暂时不可用，请稍后重试。',
+      );
+    }
+    if (usage.status === 'fulfilled' && isUsageHistory(usage.value)) {
       setHistory(usage.value);
       setHistoryError('');
-    } else setHistoryError(message(usage.reason));
+    } else {
+      setHistory(null);
+      setHistoryError(
+        usage.status === 'rejected' ? message(usage.reason) : '流量历史暂时不可用，请稍后重试。',
+      );
+    }
   }, []);
   const { syncing, refresh } = usePolling(load, refreshMs);
   const sub = data?.subscription;
@@ -196,7 +211,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
             <DevicesCard
               devices={devices}
               error={devicesError}
-              fallbackLimit={data.device_limit}
+              fallbackLimit={data.device_limit ?? 0}
               allowDedicated={!!sub?.allow_dedicated}
             />
           </SimpleGrid>

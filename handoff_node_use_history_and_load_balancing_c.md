@@ -580,7 +580,7 @@
 
 | 编号 | 项目 | 命令 | 结果 |
 | --- | --- | --- | --- |
-| R4-01 | 单元：刷新间隔边界（4999/120001/小数/NaN 回落 15000）、单位（0、<0.01 MB、MB/GB 边界、计费折算）、时区换算（上海/UTC/加尔各答半小时/洛杉矶/跨午夜、“至现在”）、空数据与峰值、服务端时间差文案 | `npm --prefix frontend run test:dashboard` | PASS（5 项）；`test:nodes` 3 项仍通过 |
+| R4-01 | 单元：刷新间隔边界（4999/120001/小数/NaN 回落 15000）、单位（0、<0.01 MB、MB/GB 边界、计费折算）、时区换算（上海/UTC/加尔各答半小时/洛杉矶/跨午夜、“至现在”）、空数据与峰值、异常响应形状被拒绝、服务端时间差文案 | `npm --prefix frontend run test:dashboard` | PASS（6 项）；`test:nodes` 3 项、`test:downloads` 6 项、`test:api-proxy` 15 项通过 |
 | R4-02 | 真实浏览器：管理员在“轻量计划”筛选下新建 JP1（默认带入该套餐），导入 5 台同名（代理名 JP1）服务器、各容量 5；后台显示 5 台、“在线 0 / 容量 25” | `scripts/test-node-catalog.py --skip-build`（`dashboard-presence.spec.ts`） | PASS |
 | R4-03 | 三台模拟设备经原生 API 登录（只登录不占名额）；两台接入 201 且第二台按固定分配回到同一服务器，第三台 403 `device_limit`；仪表盘在一次刷新内显示“在线设备 2 / 2”、两条在线记录（线路 JP1）与“已登录未连接”；后台“在线 2 / 容量 25”；`/me/devices` 响应不含服务器 ID 与连接 ID | 同上 | PASS |
 | R4-04 | 释放一台：仪表盘 1 / 2、后台 1 / 25；在后台编辑并停用剩余设备所在服务器：该行“已停用 0 / 5”、组“在线 0 / 容量 20”，设备 `/session` 原因为 `connection_reassigned`，重新接入分到同组另一台，后台“在线 1 / 容量 20”且新服务器行 1 / 5 | 同上 | PASS |
@@ -596,6 +596,7 @@
 | R4-14 | 第 1 轮迁移/回滚演练、仅后端目录独立构建 | `test-node-groups-migration.py`、`test-backend-standalone.py` | PASS（演练 7 项，目录、配置、网站目录、管理列表与旧版逐字节一致；独立构建 108 个文件，tests/vet、Linux amd64/arm64） |
 | R4-15 | Core 接入 `/connections`、重新分配自动重连、四平台 APP | — | NOT RUN（第 5、6 轮） |
 
+- **CI 首次运行（0f1e1ca）**：`Browser / node catalog / legacy Mihomo ledger` 在 `test:api-proxy` 失败（3 个子测试），其余 14 项全绿。原因：该测试的假上游对未知路径返回 200 回显体，新仪表盘把它当作设备列表读取 `online.length` 而整页报错（本地提交前漏跑了 `test:api-proxy`）。修复：仪表盘对 `/me/devices`、`/me/usage-history` 做响应形状校验（`isDeviceStatus`/`isUsageHistory`），异常或失败时只让对应卡片显示错误并清空旧数据，不影响概览（也覆盖回滚到旧后端时没有这两个接口的情况）；假上游补充这两个接口。本地 `test:api-proxy` 15/15、节点目录验收 10/10 + Mihomo 通过后重新推送。
 - **截图**：本机 `artifacts/nodes-round4/`（`admin-groups-desktop.png`、`admin-desktop.png`、`admin-mobile.png`、`dashboard-online.png`、`dashboard-history-desktop.png`、`dashboard-mobile.png`、`nodes-*.png`、`ordinary-denied.png`）；`artifacts/` 不入库，CI 每次重新生成（CI 只上传 summary，不上传截图）。
 - **设计取舍（实施中确定）**：柱状图用 CSS 网格而非 SVG，8 个两行时间标签在 390 宽度下仍可读；每根柱是按钮而不是 `role=img`，键盘可达且读屏读出数值；非零小值至少 3 像素高。“最近心跳/已连接时长”用接口的 `server_time` 计算，浏览器时钟偏差不影响。管理端“某套餐”筛选包含不限套餐的组，因为这正是该套餐用户能看到的线路。服务器表按备注排序。仪表盘不等三个接口全部成功：设备或历史失败时各自卡片显示错误，概览照常。
 - **遗留与归属**：旧的按服务器请求体（`/admin/nodes` 不带 `group_id`）本轮前端已不再使用，但后端测试夹具、用户节点列表规格（`user-nodes.spec.ts`）和第 1 轮迁移/回滚演练仍依赖它（回滚目标旧二进制只认它），移除留到第 7 轮发布演练时一并处理；grant 路径若要 `avoid_node_id` 需另加服务器 ID 字段（第 5 轮）；Core 适配与四平台（第 5、6 轮）。

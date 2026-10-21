@@ -1,4 +1,38 @@
-import type { UsageInterval } from './types';
+import type { DeviceStatus, UsageHistory, UsageInterval } from './types';
+
+// Shape checks for the presence and history responses: an unexpected body (an older
+// backend, a proxy page) becomes a card-level error instead of breaking the dashboard.
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+export function isDeviceStatus(value: unknown): value is DeviceStatus {
+  return (
+    isRecord(value) &&
+    typeof value.server_time === 'string' &&
+    typeof value.device_limit === 'number' &&
+    typeof value.online_count === 'number' &&
+    Array.isArray(value.online) &&
+    Array.isArray(value.signed_in)
+  );
+}
+
+export function isUsageHistory(value: unknown): value is UsageHistory {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.buckets) &&
+    value.buckets.every(
+      (bucket) =>
+        isRecord(bucket) &&
+        typeof bucket.start === 'string' &&
+        typeof bucket.end === 'string' &&
+        typeof bucket.upload_bytes === 'number' &&
+        typeof bucket.download_bytes === 'number' &&
+        typeof bucket.charged_units === 'number',
+    ) &&
+    typeof value.total_upload_bytes === 'number' &&
+    typeof value.total_download_bytes === 'number'
+  );
+}
 
 // Deployment-time setting (DASHBOARD_REFRESH_MS): only this non-secret interval reaches the
 // browser, read the same way as NODE_LIST_REFRESH_MS.

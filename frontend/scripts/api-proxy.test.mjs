@@ -234,6 +234,39 @@ function mockBackend(label, origins) {
         proxy_service_ready: false,
       });
     }
+    if (pathname === '/api/v1/me/devices') {
+      if (!active || !cookie.includes(`vpn_access=access-${generation}`))
+        return fail(401, 'unauthorized');
+      return json(200, {
+        server_time: new Date().toISOString(),
+        device_limit: 2,
+        online_count: 0,
+        online: [],
+        signed_in: [],
+        lease_seconds: 90,
+      });
+    }
+    if (pathname === '/api/v1/me/usage-history') {
+      if (!active || !cookie.includes(`vpn_access=access-${generation}`))
+        return fail(401, 'unauthorized');
+      const now = Date.now();
+      const buckets = Array.from({ length: 8 }, (_, index) => ({
+        start: new Date(now - (8 - index) * 10800000).toISOString(),
+        end: new Date(now - (7 - index) * 10800000).toISOString(),
+        upload_bytes: 0,
+        download_bytes: 0,
+        charged_units: 0,
+      }));
+      return json(200, {
+        server_time: new Date(now).toISOString(),
+        bucket_seconds: 10800,
+        granularity_seconds: 300,
+        buckets,
+        total_upload_bytes: 0,
+        total_download_bytes: 0,
+        total_charged_units: 0,
+      });
+    }
     if (pathname === '/api/v1/orders') {
       if (!active || !cookie.includes(`vpn_access=access-${generation}`))
         return fail(401, 'unauthorized');
