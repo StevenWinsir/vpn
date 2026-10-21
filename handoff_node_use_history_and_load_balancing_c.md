@@ -489,3 +489,38 @@
 
 - **关键数据**：演练库 5 台服务器 → 5 组，`ungrouped_servers=0`；回滚后旧版新增 1 台 → 再迁移 6 组；账本 2 行，`used_units = 7000 字节 × 1.2 = 8,400,000`，跨版本连续。
 - **遗留与归属**：在线租约获取/续期/释放、设备上限、流量历史写入与接口（第 2 轮）；分配器与组管理 API、组名同可见范围唯一、取消服务器名全局唯一（第 3 轮）；本轮 `max_connections` 只存储不生效。管理端写组时目前在已持有 advisory lock 708614922 的前提下先锁服务器再锁组，第 3 轮改为“组 → 服务器”的约定顺序。
+- **合并后补记**：PR #50 合并到 main 后，main 上 `Android lifecycle acceptance` 的 L07-cycles 第 4/10 轮失败，与本轮无关（该任务的后端是不启动维护循环的测试装配，目录与配置输出不变）。根因是测试竞态：`disconnect()` 只等 Core 停止，下一轮看到的可能是上一轮正在注销的 VPN 网络。由 PR #51 修复（每轮等待系统注销全部 VPN 网络，未注销记为失败），#51 CI 全绿，L07 10/10 且无需重试；main 失败任务重跑亦通过。
+
+### 第 2 轮：后端在线租约、设备上限与流量历史（2026-10-21）
+
+- **分支/PR**：`worktree-nodes-round2-leases`，PR 见 GitHub（StevenWinsir/vpn）。基线 af7df05（#51 合并后）。
+- **交付文件**
+  - `backend/internal/api/lease.go`（新）：租约唯一实现。`liveLeases`（active、未过期、会话未撤销未过期、账号 active，所有统计都用它）；`acquireLease`（锁顺序 用户→会话→订阅→节点组行 FOR UPDATE；先结束本设备与本会话旧租约 `replaced`，再结束授权已因订阅变化失效的其他会话租约 `entitlement_ended`，再按 D1 统计其他设备、按 `max_connections` 统计服务器负载）；`renewLease`/`renewRecording`（只延长未过期租约；有流量的批次用一条带数据修改 CTE 的语句同时累加 5 分钟桶并续期）；`renewClientLease`/`readmitLegacy`；`renewGrantLease`；`endGrantLease`/`endSessionLeases`；`leaseReason`（v3 租约近期过期 `connection_expired`、服务器不可用结束 `connection_reassigned`；legacy 租约过期不提示、服务端结束提示 `profile_changed`；超过空闲窗口的旧结果不再提示）；`groupServer`（本轮“组内唯一服务器”，未分组服务器按 D3 视为自身组）。
+  - `backend/internal/api/connections.go`（新）：`POST /client/connections`（Idempotency-Key 重放/换组冲突、`last_sequence`、`avoid_node_id`、Agent 组 `grant_required`）与 `POST /client/connections/:id/release`（原因白名单、幂等、仅本会话）。
+  - `backend/internal/api/presence.go`（新）：`GET /me/devices`、`GET /me/usage-history`（基线 T 向下取整 5 分钟，窗口 [T−24h+5m, T+5m)，8 个 3 小时区间补零，下界始终在查询中）。
+  - `native.go`：注入时钟；登录同设备、登出结束租约；`/config` 建立 `legacy_config` 租约（替代旧 `checkDeviceLimit`）与版本门禁；`/traffic` 续期、legacy 重新接入、历史写入同事务；`/session` 为 grant 会话续期；快照三个新字段；新批次的会话更新同时写 `last_seen_at`（省去一次更新）。
+  - `grants.go`：`node_id` 为组 ID、`avoid_node_id`、grant 与租约同事务、撤销结束租约、`contract_versions` 加 3。`agent_api.go`：Agent 判定撤销/确认移除/对账过期时结束租约；Agent 用量写入历史。`authmail/reset.go`：全部会话撤销同时结束租约。`commerce.go`：`/me/dashboard` 的 `metering_connected`、`online_devices`、`device_limit`。
+  - `shared/contracts/native-v3.json`（新，同步到后端 testdata；`sync-backend-shared.py` 与其测试纳入 v3）；native-v2 未改。`docs/native-client-protocol.md`、`backend/DEPLOYMENT.md` 新章节。
+- **测试结果**
+
+| 编号 | 项目 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| R2-01 | 租约状态机：登录/目录/会话读取不占位；获取、幂等重放、换组冲突；`/session` 不续期、`/traffic` 续期；释放白名单/幂等/跨会话拒绝；释放后尾账入账不复活；过期不复活且报告 `connection_expired`、该批仍入账；同设备再接入替换旧租约、只剩一条 active | `TestLeaseLifecyclePostgres`（`-race`） | PASS |
+| R2-02 | 设备上限：上限 2 时 10 台设备并发接入恰好 2 台成功；同设备连续接入 5 次仍占 1 位；释放后第三台立即成功；被硬杀设备在第 89 秒仍拒绝、第 90 秒放行（注入时钟）；D1 三种取小组合 | `TestDeviceLimitPostgres` | PASS |
+| R2-03 | 撤销：同设备重新登录、登出、密码重置（`authmail.RevokeAllSessions`）立即结束租约且 `/me/devices` 不再显示；停用账号与漏结束的已撤销会话均由查询排除 | `TestRevocationEndsLeasesPostgres` | PASS |
+| R2-04 | 旧 Core 兼容：`/config` + `/traffic`，v1 会话字段全部保留；legacy 租约续期、空闲过期不打扰、下次上报重新接入；`/config` 受上限约束；超额的重新接入照常入账并提示 `device_limit`；服务端结束提示 `profile_changed` | `TestLegacyCoreLeasesPostgres` | PASS |
+| R2-05 | 历史：按服务端接收时间入 5 分钟桶、重放不累加；历史写入故障注入（GORM Row 回调 + 请求上下文标记）时整笔回滚、不扣费、无账本行、序号不变；8 个区间划分、补零、合计、窗口下界（T−24h 整点与 30 小时前的行不显示）、只看到自己的数据 | `TestUsageHistoryPostgres` | PASS |
+| R2-06 | 响应白名单：`/me/devices`、`/me/usage-history` 字段集合精确比较，不含服务器/组/租约/会话 ID、设备完整 UUID、令牌、地址或密钥；`/me/dashboard` 新字段；跨用户不可见 | `TestPresenceResponsesAreAllowListedPostgres` | PASS |
+| R2-07 | 接入门禁：`CLIENT_MIN_APP_VERSION` 作用于 `/connections` 与 `/config`；`avoid_node_id`、未知组、停用服务器 → `group_unavailable`；容量 → `group_full`；Agent 组 → `grant_required`；幂等键与严格 JSON | `TestAdmissionGatesPostgres` | PASS |
+| R2-08 | node_reported：grant 与租约同建、`/session` 续期、Agent 用量写入历史、撤销结束、会话登出后 Agent 同步结束租约 | `TestGrantLeaseAndHistoryPostgres` | PASS |
+| R2-09 | 契约：native-v3 夹具严格解码为在线类型、释放原因与连接状态一致、v3 错误码与会话原因均在代码中出现；新连接/释放/过期快照与 grant 会话的在线响应形状与 v3 一致（原 v2 的两处会话形状比较改为对照 v3） | `TestV3FixtureFitsLiveTypes`、`TestV3CodesAreEmitted` 及上述形状断言 | PASS |
+| R2-10 | 全量后端测试（私有 PG、`-race`），含真实 Core 端到端（旧 Core `/config` 路径，含 device_limit）、真实 Node Agent 与 billtest | `python3 scripts/test-native.py` | PASS（最终代码：312 PASS、0 FAIL；8 SKIP = 7 个按环境变量启用的夹具装配 + 按需运行的耗时测试） |
+| R2-14 | 仅后端目录独立构建（tests/vet、Linux amd64/arm64） | `python3 scripts/test-backend-standalone.py` | PASS（103 个文件） |
+| R2-15 | 新 Core 接入（`/connections`、释放、`connection_*` 原因）、平台生命周期、网站界面 | — | NOT RUN（第 4–6 轮） |
+| R2-11 | `/traffic` 耗时（同一私有 PG、完整 handler、1000 次上报、预热 20 次，第 1 轮基线树 af7df05 与本轮交替各 3 次） | `TRAFFIC_TIMING_REPORTS=1000 go test -run TestTrafficTimingBaseline ./internal/api` | PASS：p50 312 → 356 µs（+14%），p95 555 → 600 µs（+8%） |
+| R2-12 | 第 1 轮真实二进制迁移/回滚演练在本轮代码上 | `python3 scripts/test-node-groups-migration.py` | PASS（7 项） |
+| R2-13 | `go vet`、`gofmt`、共享快照一致与其单元测试 | `go vet ./...`、`sync-backend-shared.py --check`、`test-backend-shared.py` | PASS |
+
+- **关键数据**：并发 10 设备接入成功 2；硬杀设备名额在第 90 秒回收；`/traffic` p50 +14%、p95 +8%。耗时首版为 p50 +29%（续期、历史写入、快照读租约三条额外语句），经“续期返回行”“续期与历史合并为一条 CTE 语句”“新批次会话更新同时写 last_seen_at”降到预算内。
+- **设计取舍（实施中确定）**：旧 Core 在选择线路时就调用 `/config`，因此选择会暂时占位最长 90 秒；旧 Core 的租约过期后不在空闲时提示 `profile_changed`（否则旧 APP 闲置 90 秒后显示未就绪），改由它连接时的首报按完整检查重新接入。订阅变化使其他会话授权失效时，接入时即结束它们的租约，避免新设备被不能续期的旧设备挡住 90 秒。仓库中没有管理员停用账号的接口，停用账号由统计查询排除。
+- **遗留与归属**：目录长轮询中的本会话 `connection` 摘要与修订号（随重新分配在第 3 轮实现）；健康事件写入（`tunnel_unhealthy`/`tunnel_failed` 本轮只记为结束原因，软冷却在第 3 轮）；完整分配器（第 3 轮）；网站界面（第 4 轮）；Core 适配与 Core 文案（第 5 轮）。发布注意：D1 默认值使 pro/max 同时在线上限立即为 2；`CLIENT_MIN_APP_VERSION` 在新 Core 发布前须保持为空（见 DEPLOYMENT.md）。

@@ -143,5 +143,7 @@ func RevokeAllSessions(tx *gorm.DB, userID string, now time.Time) error {
 			return err
 		}
 	}
-	return nil
+	// Every online device of the user goes offline with its session (presence plan 5.4).
+	return tx.Model(&model.ConnectionLease{}).Where("state = ? AND user_id = ?", model.LeaseActive, userID).
+		Updates(map[string]any{"state": model.LeaseEnded, "ended_at": now, "end_reason": model.LeaseSessionRevoked}).Error
 }

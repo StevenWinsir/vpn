@@ -47,7 +47,7 @@ func (s *Server) readNativeCatalog(c *gin.Context) (nativeCatalog, error) {
 	identity := c.MustGet("native_session").(model.NativeSession)
 	out := nativeCatalog{SessionID: identity.ID, Nodes: []nodeChoice{}}
 	err := s.database(c).Transaction(func(tx *gorm.DB) error {
-		now := time.Now().UTC()
+		now := s.now()
 		var user model.User
 		if e := tx.Select("id").First(&user, "id = ? AND status = ?", identity.UserID, "active").Error; e != nil {
 			if errors.Is(e, gorm.ErrRecordNotFound) {

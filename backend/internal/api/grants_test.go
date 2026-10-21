@@ -345,7 +345,8 @@ func TestGrantLifecyclePostgres(t *testing.T) {
 	if got.Code != 200 {
 		t.Fatalf("ready: %d %s", got.Code, got.Body.String())
 	}
-	contractShape(t, "grant_ready", "response", got.Body.Bytes())
+	// v3: the session now also carries its online lease.
+	contractShapeV3(t, "grant_ready", "response", got.Body.Bytes())
 	var ready struct {
 		State   string      `json:"state"`
 		YAML    string      `json:"yaml"`
@@ -393,7 +394,7 @@ func TestGrantLifecyclePostgres(t *testing.T) {
 
 	// The session reflects the server balance and the grant.
 	status := e.client("GET", "/session", token, nil, nil)
-	contractShape(t, "session_node_reported", "response", status.Body.Bytes())
+	contractShapeV3(t, "session_node_reported", "response", status.Body.Bytes())
 	var state nativeState
 	_ = json.Unmarshal(status.Body.Bytes(), &state)
 	if state.MeteringSource != "node_reported" || state.UsedUnits != e.subscription(u.subID).UsedUnits || state.GrantState != "ready" {
@@ -596,7 +597,8 @@ func TestGrantAuthorizationEndsPostgres(t *testing.T) {
 }
 
 func TestGrantBudgetPoolNeverOversubscribesPostgres(t *testing.T) {
-	e := newGrantEnv(t, func(c *config.Config) { c.GrantBudgetBytes = 2 * mib })
+	// The pool, not the online cap (D1 defaults to 2 devices), is under test here.
+	e := newGrantEnv(t, func(c *config.Config) { c.GrantBudgetBytes, c.ClientMaxOnlineDevices = 2*mib, 8 })
 	// 5 MiB at 1x with 2 MiB chunks: two grants fit fully, the third gets the rest.
 	u := e.newUser(5*mib, 8)
 	node := e.addNode("N", 1000, true)
