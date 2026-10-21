@@ -258,6 +258,16 @@ class LifecycleAcceptanceTest {
     @Suppress("DEPRECATION")
     private fun vpnNetworkUp(): Boolean = connectivity.allNetworks.any { connectivity.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
 
+    /** Milliseconds until the system has unregistered every VPN network, or null after [millis]. */
+    private suspend fun vpnGone(millis: Long = 10_000): Long? {
+        val start = SystemClock.elapsedRealtime()
+        while (SystemClock.elapsedRealtime() - start < millis) {
+            if (!vpnNetworkUp()) return SystemClock.elapsedRealtime() - start
+            delay(50)
+        }
+        return null
+    }
+
     private val sink get() = config.getValue("sink").jsonObject
 
     /** Downloads [bytes] from the sink by name through the tunnel; the body length read, or the failure. */
@@ -698,6 +708,7 @@ class LifecycleAcceptanceTest {
         disconnect(c)
         if (!connect(c)) return record("L07-cycles", "FAIL", "warm-up connect failed")
         disconnect(c)
+        vpnGone()
         delay(1_000)
         val fd0 = fds()
         val th0 = procStatus("Threads")
@@ -716,13 +727,22 @@ class LifecycleAcceptanceTest {
                 delay(500)
                 got = download(256L shl 10)
             }
-            when {
-                !core -> failures += "#${i + 1}: not connected (${c.state.value.snapshot.state}, ${c.state.value.message?.code ?: c.state.value.snapshot.lastError?.code})"
-                !vpn -> failures += "#${i + 1}: connected but no VPN network registered"
-                got?.getOrNull() != 256L shl 10 -> failures += "#${i + 1}: download failed twice (${got?.exceptionOrNull()?.message?.take(80)})"
-                else -> ok++
+            val problem = when {
+                !core -> "#${i + 1}: not connected (${c.state.value.snapshot.state}, ${c.state.value.message?.code ?: c.state.value.snapshot.lastError?.code})"
+                !vpn -> "#${i + 1}: connected but no VPN network registered"
+                got?.getOrNull() != 256L shl 10 -> "#${i + 1}: download failed twice (${got?.exceptionOrNull()?.message?.take(80)})"
+                else -> null
             }
             disconnect(c)
+            // The Core reports stopped before Android unregisters the VPN network. Without this
+            // wait the next cycle's vpnNetworkUp() can be this dying network, and a socket routed
+            // onto it fails at once (seen on a loaded runner: both attempts refused within 500 ms).
+            val gone = vpnGone()
+            when {
+                problem != null -> failures += problem
+                gone == null -> failures += "#${i + 1}: VPN network still registered 10 s after disconnect"
+                else -> ok++
+            }
         }
         delay(2_000)
         val fd1 = fds()
