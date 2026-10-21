@@ -433,9 +433,10 @@ func TestGateReadmitsAnExpiredLease(t *testing.T) {
 	h.f.session.Reason, h.f.session.CanConnect, h.f.session.ConnectionState = "connection_expired", false, apiclient.ConnectionExpired
 	h.f.mu.Unlock()
 	h.clock.sleep(10 * time.Minute)
-	waitFor(t, "re-admission", func() bool { return h.f.conns.connects.Load() == 2 && h.m.Snapshot().State == StateConnected })
-	if s := h.m.Snapshot(); s.LastError != nil || h.f.activeLeases() != 1 {
-		t.Fatalf("%+v", s.LastError)
+	// Same server, same document: the gate reopens the very same tunnel (no restart).
+	s := h.waitGate(t, "reopened", 1)
+	if h.f.conns.connects.Load() != 2 || s.State != StateConnected || s.LastError != nil || h.f.activeLeases() != 1 || h.engine.starts.Load() != 1 {
+		t.Fatalf("admissions %d state %s %+v starts %d", h.f.conns.connects.Load(), s.State, s.LastError, h.engine.starts.Load())
 	}
 
 	h.f.mu.Lock()
@@ -447,6 +448,24 @@ func TestGateReadmitsAnExpiredLease(t *testing.T) {
 		s := h.m.Snapshot()
 		return s.State != StateConnected && s.State != StateStopping && s.LastError != nil && s.LastError.Code == "device_limit"
 	})
+}
+
+// ResumeGate: re-admitted onto another server (the old one went away meanwhile), the held
+// tunnel cannot carry on; it is stopped and connected again once, on the new server.
+func TestGateReadmissionElsewhereReconnects(t *testing.T) {
+	h, _ := newGateHarness(t, nil, time.Minute)
+	h.connect(t)
+	h.f.mu.Lock()
+	h.f.session.Reason, h.f.session.CanConnect, h.f.session.ConnectionState = "connection_expired", false, apiclient.ConnectionExpired
+	h.f.conns.down = map[string]bool{serverOf(nodeA, 1): true}
+	h.f.mu.Unlock()
+	h.clock.sleep(10 * time.Minute)
+	waitFor(t, "reconnect on the other server", func() bool {
+		return h.engine.starts.Load() == 2 && h.m.Snapshot().State == StateConnected
+	})
+	if !h.stoppedWith("connection_expired") || h.f.activeLeases() != 1 {
+		t.Fatalf("stops %v active %d", h.stops, h.f.activeLeases())
+	}
 }
 
 // Node-reported: the grant path asks to avoid the failed server and reports the failure.

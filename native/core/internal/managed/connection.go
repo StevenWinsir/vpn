@@ -18,6 +18,9 @@ import (
 // the opaque server it was admitted to, used only as avoid_node_id.
 type admission struct {
 	id, groupID, serverID string
+	// profile is the document the segment was started with: a lapsed lease taken again under
+	// a closed gate may keep the tunnel only if it brings this very document (readmit).
+	profile *Profile
 }
 
 // pendingRelease is a lease whose release could not be delivered yet (or must wait for the
@@ -388,6 +391,7 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 		return snap, "", failure
 	}
 	m.profile, m.profileNode = &profile, node
+	ref.profile = &profile
 	if m.meter == nil {
 		m.meter = m.newMeterLocked(client, token)
 	}
@@ -470,4 +474,64 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
 	go m.monitor(monitorCtx, gen, conn, mt, signature, watch)
 	return snap, "", nil
+}
+
+// readmit takes a new lease for the live segment's line while its gate is closed (ResumeGate):
+// the old one lapsed while the device slept or had no network. Placed on the same server with
+// the same document, the held tunnel simply reopens; anywhere else it must be rebuilt, which
+// the caller does by stopping and reconnecting once (connection_expired). A refusal (e.g.
+// device_limit: the slot was taken meanwhile) stops with that reason.
+func (m *Manager) readmit(ctx context.Context, gen uint64) (gateVerdict, string) {
+	m.mu.Lock()
+	if m.generation != gen || m.client == nil || m.session == nil || m.admission == nil || m.admission.profile == nil {
+		m.mu.Unlock()
+		return gateRefused, "connection_expired"
+	}
+	// The expired verdict dropped m.profile (as any reason does); the admission kept it.
+	client, token, ref := m.client, m.token, *m.admission
+	version := ref.profile.Version
+	request := apiclient.ConnectionRequest{GroupID: ref.groupID, LastSequence: m.session.LastSequence}
+	m.mu.Unlock()
+
+	response, started, err := m.admit(ctx, client, token, request)
+	if ctx.Err() != nil {
+		return gateCanceled, ""
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.generation != gen {
+		if err == nil {
+			m.releaseStale(client, token, response.Connection.ID)
+		}
+		return gateCanceled, ""
+	}
+	if err != nil {
+		var apiErr *apiclient.Error
+		switch {
+		case errors.As(err, &apiErr) && apiclient.TerminatesSession(apiErr.Code):
+			m.dropSessionLocked(apiErr.Code)
+			return gateCanceled, ""
+		case apiErr != nil && !apiErr.Transient || apiErr != nil && noOtherServer(apiErr.Code):
+			return gateRefused, apiErr.Code
+		}
+		return gateTransient, "network_unreachable"
+	}
+	// From here the new lease is the segment's: every teardown releases it.
+	m.admission = &admission{id: response.Connection.ID, groupID: ref.groupID, serverID: response.NodeID, profile: ref.profile}
+	if apiclient.TerminatesSession(response.Session.Reason) {
+		m.dropSessionLocked(response.Session.Reason)
+		return gateCanceled, ""
+	}
+	if response.Session.ConnectionID != response.Connection.ID || response.NodeID != ref.serverID || response.Version != version {
+		// Another server (or an edited one): the tunnel cannot carry on as it is.
+		return gateRefused, "connection_expired"
+	}
+	m.applySessionLocked(response.Session, started)
+	if response.Session.Reason == "" && response.Session.ProfileVersion == version {
+		m.profile = ref.profile // the same validated document the tunnel already runs
+	}
+	if code := m.gateLocked(); code != "" {
+		return gateRefused, code
+	}
+	return gateAuthorized, ""
 }

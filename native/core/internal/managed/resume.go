@@ -124,6 +124,11 @@ func (m *Manager) reconfirm(ctx context.Context, gen uint64, reason string, mt *
 	for attempt := 1; ; attempt++ {
 		signature := m.opts.Signature()
 		verdict, code := m.reauthorize(ctx, gen, mt)
+		if verdict == gateRefused && code == "connection_expired" && mt != nil {
+			// The lease lapsed while the device slept or had no network: take it again for
+			// the same line while the gate holds the tunnel (plan 10.1, ResumeGate).
+			verdict, code = m.readmit(ctx, gen)
+		}
 		switch verdict {
 		case gateCanceled:
 			return "", false
