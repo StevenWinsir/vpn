@@ -76,7 +76,9 @@ func TestSelectedLineEchoedForGrantPostgres(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != 200 || out.YAML == "" {
 		t.Fatalf("ready grant: %d %s", w.Code, w.Body.String())
 	}
-	if out.NodeID != a.ID || strings.Contains(w.Body.String(), b.ID) {
-		t.Fatalf("grant must echo the selected group %s, not the server: %s", a.ID, w.Body.String())
+	// node_id echoes the group; the server appears only as the opaque server_id (contract v3,
+	// round 5), which a client sends back solely as avoid_node_id after a failed probe.
+	if out.NodeID != a.ID || out.ServerID != b.ID || strings.Count(w.Body.String(), b.ID) != 1 {
+		t.Fatalf("grant must echo the selected group %s and name the server only as server_id: %s", a.ID, w.Body.String())
 	}
 }

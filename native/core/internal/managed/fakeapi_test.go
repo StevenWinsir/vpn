@@ -72,6 +72,8 @@ type fakeAPI struct {
 
 	// Node-reported mode (grants).
 	grants grantFake
+	// Online leases (contract native-v3).
+	conns connFake
 }
 
 type apiError struct {
@@ -98,6 +100,8 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	mux.HandleFunc("/api/v1/client/nodes", f.nodesHandler)
 	mux.HandleFunc("/api/v1/client/config", f.config)
 	mux.HandleFunc("/api/v1/client/traffic", f.traffic)
+	mux.HandleFunc("/api/v1/client/connections", f.connectionCreate)
+	mux.HandleFunc("/api/v1/client/connections/", f.connectionRelease)
 	mux.HandleFunc("/api/v1/client/grants", f.grantCreate)
 	mux.HandleFunc("/api/v1/client/grants/", f.grantByID)
 	mux.HandleFunc("/api/v1/client/logout", func(w http.ResponseWriter, r *http.Request) {

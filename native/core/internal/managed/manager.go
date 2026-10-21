@@ -122,6 +122,14 @@ type Manager struct {
 	orphan string
 	local  *meter.Meter
 
+	// Online lease (contract native-v3, connection.go): admission is the lease of the live
+	// (or starting) client-reported segment; unreleased a lease whose release is not
+	// delivered yet. intent counts the user's own commands, so an automatic reconnect never
+	// overrides one.
+	admission  *admission
+	unreleased *pendingRelease
+	intent     uint64
+
 	// gate is the closed authorization gate of the live segment (ResumeGate; nil while
 	// open); lastGate and gateClosures describe the gates closed so far in this session.
 	gate         *gateState
@@ -219,6 +227,7 @@ func (m *Manager) Login(ctx context.Context, p LoginParams) (Snapshot, error) {
 	}
 	// A previous account's tunnel is closed and its tail settled under that account
 	// before anything else happens (section 6.3: old tail never charges a new login).
+	m.bumpIntent()
 	_ = m.stopTunnel(ctx, "")
 	m.teardown(true)
 
@@ -266,7 +275,9 @@ func (m *Manager) Login(ctx context.Context, p LoginParams) (Snapshot, error) {
 // Logout stops background work, makes a bounded best-effort server revocation and
 // clears every temporary identity. It is idempotent.
 func (m *Manager) Logout(ctx context.Context) Snapshot {
-	// Close the data path and settle the tail while the bearer token is still valid.
+	// Close the data path, settle the tail and release the online lease while the bearer
+	// token is still valid.
+	m.bumpIntent()
 	_ = m.stopTunnel(ctx, "")
 	m.mu.Lock()
 	client, token := m.client, m.token
@@ -310,6 +321,7 @@ func (m *Manager) resetLocked(keepError bool) {
 	m.profileNode = apiclient.NodeChoice{}
 	m.meter = nil
 	m.grant, m.orphan, m.local = nil, "", nil
+	m.admission, m.unreleased = nil, nil
 	m.gate, m.lastGate, m.gateClosures = nil, nil, 0
 	m.state = StateSignedOut
 	if !keepError {
@@ -370,12 +382,10 @@ func (m *Manager) applySessionLocked(s apiclient.Session, requestStart time.Time
 }
 
 // readyLocked: the server's verdict leaves the account able to (re)connect, possibly
-// after selecting a node or minting a new grant.
+// after selecting a line: what it reports is only about the previous binding (a lease, a
+// grant, a server's config), and connecting admits the device afresh.
 func (m *Manager) readyLocked(s apiclient.Session) bool {
-	if s.CanConnect || s.Reason == "profile_required" || s.Reason == "profile_changed" {
-		return true
-	}
-	return s.Reason == "grant_expired" && m.selectedNodeReportedLocked()
+	return s.CanConnect || graceReason(s.Reason)
 }
 
 // jitter returns d reduced by up to 10% so renewals land early, never late.
@@ -453,6 +463,9 @@ func (m *Manager) keepAlive(ctx context.Context, gen uint64, client *apiclient.C
 				}
 				m.mu.Unlock()
 				backoff = m.opts.BackoffMin
+				// The tail is acknowledged now: a lease whose release was not delivered (or
+				// had to wait for that tail) is released.
+				m.retryRelease(ctx, gen)
 				break
 			}
 			var apiErr *apiclient.Error

@@ -149,7 +149,7 @@ func (h *harness) measure(ctx context.Context, tag string, node managed.NodeView
 	var seg segment
 	before, err := h.selectNode(ctx, node)
 	if err != nil {
-		h.rec.record(tag+"-select", "the node can be selected and its config verified", errCode(err), "fail")
+		h.rec.record(tag+"-select", "the line can be selected", errCode(err), "fail")
 		return seg, before, false
 	}
 	b := func() (ok bool) {

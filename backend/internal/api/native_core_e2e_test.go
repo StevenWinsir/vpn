@@ -364,6 +364,7 @@ func TestNativeCoreEndToEnd(t *testing.T) {
 	})
 
 	t.Run("device_limit", func(t *testing.T) {
+		// Selecting never takes a slot (contract native-v3); connecting does.
 		first := startCore(t, bin, server.URL)
 		first.login(vip.Email, password)
 		snap, _ := first.waitSnapshot("catalog", 6*time.Second, func(s snapshotView) bool { return len(s.Nodes) == 2 })
@@ -373,10 +374,17 @@ func TestNativeCoreEndToEnd(t *testing.T) {
 		second := startCore(t, bin, server.URL)
 		second.login(vip.Email, password)
 		snap, _ = second.waitSnapshot("catalog", 6*time.Second, func(s snapshotView) bool { return len(s.Nodes) == 2 })
-		_, s := second.call("select_node", second.gen, map[string]string{"node_id": dedicated.ID, "catalog_revision": snap.CatalogRevision})
-		if s.ActionError == nil || s.ActionError.Code != "device_limit" || !strings.Contains(s.ActionError.Message, "设备上限") {
+		if _, s := second.call("select_node", second.gen, map[string]string{"node_id": dedicated.ID, "catalog_revision": snap.CatalogRevision}); s.ActionError != nil {
+			t.Fatalf("selecting on the second device: %+v", s.ActionError)
+		}
+		if _, s := first.call("connect", first.gen, nil); s.ActionError != nil || s.State != "connected" {
+			t.Fatalf("first device connect: %+v", s.ActionError)
+		}
+		_, s := second.call("connect", second.gen, nil)
+		if s.ActionError == nil || s.ActionError.Code != "device_limit" || !strings.Contains(s.ActionError.Message, "设备上限") || s.State == "connected" {
 			t.Fatalf("second device (plan allows 1): %+v", s.ActionError)
 		}
+		first.call("disconnect", 0, nil)
 	})
 
 	// Stage 3: real metering through the real Core and the real ledger. The engine is the
@@ -540,8 +548,8 @@ func TestNativeCoreEndToEnd(t *testing.T) {
 			return len(s.Nodes) == 1 && s.Nodes[0].Name == "JP-Direct-Renamed" && s.Nodes[0].RatePermille == 1500
 		})
 		t.Logf("admin rename+rate observed by the client after %v", time.Since(changedAt))
-		if snap.ConfigReady {
-			t.Fatal("stale config kept after the node changed")
+		if snap.SelectedNodeID != ordinary.ID {
+			t.Fatal("an idle selection should survive the node edit (nothing is held between connections)")
 		}
 		// The very next connect re-validates against the new version before any engine call.
 		_, again := core.call("connect", core.gen, nil)

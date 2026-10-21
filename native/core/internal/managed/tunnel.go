@@ -106,156 +106,17 @@ func (m *Manager) settle(ctx context.Context, gen uint64, mt *meter.Meter) error
 }
 
 // Connect is the only path to Engine.Start and re-checks every gate itself:
-// signed in, a selected node, a fresh server authorization with an active lease, a
-// config validated against the same version, no conflicting VPN, and a first metering
-// acknowledgement. Only after the tunnel verifiably forwards does it report Connected.
+// signed in, a selected line, a fresh server authorization, an online lease admitted for
+// this device (which brings the one server's config, validated before use), no conflicting
+// VPN, and a first metering acknowledgement. Only after the tunnel verifiably forwards does
+// it report Connected (connection.go, grant.go).
 func (m *Manager) Connect(ctx context.Context) (Snapshot, error) {
 	if !m.opMu.TryLock() {
 		return m.Snapshot(), codeError("operation_in_progress")
 	}
 	defer m.opMu.Unlock()
-
-	gen, client, token, err := m.handles()
-	if err != nil {
-		return m.Snapshot(), err
-	}
-	m.mu.Lock()
-	if m.conn != nil {
-		defer m.mu.Unlock()
-		return m.snapshotLocked(), nil // already connected: idempotent
-	}
-	selected := m.selected
-	nodeMode := m.nodeReportedLocked(selected)
-	m.mu.Unlock()
-	if selected == "" {
-		return m.Snapshot(), codeError("profile_required")
-	}
-	if nodeMode {
-		return m.connectGranted(ctx, gen, client, token, selected)
-	}
-
-	if err = m.settleIdle(ctx, gen); err != nil {
-		return m.Snapshot(), err
-	}
-	// Fresh authorization first: connecting never relies on a cached verdict.
-	if err = m.refreshSession(ctx, gen, client, token); err != nil {
-		return m.Snapshot(), err
-	}
-	// If the server says our binding is stale (or we hold nothing), bind once.
-	m.mu.Lock()
-	need := m.profile == nil
-	m.mu.Unlock()
-	if need {
-		if err = m.bindNode(ctx, gen, client, token, selected); err != nil {
-			return m.Snapshot(), err
-		}
-	}
-
-	m.mu.Lock()
-	if m.generation != gen {
-		m.mu.Unlock()
-		return m.Snapshot(), codeError("stale_generation")
-	}
-	if code := m.gateLocked(); code != "" {
-		m.failLocked(codeError(code))
-		m.mu.Unlock()
-		return m.Snapshot(), codeError(code)
-	}
-	profile, session := *m.profile, *m.session
-	if m.meter == nil {
-		m.meter = m.newMeterLocked(client, token)
-	}
-	mt := m.meter
-	m.state = StatePreparing
-	m.mu.Unlock()
-
-	fail := func(code string, engineUp bool) (Snapshot, error) {
-		if engineUp {
-			_ = m.opts.Engine.Stop()
-			m.opts.Egress.Clear()
-		}
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if m.generation == gen {
-			m.classifyLocked()
-			m.failLocked(codeError(code))
-		}
-		return m.snapshotLocked(), codeError(code)
-	}
-
-	iface, err := m.opts.Engine.Preflight(ctx)
-	if err != nil {
-		return fail(engineCode(err), false)
-	}
-	signature := m.opts.Signature()
-	if err = mt.Begin(session); err != nil {
-		return m.failMeter(gen, mt, err)
-	}
-	// First acknowledgement before any tunnel exists: it proves the ledger and the
-	// server agree and renews the lease. A zero-byte batch is legitimate.
-	ack, started, err := mt.Flush(ctx)
-	m.mu.Lock()
-	if m.generation != gen {
-		m.mu.Unlock()
-		return m.Snapshot(), codeError("stale_generation")
-	}
-	if ack.SessionID != "" {
-		if apiclient.TerminatesSession(ack.Reason) {
-			m.dropSessionLocked(ack.Reason)
-			m.mu.Unlock()
-			return m.Snapshot(), codeError(ack.Reason)
-		}
-		m.applySessionLocked(ack, started)
-	}
-	m.mu.Unlock()
-	if err != nil {
-		return m.failMeter(gen, mt, err)
-	}
-	m.mu.Lock()
-	code := m.gateLocked()
-	if code == "" && mt.EstimatedRemaining() <= 0 {
-		code = "quota_exhausted"
-	}
-	if code == "" {
-		m.state = StateConnecting
-	}
-	m.mu.Unlock()
-	if code != "" {
-		return fail(code, false)
-	}
-
-	// From here the data path may exist, so every failure must close it.
-	m.opts.Egress.Set(iface)
-	if err = m.opts.Engine.Start(ctx, profile); err != nil {
-		return fail(engineCode(err), true)
-	}
-	if err = m.opts.Engine.Verify(ctx); err != nil {
-		snap, failure := fail(engineCode(err), true)
-		// The probe itself used the tunnel and was counted; acknowledge that tail.
-		_ = m.settle(ctx, gen, mt)
-		return snap, failure
-	}
-
-	m.mu.Lock()
-	if m.generation != gen {
-		m.mu.Unlock()
-		_ = m.opts.Engine.Stop()
-		m.opts.Egress.Clear()
-		return m.Snapshot(), codeError("stale_generation")
-	}
-	monitorCtx, cancel := context.WithCancel(context.Background())
-	conn := &connection{cancel: cancel, done: make(chan struct{}), metered: true}
-	m.conn = conn
-	m.state = StateConnected
-	m.lastError = nil
-	snap := m.snapshotLocked()
-	m.mu.Unlock()
-	// The clock watch is primed here, before the goroutine exists, so a sleep that
-	// begins right after Connect is still seen.
-	var watch clockWatch
-	watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
-	go m.monitor(monitorCtx, gen, conn, mt, signature, watch)
-	return snap, nil
+	m.bumpIntent()
+	return m.connect(ctx)
 }
 
 // failMeter reports a metering failure that happened before any tunnel existed.
@@ -283,8 +144,10 @@ func (m *Manager) failMeter(gen uint64, mt *meter.Meter, err error) (Snapshot, e
 	return m.snapshotLocked(), codeError(code)
 }
 
-// Disconnect closes the data path and settles the tail. It is idempotent.
+// Disconnect closes the data path, settles the tail and releases the online lease. It is
+// idempotent.
 func (m *Manager) Disconnect(ctx context.Context) Snapshot {
+	m.bumpIntent()
 	_ = m.stopTunnel(ctx, "")
 	return m.Snapshot()
 }
@@ -299,6 +162,7 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 	m.mu.Lock()
 	gen, conn, mt, grant, local := m.generation, m.conn, m.meter, m.grant, m.local
 	active := conn != nil || m.state == StateConnected || m.state == StateConnecting
+	held := m.admission != nil && active
 	m.conn = nil
 	m.closeGateRecordLocked("stopped")
 	if active {
@@ -315,7 +179,7 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 
 	// Node-reported: the data path is closed, so the grant can now be revoked at the node.
 	if grant != nil {
-		m.finishGrant(ctx, gen, grant)
+		m.finishGrant(ctx, gen, grant, releaseReason(reason))
 	}
 	if local != nil {
 		local.Idle()
@@ -327,6 +191,11 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 			settleErr = m.settle(ctx, gen, mt)
 		}
 		mt.Idle() // after settlement: the final sample must not resurrect a displayed rate
+	}
+	// The device goes offline only now: forwarding has stopped and its tail is acknowledged
+	// (or, if not, the release waits for keepAlive to settle it first).
+	if held {
+		m.endAdmission(ctx, gen, releaseReason(reason))
 	}
 
 	m.mu.Lock()
@@ -360,15 +229,22 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 }
 
 // requestStop ends the segment from a watchdog without blocking it (stopTunnel waits
-// for the watchdog to exit).
+// for the watchdog to exit). A server-side move (connection_reassigned) is followed by one
+// automatic reconnect to the same line, unless the user acted meanwhile.
 func (m *Manager) requestStop(gen uint64, reason string) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), m.opts.SettleTimeout+5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), m.opts.SettleTimeout+releaseTimeout+5*time.Second)
 		defer cancel()
-		if m.Generation() != gen {
+		m.mu.Lock()
+		current, intent := m.generation == gen, m.intent
+		m.mu.Unlock()
+		if !current {
 			return
 		}
 		_ = m.stopTunnel(ctx, reason)
+		if m.reconnects(reason) {
+			m.reconnect(gen, intent)
+		}
 	}()
 }
 

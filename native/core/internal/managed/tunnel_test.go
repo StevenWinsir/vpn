@@ -318,7 +318,7 @@ func TestAuthorizationLossStopsTheTunnel(t *testing.T) {
 		h.connect(t)
 		h.f.mutate(func() { h.f.nodes[0].RatePermille, h.f.nodes[0].Version = 1500, 2 })
 		h.waitStopped(t, "profile_changed")
-		if s := h.m.Snapshot(); s.ConfigReady || s.State == StateConnected {
+		if s := h.m.Snapshot(); s.ProfileVersion != "" || s.State == StateConnected || s.SelectedNodeID != nodeA {
 			t.Fatalf("%+v", s)
 		}
 	})
@@ -454,14 +454,20 @@ func TestSwitchingNodeSettlesBeforeRebinding(t *testing.T) {
 		t.Fatalf("%v %+v", err, out.State)
 	}
 	_, _, down, seq := h.ledger()
-	if down != 5*mib {
-		t.Fatalf("old tail not settled before the new bind: %d", down)
+	if down != 5*mib || h.engine.stops.Load() == 0 {
+		t.Fatalf("old tail not settled before the switch: %d", down)
 	}
+	// The old line's lease is released once its tail is acknowledged; the new line is
+	// admitted against the confirmed sequence when the user connects.
+	if r := h.f.releasesSeen(); len(r) != 1 || r[0].reason != "user" {
+		t.Fatalf("old lease not released: %+v", r)
+	}
+	h.connect(t)
 	h.f.mu.Lock()
 	seen := h.f.lastSeqSeen
 	h.f.mu.Unlock()
-	if seen != itoa(seq) || h.engine.stops.Load() == 0 {
-		t.Fatalf("config requested with last_sequence=%s, ledger at %d", seen, seq)
+	if seen != itoa(seq) {
+		t.Fatalf("admitted with last_sequence=%s, ledger at %d", seen, seq)
 	}
 }
 

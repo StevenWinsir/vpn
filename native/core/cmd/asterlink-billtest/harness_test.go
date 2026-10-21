@@ -39,6 +39,8 @@ type fakeServer struct {
 	reports     map[int64]apiclient.Counters
 	doubleBill  bool // a broken server that charges replays again
 	trafficHits int
+	// Online leases (contract native-v3).
+	leases, releases int
 }
 
 func sha(text string) string {
@@ -116,6 +118,43 @@ func newFakeServer(t *testing.T, total int64) *fakeServer {
 			}
 		}
 		http.Error(w, `{"error":{"code":"client_config_unavailable"}}`, http.StatusServiceUnavailable)
+	})
+	// Contract native-v3: the Core is admitted when it connects and releases afterwards.
+	mux.HandleFunc("/api/v1/client/connections", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		var in apiclient.ConnectionRequest
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, n := range f.nodes {
+			if n.ID == in.GroupID {
+				doc := "# catalog: 0000\nmode: rule\nproxies:\n    - name: " + n.Name + "\n      type: ss\n      server: 192.0.2.10\n      port: 8388\n      cipher: aes-256-gcm\n      password: node-secret-password-1234\n      udp: true\nproxy-groups:\n    - name: VPN\n      type: select\n      proxies:\n        - " + n.Name + "\nrules:\n    - MATCH,VPN\n"
+				f.leases++
+				id := fmt.Sprintf("77777777-7777-4777-8777-%012d", f.leases)
+				f.session.RatePermille, f.session.Reason, f.session.CanConnect, f.session.ProfileVersion = n.RatePermille, "", true, sha(doc)
+				f.session.ConnectionID, f.session.ConnectionState = id, apiclient.ConnectionActive
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(apiclient.ConnectionResponse{Connection: apiclient.Connection{ID: id, GroupID: n.ID, State: apiclient.ConnectionActive, ExpiresAt: time.Now().Add(90 * time.Second)},
+					NodeID: "99999999-9999-4999-8999-999999999999", YAML: doc, Version: sha(doc), Nodes: f.nodes, Session: f.snapshot()})
+				return
+			}
+		}
+		http.Error(w, `{"error":{"code":"group_unavailable"}}`, http.StatusServiceUnavailable)
+	})
+	mux.HandleFunc("/api/v1/client/connections/", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		id, _ := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/client/connections/"), "/release")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.releases++
+		if f.session.ConnectionID == id {
+			f.session.ConnectionState = apiclient.ConnectionEnded
+		}
+		_ = json.NewEncoder(w).Encode(apiclient.ReleaseResponse{Connection: apiclient.Connection{ID: id, State: apiclient.ConnectionEnded}, Session: f.snapshot()})
 	})
 	mux.HandleFunc("/api/v1/client/traffic", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {

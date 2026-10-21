@@ -24,6 +24,9 @@
 //	ASTERLINK_BILL_SINK_TOKEN  the sink's ASTERLINK_SINK_TOKEN
 //	ASTERLINK_BILL_DEVICE_ID   optional UUID; default is derived from the host name
 //
+// --presence (presence.go) instead checks online leases with several devices of the account:
+// device limit, a full line and a server withdrawn under a live connection. It needs no sink.
+//
 // It is never part of the application bundle.
 package main
 
@@ -76,8 +79,21 @@ func main() {
 	raceAt := flag.String("race-at", "", "with --race-sessions: RFC 3339 start time, to line up several machines (e.g. 2026-10-14T20:30:00+08:00)")
 	raceMax := flag.Int64("race-max-mib", 2048, "with --race-sessions: refuse (BLOCKED) when the account has more quota than this left")
 	udpSink := flag.String("udp-sink", "", "with --grants: host:port of the sink's UDP echo, tested with pinned Mihomo XUDP (no command-2 fallback); empty = TCP flows only")
+	presence := flag.Bool("presence", false, "instead of B01: online leases through the production Manager (P01 device limit, P02 group full, P03 reassignment); several devices of the test account sign in")
+	slots := flag.Bool("use-device-slots", false, "with --presence: confirm the test account's device slots may be taken (its other devices may be refused meanwhile)")
+	deviceLimit := flag.Int("device-limit", 2, "with --presence: the account's effective online-device limit, min(plan max_devices, CLIENT_MAX_ONLINE_DEVICES)")
+	line := flag.String("line", "", "with --presence: id or exact name of the line for P01/P03 (default: the first client-reported line)")
+	fullLine := flag.String("full-line", "", "with --presence: id or exact name of a line whose total capacity is below --device-limit (P02; empty = BLOCKED)")
+	reassignWait := flag.Int("reassign-wait-seconds", 0, "with --presence: P03, hold a connection this long for YOU to disable its server in /admin/nodes (0 = BLOCKED)")
+	reconnectWithin := flag.Int("reconnect-within-seconds", 30, "with --reassign-wait-seconds: the automatic reconnect must complete within this long")
 	flag.Parse()
 
+	if *presence {
+		os.Exit(presenceMain(*output, *slots, *tun, *allow, presenceOptions{
+			limit: *deviceLimit, line: *line, fullLine: *fullLine, tun: *tun,
+			reassignWait: time.Duration(*reassignWait) * time.Second, reconnectWithin: time.Duration(*reconnectWithin) * time.Second,
+		}, time.Duration(*maxSeconds)*time.Second))
+	}
 	needTUN := !*grants || *tun
 	if *grants && !*spend {
 		fail("BLOCKED: --grants spends the test account's quota; pass --spend-test-quota to confirm")
@@ -91,7 +107,7 @@ func main() {
 	if *output == "" {
 		fail("usage: --output NEWDIR (and the ASTERLINK_BILL_* environment, see the file header)")
 	}
-	cfg, err := configFromEnv()
+	cfg, err := configFromEnv(true)
 	if err != nil {
 		fail("BLOCKED: " + err.Error())
 	}
@@ -151,13 +167,17 @@ func main() {
 	os.Exit(code)
 }
 
-func configFromEnv() (config, error) {
+func configFromEnv(needSink bool) (config, error) {
 	cfg := config{
 		apiBase: os.Getenv("ASTERLINK_BILL_API_BASE"), channel: "development",
 		email: os.Getenv("ASTERLINK_BILL_EMAIL"), password: os.Getenv("ASTERLINK_BILL_PASSWORD"),
 		sinkBase: strings.TrimRight(os.Getenv("ASTERLINK_BILL_SINK"), "/"), deviceID: os.Getenv("ASTERLINK_BILL_DEVICE_ID"),
 	}
-	for name, value := range map[string]string{"ASTERLINK_BILL_API_BASE": cfg.apiBase, "ASTERLINK_BILL_EMAIL": cfg.email, "ASTERLINK_BILL_PASSWORD": cfg.password, "ASTERLINK_BILL_SINK": cfg.sinkBase, tokenEnv: os.Getenv(tokenEnv)} {
+	required := map[string]string{"ASTERLINK_BILL_API_BASE": cfg.apiBase, "ASTERLINK_BILL_EMAIL": cfg.email, "ASTERLINK_BILL_PASSWORD": cfg.password}
+	if needSink {
+		required["ASTERLINK_BILL_SINK"], required[tokenEnv] = cfg.sinkBase, os.Getenv(tokenEnv)
+	}
+	for name, value := range required {
 		if value == "" {
 			return cfg, fmt.Errorf("set %s", name)
 		}
@@ -165,7 +185,7 @@ func configFromEnv() (config, error) {
 	if _, err := apiclient.ParseBase(cfg.apiBase, cfg.channel); err != nil {
 		return cfg, fmt.Errorf("ASTERLINK_BILL_API_BASE must be https://<host>/api/v1/client")
 	}
-	if u, err := url.Parse(cfg.sinkBase); err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	if u, err := url.Parse(cfg.sinkBase); needSink && (err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https")) {
 		return cfg, fmt.Errorf("ASTERLINK_BILL_SINK must be http(s)://host:port")
 	}
 	if cfg.deviceID == "" {
@@ -189,6 +209,50 @@ func deviceIDFromHost() string {
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:4])
+}
+
+// presenceMain runs --presence. It needs no sink: only the control plane is measured, unless
+// --tun gives device 1 the production engine (privileged, like B01).
+func presenceMain(output string, slots, tun, allow bool, o presenceOptions, maxRun time.Duration) int {
+	if !slots {
+		fail("BLOCKED: --presence signs in several devices of the test account and takes its slots; pass --use-device-slots to confirm")
+	}
+	if o.limit < 1 || o.limit > 20 {
+		fail("--device-limit must be 1-20")
+	}
+	if tun && (!allow || !privileged()) {
+		fail("BLOCKED: --tun needs --allow-network-changes and " + privilegeHint)
+	}
+	if output == "" {
+		fail("usage: --output NEWDIR (and the ASTERLINK_BILL_* environment, see the file header)")
+	}
+	cfg, err := configFromEnv(false)
+	if err != nil {
+		fail("BLOCKED: " + err.Error())
+	}
+	if err := os.Mkdir(output, 0o700); err != nil {
+		fail("output directory must not exist: " + err.Error())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), maxRun)
+	defer cancel()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() { <-signals; cancel() }()
+	var production managed.Engine
+	run := &presenceRun{cfg: cfg, opts: o, rec: &recorder{}, newEngine: func(i int) managed.Engine {
+		if tun && i == 0 {
+			production = engine.New()
+			return production
+		}
+		return controlEngine{}
+	}}
+	fmt.Printf("presence: %s\n", presenceSummary(o))
+	run.run(ctx)
+	if production != nil {
+		_ = production.Stop()
+		cleanupProbe()
+	}
+	return finish(output, run.rec, cfg)
 }
 
 func finish(output string, rec *recorder, cfg config) int {

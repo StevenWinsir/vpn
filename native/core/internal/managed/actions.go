@@ -78,8 +78,10 @@ func (m *Manager) syncCatalog(ctx context.Context, gen uint64, client *apiclient
 	return nil
 }
 
-// SelectNode records the user's choice and fetches, verifies and holds that single
-// node's config. catalogRevision must equal the revision the UI was looking at.
+// SelectNode records the user's choice of line (a node group). It sends nothing and takes
+// no slot: the online lease and the one server's config are obtained when the user connects
+// (contract native-v3), in either metering mode. catalogRevision must equal the revision the
+// UI was looking at.
 func (m *Manager) SelectNode(ctx context.Context, nodeID, catalogRevision string) (Snapshot, error) {
 	gen, client, token, err := m.handles()
 	if err != nil {
@@ -90,108 +92,50 @@ func (m *Manager) SelectNode(ctx context.Context, nodeID, catalogRevision string
 		m.mu.Unlock()
 		return m.Snapshot(), codeError("stale_catalog")
 	}
+	m.bumpIntentLocked()
 	m.mu.Unlock()
-	// Switching nodes (or re-reading a changed one) never overlaps with forwarding:
-	// close the data path and have the old tail acknowledged before the new bind, so the
-	// new config is fetched against the confirmed last_sequence (section 6.3).
+	// Switching lines never overlaps with forwarding: close the data path, have the old tail
+	// acknowledged and the old lease released before the new line is recorded.
 	if err = m.stopTunnel(ctx, ""); err != nil {
 		return m.Snapshot(), err
 	}
 	m.mu.Lock()
-	nodeMode := m.nodeReportedLocked(nodeID)
-	m.mu.Unlock()
-	if nodeMode {
-		// A node-reported node has no config to fetch: its per-user credential is minted
-		// by a grant when (and only when) the user connects.
-		return m.selectGrantNode(gen, nodeID)
-	}
-	if err = m.bindNode(ctx, gen, client, token, nodeID); err != nil {
-		return m.Snapshot(), err
-	}
-	return m.Snapshot(), nil
-}
-
-// bindNode downloads, verifies and stores the config for nodeID. The raw document
-// lives only in this function's frame.
-func (m *Manager) bindNode(ctx context.Context, gen uint64, client *apiclient.Client, token, nodeID string) error {
-	m.mu.Lock()
 	stale := m.catalogStale
 	m.mu.Unlock()
 	if stale {
-		// The long-poll was paused (Android background): the node's metadata may be old, and
-		// a binding made against it would be invalidated as "changed" by the next catalog.
-		if err := m.syncCatalog(ctx, gen, client, token); err != nil {
-			return err
+		// The long-poll was paused (Android background): the line's metadata may be old, and
+		// a selection made against it would be invalidated as "changed" by the next catalog.
+		if err = m.syncCatalog(ctx, gen, client, token); err != nil {
+			return m.Snapshot(), err
 		}
 	}
-	m.mu.Lock()
-	if m.generation != gen {
-		m.mu.Unlock()
-		return codeError("stale_generation")
-	}
-	var node *apiclient.NodeChoice
-	for i := range m.nodes {
-		if m.nodes[i].ID == nodeID {
-			choice := m.nodes[i]
-			node = &choice
-		}
-	}
-	if node == nil {
-		m.mu.Unlock()
-		return codeError("node_unavailable")
-	}
-	var lastSequence int64
-	if m.session != nil {
-		lastSequence = m.session.LastSequence
-	}
-	// A previously held config is dropped before the request: if the fetch fails,
-	// nothing stale can be used.
-	m.profile = nil
-	previous := m.state
-	m.state = StatePreparing
-	m.mu.Unlock()
+	return m.selectLine(gen, nodeID)
+}
 
-	start := m.opts.Now()
-	response, err := client.Config(ctx, token, nodeID, lastSequence)
-
+// selectLine records nodeID as the selection if the catalog offers it.
+func (m *Manager) selectLine(gen uint64, nodeID string) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.generation != gen {
-		return codeError("stale_generation")
+		return m.snapshotLocked(), codeError("stale_generation")
 	}
-	m.state = previous
-	if err != nil {
-		var apiErr *apiclient.Error
-		if errors.As(err, &apiErr) && apiclient.TerminatesSession(apiErr.Code) {
-			m.dropSessionLocked(apiErr.Code)
-			return err
+	for i := range m.nodes {
+		if m.nodes[i].ID == nodeID {
+			m.selected, m.profile, m.profileNode = nodeID, nil, m.nodes[i]
+			m.lastError = nil
+			return m.snapshotLocked(), nil
 		}
-		m.failLocked(err)
-		m.selected = nodeID
-		return err
 	}
-	profile, parseErr := ParseProfile(nodeID, node.Name, response.Version, response.YAML)
-	if parseErr != nil || response.NodeID != nodeID {
-		m.failLocked(codeError("config_rejected"))
-		return codeError("config_rejected")
-	}
-	m.applySessionLocked(response.Session, start)
-	if response.Session.Reason != "" && response.Session.Reason != "profile_required" {
-		// The bind went through but the account is not currently authorized.
-		m.selected = nodeID
-		m.failLocked(codeError(response.Session.Reason))
-		return codeError(response.Session.Reason)
-	}
-	m.selected, m.profile, m.profileNode = nodeID, &profile, *node
-	m.lastError = nil
-	return nil
+	return m.snapshotLocked(), codeError("node_unavailable")
 }
 
 // gateLocked is the authorization verdict as of now ("" means allowed). It is also
-// what Snapshot reports, so the UI button and the real gate can never disagree.
+// what Snapshot reports, so the UI button and the real gate can never disagree. Before a
+// segment holds its lease (and, node-reported, before its tunnel runs) the verdict is
+// whether pressing Connect may proceed; the admission itself is then the server's check.
 func (m *Manager) gateLocked() string {
-	if m.client != nil && m.session != nil && m.conn == nil && m.selectedNodeReportedLocked() {
-		return m.grantGateLocked()
+	if m.client != nil && m.session != nil && m.conn == nil && (m.admission == nil || m.selectedNodeReportedLocked()) {
+		return m.admitGateLocked()
 	}
 	switch {
 	case m.client == nil || m.session == nil:

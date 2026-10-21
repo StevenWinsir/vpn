@@ -13,7 +13,8 @@
     "Admission picks one server of the group: this device's own server, else the user's sticky server while healthy and not full, else the lowest load ratio (ties at random). A full group answers group_full; load and cooldown never change the catalog or its revision.",
     "GET /nodes carries connection (id, group_id, state) for the session's latest lease taken by a v3 call, and it is part of the revision: a device whose server is withdrawn wakes its long poll. It has no expiry, so renewals never wake it. Sessions without a v3 lease keep the v2 catalog and revision unchanged.",
     "connection_reassigned is reported when the session's server was withdrawn (disabled, deleted or moved) while its group stays available; it takes precedence over client_config_unavailable and profile_changed. A disabled or deleted group ends its leases without it: the line is gone.",
-    "POST /grants/:id/revoke accepts an optional reason from the release list; tunnel_unhealthy and tunnel_failed count as failure reports there too. Reports from NODE_HEALTH_FAILURE_USERS distinct users within 5 minutes cool a server down (new admissions avoid it while another server has room)."
+    "POST /grants/:id/revoke accepts an optional reason from the release list; tunnel_unhealthy and tunnel_failed count as failure reports there too. Reports from NODE_HEALTH_FAILURE_USERS distinct users within 5 minutes cool a server down (new admissions avoid it while another server has room).",
+    "A ready grant (GET /grants/:id) also names server_id, the opaque server it was minted on; like node_id in /connections it is used only as avoid_node_id. connection_reassigned also takes precedence over grant_expired when the grant ended because its server was withdrawn."
   ],
   "cases": {
     "capabilities": {
@@ -191,6 +192,7 @@
         "yaml": "# catalog: 0000000000000000000000000000000000000000000000000000000000000000\nmode: rule\nproxies:\n    - name: Fixture-Node\n      port: 9\n      server: 127.0.0.1\n      type: vless\n      udp: true\n      uuid: 44444444-4444-4444-8444-444444444444\nproxy-groups:\n    - name: VPN\n      proxies:\n        - Fixture-Node\n      type: select\nrules:\n    - MATCH,VPN\n",
         "version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
         "node_id": "66666666-6666-4666-8666-666666666666",
+        "server_id": "99999999-9999-4999-8999-999999999999",
         "session": {
           "server_time": "2030-01-01T00:00:00Z",
           "subscription_expires_at": "2030-01-01T00:10:00Z",

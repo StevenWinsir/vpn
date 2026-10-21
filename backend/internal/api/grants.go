@@ -84,11 +84,14 @@ type grantResponse struct {
 	GrantID string `json:"grant_id"`
 	State   string `json:"state"`
 	// Reason is "grant_pending" while the node has not confirmed installation.
-	Reason  string       `json:"reason,omitempty"`
-	YAML    string       `json:"yaml,omitempty"`
-	Version string       `json:"version,omitempty"`
-	NodeID  string       `json:"node_id,omitempty"`
-	Session *nativeState `json:"session,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	YAML    string `json:"yaml,omitempty"`
+	Version string `json:"version,omitempty"`
+	NodeID  string `json:"node_id,omitempty"`
+	// ServerID (contract v3, ready grants only) is the opaque server the grant was minted
+	// on: a client that fails its probe through it names it as avoid_node_id once.
+	ServerID string       `json:"server_id,omitempty"`
+	Session  *nativeState `json:"session,omitempty"`
 }
 
 func (s *Server) nativeCapabilities(c *gin.Context) {
@@ -339,7 +342,7 @@ func (s *Server) getGrant(c *gin.Context) {
 			}
 			snapshot := s.nativeSnapshot(*sess, sub, now, tx)
 			// node_id echoes the selected line (group); the server stays opaque.
-			out.YAML, out.Version, out.NodeID, out.Session = string(data), version, line, &snapshot
+			out.YAML, out.Version, out.NodeID, out.ServerID, out.Session = string(data), version, line, g.NodeID, &snapshot
 		case g.State == grantPending || g.State == grantReady:
 			return &apiError{410, "grant_expired", "授权已过期，请重新连接"}
 		}

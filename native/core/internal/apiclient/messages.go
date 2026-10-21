@@ -15,7 +15,7 @@ var messages = map[string]string{
 	"profile_changed":                   "线路配置已更新，请重新选择线路",
 	"client_config_unavailable":         "线路配置暂不可用，请稍后重试或联系管理员",
 	"subscription_changed":              "套餐已变更，请重新登录",
-	"device_limit":                      "已达到套餐同时在线设备上限，请先在其他设备退出",
+	"device_limit":                      "已达到同时在线设备上限，请先断开其他设备",
 	"traffic_sequence":                  "流量批次未确认，请稍后重试",
 	"traffic_conflict":                  "流量批次冲突，请重新登录",
 	"invalid_managed_selection":         "所选线路无效",
@@ -61,6 +61,12 @@ var messages = map[string]string{
 	"handoff_conflict":                  "会话账本不一致，请重新登录",
 	"handoff_unsettled":                 "最近的流量尚未结清，暂时无法切换，请稍后重试",
 	"handoff_required":                  "请在 AsterLink App 内连接",
+	"group_full":                        "该线路当前已满，请稍后再试或选择其他线路",
+	"group_unavailable":                 "该线路暂无可用服务器，请选择其他线路",
+	"connection_reassigned":             "线路服务器已调整，正在为你重新连接",
+	"connection_not_found":              "连接记录不存在，请重新连接",
+	"connection_expired":                "在线状态已过期，请重新连接",
+	"grant_required":                    "此线路需使用节点授权连接",
 }
 
 // Message returns the Chinese text for code, or a generic line for unknown codes.

@@ -31,6 +31,10 @@ type presenceEnv struct {
 	router *gin.Engine
 	mu     sync.Mutex
 	at     time.Time
+	// tick, when set, moves the clock on by this much at every reading, so rows written by
+	// consecutive requests (e.g. one session's successive leases) never share a timestamp,
+	// as they cannot in production. Tests of exact boundaries leave it zero.
+	tick time.Duration
 }
 
 const presencePassword = "Presence-Test-Password!"
@@ -66,6 +70,7 @@ func newPresenceEnvWith(t *testing.T, mutate func(*config.Config), random func(i
 func (e *presenceEnv) now() time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.at = e.at.Add(e.tick)
 	return e.at
 }
 

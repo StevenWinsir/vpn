@@ -282,10 +282,12 @@ class AccountAcceptanceTest {
         world("edit", """{"node":"ordinary","name":"JP-Renamed-By-Admin","rate_permille":1500}""")
         val renamed = waitFor(c, 15_000) { st -> st.snapshot.nodes.any { it.name == "JP-Renamed-By-Admin" && it.ratePermille == 1500L } }
         s = c.state.value
+        // Contract native-v3: nothing is fetched or held for an idle selection (the server and its
+        // config are assigned when connecting), so the selection stays and no stale config exists.
         record(
             "A04.rename_and_rate",
-            renamed != null && renamed <= 7_000 && !s.snapshot.configReady,
-            "rename + 1.5x seen after ${renamed} ms; the bound config was dropped (config_ready ${s.snapshot.configReady}, last_error ${s.snapshot.lastError?.code})",
+            renamed != null && renamed <= 7_000 && s.snapshot.profileVersion.isEmpty() && s.snapshot.selectedNodeId == nodeIds.getValue("ordinary"),
+            "rename + 1.5x seen after ${renamed} ms; no config held while idle (profile_version '${s.snapshot.profileVersion}', selection kept ${s.snapshot.selectedNodeId == nodeIds.getValue("ordinary")}, last_error ${s.snapshot.lastError?.code})",
         )
 
         // A04: disabled, then enabled again, then deleted.
@@ -308,13 +310,17 @@ class AccountAcceptanceTest {
         record("A.redaction", secrets.none { text.contains(it) }, "UI state and diagnostics contain no node address, credential, cipher or password")
         main { c.signOutNow() }
 
-        // A02: the plan's only device slot is taken by another device: binding a line says so.
+        // A02: the plan's only device slot is taken by another device. Contract native-v3: a slot is
+        // taken when a device connects, never by signing in or selecting, so selecting still works
+        // here; the refusal (device_limit) comes from Connect. The Core and its backend end-to-end
+        // tests prove that refusal; this suite cannot connect (no VPN), round 6 adds it on-device.
         world("occupy", """{"user":"vip","node":"dedicated"}""")
         main { c.signInNow(vip, password, remember = false, automatic = false) }
         waitFor(c, 8_000) { it.snapshot.nodes.isNotEmpty() }
         main { c.selectNow(nodeIds.getValue("dedicated")) }
         s = c.state.value
-        record("A02.device_limit", s.message?.code == "device_limit" && !s.snapshot.configReady, "second device: ${s.message?.code} — ${s.message?.text}")
+        record("A02.device_limit", s.message?.code != "device_limit" && s.snapshot.configReady && s.snapshot.selectedNodeId == nodeIds.getValue("dedicated"),
+            "second device selects without taking a slot (message ${s.message?.code}); device_limit is answered at connect")
         main { c.signOutNow() }
         scope?.cancel()
     }

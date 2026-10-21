@@ -116,7 +116,7 @@ type grant struct {
 
 // mint asks for a grant and waits for the node to confirm it. The credential cannot exist before that.
 func (g *grantRun) mint(ctx context.Context, s session, nodeID string, wait time.Duration) (grant, error) {
-	status, err := g.api.CreateGrant(ctx, s.token, nodeID, requestKey())
+	status, err := g.api.CreateGrant(ctx, s.token, nodeID, "", requestKey())
 	if err != nil {
 		return grant{}, err
 	}
@@ -158,7 +158,7 @@ func (g *grantRun) mint(ctx context.Context, s session, nodeID string, wait time
 func (g *grantRun) release(s session, gr grant) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := g.api.RevokeGrant(ctx, s.token, gr.id); err != nil {
+	if _, err := g.api.RevokeGrant(ctx, s.token, gr.id, ""); err != nil {
 		return
 	}
 	for ctx.Err() == nil {
@@ -410,7 +410,7 @@ func (g *grantRun) revokeCutsFlows(ctx context.Context, s session, node apiclien
 	}
 	p, err := g.startProbe(ctx, gr, 0)
 	if err != nil {
-		_, _ = g.api.RevokeGrant(context.Background(), s.token, gr.id)
+		_, _ = g.api.RevokeGrant(context.Background(), s.token, gr.id, "")
 		g.rec.record("B05-revoke", "TCP"+g.udpNote()+" flows are established with the extracted credential", err.Error(), "fail")
 		return
 	}
@@ -421,7 +421,7 @@ func (g *grantRun) revokeCutsFlows(ctx context.Context, s session, node apiclien
 		return
 	}
 	began := time.Now()
-	if _, err = g.api.RevokeGrant(ctx, s.token, gr.id); err != nil {
+	if _, err = g.api.RevokeGrant(ctx, s.token, gr.id, ""); err != nil {
 		g.rec.record("B05-revoke", "the revocation is accepted", apiCode(err), "fail")
 		return
 	}

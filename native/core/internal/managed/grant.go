@@ -35,16 +35,23 @@ func (m *Manager) selectedNodeReportedLocked() bool {
 	return m.selected != "" && m.nodeReportedLocked(m.selected)
 }
 
-// graceReason: server reasons that describe the previous grant or the missing binding
-// of a node-reported node, and are resolved by minting a new grant, not by waiting.
+// graceReason: server reasons that describe the previous binding (a grant, a lease, a
+// server's config) or the missing one, and are resolved by connecting again, not by waiting.
 func graceReason(reason string) bool {
-	return reason == "profile_required" || reason == "profile_changed" || reason == "grant_expired"
+	switch reason {
+	case "profile_required", "profile_changed", "grant_expired", "client_config_unavailable",
+		"connection_expired", "connection_reassigned":
+		return true
+	}
+	return false
 }
 
-// grantGateLocked is the verdict for pressing Connect on a node-reported node while no
-// segment is live. There is no lease to check yet: the grant request itself is the
-// server-side authorization, and the lease starts with the grant's session snapshot.
-func (m *Manager) grantGateLocked() string {
+// admitGateLocked is the verdict for pressing Connect while no segment holds a lease.
+// There is no lease to check yet: the admission (POST /connections or a grant) is itself
+// the server-side authorization, and the lease starts with its session snapshot. A session
+// that still carries an authorization must not have let it lapse, though: then the last
+// verdict seen is too old to offer connecting.
+func (m *Manager) admitGateLocked() string {
 	switch {
 	case m.catalogReason != "":
 		return m.catalogReason
@@ -52,26 +59,12 @@ func (m *Manager) grantGateLocked() string {
 		return m.session.Reason
 	case m.session.RemainingBytes <= 0:
 		return "quota_exhausted"
+	case m.session.AuthorizationExpiresAt != nil && m.session.Reason == "" && !m.lease.active(m.opts.Now()):
+		return "lease_expired"
 	case m.selected == "":
 		return "profile_required"
 	}
 	return ""
-}
-
-func (m *Manager) selectGrantNode(gen uint64, nodeID string) (Snapshot, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.generation != gen {
-		return m.snapshotLocked(), codeError("stale_generation")
-	}
-	for i := range m.nodes {
-		if m.nodes[i].ID == nodeID {
-			m.selected, m.profile, m.profileNode = nodeID, nil, m.nodes[i]
-			m.lastError = nil
-			return m.snapshotLocked(), nil
-		}
-	}
-	return m.snapshotLocked(), codeError("node_unavailable")
 }
 
 func newRequestKey() string {
@@ -90,11 +83,11 @@ func isTerminal(err error) (*apiclient.Error, bool) {
 
 // mintGrant asks for a grant, retrying transient failures with the same idempotency
 // key so a lost reply can never leave two grants behind.
-func (m *Manager) mintGrant(ctx context.Context, client *apiclient.Client, token, nodeID, key string) (apiclient.GrantStatus, error) {
+func (m *Manager) mintGrant(ctx context.Context, client *apiclient.Client, token, nodeID, avoid, key string) (apiclient.GrantStatus, error) {
 	began := time.Now()
 	backoff := m.opts.BackoffMin
 	for {
-		status, err := client.CreateGrant(ctx, token, nodeID, key)
+		status, err := client.CreateGrant(ctx, token, nodeID, avoid, key)
 		if err == nil {
 			return status, nil
 		}
@@ -143,19 +136,21 @@ func (m *Manager) awaitGrant(ctx context.Context, client *apiclient.Client, toke
 }
 
 // connectGranted is Connect for a node-reported node. Order: fresh authorization,
-// physical network check, grant (node confirms) -> verified document -> tunnel ->
-// real forwarding probe. Any failure revokes the grant and leaves no data path.
-func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apiclient.Client, token, nodeID string) (Snapshot, error) {
+// physical network check, grant (node confirms; it carries the online lease) -> verified
+// document -> tunnel -> real forwarding probe. Any failure revokes the grant and leaves no
+// data path. The string result is the server to avoid on a retry: set only when the probe
+// failed.
+func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apiclient.Client, token, nodeID, avoid string) (Snapshot, string, error) {
 	if err := m.settleIdle(ctx, gen); err != nil {
-		return m.Snapshot(), err
+		return m.Snapshot(), "", err
 	}
 	if err := m.refreshSession(ctx, gen, client, token); err != nil {
-		return m.Snapshot(), err
+		return m.Snapshot(), "", err
 	}
 	m.mu.Lock()
 	if m.generation != gen {
 		m.mu.Unlock()
-		return m.Snapshot(), codeError("stale_generation")
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	var node apiclient.NodeChoice
 	found := false
@@ -168,24 +163,25 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		m.selected, m.profile = "", nil
 		m.failLocked(codeError("node_unavailable"))
 		m.mu.Unlock()
-		return m.Snapshot(), codeError("node_unavailable")
+		return m.Snapshot(), "", codeError("node_unavailable")
 	}
 	if code := m.gateLocked(); code != "" {
 		m.failLocked(codeError(code))
 		m.mu.Unlock()
-		return m.Snapshot(), codeError(code)
+		return m.Snapshot(), "", codeError(code)
 	}
 	m.state = StatePreparing
 	m.mu.Unlock()
 
 	var ref *grantRef
+	revokeReason := ""
 	fail := func(code string, engineUp bool) (Snapshot, error) {
 		if engineUp {
 			_ = m.opts.Engine.Stop()
 			m.opts.Egress.Clear()
 		}
 		if ref != nil {
-			m.finishGrant(ctx, gen, ref)
+			m.finishGrant(ctx, gen, ref, revokeReason)
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -199,7 +195,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 	failErr := func(err error, engineUp bool) (Snapshot, error) {
 		if ae, ok := isAPIError(err); ok && apiclient.TerminatesSession(ae.Code) {
 			if ref != nil {
-				m.finishGrant(ctx, gen, ref)
+				m.finishGrant(ctx, gen, ref, "")
 			}
 			m.mu.Lock()
 			defer m.mu.Unlock()
@@ -215,40 +211,41 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		return fail(code, engineUp)
 	}
 
+	two := func(snap Snapshot, err error) (Snapshot, string, error) { return snap, "", err }
 	iface, err := m.opts.Engine.Preflight(ctx)
 	if err != nil {
-		return fail(engineCode(err), false)
+		return two(fail(engineCode(err), false))
 	}
 	signature := m.opts.Signature()
 
-	status, err := m.mintGrant(ctx, client, token, nodeID, newRequestKey())
+	status, err := m.mintGrant(ctx, client, token, nodeID, avoid, newRequestKey())
 	if err != nil {
-		return failErr(err, false)
+		return two(failErr(err, false))
 	}
 	ref = &grantRef{id: status.GrantID, nodeID: nodeID}
 	m.mu.Lock()
 	if m.generation != gen {
 		m.mu.Unlock()
-		m.finishGrant(ctx, gen, ref)
-		return m.Snapshot(), codeError("stale_generation")
+		m.finishGrant(ctx, gen, ref, "")
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	m.grant = ref // from here every teardown path revokes it
 	m.mu.Unlock()
 
 	ready, requested, err := m.awaitGrant(ctx, client, token, status.GrantID)
 	if err != nil {
-		return failErr(err, false)
+		return two(failErr(err, false))
 	}
 	profile, parseErr := ParseProfile(nodeID, node.Name, ready.Version, ready.YAML)
 	if parseErr != nil || ready.NodeID != nodeID || ready.Session.GrantID != ready.GrantID {
-		return fail("config_rejected", false)
+		return two(fail("config_rejected", false))
 	}
 
 	m.mu.Lock()
 	if m.generation != gen {
 		m.mu.Unlock()
-		m.finishGrant(ctx, gen, ref)
-		return m.Snapshot(), codeError("stale_generation")
+		m.finishGrant(ctx, gen, ref, "")
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	m.applySessionLocked(*ready.Session, requested)
 	if ready.Session.Reason != "" || !ready.Session.CanConnect || ready.Session.MeteringSource != apiclient.MeteringNode {
@@ -257,7 +254,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 			code = "metering_source_mismatch"
 		}
 		m.mu.Unlock()
-		return fail(code, false)
+		return two(fail(code, false))
 	}
 	m.profile, m.profileNode = &profile, node
 	local := meter.New(meter.Config{Base: *m.session, Totals: m.opts.Engine.Totals, Now: m.opts.Now})
@@ -269,10 +266,16 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 
 	m.opts.Egress.Set(iface)
 	if err = m.opts.Engine.Start(ctx, profile); err != nil {
-		return fail(engineCode(err), true)
+		// Starting is local (TUN, routes): not evidence against the server.
+		return two(fail(engineCode(err), true))
 	}
 	if err = m.opts.Engine.Verify(ctx); err != nil {
-		return fail(engineCode(err), true)
+		// The probe failed through this server: the revocation reports it, and the caller
+		// may retry once on another server of the group.
+		probe := engineCode(err)
+		revokeReason = releaseReason(probe)
+		snap, failure := fail(probe, true)
+		return snap, ready.ServerID, failure
 	}
 
 	m.mu.Lock()
@@ -280,8 +283,8 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		m.mu.Unlock()
 		_ = m.opts.Engine.Stop()
 		m.opts.Egress.Clear()
-		m.finishGrant(ctx, gen, ref)
-		return m.Snapshot(), codeError("stale_generation")
+		m.finishGrant(ctx, gen, ref, "")
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	conn := &connection{cancel: cancel, done: make(chan struct{})}
@@ -293,7 +296,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 	var watch clockWatch
 	watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
 	go m.monitorGranted(monitorCtx, gen, conn, signature, watch)
-	return snap, nil
+	return snap, "", nil
 }
 
 func isAPIError(err error) (*apiclient.Error, bool) {
@@ -376,8 +379,9 @@ func (m *Manager) lapseGranted(ctx context.Context, gen uint64, reason string) (
 
 // finishGrant revokes a grant after the data path is closed, then waits (bounded) for
 // the node's confirmation. A revocation that cannot be delivered is retried from the
-// keep-alive loop; the node's own deadline ends the grant regardless.
-func (m *Manager) finishGrant(ctx context.Context, gen uint64, g *grantRef) {
+// keep-alive loop; the node's own deadline ends the grant regardless. reason is a release
+// reason ("" for none); a probe failure is reported against the server.
+func (m *Manager) finishGrant(ctx context.Context, gen uint64, g *grantRef, reason string) {
 	m.mu.Lock()
 	client, token, current := m.client, m.token, m.generation == gen
 	m.mu.Unlock()
@@ -394,7 +398,7 @@ func (m *Manager) finishGrant(ctx context.Context, gen uint64, g *grantRef) {
 	var rerr error
 	backoff := m.opts.BackoffMin
 	for {
-		_, rerr = client.RevokeGrant(rctx, token, g.id)
+		_, rerr = client.RevokeGrant(rctx, token, g.id, reason)
 		if rerr == nil {
 			break
 		}
@@ -437,7 +441,7 @@ func (m *Manager) retryOrphan(ctx context.Context, gen uint64, client *apiclient
 	}
 	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := client.RevokeGrant(rctx, token, id)
+	_, err := client.RevokeGrant(rctx, token, id, "")
 	if _, terminal := isTerminal(err); err != nil && !terminal {
 		return
 	}
