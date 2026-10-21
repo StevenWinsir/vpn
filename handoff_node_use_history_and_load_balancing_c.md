@@ -600,3 +600,40 @@
 - **截图**：本机 `artifacts/nodes-round4/`（`admin-groups-desktop.png`、`admin-desktop.png`、`admin-mobile.png`、`dashboard-online.png`、`dashboard-history-desktop.png`、`dashboard-mobile.png`、`nodes-*.png`、`ordinary-denied.png`）；`artifacts/` 不入库，CI 每次重新生成（CI 只上传 summary，不上传截图）。
 - **设计取舍（实施中确定）**：柱状图用 CSS 网格而非 SVG，8 个两行时间标签在 390 宽度下仍可读；每根柱是按钮而不是 `role=img`，键盘可达且读屏读出数值；非零小值至少 3 像素高。“最近心跳/已连接时长”用接口的 `server_time` 计算，浏览器时钟偏差不影响。管理端“某套餐”筛选包含不限套餐的组，因为这正是该套餐用户能看到的线路。服务器表按备注排序。仪表盘不等三个接口全部成功：设备或历史失败时各自卡片显示错误，概览照常。
 - **遗留与归属**：旧的按服务器请求体（`/admin/nodes` 不带 `group_id`）本轮前端已不再使用，但后端测试夹具、用户节点列表规格（`user-nodes.spec.ts`）和第 1 轮迁移/回滚演练仍依赖它（回滚目标旧二进制只认它），移除留到第 7 轮发布演练时一并处理；grant 路径若要 `avoid_node_id` 需另加服务器 ID 字段（第 5 轮）；Core 适配与四平台（第 5、6 轮）。
+
+### 第 5 轮：共享 Go Core 适配与端到端（2026-10-21）
+
+- **分支/PR**：`worktree-nodes-round5-core`，PR 见 GitHub（StevenWinsir/vpn）。基线 20c75b7（#54 合并后）。本轮无新表、新列、新配置项，无需迁移；快照契约 `snapshot-v1.json` 与四个 APP 的生产源码未改（`git diff main` 为空），APP 只有两个移动端验收用例按新语义调整（见下）。
+- **交付文件**
+  - `native/core/internal/apiclient`：`Connect`（`POST /connections`，带 `Idempotency-Key`）、`ReleaseConnection`、`CreateGrant` 增加 `avoid`、`RevokeGrant` 增加 `reason`（空时仍发 `{}`）；会话快照三个可选字段 `connection_id/connection_state/connection_expires_at`、目录 `connection` 摘要、就绪 grant 的 `server_id`、释放原因与租约状态常量；第 8.4 节新文案（`device_limit` 改为“已达到同时在线设备上限，请先断开其他设备”，新增 `group_full`、`group_unavailable`、`connection_reassigned`、`connection_not_found`、`connection_expired`、`grant_required`），均不结束登录会话。`contract_v3_test.go`：Core 类型严格解码 native-v3 全部用例、释放原因与状态和契约一致、所有 v3 码有专属文案。
+  - `native/core/internal/managed/connection.go`（新）：`admission`/`pendingRelease`；`connect`（两种模式的唯一入口，探测失败后带 `avoid_node_id` 重试一次，组内无其他服务器时显示原始探测失败）；`connectClient`（确认旧尾账 → `/session` → 物理网络检查 → 接入（同 key 重试网络错误与 5xx，`group_unavailable`/`agent_unavailable` 不重试）→ 校验配置与 `connection_id` → 计量首报 → 引擎 → 探测；接入后的任何失败都先关数据通道、结清探测尾账再释放）；`endAdmission`/`release`/`retryRelease`（尾账未确认时不释放，交给保活；释放失败由保活重试，得到确定答复后不再重复；服务端已结束的租约不再释放）；`releaseStale`（generation 已变的迟到接入回复不安装，后台释放）；`reconnect`（自动重连一次，用户任何操作优先，失败原因作为停止原因保留）。
+  - `actions.go`：`SelectNode` 两种模式都只记录选择（必要时先同步暂停期间的目录），删除 `bindNode`；`gateLocked` 在未持有租约时使用接入前判定。`grant.go`：`admitGateLocked`（宽限原因扩展为 `profile_required/profile_changed/grant_expired/client_config_unavailable/connection_expired/connection_reassigned`；会话仍带授权时检查其是否过期）、grant 路径 `avoid` 与撤销原因、探测失败返回 `server_id` 供重试。`tunnel.go`：`Connect` 委托 `connect`；`stopTunnel` 在确认尾账之后、状态迁移之前释放（原因映射 `user/network_changed/lifecycle/stopped`，探测失败为 `tunnel_unhealthy/tunnel_failed`）；`requestStop` 对 `connection_reassigned`（以及 ResumeGate 下的 `connection_expired`）停止后自动重连一次。`manager.go`：`readyLocked` 改用宽限原因、保活成功后重试待释放、`intent` 计数（登录、登出、选择、连接、断开、交接）。`handoff.go`：持有或待释放租约时 `handoff_unsettled`（导出前先尝试释放），接管后只恢复选择。`snapshot.go`：已选即 `config_ready`。
+  - 后端（小改动）：`grants.go` 就绪 grant 返回不透明的 `server_id`（第 4 轮遗留，grant 路径的 `avoid_node_id` 来源）；`lease.go` 服务器被撤下导致 grant 被撤销时，`connection_reassigned` 优先于 `grant_expired`（否则 node_reported 的 Core 只会停止而不会自动重连）。`shared/contracts/native-v3.json`（及后端副本、`shared-sources.json`）：`grant_ready` 增加 `server_id` 与说明。
+  - `cmd/asterlink-billtest/presence.go`（新）与 `--presence`：同一账号多设备经生产 Manager 运行 P01 设备上限（前 N 台接入、第 N+1 台 `device_limit` 且为 Core 文案、断开一台后立即接入）、P02 满载（`--full-line`，`group_full`）、P03 重新分配（`--reassign-wait-seconds`，提示操作者停用该设备所在服务器，要求自动重连恰好一次、账本连续、无未确认批次）；默认控制面引擎（无 TUN），`--tun` 让设备 1 用真实引擎（需特权）；不需要流量汇点。
+  - 测试：`managed/connection_test.go`、`fakeconn_test.go`（新）及既有用例按新语义更新；`backend/internal/api/core_presence_e2e_test.go`、`billtest_presence_e2e_test.go`、`grant_reassign_test.go`（新）；`native_core_e2e_test.go` 的设备上限与管理员改名用例、`line_echo_test.go` 的 grant 回显用例按新语义更新；`presence_harness_test.go` 增加可选的每次读时钟前进 1 µs（同一会话连续租约在冻结时钟下时间戳相同，`latestLease` 会按 UUID 随机取，生产中不存在）。Android `AccountAcceptanceTest`、iOS `AccountAcceptanceTests` 的 A02/A04 按新语义调整（选择不占名额、空闲时不持有配置；这两个套件不能连接，连接时的 `device_limit` 由 Core 与后端端到端证明，平台连接证据留第 6 轮）。`docs/native-client-protocol.md` 新章节。
+- **测试结果**
+
+| 编号 | 项目 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| R5-01 | Core 单元（假服务器）：选择不发请求、不占名额；连接只接入一次且同 key 重试丢失回复只产生一个租约；断开先结尾账后释放（释放时服务端序号 = 最终序号）；守卫停止带各自原因；释放失败由保活重试且恰好再发一次；尾账未确认时释放等待保活；登出释放；`connection_reassigned` → 停止 → 结账 → 重连一次且账本连续、已结束租约不再释放；自动重连失败停住且原因不被续期清除；用户断开优先于自动重连；探测失败带 `avoid_node_id` 重试一次、两次失败只重试一次、单服务器组显示原探测失败；引擎启动失败按 `stopped` 释放不重试；`device_limit/group_full/group_unavailable/grant_required` 文案且不重问；迟到接入回复不安装并释放；持有/待释放租约拒绝交接；桌面 `connection_expired` 停止不自动重连；ResumeGate 下重新接入、名额被占时停止并提示 `device_limit`；grant 路径的 `avoid` 与撤销原因、grant 重新分配 | `go test -race ./internal/managed` | PASS；新增 19 个用例连续 10 次（`-count=10 -race`）全部通过 |
+| R5-02 | Core 契约切换到 native-v3：全部用例严格解码、释放原因/状态一致、v3 码文案与 8.4 节逐字一致且不结束会话；v1/v2 契约测试保留 | `go test -race ./internal/apiclient` | PASS |
+| R5-03 | 真实 Core 对真实后端（3 个 Core 进程 = 同一账号 3 台设备，假引擎，注入服务端时钟）：登录+选择 0 占位；两台在线、第三台 `device_limit`（Core 文案）；断开回复返回时后端在线数已为 1、`/me/devices` 为 1，空出的名额立即可用；杀掉一个 Core（不释放）后第 89 秒仍占位、第 91 秒回收；管理员停用其服务器后 Core 自动改连同组另一台，旧租约 `node_unavailable`，账本序号连续、计费 = (5+20) MiB×1000、5 分钟桶合计等于账本、`/me/usage-history` 正常 | `python3 scripts/test-native.py -run TestCoreOnlineLeasesEndToEnd ./internal/api` | PASS（停用后 1.04 s 完成改连；断开到网站可见离线 0.50 s，含网页登录） |
+| R5-04 | 既有真实 Core 端到端（套餐过滤、计量、配额、到期、撤销、管理员改动）按新语义：设备上限在连接时生效；空闲选择在改名后保留 | 同上 `-run TestNativeCoreEndToEnd` | PASS |
+| R5-05 | billtest `--presence` 对真实 API（测试扮演操作者，收到提示后经管理 API 停用该设备所在服务器）：P-LOGIN、P01-admit/refuse/release、P02-group-full（容量 1）、P03-reassign；结束后该账号 0 个在线租约 | `-run TestBilltestPresenceAgainstTheRealAPIPostgres` | PASS（释放后 9 ms 接入；P03 停止后 51 ms 重连，序号 5 → 8，无未确认批次） |
+| R5-06 | 就绪 grant 的 `server_id` = 所在服务器、`node_id` = 组且服务器 ID 只出现一次；撤下服务器且 Agent 撤销 grant 后 `/session` 为 `connection_reassigned`；带 `avoid_node_id` 重新创建 grant 落到另一台 | `-run 'TestGrantReadyNamesItsServer\|TestSelectedLineEchoed'` | PASS |
+| R5-07 | 全量后端测试（私有 PG、`-race`），含真实 Core、Node Agent、billtest grants 与 presence 端到端 | `python3 scripts/test-native.py` | PASS（331 PASS、0 FAIL、9 SKIP，与第 4 轮相同的按环境变量启用项；首次全量运行时第 4 轮的 `TestSelectedLineEchoedForGrantPostgres` 因断言“grant 响应中不出现服务器 ID”而失败，已按 `server_id` 新语义更新为“服务器 ID 只出现在 `server_id`”） |
+| R5-08 | Core 全模块 `-race`、`go vet`（含 `GOOS=windows`）、Linux arm64 / iOS 交叉构建；本轮文件 `gofmt` | `go test -race ./...`、`go vet ./...` | PASS（15 个包）；`gofmt -l` 只列出未改动的 `internal/engine/harness.go`（main 上已存在） |
+| R5-09 | `snapshot-v1.json`、四个 APP 生产源码未改 | `git diff main -- shared/contracts/snapshot-v1.json apps/*/…` | PASS（为空） |
+| R5-10 | 共享快照一致与其单元测试、仅后端目录独立构建、第 1 轮迁移/回滚演练 | `sync-backend-shared.py --check`、`test-backend-shared.py`、`test-backend-standalone.py`、`test-node-groups-migration.py` | PASS（111 个文件；演练 7 项） |
+| R5-11 | Android/iOS 账户验收 A02、A04 新语义；四平台 CI | PR 的 CI | 以 PR 的 CI 结果为准（本机无 JDK/Android SDK，iOS 模拟器套件在 CI 运行） |
+| R5-12 | 真实流量重新分配（billtest + 两台受控 Mihomo 节点，账本合计 = 两台节点各自看到的字节数之和） | `asterlink-billtest --presence --use-device-slots --tun --allow-network-changes --reassign-wait-seconds 120 …`（特权） | NOT RUN：需要 root/管理员 TUN 与两台受控节点，本机公司 VPN 常开；控制面部分已由 R5-03/R5-05 覆盖，真实流量留第 6/7 轮在设备上执行 |
+
+- **关键数据**：3 设备上限 2：第三台被拒、断开后 9 ms 接入；杀进程名额第 90 秒回收（89 s 仍占）；管理员停用到自动改连 1.04 s（真实 Core）/ 51 ms（billtest 观测停止到重连）；Core 新用例 10 次重复零失败。
+- **设计取舍（实施中确定）**：
+  - 选择不再预取配置，空闲时也不持有任何服务器的配置；旧的“管理员改名使已绑定配置失效”只在连接期间适用（连接中仍按 `profile_changed` 停止）。
+  - 接入前判定沿用 node_reported 的做法：会话原因只描述上一次绑定时视为宽限；会话仍带授权时若其已过期仍报 `lease_expired`（目录不续期授权的保证不变）。
+  - 引擎启动失败视为本机问题，不作健康报告、不换服务器重试；只有探测（`Verify`）失败才带原因释放并重试一次。
+  - 自动重连只在 `connection_reassigned`（以及 Android ResumeGate 的 `connection_expired`）时发生一次；桌面端 `connection_expired` 停止并提示。
+  - 自动重连失败的原因作为停止原因保留（重复运行测试时发现：否则下一次保活续期会把“为什么断开”清掉）。
+  - 第 3 轮遗留评估（组可见性变化时在线租约不立即结束）：新 Core 连接中收到 `client_config_unavailable` 会按守卫停止并立即释放，最长一个上报周期；不再需要在保存组时结束租约，维持现状。
+- **遗留与归属**：四平台在设备上的“连接时 `device_limit`”与“重新分配自动重连”证据、`PresentationTest`/`PresentationTests` 新码、Android `FakeCore`/`ScreenshotTest` 夹具中的旧 `device_limit` 文案、平台生命周期释放验收（第 6 轮）；真实流量重新分配 R5-12（第 6/7 轮）；旧按服务器请求体移除（第 7 轮，见第 4 轮记录）。
