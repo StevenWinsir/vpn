@@ -138,19 +138,19 @@ func (m *Manager) awaitGrant(ctx context.Context, client *apiclient.Client, toke
 // connectGranted is Connect for a node-reported node. Order: fresh authorization,
 // physical network check, grant (node confirms; it carries the online lease) -> verified
 // document -> tunnel -> real forwarding probe. Any failure revokes the grant and leaves no
-// data path. The third result is the server to avoid on a retry: set only when the probe
+// data path. The string result is the server to avoid on a retry: set only when the probe
 // failed.
-func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apiclient.Client, token, nodeID, avoid string) (Snapshot, error, string) {
+func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apiclient.Client, token, nodeID, avoid string) (Snapshot, string, error) {
 	if err := m.settleIdle(ctx, gen); err != nil {
-		return m.Snapshot(), err, ""
+		return m.Snapshot(), "", err
 	}
 	if err := m.refreshSession(ctx, gen, client, token); err != nil {
-		return m.Snapshot(), err, ""
+		return m.Snapshot(), "", err
 	}
 	m.mu.Lock()
 	if m.generation != gen {
 		m.mu.Unlock()
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	var node apiclient.NodeChoice
 	found := false
@@ -163,12 +163,12 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		m.selected, m.profile = "", nil
 		m.failLocked(codeError("node_unavailable"))
 		m.mu.Unlock()
-		return m.Snapshot(), codeError("node_unavailable"), ""
+		return m.Snapshot(), "", codeError("node_unavailable")
 	}
 	if code := m.gateLocked(); code != "" {
 		m.failLocked(codeError(code))
 		m.mu.Unlock()
-		return m.Snapshot(), codeError(code), ""
+		return m.Snapshot(), "", codeError(code)
 	}
 	m.state = StatePreparing
 	m.mu.Unlock()
@@ -211,7 +211,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		return fail(code, engineUp)
 	}
 
-	two := func(snap Snapshot, err error) (Snapshot, error, string) { return snap, err, "" }
+	two := func(snap Snapshot, err error) (Snapshot, string, error) { return snap, "", err }
 	iface, err := m.opts.Engine.Preflight(ctx)
 	if err != nil {
 		return two(fail(engineCode(err), false))
@@ -227,7 +227,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 	if m.generation != gen {
 		m.mu.Unlock()
 		m.finishGrant(ctx, gen, ref, "")
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	m.grant = ref // from here every teardown path revokes it
 	m.mu.Unlock()
@@ -245,7 +245,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 	if m.generation != gen {
 		m.mu.Unlock()
 		m.finishGrant(ctx, gen, ref, "")
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	m.applySessionLocked(*ready.Session, requested)
 	if ready.Session.Reason != "" || !ready.Session.CanConnect || ready.Session.MeteringSource != apiclient.MeteringNode {
@@ -275,7 +275,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		probe := engineCode(err)
 		revokeReason = releaseReason(probe)
 		snap, failure := fail(probe, true)
-		return snap, failure, ready.ServerID
+		return snap, ready.ServerID, failure
 	}
 
 	m.mu.Lock()
@@ -284,7 +284,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 		_ = m.opts.Engine.Stop()
 		m.opts.Egress.Clear()
 		m.finishGrant(ctx, gen, ref, "")
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	conn := &connection{cancel: cancel, done: make(chan struct{})}
@@ -296,7 +296,7 @@ func (m *Manager) connectGranted(ctx context.Context, gen uint64, client *apicli
 	var watch clockWatch
 	watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
 	go m.monitorGranted(monitorCtx, gen, conn, signature, watch)
-	return snap, nil, ""
+	return snap, "", nil
 }
 
 func isAPIError(err error) (*apiclient.Error, bool) {

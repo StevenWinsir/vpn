@@ -243,18 +243,18 @@ func (m *Manager) connect(ctx context.Context) (Snapshot, error) {
 	if selected == "" {
 		return m.Snapshot(), codeError("profile_required")
 	}
-	attempt := func(avoid string) (Snapshot, error, string) {
+	attempt := func(avoid string) (Snapshot, string, error) {
 		if nodeMode {
 			return m.connectGranted(ctx, gen, client, token, selected, avoid)
 		}
 		return m.connectClient(ctx, gen, client, token, selected, avoid)
 	}
-	snap, err, avoid := attempt("")
+	snap, avoid, err := attempt("")
 	if err == nil || avoid == "" || ctx.Err() != nil {
 		return snap, err
 	}
 	first := codeOf(err)
-	retried, retryErr, _ := attempt(avoid)
+	retried, _, retryErr := attempt(avoid)
 	if retryErr != nil && noOtherServer(codeOf(retryErr)) {
 		// The group has no other server to try: report what actually went wrong.
 		m.mu.Lock()
@@ -279,19 +279,19 @@ func codeOf(err error) string {
 // session, physical network check, admission (lease + the one server's document), verified
 // document, first metering acknowledgement, tunnel, real forwarding probe. Every failure
 // after the admission releases the lease once the data path is closed and the tail settled.
-// The third result is the server to avoid on a retry: set only when the probe failed.
-func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclient.Client, token, groupID, avoid string) (Snapshot, error, string) {
+// The string result is the server to avoid on a retry: set only when the probe failed.
+func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclient.Client, token, groupID, avoid string) (Snapshot, string, error) {
 	if err := m.settleIdle(ctx, gen); err != nil {
-		return m.Snapshot(), err, ""
+		return m.Snapshot(), "", err
 	}
 	// Fresh authorization first: connecting never relies on a cached verdict.
 	if err := m.refreshSession(ctx, gen, client, token); err != nil {
-		return m.Snapshot(), err, ""
+		return m.Snapshot(), "", err
 	}
 	m.mu.Lock()
 	if m.generation != gen {
 		m.mu.Unlock()
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	var node apiclient.NodeChoice
 	found := false
@@ -304,12 +304,12 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 		m.selected, m.profile = "", nil
 		m.failLocked(codeError("node_unavailable"))
 		m.mu.Unlock()
-		return m.Snapshot(), codeError("node_unavailable"), ""
+		return m.Snapshot(), "", codeError("node_unavailable")
 	}
 	if code := m.gateLocked(); code != "" {
 		m.failLocked(codeError(code))
 		m.mu.Unlock()
-		return m.Snapshot(), codeError(code), ""
+		return m.Snapshot(), "", codeError(code)
 	}
 	lastSequence := m.session.LastSequence
 	m.profile = nil
@@ -342,7 +342,7 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	iface, err := m.opts.Engine.Preflight(ctx)
 	if err != nil {
 		snap, failure := fail(engineCode(err), false, false, apiclient.ReleaseStopped)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 	signature := m.opts.Signature()
 
@@ -355,10 +355,10 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 				m.dropSessionLocked(apiErr.Code)
 			}
 			m.mu.Unlock()
-			return m.Snapshot(), err, ""
+			return m.Snapshot(), "", err
 		}
 		snap, failure := fail(codeOf(err), false, false, apiclient.ReleaseStopped)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 	ref := &admission{id: response.Connection.ID, groupID: groupID, serverID: response.NodeID}
 	profile, parseErr := ParseProfile(groupID, node.Name, response.Version, response.YAML)
@@ -366,26 +366,26 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	if m.generation != gen {
 		m.mu.Unlock()
 		m.releaseStale(client, token, ref.id) // a late reply never revives an old lease here
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	m.admission = ref  // from here every teardown path releases it
 	m.unreleased = nil // this device's older lease was replaced by the admission
 	if parseErr != nil || response.Session.ConnectionID != ref.id {
 		m.mu.Unlock()
 		snap, failure := fail("config_rejected", false, false, apiclient.ReleaseStopped)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 	if apiclient.TerminatesSession(response.Session.Reason) {
 		m.dropSessionLocked(response.Session.Reason)
 		m.mu.Unlock()
-		return m.Snapshot(), codeError(response.Session.Reason), ""
+		return m.Snapshot(), "", codeError(response.Session.Reason)
 	}
 	m.applySessionLocked(response.Session, requested)
 	if response.Session.Reason != "" {
 		code := response.Session.Reason
 		m.mu.Unlock()
 		snap, failure := fail(code, false, false, apiclient.ReleaseStopped)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 	m.profile, m.profileNode = &profile, node
 	if m.meter == nil {
@@ -397,7 +397,7 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	if err = mt.Begin(session); err != nil {
 		m.endAdmission(ctx, gen, apiclient.ReleaseStopped)
 		snap, failure := m.failMeter(gen, mt, err)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 	// First acknowledgement before any tunnel exists: it proves the ledger and the server
 	// agree and renews the lease. A zero-byte batch is legitimate.
@@ -405,13 +405,13 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	m.mu.Lock()
 	if m.generation != gen {
 		m.mu.Unlock()
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	if ack.SessionID != "" {
 		if apiclient.TerminatesSession(ack.Reason) {
 			m.dropSessionLocked(ack.Reason)
 			m.mu.Unlock()
-			return m.Snapshot(), codeError(ack.Reason), ""
+			return m.Snapshot(), "", codeError(ack.Reason)
 		}
 		m.applySessionLocked(ack, started)
 	}
@@ -419,7 +419,7 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	if err != nil {
 		m.endAdmission(ctx, gen, apiclient.ReleaseStopped)
 		snap, failure := m.failMeter(gen, mt, err)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 	m.mu.Lock()
 	code := m.gateLocked()
@@ -432,7 +432,7 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	m.mu.Unlock()
 	if code != "" {
 		snap, failure := fail(code, false, false, apiclient.ReleaseStopped)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 
 	// From here the data path may exist, so every failure must close it.
@@ -440,14 +440,14 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	if err = m.opts.Engine.Start(ctx, profile); err != nil {
 		// Starting is local (TUN, routes): not evidence against the server.
 		snap, failure := fail(engineCode(err), true, false, apiclient.ReleaseStopped)
-		return snap, failure, ""
+		return snap, "", failure
 	}
 	if err = m.opts.Engine.Verify(ctx); err != nil {
 		// The probe itself used the tunnel and was counted; that tail is acknowledged before
 		// the lease is released with the failure, which reports the server.
 		probe := engineCode(err)
 		snap, failure := fail(probe, true, true, releaseReason(probe))
-		return snap, failure, ref.serverID
+		return snap, ref.serverID, failure
 	}
 
 	m.mu.Lock()
@@ -455,7 +455,7 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 		m.mu.Unlock()
 		_ = m.opts.Engine.Stop()
 		m.opts.Egress.Clear()
-		return m.Snapshot(), codeError("stale_generation"), ""
+		return m.Snapshot(), "", codeError("stale_generation")
 	}
 	monitorCtx, cancel := context.WithCancel(context.Background())
 	conn := &connection{cancel: cancel, done: make(chan struct{}), metered: true}
@@ -469,5 +469,5 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	var watch clockWatch
 	watch.jumped(m.opts.Now().Round(0), m.opts.Mono())
 	go m.monitor(monitorCtx, gen, conn, mt, signature, watch)
-	return snap, nil, ""
+	return snap, "", nil
 }
