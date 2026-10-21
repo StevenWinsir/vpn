@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +160,60 @@ func TestClientTimingOverridesAndBounds(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 			if _, err := Load(); err == nil {
 				t.Fatalf("%s=%s accepted", tc.key, tc.value)
+			}
+		})
+	}
+}
+
+// Online presence and node-health settings: defaults, accepted boundaries, and
+// start-up failure for anything outside the documented ranges.
+func TestPresenceSettingsDefaultsAndBounds(t *testing.T) {
+	keys := []string{"CLIENT_MAX_ONLINE_DEVICES", "NODE_HEALTH_FAILURE_USERS", "NODE_HEALTH_COOLDOWN_SECONDS"}
+	base := func(t *testing.T) {
+		timingBase(t)
+		for _, k := range keys {
+			t.Setenv(k, "")
+		}
+	}
+	base(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxOnlineDevices() != 2 || c.HealthFailureUsers() != 3 || c.HealthCooldown() != 300*time.Second {
+		t.Fatalf("defaults changed: %d %d %v", c.MaxOnlineDevices(), c.HealthFailureUsers(), c.HealthCooldown())
+	}
+	var zero Config
+	if zero.MaxOnlineDevices() != 2 || zero.HealthFailureUsers() != 3 || zero.HealthCooldown() != 300*time.Second {
+		t.Fatal("zero-value Config does not fall back to defaults")
+	}
+	for _, tc := range []struct {
+		key, value string
+		ok         bool
+	}{
+		{"CLIENT_MAX_ONLINE_DEVICES", "1", true}, {"CLIENT_MAX_ONLINE_DEVICES", "100", true},
+		{"CLIENT_MAX_ONLINE_DEVICES", "0", false}, {"CLIENT_MAX_ONLINE_DEVICES", "101", false}, {"CLIENT_MAX_ONLINE_DEVICES", "two", false}, {"CLIENT_MAX_ONLINE_DEVICES", "-1", false},
+		{"NODE_HEALTH_FAILURE_USERS", "2", true}, {"NODE_HEALTH_FAILURE_USERS", "50", true},
+		{"NODE_HEALTH_FAILURE_USERS", "1", false}, {"NODE_HEALTH_FAILURE_USERS", "51", false}, {"NODE_HEALTH_FAILURE_USERS", "3.5", false},
+		{"NODE_HEALTH_COOLDOWN_SECONDS", "60", true}, {"NODE_HEALTH_COOLDOWN_SECONDS", "3600", true},
+		{"NODE_HEALTH_COOLDOWN_SECONDS", "59", false}, {"NODE_HEALTH_COOLDOWN_SECONDS", "3601", false}, {"NODE_HEALTH_COOLDOWN_SECONDS", "5m", false},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			base(t)
+			t.Setenv(tc.key, tc.value)
+			c, err := Load()
+			if (err == nil) != tc.ok {
+				t.Fatalf("%s=%s: err=%v, want ok=%v", tc.key, tc.value, err, tc.ok)
+			}
+			if !tc.ok {
+				if !strings.Contains(err.Error(), tc.key) {
+					t.Fatalf("error does not name %s: %v", tc.key, err)
+				}
+				return
+			}
+			got := map[string]string{"CLIENT_MAX_ONLINE_DEVICES": fmt.Sprint(c.MaxOnlineDevices()), "NODE_HEALTH_FAILURE_USERS": fmt.Sprint(c.HealthFailureUsers()), "NODE_HEALTH_COOLDOWN_SECONDS": fmt.Sprint(int(c.HealthCooldown() / time.Second))}[tc.key]
+			if got != tc.value {
+				t.Fatalf("%s=%s loaded as %s", tc.key, tc.value, got)
 			}
 		})
 	}

@@ -16,6 +16,7 @@ import (
 	"vpn/backend/internal/model"
 	"vpn/backend/internal/nodes"
 	"vpn/backend/internal/operations"
+	"vpn/backend/internal/store"
 )
 
 func TestConsoleReadinessAndAdministratorPostgres(t *testing.T) {
@@ -103,6 +104,17 @@ func TestConsoleReadinessAndAdministratorPostgres(t *testing.T) {
 	}
 	if !checkedReadOnly {
 		t.Fatal("read-only transaction assertion did not execute")
+	}
+	// A server written without a group (an older binary, or this direct insert) is
+	// reported until the additive migration adopts it.
+	if report.UngroupedServers != 1 || report.NodeGroups != 0 || !slices.Contains(report.Warnings, "servers_without_group_run_migration") {
+		t.Fatalf("ungrouped server not diagnosed: %+v", report)
+	}
+	if err := store.Migrate(db, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if report = inspect(); report.UngroupedServers != 0 || report.NodeGroups != 1 || slices.Contains(report.Warnings, "servers_without_group_run_migration") || !report.DevelopmentReady {
+		t.Fatalf("migrated server still diagnosed: %+v", report)
 	}
 	// Without SMTP the probe reports mail as unavailable; it never sends mail.
 	if report.Mail.Configured || report.Mail.RegistrationOpen || report.Mail.PendingJobs != 0 || report.Mail.OldestPendingSecs != 0 || !slices.Contains(report.Warnings, "auth_mail_not_configured") {

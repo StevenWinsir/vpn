@@ -41,6 +41,10 @@ type Config struct {
 	WebsiteBaseURL                      string
 	AuthMailSecret                      []byte
 	RegistrationDomains, TrustedProxies []string
+	// Online presence and node groups (handoff_node_use_history_and_load_balancing_c.md 11).
+	// The lease length is ClientLease and renewal follows ClientReportInterval.
+	ClientMaxOnlineDevices, NodeHealthFailureUsers int
+	NodeHealthCooldown                             time.Duration
 }
 
 func Load() (Config, error) {
@@ -116,6 +120,22 @@ func Load() (Config, error) {
 		}
 		*x.dest = time.Duration(v) * time.Second
 	}
+	for _, x := range []struct {
+		key           string
+		dest          *int
+		def, min, max int
+	}{{"CLIENT_MAX_ONLINE_DEVICES", &c.ClientMaxOnlineDevices, DefaultMaxOnlineDevices, 1, 100}, {"NODE_HEALTH_FAILURE_USERS", &c.NodeHealthFailureUsers, DefaultHealthFailureUsers, 2, 50}} {
+		v, err := strconv.Atoi(env(x.key, strconv.Itoa(x.def)))
+		if err != nil || v < x.min || v > x.max {
+			return c, fmt.Errorf("invalid %s (allowed %d-%d)", x.key, x.min, x.max)
+		}
+		*x.dest = v
+	}
+	cooldown, err := strconv.Atoi(env("NODE_HEALTH_COOLDOWN_SECONDS", strconv.Itoa(DefaultHealthCooldownSeconds)))
+	if err != nil || cooldown < 60 || cooldown > 3600 {
+		return c, fmt.Errorf("invalid NODE_HEALTH_COOLDOWN_SECONDS (allowed 60-3600)")
+	}
+	c.NodeHealthCooldown = time.Duration(cooldown) * time.Second
 	budget, err := strconv.ParseInt(env("GRANT_BUDGET_BYTES", strconv.FormatInt(DefaultGrantBudgetBytes, 10)), 10, 64)
 	if err != nil || budget < 1<<20 || budget > 64<<30 {
 		return c, fmt.Errorf("invalid GRANT_BUDGET_BYTES (allowed 1 MiB - 64 GiB)")
@@ -196,6 +216,11 @@ const (
 	DefaultAgentStaleSeconds  = 30
 	DefaultSettleGraceSeconds = 60
 	DefaultGrantBudgetBytes   = int64(512 << 20)
+
+	// D1: the effective cap is min(subscription max_devices, this value).
+	DefaultMaxOnlineDevices      = 2
+	DefaultHealthFailureUsers    = 3
+	DefaultHealthCooldownSeconds = 300
 )
 
 // ValidVersion accepts dotted numeric versions such as 1, 1.2 or 1.2.3.
@@ -248,6 +273,23 @@ func (c Config) GrantBudget() int64 {
 		return DefaultGrantBudgetBytes
 	}
 	return c.GrantBudgetBytes
+}
+
+func (c Config) MaxOnlineDevices() int {
+	return orDefaultInt(c.ClientMaxOnlineDevices, DefaultMaxOnlineDevices)
+}
+func (c Config) HealthFailureUsers() int {
+	return orDefaultInt(c.NodeHealthFailureUsers, DefaultHealthFailureUsers)
+}
+func (c Config) HealthCooldown() time.Duration {
+	return orDefault(c.NodeHealthCooldown, DefaultHealthCooldownSeconds)
+}
+
+func orDefaultInt(value, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func orDefault(value time.Duration, seconds int) time.Duration {

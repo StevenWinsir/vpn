@@ -34,12 +34,14 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB_TABLES = ['users', 'plans', 'sessions', 'subscriptions', 'orders', 'nodes']
 ALL_TABLES = WEB_TABLES + ['native_sessions', 'client_traffic_reports', 'node_configs', 'admin_audits',
     'node_agents', 'subscription_periods', 'connection_grants', 'node_usage_reports',
-    'email_auth_challenges', 'auth_mail_jobs', 'auth_rate_buckets']
+    'email_auth_challenges', 'auth_mail_jobs', 'auth_rate_buckets',
+    'node_groups', 'connection_leases', 'node_assignments', 'usage_buckets', 'node_health_events']
 # main before handoff_auth.md round 1: open registration, no mailbox verification.
 LEGACY_REF = '67e7b37f935e654e4378c14a32bc888ccff2065f'
 # Round 3 merge: verified registration, mail reset, password versions and session revocation.
 ROLLBACK_REF = 'c84de59'
-ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key'}
+ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key',
+    'node_assignments': "user_id::text || group_id", 'usage_buckets': "user_id::text || bucket_start"}
 
 
 def free_port():

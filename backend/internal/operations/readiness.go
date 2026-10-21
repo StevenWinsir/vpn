@@ -38,6 +38,10 @@ type ReadinessReport struct {
 	AgentsOnline       int   `json:"agents_online"`
 	AuthoritativeNodes int   `json:"authoritative_nodes"`
 	GrantsToReconcile  int64 `json:"grants_needing_reconcile"`
+	// Node groups (handoff_node_use_history_and_load_balancing_c.md 4): servers left
+	// without a group mean the additive migration has not run since they were written.
+	NodeGroups       int64 `json:"node_groups"`
+	UngroupedServers int64 `json:"ungrouped_servers"`
 	// Registration and mail (handoff_auth.md 3.1). Configuration facts and queue
 	// counts only: the probe never sends mail and never prints SMTP settings.
 	Mail MailReadiness `json:"auth_mail"`
@@ -91,7 +95,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -104,6 +108,15 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		}
 		if err := tx.Model(&model.Node{}).Where("enabled = ?", true).Count(&report.EnabledNodes).Error; err != nil {
 			return err
+		}
+		if err := tx.Model(&model.NodeGroup{}).Count(&report.NodeGroups).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Node{}).Where("group_id IS NULL").Count(&report.UngroupedServers).Error; err != nil {
+			return err
+		}
+		if report.UngroupedServers > 0 {
+			report.Warnings = append(report.Warnings, "servers_without_group_run_migration")
 		}
 		var agents []model.NodeAgent
 		if err := tx.Where("enabled = ?", true).Find(&agents).Error; err != nil {

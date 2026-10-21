@@ -83,6 +83,10 @@ type Order struct {
 }
 
 // Public metadata only. Never put shared proxy credentials in public-facing models.
+//
+// A Node is one real upstream server. Region, LineType, RatePermille (and
+// node_configs.plan_ids) are the legacy copies of its NodeGroup's public metadata,
+// kept in step for one release so an older binary still reads a consistent catalog.
 type Node struct {
 	ID           string    `gorm:"type:uuid;primaryKey" json:"id"`
 	Name         string    `gorm:"size:120;not null" json:"name"`
@@ -93,4 +97,13 @@ type Node struct {
 	Version      int64     `gorm:"not null;default:1" json:"version"`
 	CreatedAt    time.Time `json:"-"`
 	UpdatedAt    time.Time `json:"-"`
+	// GroupID stays nullable so an older binary can still insert servers; the
+	// migration back-fills every NULL with a one-server group of the same id.
+	GroupID *string    `gorm:"type:uuid;index:idx_nodes_group_id" json:"-"`
+	Group   *NodeGroup `gorm:"constraint:OnDelete:RESTRICT" json:"-"`
+	// The column default keeps rows written by an older binary valid and lets the
+	// migration land without locking anyone out ("no limit" until an admin sets it).
+	MaxConnections int        `gorm:"not null;default:1000;check:max_connections >= 1 AND max_connections <= 10000" json:"-"`
+	Label          string     `gorm:"size:40;not null;default:''" json:"-"`
+	UnhealthyUntil *time.Time `json:"-"`
 }
