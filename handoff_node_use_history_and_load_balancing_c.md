@@ -564,3 +564,38 @@
 - **R3-12 瓶颈分析与取舍**：分配按规划 6.3 在节点组行锁内串行，同组接入必然排队；单次接入在锁内约 9 次数据库往返（组锁、候选+负载+首选合并查询、Agent 表、可见目录与选中服务器密文、首选写入、结束旧租约、统计其他设备、写租约、会话更新、提交），每条语句库内耗时均 <0.1 ms，时间主要是往返和高并发下的调度等待（串行 3 ms/次，并发时锁内约 5 ms/次）。500 个同时到达的请求在 200 ms 内全部完成需要每次持锁 <0.4 ms，在“组行锁串行化”的设计下不可达；本轮已把锁内语句从约 14 次减到约 9 次（Agent 表只读一次、候选与负载合并、响应快照复用、两条结束租约合并、`last_seen_at` 并入会话更新），提升约 6%。取舍：保留组锁换取“统计负载与写租约之间不可插入”的精确容量与严格的负载均衡；实际场景中设备连接分散到达，同一组瞬时 500 并发相当于全组用户同秒连接，按 200 次/秒约 2.5 秒排空，不丢请求、不超额。若以后需要更高单组吞吐，可改为“无锁读负载 → 只锁选中服务器行 → 锁内复核该服务器负载，满则换下一台”，同组不同服务器可并行（负载均衡变为近似，容量仍精确），留待第 7 轮压测结果决定。
 - **设计取舍（实施中确定）**：管理端 `/admin/nodes` 同时接受分组与旧请求体，避免第 4 轮前端改造前现有管理页与发布演练失效；旧请求体只能操作“一组一台”。无组服务器（迁移后由旧二进制写入）不再按 D3 视为自身组，客户端看不到，直到下一次 `-migrate` 回填（doctor 的 `ungrouped_servers` 会提示）。整组停用/删除使用新的结束原因 `group_unavailable`，以区别于“换服务器重连”。`connection` 摘要只给 v3 租约，旧 Core 的目录修订号不受在线状态影响。发布时目录标签可能变化一次（见 DEPLOYMENT.md 本轮第 1 条）。
 - **遗留与归属**：组的套餐或线路类型修改使部分在线用户不再可见时，其租约不立即结束（下一次快照为 `client_config_unavailable`，`/traffic` 仍会续期至断开），第 5 轮 Core 处理该原因后再评估是否在保存组时结束；网站节点组管理与 `/nodes` 页（第 4 轮）；Core 的重新分配自动重连、`avoid_node_id` 重试与释放原因（第 5 轮）；单组高并发吞吐（见上，第 7 轮压测决定）；旧请求体在第 4 轮前端改造后移除。
+
+### 第 4 轮：网站仪表盘、柱状图与节点组管理页（2026-10-21）
+
+- **分支/PR**：`worktree-nodes-round4-website`，PR 见 GitHub（StevenWinsir/vpn）。基线 6c523eb（#53 合并后）。本轮无新表、新列、新后端配置项，无需迁移；新增前端运行时配置 `DASHBOARD_REFRESH_MS`。
+- **交付文件**
+  - `frontend/src/lib/dashboard.ts`（新）：`dashboardRefreshMs`（5000–120000，缺省/非法回落 15000，读取方式同 `NODE_LIST_REFRESH_MS`）；`formatBytes`（1 GiB = 1,073,741,824 字节，自动 MB/GB）；`intervalLabel`（UTC 区间 → 浏览器本地时区“09:05–12:05”，最右一根“至现在”）；`chartPeak`/`historyEmpty`；以服务端时间计算的“xx 秒前/已连接 xx 分钟”。`use-polling.ts`（新）：与 `/nodes` 相同的轮询规则（可见时按间隔、聚焦/回到前台/网络恢复立即、并发合并、卸载取消）。
+  - `frontend/src/lib/types.ts`：`Dashboard` 增加 `online_devices`/`device_limit`；`DeviceStatus`/`OnlineDevice`/`SignedInDevice`/`UsageHistory`/`UsageInterval` 显式白名单类型（无服务器/会话/租约 ID、地址、令牌）。
+  - 仪表盘：`dashboard-view.tsx` 三个接口（`/me/dashboard`、`/me/devices`、`/me/usage-history`）独立请求、互不影响，按 `DASHBOARD_REFRESH_MS` 刷新；去掉写死的“尚未接入代理服务”“开发环境说明”和“设计值”倍率，按真实计量状态显示。`devices-card.tsx`（新）：“在线设备 x / y”徽章（满额橙色）、在线列表（平台图标、版本、设备短标识、线路组名、已连接时长、最近心跳、本次上下行）、“已登录未连接（不占名额）”次级列表、有效上限与“约 90 秒让出名额”说明、专线权限。`usage-chart.tsx`（新）：8 根 3 小时上传/下载堆叠柱（纯 CSS，无图表依赖），每根柱为可聚焦按钮且无障碍名称含上传/下载/合计/计费，悬停或聚焦显示明细，“以表格查看”折叠表，全 0 空状态；`globals.css` 新样式。
+  - `/admin/nodes`：`admin-nodes-view.tsx` 重写为“套餐筛选 → 节点组卡片 → 服务器表格”。筛选为全部/不限套餐/各套餐（某套餐 = 该套餐用户可见的组，含不限套餐的组），在某套餐下新建组默认限定该套餐；组卡片显示名称、地区、线路、倍率、可用套餐、启用、计量方式、“在线 x / 容量 y”负载条、服务器数、混合计量警告；操作：编辑组、导入服务器 YAML（默认容量 5）、停用/启用、删除（仅空组）。服务器表：备注、代理名、协议、启用、健康（正常/冷却至 hh:mm/Agent 离线/配置不可读）、在线/上限与“超出”、版本；操作：编辑（YAML、容量、备注、启用、移组）、清除冷却、删除（确认框写明受影响在线设备数）。每 5 秒刷新；管理写操作期间丢弃旧轮询结果；存在迁移得到的容量 1000 时提示改为真实值；文案说明容量在实际连接时生效、调低不踢人、停用/删除服务器自动改连同组其他服务器、同组统一显示组名。`admin-agents-panel.tsx` 下拉框改为“组名 / 服务器备注”。页面只使用分组请求体。
+  - 用户 `/nodes`：`nodes-view.tsx` 文案改为线路（节点组），说明连接时在组内自动分配、满载时拒绝；字段、过滤和请求不变（后端第 3 轮已输出节点组）。
+  - **后端兼容修正（本轮浏览器验收发现）**：`GET /client/config` 与就绪的 `GET /client/grants/:id` 响应中的 `node_id` 原为所分配的服务器 ID。已发布的旧 Core（legacy-core `ConfigForNode`/`ValidCatalog`）与当前 Core（`actions.go`、`grant.go`）都要求它等于所选目录项（组 ID）；第 3 轮的测试只覆盖“组 ID = 服务器 ID”的迁移组，因此未暴露。网站新建的组 ID 都不等于服务器 ID，旧逻辑下现有客户端一律报 `invalid_server_response`/`config_rejected`。现改为回显组 ID（`native.go`；`grants.go` 的 `grantProfile` 同时返回组 ID），服务器仍不透明（会话行记录绑定）；`/connections` 的 `node_id` 仍为服务器 ID（v3，供第 5 轮的 `avoid_node_id` 使用）。`docs/native-client-protocol.md` 同步更正。
+  - 测试：`frontend/scripts/dashboard.test.mjs`（新，`npm run test:dashboard`，已加入 CI）；`frontend/tests/dashboard-presence.spec.ts`（新）、`frontend/tests/layout.ts`（新，列出溢出视口的元素）；`admin-nodes.spec.ts` 改为节点组流程（最终仍留下 Mihomo 验收需要的 `Catalog-Half-Edited` 0.5× 与 `Catalog-Premium` 1× 两条线路）；`playwright.catalog.config.ts` 纳入新规格；`catalog_acceptance_test.go` 夹具新增“轻量计划”用户 `lite` 与 `/fixture/usage-history`（控制令牌保护，写入跨 26 小时的固定历史）；`line_echo_test.go`（新）；`allocator_test.go` 的 `TestServerWithdrawalPostgres` 改为断言 `/config` 回显组 ID、服务器取自会话绑定。`frontend/.env.example`、`docs/user-node-list.md` 补充说明。
+- **测试结果**
+
+| 编号 | 项目 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| R4-01 | 单元：刷新间隔边界（4999/120001/小数/NaN 回落 15000）、单位（0、<0.01 MB、MB/GB 边界、计费折算）、时区换算（上海/UTC/加尔各答半小时/洛杉矶/跨午夜、“至现在”）、空数据与峰值、服务端时间差文案 | `npm --prefix frontend run test:dashboard` | PASS（5 项）；`test:nodes` 3 项仍通过 |
+| R4-02 | 真实浏览器：管理员在“轻量计划”筛选下新建 JP1（默认带入该套餐），导入 5 台同名（代理名 JP1）服务器、各容量 5；后台显示 5 台、“在线 0 / 容量 25” | `scripts/test-node-catalog.py --skip-build`（`dashboard-presence.spec.ts`） | PASS |
+| R4-03 | 三台模拟设备经原生 API 登录（只登录不占名额）；两台接入 201 且第二台按固定分配回到同一服务器，第三台 403 `device_limit`；仪表盘在一次刷新内显示“在线设备 2 / 2”、两条在线记录（线路 JP1）与“已登录未连接”；后台“在线 2 / 容量 25”；`/me/devices` 响应不含服务器 ID 与连接 ID | 同上 | PASS |
+| R4-04 | 释放一台：仪表盘 1 / 2、后台 1 / 25；在后台编辑并停用剩余设备所在服务器：该行“已停用 0 / 5”、组“在线 0 / 容量 20”，设备 `/session` 原因为 `connection_reassigned`，重新接入分到同组另一台，后台“在线 1 / 容量 20”且新服务器行 1 / 5 | 同上 | PASS |
+| R4-05 | 柱状图：写入跨 26 小时的固定历史后，接口 8 个区间、`bucket_seconds=10800`，26 小时前的行不计入合计；页面 8 根柱的无障碍名称与接口数值逐一一致（上海时区）；Tab 键依次聚焦 8 根柱并显示对应明细；“以表格查看”可展开；手机宽度（390）无横向溢出 | 同上 | PASS |
+| R4-06 | 安全：仪表盘 DOM、localStorage、sessionStorage 不含 5 台服务器 ID、`proxies`、`socks5` 或节点端口 | 同上 | PASS |
+| R4-07 | 管理端回归（新流程）：建组/导入/迟到的服务器详情不覆盖新草稿/改组名（版本 +1）/改容量（服务器版本不变）/“不限套餐”筛选/桌面与手机布局/普通用户 403；VLESS Reality 与 WireGuard 导入停用组、重开不丢嵌套参数、删除 409 重试、删除空组 | 同上（`admin-nodes.spec.ts`） | PASS |
+| R4-08 | 用户 `/nodes` 既有规格（真实管理员变更同步、字段白名单、过滤、错误/空/失效、可见性轮询、文本渲染、匿名跳转）；注册、找回密码规格 | 同上 | PASS（浏览器 10/10） |
+| R4-09 | 官方旧 Core（legacy-core）经网站新建的组（组 ID ≠ 服务器 ID）真实 Mihomo 流量与倍率账本 | 同上（`TestCatalogBackendMihomoAcceptance`） | 修正前 FAIL（`invalid_server_response`，即上述兼容问题）；修正后 PASS：半价线路 raw 3540 字节计费 1,770,000 单位，合计 raw 7080 字节计费 5,310,000 单位 |
+| R4-10 | `/config` 与就绪 grant 回显组 ID、不泄露服务器 ID，不带 `node_id` 重选仍回显组 | `go test -race -run TestSelectedLineEchoed ./internal/api` | PASS |
+| R4-11 | 全量后端测试（私有 PG、`-race`） | `python3 scripts/test-native.py` | PASS（324 PASS、0 FAIL、9 SKIP，与第 3 轮相同的按环境变量启用项）；首次运行 `TestServerWithdrawalPostgres` 因断言旧的“返回服务器 ID”行为而失败，已按新语义更新 |
+| R4-12 | `tsc`、`eslint`、`next build --webpack` | `npm run typecheck`、`npm run lint`、`next build --webpack` | PASS |
+| R4-13 | `go vet`、`gofmt`、共享快照一致 | `go vet ./...`、`gofmt -l`、`sync-backend-shared.py --check` | PASS |
+| R4-14 | 第 1 轮迁移/回滚演练、仅后端目录独立构建 | `test-node-groups-migration.py`、`test-backend-standalone.py` | PASS（演练 7 项，目录、配置、网站目录、管理列表与旧版逐字节一致；独立构建 108 个文件，tests/vet、Linux amd64/arm64） |
+| R4-15 | Core 接入 `/connections`、重新分配自动重连、四平台 APP | — | NOT RUN（第 5、6 轮） |
+
+- **截图**：本机 `artifacts/nodes-round4/`（`admin-groups-desktop.png`、`admin-desktop.png`、`admin-mobile.png`、`dashboard-online.png`、`dashboard-history-desktop.png`、`dashboard-mobile.png`、`nodes-*.png`、`ordinary-denied.png`）；`artifacts/` 不入库，CI 每次重新生成（CI 只上传 summary，不上传截图）。
+- **设计取舍（实施中确定）**：柱状图用 CSS 网格而非 SVG，8 个两行时间标签在 390 宽度下仍可读；每根柱是按钮而不是 `role=img`，键盘可达且读屏读出数值；非零小值至少 3 像素高。“最近心跳/已连接时长”用接口的 `server_time` 计算，浏览器时钟偏差不影响。管理端“某套餐”筛选包含不限套餐的组，因为这正是该套餐用户能看到的线路。服务器表按备注排序。仪表盘不等三个接口全部成功：设备或历史失败时各自卡片显示错误，概览照常。
+- **遗留与归属**：旧的按服务器请求体（`/admin/nodes` 不带 `group_id`）本轮前端已不再使用，但后端测试夹具、用户节点列表规格（`user-nodes.spec.ts`）和第 1 轮迁移/回滚演练仍依赖它（回滚目标旧二进制只认它），移除留到第 7 轮发布演练时一并处理；grant 路径若要 `avoid_node_id` 需另加服务器 ID 字段（第 5 轮）；Core 适配与四平台（第 5、6 轮）。

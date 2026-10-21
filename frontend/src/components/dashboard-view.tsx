@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Alert,
   Badge,
@@ -15,41 +15,42 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconArrowRight, IconRefresh, IconShieldCheck, IconWifiOff } from '@tabler/icons-react';
+import { IconArrowRight, IconRefresh, IconShieldCheck } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
-import { date, gib, type Dashboard } from '@/lib/types';
+import { date, gib, type Dashboard, type DeviceStatus, type UsageHistory } from '@/lib/types';
+import { usePolling } from '@/lib/use-polling';
+import { DevicesCard } from './devices-card';
+import { UsageChart } from './usage-chart';
 
-export function DashboardView() {
+export function DashboardView({ refreshMs }: { refreshMs: number }) {
   const [data, setData] = useState<Dashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => {
-    setBusy(true);
-    try {
-      setData(await api<Dashboard>('/me/dashboard'));
+  const [devices, setDevices] = useState<DeviceStatus | null>(null);
+  const [devicesError, setDevicesError] = useState('');
+  const [history, setHistory] = useState<UsageHistory | null>(null);
+  const [historyError, setHistoryError] = useState('');
+  // The three requests are independent: one failing never blanks the others.
+  const load = useCallback(async (signal: AbortSignal) => {
+    const [summary, presence, usage] = await Promise.allSettled([
+      api<Dashboard>('/me/dashboard', { signal }),
+      api<DeviceStatus>('/me/devices', { signal }),
+      api<UsageHistory>('/me/usage-history', { signal }),
+    ]);
+    if (signal.aborted) return;
+    if (summary.status === 'fulfilled') {
+      setData(summary.value);
       setError(null);
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-    }
+    } else setError(message(summary.reason));
+    if (presence.status === 'fulfilled') {
+      setDevices(presence.value);
+      setDevicesError('');
+    } else setDevicesError(message(presence.reason));
+    if (usage.status === 'fulfilled') {
+      setHistory(usage.value);
+      setHistoryError('');
+    } else setHistoryError(message(usage.reason));
   }, []);
-  useEffect(() => {
-    let active = true;
-    void api<Dashboard>('/me/dashboard')
-      .then((result) => {
-        if (active) {
-          setData(result);
-          setError(null);
-        }
-      })
-      .catch((e) => {
-        if (active) setError(message(e));
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { syncing, refresh } = usePolling(load, refreshMs);
   const sub = data?.subscription;
   const usedBytes = (sub?.used_units || 0) / 1000;
   const limit = sub?.traffic_limit_bytes || 0;
@@ -69,8 +70,8 @@ export function DashboardView() {
           variant="default"
           size="xs"
           leftSection={<IconRefresh size={15} />}
-          loading={busy}
-          onClick={() => void load()}
+          loading={syncing}
+          onClick={refresh}
         >
           同步数据
         </Button>
@@ -127,12 +128,14 @@ export function DashboardView() {
             <Metric
               label="套餐权益"
               value={data.entitlement_active ? '已开通' : '未生效'}
-              detail={sub?.is_test ? '测试权益 · 不等于代理已连接' : '开通后可查看有效期和额度'}
+              detail={sub?.is_test ? '测试权益 · 不等于代理已连接' : '有效期和额度以订阅快照为准'}
             />
             <Metric
               label="剩余计费额度"
               value={`${gib(Math.max(0, limit - usedBytes))} GiB`}
-              detail={data.metering_connected ? '按线路倍率折算后扣减' : '尚未接入代理节点计量'}
+              detail={
+                data.metering_connected ? '按所连线路倍率折算后扣减' : '近 24 小时暂无计量数据'
+              }
             />
             <Metric
               label="累计订单"
@@ -147,7 +150,7 @@ export function DashboardView() {
                   流量概览
                 </Title>
                 <Badge variant="light" color="gray">
-                  {data.metering_connected ? '已接入计量' : '待接入计量'}
+                  {data.metering_connected ? '24 小时内有计量' : '24 小时内无计量'}
                 </Badge>
               </Group>
               <Group justify="center" gap={35} my={22}>
@@ -185,62 +188,27 @@ export function DashboardView() {
                 </Stack>
               </Group>
               <Divider />
-              <Group grow mt="lg">
-                <div>
-                  <Text c="dimmed" size="xs">
-                    专线倍率（设计值）
-                  </Text>
-                  <Text size="sm" fw={600} mt={5}>
-                    实际 1 GiB = 计费 1 GiB
-                  </Text>
-                </div>
-                <div>
-                  <Text c="dimmed" size="xs">
-                    普通线路倍率（设计值）
-                  </Text>
-                  <Text size="sm" fw={600} mt={5}>
-                    实际 1 GiB = 计费 0.5 GiB
-                  </Text>
-                </div>
-              </Group>
+              <Text size="xs" c="dimmed" mt="lg" lh={1.8}>
+                实际上下行流量 × 所连线路的倍率 = 扣除的计费流量。
+                <Link href="/nodes">查看各线路倍率</Link>
+              </Text>
             </Paper>
-            <Paper withBorder p={26} radius="lg">
-              <Title order={2} size={17} mb={22}>
-                连接与客户端
-              </Title>
-              <div className="empty-state">
-                <IconWifiOff size={34} stroke={1.3} />
-                <Text size="sm" fw={600} c="dark.4" mt="sm">
-                  尚未接入代理服务
-                </Text>
-                <Text size="xs" mt={8} lh={1.8}>
-                  当前没有可用的原生客户端或节点连接。
-                  <br />
-                  开通测试套餐不会建立 VPN 连接。
-                </Text>
-              </div>
-              <Group justify="space-between" mt="lg">
-                <Text size="sm" c="dimmed">
-                  设备额度
-                </Text>
-                <Text size="sm" fw={600}>
-                  {sub ? `${sub.max_devices} 台（待客户端执行）` : '—'}
-                </Text>
-              </Group>
-              <Group justify="space-between" mt="sm">
-                <Text size="sm" c="dimmed">
-                  专线权限
-                </Text>
-                <Text size="sm" fw={600}>
-                  {sub?.allow_dedicated ? '套餐包含' : '未包含'}
-                </Text>
-              </Group>
-            </Paper>
+            <DevicesCard
+              devices={devices}
+              error={devicesError}
+              fallbackLimit={data.device_limit}
+              allowDedicated={!!sub?.allow_dedicated}
+            />
           </SimpleGrid>
-          <Alert color="gray" title="开发环境说明">
-            流量图表展示数据库中的额度与计数，尚未连接节点侧计量。所有测试订单均不会扣款，也不会下发代理密码或
-            YAML 配置。
-          </Alert>
+          <UsageChart history={history} error={historyError} />
+          <Text size="xs" c="dimmed" ta="right">
+            页面可见时每 {refreshMs / 1000} 秒自动刷新，返回页面时也会刷新。
+          </Text>
+          {sub?.is_test ? (
+            <Alert color="gray" title="测试套餐">
+              测试订单不会扣款；套餐权益不代表客户端已连接，连接状态以“连接与客户端”为准。
+            </Alert>
+          ) : null}
         </Stack>
       )}
       <div className="page-footer">

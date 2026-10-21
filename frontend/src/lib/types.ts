@@ -28,8 +28,56 @@ export type Dashboard = {
   subscription: Subscription | null;
   entitlement_active: boolean;
   order_count: number;
+  // True when this account has metered traffic in the last 24 hours.
   metering_connected: boolean;
   proxy_service_ready: boolean;
+  online_devices: number;
+  device_limit: number;
+};
+// Explicit presence contract (GET /me/devices): never a server, session, lease or grant id,
+// address or token. `device` is the last 6 characters of the client's device UUID.
+export type OnlineDevice = {
+  platform: string;
+  app_version: string;
+  device: string;
+  line: string;
+  connected_at: string;
+  last_heartbeat_at: string;
+  upload_bytes: number;
+  download_bytes: number;
+};
+export type SignedInDevice = {
+  platform: string;
+  app_version: string;
+  device: string;
+  last_seen_at: string;
+};
+export type DeviceStatus = {
+  server_time: string;
+  device_limit: number;
+  online_count: number;
+  online: OnlineDevice[];
+  signed_in: SignedInDevice[];
+  lease_seconds: number;
+};
+// GET /me/usage-history: 8 three-hour intervals ending with the bucket in progress.
+export type UsageInterval = {
+  start: string;
+  end: string;
+  upload_bytes: number;
+  download_bytes: number;
+  charged_units: number;
+};
+export type UsageHistory = {
+  server_time: string;
+  window_start: string;
+  window_end: string;
+  bucket_seconds: number;
+  granularity_seconds: number;
+  buckets: UsageInterval[];
+  total_upload_bytes: number;
+  total_download_bytes: number;
+  total_charged_units: number;
 };
 export type Order = {
   id: string;
@@ -43,7 +91,8 @@ export type Order = {
   created_at: string;
   paid_at: string;
 };
-// Explicit metadata contract. Never add connection parameters or YAML here.
+// Explicit metadata contract. Never add connection parameters or YAML here. Each entry is a
+// node group (a line); the client is assigned one of its servers when it connects.
 export type PublicNode = {
   id: string;
   name: string;

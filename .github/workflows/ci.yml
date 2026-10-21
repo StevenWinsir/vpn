@@ -95,6 +95,7 @@ jobs:
           npm run test:api-proxy
           npm run test:nodes
           npm run test:downloads
+          npm run test:dashboard
       - name: Legacy managed-core regressions (kept until the new Core re-implements them in stage 2)
         working-directory: native/legacy-core
         run: |

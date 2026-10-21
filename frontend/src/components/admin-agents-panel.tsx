@@ -111,7 +111,7 @@ export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
     if (pending.current) return;
     const fingerprint = form.fingerprint.replace(/:/g, '').trim().toLowerCase();
     if (!form.name.trim() || !/^[0-9a-f]{64}$/.test(fingerprint) || (!form.id && !form.node_id)) {
-      setFormError('请选择节点、填写名称，并粘贴 64 位十六进制的客户端证书 SHA-256 指纹。');
+      setFormError('请选择服务器、填写名称，并粘贴 64 位十六进制的客户端证书 SHA-256 指纹。');
       return;
     }
     pending.current = true;
@@ -233,7 +233,7 @@ export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>代理</Table.Th>
-                  <Table.Th>节点</Table.Th>
+                  <Table.Th>服务器</Table.Th>
                   <Table.Th>状态</Table.Th>
                   <Table.Th>已验证协议</Table.Th>
                   <Table.Th>在用授权</Table.Th>
@@ -314,9 +314,9 @@ export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
               </Alert>
             )}
             <Select
-              label="节点"
+              label="服务器（节点组 / 备注）"
               required
-              placeholder="选择尚未绑定代理的节点"
+              placeholder="选择尚未绑定代理的服务器"
               data={unbound.map((node) => ({ value: node.id, label: node.name }))}
               value={form.node_id}
               disabled={busy}

@@ -103,7 +103,7 @@ authorization_expires_at = min(server_time + 90 秒,
 
 ## 节点组分配（节点组交接书第 3 轮）
 
-- **目录项是节点组**：`GET /nodes` 的 `nodes[]` 结构不变，`id` 为组 ID、`version` 为组版本。同组服务器的代理名可以相同；下发的配置只含一台服务器，代理名改写为组名，`ParseProfile` 的名称校验不变。`/connections` 与 `/grants` 响应中的 `node_id` 是不透明的服务器 ID，客户端只在连接失败后的一次重试中作为 `avoid_node_id` 回传。
+- **目录项是节点组**：`GET /nodes` 的 `nodes[]` 结构不变，`id` 为组 ID、`version` 为组版本。同组服务器的代理名可以相同；下发的配置只含一台服务器，代理名改写为组名，`ParseProfile` 的名称校验不变。`/connections` 响应中的 `node_id` 是不透明的服务器 ID，客户端只在连接失败后的一次重试中作为 `avoid_node_id` 回传。`GET /config` 与就绪的 `GET /grants/:id` 响应中的 `node_id` 回显所选线路（组 ID）：已发布的旧 Core 与当前 Core 都校验它等于所选目录项，组 ID 与服务器 ID 不同时（网站新建的组都是如此）若返回服务器 ID 会被拒绝（第 4 轮修正）。grant 路径如需服务器 ID 用于 `avoid_node_id`，第 5 轮另加字段，不改变 `node_id` 语义。
 - **分配**：本设备已在线的服务器 → 用户在该组的固定服务器（健康且未满）→ 负载率最低（相同则随机）→ 冷却中的服务器（仅当没有健康且未满的服务器）。满载与冷却不进入目录或修订号。
 - **目录中的本会话连接**：会话持有过 v3 调用（`/connections`、`/grants`）取得的租约后，`GET /nodes` 带 `connection`（`id`、`group_id`、`state`），并计入修订号；服务器被撤下时长轮询数秒内返回，`state` 变为 `ended`。它不含到期时间，续期不会唤醒长轮询。没有 v3 租约的会话（旧 Core）目录与修订号保持 v2 原样。
 - **重新分配与线路消失**：服务器被停用、删除或移到其他组时租约以 `node_unavailable` 结束，快照原因 `connection_reassigned`（优先于此时的 `client_config_unavailable`/`profile_changed`），客户端应对同一组重新接入一次；旧 Core 收到 `profile_changed`。整组停用或删除时租约以 `group_unavailable` 结束，不报告 `connection_reassigned`，快照为 `client_config_unavailable`，线路从目录消失。

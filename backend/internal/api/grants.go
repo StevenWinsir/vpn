@@ -101,24 +101,25 @@ func (s *Server) nativeCapabilities(c *gin.Context) {
 
 // grantProfile renders the exact document a grant holder receives: the node's
 // definition with the administrator's shared secret replaced by the grant credential.
-func (s *Server) grantProfile(db *gorm.DB, sub *model.Subscription, g model.ConnectionGrant) ([]byte, string, error) {
+// It also names the grant's line (group), the id the client selected.
+func (s *Server) grantProfile(db *gorm.DB, sub *model.Subscription, g model.ConnectionGrant) ([]byte, string, string, error) {
 	profile, err := s.catalogProfile(db, sub, g.NodeID)
 	if err != nil || profile.Node.ID != g.NodeID {
-		return nil, "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
+		return nil, "", "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
 	}
 	credential, err := nodes.OpenCredential(s.cfg.NodeEncryptionKey, g.ID, g.CredentialCipher)
 	if err != nil {
-		return nil, "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
+		return nil, "", "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
 	}
 	proxy, err := nodes.ApplyCredential(profile.Proxy, credential)
 	if err != nil {
-		return nil, "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
+		return nil, "", "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
 	}
 	data, err := renderProfile(profile.Tag, proxy)
 	if err != nil {
-		return nil, "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
+		return nil, "", "", &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
 	}
-	return data, nativeProfileVersion(data), nil
+	return data, nativeProfileVersion(data), profile.Group.ID, nil
 }
 
 // grantReason is the session verdict for a node_reported session. A session between
@@ -135,7 +136,7 @@ func (s *Server) grantReason(db *gorm.DB, sess model.NativeSession, sub *model.S
 	if !grantLive(g, now) {
 		return "grant_expired"
 	}
-	_, version, err := s.grantProfile(db, sub, g)
+	_, version, _, err := s.grantProfile(db, sub, g)
 	if err != nil {
 		return "client_config_unavailable"
 	}
@@ -329,7 +330,7 @@ func (s *Server) getGrant(c *gin.Context) {
 			if !nativeAuthorizationBound(*sess, sub) {
 				return &apiError{409, "subscription_changed", "套餐周期已变更，请重新登录"}
 			}
-			data, version, e := s.grantProfile(tx, sub, g)
+			data, version, line, e := s.grantProfile(tx, sub, g)
 			if e != nil {
 				return e
 			}
@@ -337,7 +338,8 @@ func (s *Server) getGrant(c *gin.Context) {
 				return &apiError{409, "profile_changed", "线路配置已更新，请重新选择线路"}
 			}
 			snapshot := s.nativeSnapshot(*sess, sub, now, tx)
-			out.YAML, out.Version, out.NodeID, out.Session = string(data), version, g.NodeID, &snapshot
+			// node_id echoes the selected line (group); the server stays opaque.
+			out.YAML, out.Version, out.NodeID, out.Session = string(data), version, line, &snapshot
 		case g.State == grantPending || g.State == grantReady:
 			return &apiError{410, "grant_expired", "授权已过期，请重新连接"}
 		}

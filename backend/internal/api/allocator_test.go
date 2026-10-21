@@ -337,11 +337,15 @@ func TestServerWithdrawalPostgres(t *testing.T) {
 	legacy := e.login(u2, uuid.NewString())
 	w := e.native("GET", "/config?node_id="+g.ID+"&last_sequence=0", legacy, nil)
 	e.want(w, 200, "")
-	legacyNode := decodeBody[struct {
+	// /config echoes the selected line (an older Core checks it); its server is the
+	// session's binding.
+	echoed := decodeBody[struct {
 		NodeID string `json:"node_id"`
 	}](t, w).NodeID
-	if conn.NodeID != servers[0].ID || legacyNode != servers[1].ID {
-		t.Fatalf("setup: v3 on %s, legacy on %s", conn.NodeID, legacyNode)
+	var legacySession model.NativeSession
+	e.db.Take(&legacySession, "token_hash = ?", refreshHash(legacy))
+	if echoed != g.ID || conn.NodeID != servers[0].ID || legacySession.NodeID != servers[1].ID {
+		t.Fatalf("setup: v3 on %s, legacy on %s (echoed %s)", conn.NodeID, legacySession.NodeID, echoed)
 	}
 	e.want(e.traffic(legacy, 1, 10, 10), 200, "")
 	revision := e.catalog(v3).Revision
@@ -382,10 +386,11 @@ func TestServerWithdrawalPostgres(t *testing.T) {
 	}
 	w = e.native("GET", "/config?node_id="+g.ID+"&last_sequence=2", legacy, nil)
 	e.want(w, 200, "")
+	e.db.Take(&legacySession, "id = ?", legacySession.ID)
 	if n := decodeBody[struct {
 		NodeID string `json:"node_id"`
-	}](t, w).NodeID; n != servers[2].ID {
-		t.Fatalf("older Core re-bound to %s", n)
+	}](t, w).NodeID; n != g.ID || legacySession.NodeID != servers[2].ID {
+		t.Fatalf("older Core re-bound to %s (echoed %s)", legacySession.NodeID, n)
 	}
 	// Disable the whole group: every lease ends, the line leaves the catalog and the
 	// devices are not asked to reconnect to it.
