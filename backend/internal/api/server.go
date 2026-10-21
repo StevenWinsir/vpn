@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync"
@@ -25,6 +26,16 @@ type Server struct {
 	catalogUpdates catalogSignal
 	// clock is time.Now in production; tests inject one to step through lease expiry.
 	clock func() time.Time
+	// random picks among equally loaded servers (math/rand/v2 in production); tests
+	// inject one to make every tie-break reproducible.
+	random func(n int) int
+}
+
+func (s *Server) randomIndex(n int) int {
+	if s.random == nil {
+		return rand.IntN(n)
+	}
+	return s.random(n)
 }
 
 func (s *Server) now() time.Time {
@@ -56,9 +67,14 @@ func newServer(db *gorm.DB, cfg config.Config, mail *authmail.Service) *gin.Engi
 
 // newServerAt also injects the clock the native and presence handlers read.
 func newServerAt(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock func() time.Time) *gin.Engine {
+	return newServerWith(db, cfg, mail, clock, nil)
+}
+
+// newServerWith also injects the allocator's tie-break source (nil: math/rand/v2).
+func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock func() time.Time, random func(int) int) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	hash, _ := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), cfg.BcryptCost)
-	s := &Server{db: db, cfg: cfg, dummyHash: hash, mail: mail, clock: clock}
+	s := &Server{db: db, cfg: cfg, dummyHash: hash, mail: mail, clock: clock, random: random}
 	r := gin.New()
 	// Only explicitly configured proxies (TRUSTED_PROXIES) may supply X-Forwarded-For;
 	// otherwise the TCP peer is the client address and forged headers are ignored.
@@ -139,6 +155,11 @@ func newServerAt(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock f
 	admin.POST("/nodes", s.adminNodeSave)
 	admin.POST("/nodes/:id", s.adminNodeSave)
 	admin.DELETE("/nodes/:id", s.adminNodeDelete)
+	admin.POST("/nodes/:id/health", s.adminNodeHealth)
+	admin.GET("/node-groups", s.adminGroupList)
+	admin.POST("/node-groups", s.adminGroupSave)
+	admin.POST("/node-groups/:id", s.adminGroupSave)
+	admin.DELETE("/node-groups/:id", s.adminGroupDelete)
 	admin.GET("/node-agents", s.adminAgentList)
 	admin.POST("/node-agents", s.adminAgentSave)
 	admin.POST("/node-agents/:id", s.adminAgentSave)

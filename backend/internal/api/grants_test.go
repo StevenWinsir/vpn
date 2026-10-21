@@ -119,6 +119,7 @@ func (e *grantEnv) addNode(name string, rate int64, withShared bool) model.Node 
 	if err = e.db.Create(&model.NodeConfig{NodeID: node.ID, Ciphertext: sealed, PlanIDs: "[]"}).Error; err != nil {
 		e.t.Fatal(err)
 	}
+	adoptServer(e.t, e.db, node)
 	return node
 }
 

@@ -112,6 +112,18 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 7. **`CLIENT_MIN_APP_VERSION`**：从仅作用于 `/grants` 扩展到 `/config` 与 `/connections`。在四平台新 Core 发布之前设置它会让旧 APP 无法选择线路，请保持为空。
 8. **回滚**：回滚到第 1 轮二进制时新列与表被忽略，设备上限回到旧语义；租约行保留，维护循环（第 1 轮已有）照常过期与清理。不要删除新列或表。
 
+## 节点组分配器、负载均衡与管理端组接口（handoff_node_use_history_and_load_balancing_c.md 第 3 轮）
+
+本轮没有新表、新列或新配置项，**无需迁移**；`-migrate` 照常可重复执行。网站管理页的节点组界面在第 4 轮接入，本轮现有 `/admin/nodes` 页面继续可用。
+
+1. **目录改为节点组**：客户端目录、网站 `/nodes` 与 `/client/bootstrap` 列出节点组（组名、地区、线路、倍率、组版本）。组可见需：组启用、套餐在允许列表内（空表示所有套餐）、专线组要求订阅允许专线、组内至少一台启用的服务器（production 下须受 Agent 管理）。下发的配置把代理名改写为组名，同组多台服务器对用户完全一样。迁移得到的“一组一台”与升级前同名同 ID；**发布后首次请求时，若第 1、2 轮期间有“只改 YAML”的服务器，目录标签会变化一次**（组版本与服务器版本不再相同），在线客户端收到一次 `profile_changed` 并重新获取配置。目录展示顺序由 Go 侧按（排序、名称、ID）字节序排列，库的排序规则若不是 C，含大小写混排或非 ASCII 名称的目录修订号也会在发布后变化一次。
+2. **分配规则**：接入（`/connections`、`/grants`、旧 Core 的 `/config`）在节点组行锁内选服务器：本设备已在线的服务器 → 用户在该组的固定服务器（健康且未满即用，不比较负载）→ 负载率（在线数/`max_connections`）最低者，相同则均匀随机 → 只有没有健康且未满的服务器时才用冷却中的服务器。全组满载返回 409 `group_full`；没有可用服务器返回 503 `group_unavailable`（旧 Core 的 `/config` 收到它已认识的 `client_config_unavailable`）。Agent 管理的组只在 Agent 在线、支持该协议的服务器中分配。
+3. **故障与重新分配**：停用、删除或移组的服务器上的在线租约在同一事务结束（`node_unavailable`），新 Core 收到 `connection_reassigned`，旧 Core 收到 `profile_changed` 后重新 `/config`，都被分到同组其他服务器；固定分配随之更新。停用或删除整组则结束组内全部租约（`group_unavailable`），线路从目录消失，不提示重连。容量调低不踢出在线设备，管理列表显示 `over_capacity`。
+4. **软冷却**：释放请求（`/connections/:id/release`，以及 `/grants/:id/revoke` 新增的可选 `reason`）带 `tunnel_unhealthy` 或 `tunnel_failed` 时记录健康事件。5 分钟内 `NODE_HEALTH_FAILURE_USERS`（默认 3）个**不同用户**报告同一服务器时，该服务器进入 `NODE_HEALTH_COOLDOWN_SECONDS`（默认 300 秒）冷却，到期自动恢复；冷却只影响新分配，不踢出在线设备。管理员可调用 `POST /api/v1/admin/nodes/:id/health` 立即清除（同时删除该服务器的健康事件，记审计 `node.health_cleared`）。
+5. **管理端接口**：`GET /api/v1/admin/node-groups`（组与服务器摘要、计量方式、混合计量警告、在线/容量合计，在线数由一次聚合查询得到）；`POST /api/v1/admin/node-groups`、`POST /api/v1/admin/node-groups/:id`（乐观版本、同套餐范围重名拒绝 `node_group_name_exists`、审计 `node_group.saved`）；`DELETE /api/v1/admin/node-groups/:id`（只删空组，`node_group_not_empty`）。`POST /api/v1/admin/nodes` 新增“分组”请求体：`yaml`、`group_id`、`max_connections`（1–10000）、`label`（≤40 字）、`enabled`、`version`，批量导入的每个代理成为该组的一台服务器；服务器名不再全局唯一。旧的按服务器请求体（地区/线路/倍率/套餐）保留到第 4 轮，只能编辑“一组一台”的服务器（否则 409 `node_group_managed`），重名检查改为同套餐范围内的组名（仍返回 `node_name_exists`）。服务器版本只在 YAML、启用状态或所属组变化时递增；改容量、备注不影响任何会话。保存组时把公开属性同步写入其服务器的旧列与 `node_configs.plan_ids`（过渡双写，服务器版本不变）。
+6. **合并同类服务器**：先在目标组导入或用分组请求体把服务器的 `group_id` 改为目标组（其上的设备会改连同组其他服务器），再删除已空的旧组。删除由旧接口产生的“一组一台”服务器时，其同 ID 组随之删除；用组接口建立的组保留到单独删除。
+7. **回滚**：回滚到第 2 轮二进制时组的多服务器语义消失：旧二进制按服务器列出目录，同组的多台服务器会以同名的多条线路出现，并且旧二进制仍按服务器名全局唯一检查新保存。回滚前若已合并服务器，用户会看到重名线路，这一点属于已知取舍（handoff 第 14 节）。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：

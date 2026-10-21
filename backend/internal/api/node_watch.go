@@ -41,6 +41,16 @@ type nativeCatalog struct {
 	Revision  string       `json:"revision"`
 	Reason    string       `json:"reason"`
 	Nodes     []nodeChoice `json:"nodes"`
+	// Connection is this session's latest lease taken by a v3 call (contract v3). It is
+	// part of the revision, so a device whose server is withdrawn wakes within seconds;
+	// it carries no expiry, so renewals never wake the long poll.
+	Connection *catalogConnection `json:"connection,omitempty"`
+}
+
+type catalogConnection struct {
+	ID      string `json:"id"`
+	GroupID string `json:"group_id"`
+	State   string `json:"state"`
 }
 
 func (s *Server) readNativeCatalog(c *gin.Context) (nativeCatalog, error) {
@@ -62,9 +72,16 @@ func (s *Server) readNativeCatalog(c *gin.Context) (nativeCatalog, error) {
 			}
 			return e
 		}
+		lease, e := latestLease(tx, sess.ID)
+		if e != nil {
+			return e
+		}
+		if lease != nil && lease.Method != model.LeaseByLegacy {
+			out.Connection = &catalogConnection{ID: lease.ID, GroupID: lease.GroupID, State: leaseState(*lease, now)}
+		}
 		var subscription model.Subscription
 		var sub *model.Subscription
-		e := tx.Where("user_id = ?", identity.UserID).First(&subscription).Error
+		e = tx.Where("user_id = ?", identity.UserID).First(&subscription).Error
 		if e == nil {
 			sub = &subscription
 		} else if !errors.Is(e, gorm.ErrRecordNotFound) {
@@ -85,10 +102,20 @@ func (s *Server) readNativeCatalog(c *gin.Context) (nativeCatalog, error) {
 		return nil
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err == nil {
-		data, _ := json.Marshal(struct {
-			Reason string       `json:"reason"`
-			Nodes  []nodeChoice `json:"nodes"`
-		}{out.Reason, out.Nodes})
+		var data []byte
+		if out.Connection == nil {
+			// Unchanged for sessions without a v3 lease (older Cores).
+			data, _ = json.Marshal(struct {
+				Reason string       `json:"reason"`
+				Nodes  []nodeChoice `json:"nodes"`
+			}{out.Reason, out.Nodes})
+		} else {
+			data, _ = json.Marshal(struct {
+				Reason     string             `json:"reason"`
+				Nodes      []nodeChoice       `json:"nodes"`
+				Connection *catalogConnection `json:"connection"`
+			}{out.Reason, out.Nodes, out.Connection})
+		}
 		out.Revision = nativeProfileVersion(data)
 	}
 	return out, err

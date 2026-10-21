@@ -29,10 +29,13 @@ const (
 	LeaseByGrant       = "grant"
 
 	// End reasons (allow-list; EndReason is "" while active).
-	LeaseReleased         = "released"
-	LeaseExpired          = "expired"
-	LeaseSessionRevoked   = "session_revoked"
-	LeaseNodeUnavailable  = "node_unavailable"
+	LeaseReleased        = "released"
+	LeaseExpired         = "expired"
+	LeaseSessionRevoked  = "session_revoked"
+	LeaseNodeUnavailable = "node_unavailable"
+	// LeaseGroupUnavailable: the whole group was disabled or deleted; the line is gone,
+	// so the client is not asked to reconnect to it.
+	LeaseGroupUnavailable = "group_unavailable"
 	LeaseReplaced         = "replaced"
 	LeaseEntitlementEnded = "entitlement_ended"
 	LeaseTunnelUnhealthy  = "tunnel_unhealthy"

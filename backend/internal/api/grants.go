@@ -197,26 +197,12 @@ func (s *Server) createGrant(c *gin.Context) {
 		if sess.MeteringSource == meteringClient || sess.LastSequence > 0 {
 			return &apiError{409, "metering_source_mismatch", "此会话已使用客户端上报，不能再使用节点计量"}
 		}
-		server, e := s.groupServer(tx, nodeID.String(), avoid)
+		alloc, e := s.allocate(tx, sess, sub, nodeID.String(), avoid, admitGrant, now)
 		if e != nil {
 			return e
 		}
-		profile, e := s.catalogProfile(tx, sub, server)
-		if e != nil {
-			return e
-		}
-		var agent model.NodeAgent
-		unavailable := &apiError{503, "agent_unavailable", "该线路的节点控制服务暂不可用"}
-		if e = tx.Where("node_id = ? AND enabled = ?", server, true).First(&agent).Error; e != nil {
-			if errors.Is(e, gorm.ErrRecordNotFound) {
-				return unavailable
-			}
-			return e
-		}
+		profile, agent, unavailable := alloc.Profile, alloc.Agent, agentUnavailable()
 		proxyType, _ := profile.Proxy["type"].(string)
-		if agent.LastSeenAt == nil || now.Sub(*agent.LastSeenAt) > s.cfg.AgentStale() || !agentSupports(agent, proxyType) {
-			return unavailable
-		}
 		credential, e := nodes.NewCredential(proxyType)
 		if e != nil {
 			return unavailable
@@ -233,7 +219,7 @@ func (s *Server) createGrant(c *gin.Context) {
 		// The grant and the device's online lease are created together; the previous
 		// grant's lease (same session) is replaced.
 		id := uuid.NewString()
-		if _, e = s.acquireLease(tx, sess, sub, catalogTarget(profile.Node), model.LeaseByGrant, id, "", now); e != nil {
+		if _, e = s.acquireLease(tx, sess, sub, alloc.Target, model.LeaseByGrant, id, "", now); e != nil {
 			return e
 		}
 		period, e := ensurePeriod(tx, sub)
@@ -366,8 +352,19 @@ func (s *Server) getGrant(c *gin.Context) {
 // revokeGrant is the client asking to be disconnected at the node. It is idempotent
 // and only changes state; the reservation is released when the node confirms.
 func (s *Server) revokeGrant(c *gin.Context) {
-	var in struct{}
+	// Reason is optional (older Cores send {}); a failure reason is a health report.
+	var in struct {
+		Reason string `json:"reason"`
+	}
 	if !decode(c, &in) {
+		return
+	}
+	endReason, known := releaseReasons[in.Reason]
+	if in.Reason == "" {
+		endReason, known = model.LeaseReleased, true
+	}
+	if !known {
+		fail(c, 400, "invalid_release", "释放请求无效")
 		return
 	}
 	var out grantResponse
@@ -382,7 +379,13 @@ func (s *Server) revokeGrant(c *gin.Context) {
 				return e
 			}
 		}
-		if e = s.endLeases(tx, now, model.LeaseReleased, "grant_id = ?", g.ID); e != nil {
+		var lease model.ConnectionLease
+		switch e = tx.Where("grant_id = ? AND state = ?", g.ID, model.LeaseActive).Take(&lease).Error; {
+		case e == nil:
+			if e = s.endWithReport(tx, &lease, endReason, now); e != nil {
+				return e
+			}
+		case !errors.Is(e, gorm.ErrRecordNotFound):
 			return e
 		}
 		if sess.GrantID == g.ID {

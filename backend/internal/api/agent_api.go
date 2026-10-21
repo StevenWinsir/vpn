@@ -215,18 +215,16 @@ func (s *Server) grantVerdict(tx *gorm.DB, g model.ConnectionGrant, user *model.
 	return "", s.grantDeadline(now, &sess, sub, sess.LastSeenAt)
 }
 
+// nodeStillGranted: the server is enabled and its group is still one sub may use.
 func (s *Server) nodeStillGranted(tx *gorm.DB, nodeID string, sub *model.Subscription) bool {
-	var row catalogRow
-	err := tx.Table(s.cfg.Schema+".nodes AS n").Select("n.*, c.plan_ids").Joins("JOIN "+s.cfg.Schema+".node_configs AS c ON c.node_id = n.id").
-		Where("n.id = ? AND n.enabled = ?", nodeID, true).Take(&row).Error
+	var group model.NodeGroup
+	err := tx.Table(s.cfg.Schema+".node_groups AS g").Select("g.*").Joins("JOIN "+s.cfg.Schema+".nodes AS n ON n.group_id = g.id").
+		Where("n.id = ? AND n.enabled = ?", nodeID, true).Take(&group).Error
 	if err != nil {
 		return false
 	}
-	var plans []string
-	if json.Unmarshal([]byte(row.PlanIDs), &plans) != nil {
-		return false
-	}
-	return !(row.LineType == "dedicated" && !sub.AllowDedicated || len(plans) != 0 && !slices.Contains(plans, sub.PlanID))
+	visible, err := groupVisible(group, sub)
+	return err == nil && visible
 }
 
 func lockUserRow(tx *gorm.DB, id string) (*model.User, error) {

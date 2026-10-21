@@ -38,6 +38,7 @@ func TestTrafficTimingBaseline(t *testing.T) {
 	if err := db.Create(&model.NodeConfig{NodeID: node.ID, Ciphertext: sealed, PlanIDs: "[]"}).Error; err != nil {
 		t.Fatal(err)
 	}
+	adoptServer(t, db, node)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("Timing-Test-Password!"), 10)
 	user := model.User{ID: uuid.NewString(), Email: uuid.NewString() + "@example.invalid", Name: "timing", PasswordHash: string(hash), Role: "user", Status: "active"}
 	if err := db.Create(&user).Error; err != nil {

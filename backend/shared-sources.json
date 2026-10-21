@@ -14,7 +14,7 @@
     {
       "source": "shared/contracts/native-v3.json",
       "destination": "backend/internal/api/testdata/native_v3_contract.json",
-      "sha256": "6c2105206a5ced696353d3c9f5e17e68ca175440ee7611ecc18a57847ca09e33"
+      "sha256": "cc5c0ea8cf7162471c7418446098a9a6f3b507391cae47d1784025835fd4cf77"
     },
     {
       "source": "shared/nodepolicy/go.mod",

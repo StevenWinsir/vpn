@@ -75,6 +75,14 @@ func newIsolatedNativeDatabase(t *testing.T) (*gorm.DB, config.Config) {
 	}
 	sqlDB, _ := db.DB()
 	t.Cleanup(func() { _ = sqlDB.Close() })
+	// Drop the schema when the test ends (before the pool closes; cleanups run last in,
+	// first out): AutoMigrate's information_schema queries slow down with every schema
+	// left behind, which pushed the package past CI's 10-minute limit.
+	t.Cleanup(func() {
+		if os.Getenv("NATIVE_TEST_KEEP_SCHEMA") == "" {
+			_ = db.Exec(`DROP SCHEMA IF EXISTS "` + cfg.Schema + `" CASCADE`).Error
+		}
+	})
 	if err = store.Migrate(db, cfg); err != nil {
 		t.Fatal(err)
 	}

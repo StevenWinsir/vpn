@@ -88,6 +88,18 @@ func TestV3FixtureFitsLiveTypes(t *testing.T) {
 		AvoidNodeID string `json:"avoid_node_id"`
 	}
 	strict(t, c.section(t, "grant_create", "request"), &request)
+	var catalog nativeCatalog
+	strict(t, c.section(t, "catalog_connection", "response"), &catalog)
+	if catalog.Connection == nil || catalog.Connection.State != "ended" || len(catalog.Revision) != 64 {
+		t.Fatal("catalog_connection fixture")
+	}
+	var revoke struct {
+		Reason string `json:"reason"`
+	}
+	strict(t, c.section(t, "grant_revoke", "request"), &revoke)
+	if _, known := releaseReasons[revoke.Reason]; !known {
+		t.Fatal("grant_revoke reason is not a release reason")
+	}
 	var reasons []string
 	for reason := range releaseReasons {
 		reasons = append(reasons, reason)
