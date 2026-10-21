@@ -444,6 +444,51 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.snapshot.state, .blocked)
     }
 
+    // Node groups round 6: the device limit is checked when connecting. The refusal is the
+    // Core's sentence; the account stays signed in and may try again.
+    func testDeviceLimitAtConnectIsShownInTheCoresWordsAndStaysSignedIn() async {
+        let transport = FakeTransport()
+        transport.handler = { [self] command, _, _ in
+            command == "connect" ? reply(ready, actionError: ["code": "device_limit", "message": "已达到同时在线设备上限，请先断开其他设备"]) : reply(ready)
+        }
+        let controller = makeController(transport)
+        await controller.signIn(email: "fixture@example.invalid", password: "pw", remember: false)
+        await controller.connect()
+        XCTAssertEqual(controller.message, "已达到同时在线设备上限，请先断开其他设备")
+        XCTAssertEqual(controller.phase, .signedIn)
+        XCTAssertEqual(controller.snapshot.state, .ready)
+    }
+
+    // connection_reassigned: the Core moves to another server of the line by itself (stopping,
+    // preparing, connecting, connected). The app only follows; it neither signs out nor sends
+    // a command that would cancel the reconnect.
+    func testServerSideMoveIsFollowedWithoutACommand() async throws {
+        var connected = ready as! [String: Any]
+        connected["state"] = "connected"
+        var moving = connected
+        moving["state"] = "preparing"
+        moving["last_error"] = ["code": "connection_reassigned", "message": "线路服务器已调整，正在为你重新连接"]
+        let reads = Counter()
+        let transport = FakeTransport()
+        transport.handler = { command, _, _ in
+            guard command == "read_snapshot" else { return reply(connected) }
+            reads.logins += 1
+            return envelope(result: reads.logins < 4 ? moving : connected)
+        }
+        let controller = makeController(transport)
+        await controller.signIn(email: "fixture@example.invalid", password: "pw", remember: false)
+        var sawMoving = false
+        for _ in 0..<200 where !(sawMoving && controller.snapshot.state == .connected) {
+            if controller.snapshot.state == .preparing { sawMoving = true }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(sawMoving)
+        XCTAssertEqual(controller.snapshot.state, .connected)
+        XCTAssertEqual(controller.phase, .signedIn)
+        XCTAssertFalse(transport.commands.contains("disconnect"))
+        XCTAssertFalse(transport.stopped)
+    }
+
     func testLostWorkerSignsOutAndNextLoginStartsAFreshCore() async {
         let transport = FakeTransport()
         let lost = Counter()

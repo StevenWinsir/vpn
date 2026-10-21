@@ -165,6 +165,23 @@ func TestLogoutReleasesTheLease(t *testing.T) {
 	}
 }
 
+// Shutdown is what every platform's exit runs (service.Close on the desktop worker's pipe
+// closing or IPC shutdown, mobile.Stop in the Android VPN process and the iOS extension): the
+// tail is settled and the lease released before the session is revoked.
+func TestShutdownSettlesThenReleasesThenRevokes(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	h.engine.up.Store(3 * mib)
+	h.m.Shutdown(t.Context())
+	r := h.f.releasesSeen()
+	if len(r) != 1 || r[0].reason != "user" || h.f.logoutHits.Load() != 1 {
+		t.Fatalf("shutdown: releases %+v logouts %d", r, h.f.logoutHits.Load())
+	}
+	if _, up, _, seq := h.ledger(); up != 3*mib || h.f.conns.atRelease[0] != seq {
+		t.Fatalf("released before the tail was settled: up %d, sequence at release %d of %d", up, h.f.conns.atRelease[0], seq)
+	}
+}
+
 // The administrator withdraws the server: the Core stops, settles, and reconnects once to
 // the same line on another server, with a continuous ledger.
 func TestReassignmentReconnectsOnce(t *testing.T) {
