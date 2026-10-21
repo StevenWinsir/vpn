@@ -255,6 +255,24 @@ func (s *Server) nativeSnapshotWith(sess model.NativeSession, sub *model.Subscri
 
 // sessionSnapshot is the session and entitlement verdict without lease fields.
 func (s *Server) sessionSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time, transactions ...*gorm.DB) nativeState {
+	db := s.db
+	if len(transactions) == 1 {
+		db = transactions[0]
+	}
+	return s.sessionSnapshotKnowing(sess, sub, now, db, nil)
+}
+
+// admittedSnapshot is the snapshot of a session just admitted: the profile and lease
+// it was given are already at hand, so the admission (under the group lock) reads
+// neither again.
+func (s *Server) admittedSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time, tx *gorm.DB, lease *model.ConnectionLease, profile *catalogProfile) nativeState {
+	out := s.sessionSnapshotKnowing(sess, sub, now, tx, profile)
+	s.withLease(&out, lease, now)
+	return out
+}
+
+// sessionSnapshotKnowing may reuse known, the session's own rendered profile.
+func (s *Server) sessionSnapshotKnowing(sess model.NativeSession, sub *model.Subscription, now time.Time, db *gorm.DB, known *catalogProfile) nativeState {
 	out := nativeState{ServerTime: now, SessionIdleTimeout: int(s.cfg.IdleTTL() / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: int(s.cfg.ReportInterval() / time.Second), LeaseSeconds: int(s.cfg.Lease() / time.Second), MeteringSource: sessionSource(sess), RatePermille: sessionRate(sess)}
 	if sub != nil {
 		out.SubscriptionExpiresAt = &sub.ExpiresAt
@@ -270,21 +288,17 @@ func (s *Server) sessionSnapshot(sess model.NativeSession, sub *model.Subscripti
 		case !nativeAuthorizationBound(sess, sub):
 			out.Reason = "subscription_changed"
 		case sess.MeteringSource == meteringNode:
-			db := s.db
-			if len(transactions) == 1 {
-				db = transactions[0]
-			}
 			out.Reason = s.grantReason(db, sess, sub, now, &out)
 		default:
 			var data []byte
 			var err error
 			if s.cfg.ClientNodeCatalog {
-				db := s.db
-				if len(transactions) == 1 {
-					db = transactions[0]
-				}
 				var profile catalogProfile
-				profile, err = s.catalogProfile(db, sub, sess.NodeID)
+				if known != nil && known.Node.ID == sess.NodeID {
+					profile = *known
+				} else {
+					profile, err = s.catalogProfile(db, sub, sess.NodeID)
+				}
 				data = profile.Data
 			} else {
 				data, err = s.readNativeProfile(sub.PlanID)
@@ -394,20 +408,27 @@ func (s *Server) nativeConfig(c *gin.Context) {
 					return &apiError{409, "traffic_sequence", "切换节点前必须确认当前流量批次"}
 				}
 			}
+			// The selection names a group (an older catalog's server id resolves to its
+			// group); without one the Core stays on its current line, else the first.
 			selected := nodeID
 			if selected == "" {
 				selected = sess.NodeID
 			}
-			profile, profileErr := s.catalogProfile(tx, sub, selected)
-			if profileErr != nil && nodeID == "" && selected != "" {
-				profile, profileErr = s.catalogProfile(tx, sub, "")
+			alloc, allocErr := s.allocate(tx, sess, sub, selected, "", admitLegacy, now)
+			if business := (*apiError)(nil); nodeID == "" && errors.As(allocErr, &business) && business.Code == "group_unavailable" {
+				alloc, allocErr = s.allocate(tx, sess, sub, s.firstVisibleGroup(tx, sub), "", admitLegacy, now)
 			}
-			if profileErr != nil {
-				return profileErr
+			if business := (*apiError)(nil); errors.As(allocErr, &business) && business.Code == "group_unavailable" {
+				// The code an older Core already knows (plan 5.5).
+				return &apiError{503, "client_config_unavailable", "套餐线路配置尚未就绪，请联系管理员"}
 			}
+			if allocErr != nil {
+				return allocErr
+			}
+			profile := alloc.Profile
 			catalog = &profile
 			data, sess.NodeID, sess.RatePermille = profile.Data, profile.Node.ID, profile.Node.RatePermille
-			target = catalogTarget(profile.Node)
+			target = alloc.Target
 		} else {
 			data, e = s.readNativeProfile(sub.PlanID)
 			if e != nil {
@@ -417,15 +438,16 @@ func (s *Server) nativeConfig(c *gin.Context) {
 		fingerprint := nativeEntitlementFingerprint(sub)
 		// An older Core selects (and later connects) through /config: it is admitted here,
 		// under the same online cap and capacity as POST /connections (plan 5.5).
-		if _, e = s.acquireLease(tx, sess, sub, target, model.LeaseByLegacy, "", "", now); e != nil {
+		lease, e := s.acquireLease(tx, sess, sub, target, model.LeaseByLegacy, "", "", now)
+		if e != nil {
 			return e
 		}
 		sess.SubscriptionID, sess.SubscriptionStartsAt = &sub.ID, &sub.StartsAt
-		sess.EntitlementFingerprint, sess.ProfileVersion, sess.MeteringSource = fingerprint, nativeProfileVersion(data), meteringClient
-		if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion, "node_id": sess.NodeID, "rate_permille": sessionRate(*sess), "metering_source": meteringClient}).Error; e != nil {
+		sess.EntitlementFingerprint, sess.ProfileVersion, sess.MeteringSource, sess.LastSeenAt = fingerprint, nativeProfileVersion(data), meteringClient, now
+		if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion, "node_id": sess.NodeID, "rate_permille": sessionRate(*sess), "metering_source": meteringClient, "last_seen_at": now}).Error; e != nil {
 			return e
 		}
-		status = s.nativeSnapshot(*sess, sub, now, tx)
+		status = s.admittedSnapshot(*sess, sub, now, tx, lease, catalog)
 		return nil
 	})
 	if s.nativeFailure(c, err) {

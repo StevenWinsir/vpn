@@ -35,7 +35,19 @@ type presenceEnv struct {
 
 const presencePassword = "Presence-Test-Password!"
 
+// presenceHash is computed once: allocation tests create hundreds of users.
+var presenceHash = sync.OnceValue(func() string {
+	hash, _ := bcrypt.GenerateFromPassword([]byte(presencePassword), 10)
+	return string(hash)
+})
+
 func newPresenceEnv(t *testing.T, mutate func(*config.Config)) *presenceEnv {
+	t.Helper()
+	return newPresenceEnvWith(t, mutate, nil)
+}
+
+// newPresenceEnvWith also injects the allocator's tie-break source.
+func newPresenceEnvWith(t *testing.T, mutate func(*config.Config), random func(int) int) *presenceEnv {
 	t.Helper()
 	db, cfg := newIsolatedNativeDatabase(t)
 	cfg.ClientNodeCatalog = true
@@ -47,7 +59,7 @@ func newPresenceEnv(t *testing.T, mutate func(*config.Config)) *presenceEnv {
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(40)
 	e := &presenceEnv{t: t, db: db, cfg: cfg, at: time.Date(2030, 1, 2, 10, 7, 30, 0, time.UTC)}
-	e.router = newServerAt(db, cfg, authmail.NewService(db, cfg), e.now)
+	e.router = newServerWith(db, cfg, authmail.NewService(db, cfg), e.now, random)
 	return e
 }
 
@@ -85,6 +97,19 @@ func (e *presenceEnv) server(name string) model.Node {
 	return node
 }
 
+// adoptServer gives a fixture server written without a group the one-server group of
+// its own id, as the migration's backfill does (D3). Clients only see groups.
+func adoptServer(t *testing.T, db *gorm.DB, node model.Node) {
+	t.Helper()
+	group := model.NodeGroup{ID: node.ID, Name: node.Name, Region: node.Region, LineType: node.LineType, RatePermille: node.RatePermille, PlanIDs: "[]", Enabled: true, Version: node.Version}
+	if err := db.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Node{}).Where("id = ?", node.ID).Update("group_id", node.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type presenceUser struct {
 	model.User
 	sub model.Subscription
@@ -92,8 +117,7 @@ type presenceUser struct {
 
 func (e *presenceEnv) user(maxDevices int) presenceUser {
 	e.t.Helper()
-	hash, _ := bcrypt.GenerateFromPassword([]byte(presencePassword), 10)
-	u := model.User{ID: uuid.NewString(), Email: uuid.NewString() + "@example.invalid", Name: "presence", PasswordHash: string(hash), Role: "user", Status: "active"}
+	u := model.User{ID: uuid.NewString(), Email: uuid.NewString() + "@example.invalid", Name: "presence", PasswordHash: presenceHash(), Role: "user", Status: "active"}
 	if err := e.db.Create(&u).Error; err != nil {
 		e.t.Fatal(err)
 	}

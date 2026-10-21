@@ -524,3 +524,42 @@
 - **关键数据**：并发 10 设备接入成功 2；硬杀设备名额在第 90 秒回收；`/traffic` p50 +14%、p95 +8%。耗时首版为 p50 +29%（续期、历史写入、快照读租约三条额外语句），经“续期返回行”“续期与历史合并为一条 CTE 语句”“新批次会话更新同时写 last_seen_at”降到预算内。
 - **设计取舍（实施中确定）**：旧 Core 在选择线路时就调用 `/config`，因此选择会暂时占位最长 90 秒；旧 Core 的租约过期后不在空闲时提示 `profile_changed`（否则旧 APP 闲置 90 秒后显示未就绪），改由它连接时的首报按完整检查重新接入。订阅变化使其他会话授权失效时，接入时即结束它们的租约，避免新设备被不能续期的旧设备挡住 90 秒。仓库中没有管理员停用账号的接口，停用账号由统计查询排除。
 - **遗留与归属**：目录长轮询中的本会话 `connection` 摘要与修订号（随重新分配在第 3 轮实现）；健康事件写入（`tunnel_unhealthy`/`tunnel_failed` 本轮只记为结束原因，软冷却在第 3 轮）；完整分配器（第 3 轮）；网站界面（第 4 轮）；Core 适配与 Core 文案（第 5 轮）。发布注意：D1 默认值使 pro/max 同时在线上限立即为 2；`CLIENT_MIN_APP_VERSION` 在新 Core 发布前须保持为空（见 DEPLOYMENT.md）。
+
+### 第 3 轮：后端节点组分配器、负载均衡与管理端 API（2026-10-21）
+
+- **分支/PR**：`worktree-nodes-round3-allocator`，PR 见 GitHub（StevenWinsir/vpn）。基线 c6abd5a（#52 合并后）。本轮无新表、新列、新配置项，无需迁移。
+- **交付文件**
+  - `backend/internal/api/allocator.go`（新）：分配器。`lockGroup`（组 ID 或旧服务器 ID 解析到组，D3，并取组行锁，锁顺序 用户→会话→订阅→组）；`allocate` 在组行锁内用一条语句读出组内已启用服务器、各自有效租约数（本设备自己的租约不计负载）、本设备所在服务器与用户首选；`pickServer`（纯函数：本设备复用 → 固定分配（健康且未满即用，不比负载）→ 负载率最低（整数交叉相乘）同负载均匀随机 → 只有无健康且未满时才用冷却服务器；全满 `group_full`，无候选 `group_unavailable`）；选中服务器若配置不可解密/不合法或 Agent 不支持该协议则像停用一样排除后重选；`touchAssignment`（首次写入；首选停用/删除/Agent 离线/冷却/刚失败时改为新服务器；仅满载时保留）；`reportFailure`（健康事件 + 5 分钟内不同用户数达 `NODE_HEALTH_FAILURE_USERS` 时冷却 `NODE_HEALTH_COOLDOWN_SECONDS`）。三种接入模式：`/connections`（Agent 管理的组返回 `grant_required`）、旧 Core `/config`、`/grants`（只在 Agent 在线的受管服务器中分配，否则 `agent_unavailable`）。随机源经 `newServerWith` 注入，生产为 math/rand/v2。
+  - `backend/internal/api/node_catalog.go`：目录改为节点组。`visibleGroups` 一条联表查询（服务器 + 组，只为选中服务器取密文）+ Agent 表；组可见 = 启用、套餐、专线权益、至少一台可承载的启用服务器（production 须受管）；有受管服务器的组为 node_reported。`catalogProfile` 为指定服务器渲染，代理名改写为组名，倍率等公开属性取组；目录标签仍由可见组元数据计算（组 ID 顺序），网站/长轮询列表按（排序、名称、ID）。
+  - `backend/internal/api/admin_groups.go`（新）：`GET/POST /admin/node-groups`、`POST/DELETE /admin/node-groups/:id`（乐观版本、同套餐范围重名 `node_group_name_exists`、只删空组 `node_group_not_empty`、停用/删除组结束组内租约 `group_unavailable`、保存组时双写其服务器旧列与 `plan_ids`、审计）；列表的在线数由一次聚合查询得到，含协议、健康（ok/cooldown/agent_offline/config_error）、`over_capacity`、计量方式与混合警告。
+  - `backend/internal/api/admin_nodes.go`：`adminTransaction`（管理员行锁 + advisory lock 708614922，之后一律 组→服务器→租约）；分组请求体（`group_id`、`max_connections`、`label`）导入/编辑/移组，服务器版本只随 YAML（规范化比较）、启用状态、移组递增；停用/删除/移组结束其租约 `node_unavailable`；`POST /admin/nodes/:id/health` 清除冷却与健康事件；取消服务器名全局唯一。旧按服务器请求体保留（第 4 轮前端改造前），只能编辑“一组一台”服务器（否则 `node_group_managed`），重名检查改为同套餐范围组名（仍返回 `node_name_exists`）。删除旧接口产生的同 ID 组服务器时其空组随之删除，组接口建立的组保留。第 1 轮遗留的“先锁服务器再锁组”已改为约定顺序。
+  - `connections.go`、`grants.go`、`native.go`：三条接入路径改用分配器；`/config` 的 `group_unavailable` 对旧 Core 改报 `client_config_unavailable`；接入响应的快照直接复用刚渲染的配置与租约（锁内少读 3 次）；会话更新同时写 `last_seen_at`。释放与 `POST /grants/:id/revoke`（新增可选 `reason`，同一白名单）的失败原因先取组锁再结束租约并记健康事件。
+  - `lease.go`：快照中服务器被撤下的 `connection_reassigned`（旧 Core 为 `profile_changed`）优先于此时的 `client_config_unavailable`/`profile_changed`；结束本设备旧租约与订阅变化失效租约合并为一条语句；`latestLease` 以 active 优先、再按获取/结束时间排序（冻结时钟下两条同时刻租约原先按 UUID 随机取）。`model/presence.go` 新增结束原因 `group_unavailable`。
+  - `node_watch.go`：`/client/nodes` 带本会话 v3 租约的 `connection` 摘要（ID、组 ID、状态，无到期时间）并计入修订号；旧 Core 会话目录与修订号不变。`agent_api.go`：Agent 判定改按服务器所属组的可见性。
+  - `shared/contracts/native-v3.json`（及后端副本、`shared-sources.json`）：新增 `catalog_connection`、`grant_revoke` 两例与说明。`docs/native-client-protocol.md`、`backend/DEPLOYMENT.md` 新章节。测试夹具中直接写入的无组服务器改用 `adoptServer` 建同 ID 组（与迁移回填一致）。
+- **测试结果**
+
+| 编号 | 项目 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| R3-01 | 选择规则（本设备、固定、负载率非人数、冷却仅兜底、全满）；同负载时注入随机源每台都可被选；生产随机源 1000 次分配 5 台各在 140–260 次 | `TestPickServerRules` | PASS |
+| R3-02 | 均衡：5 台各容量 5，25 个新用户依次接入每台恰好 5，第 26 个 `group_full`；YAML 代理名为组名；目录同组只出现一次；容量 2/4/6 在第 6 次接入后为 1/2/3、最终 2/4/6；注入随机源 3 种取值分别落到 3 台 | `TestAllocatorBalancesPostgres` | PASS |
+| R3-03 | 固定分配：首次 s3 → 释放、首选被压成最忙、登出再登录、刷新目录后仍回 s3；s3 满载时新设备去别处、首选仍为 s3；s3 停用后在线设备收到 `connection_reassigned`，重新接入分到他处、首选更新 | `TestStickyAssignmentPostgres` | PASS |
+| R3-04 | 容量并发：总容量 25 的组同时 200 个不同用户接入，恰好 25 个 201、175 个 `group_full`，库中无超额服务器；同时另一组 30 个接入全部成功；同时 20 次管理员保存全部 200；另一组 40 台设备反复接入/释放时管理员反复停用/启用其中一台，全部成功、无死锁，最终停用的服务器上无租约 | `CAPACITY_RUNS=20 go test -race -run TestGroupCapacityConcurrencyPostgres` | PASS（连续 20 次零超额，-race，80 秒） |
+| R3-05 | 撤下与重新分配：停用服务器 → 租约立即 `node_unavailable`、v3 会话 `connection_reassigned`、目录修订号变化且 `connection.state=ended`、重接入避开；删除旧 Core 所在服务器 → `/traffic` 快照 `profile_changed`、固定分配随外键删除、再次 `/config` 分到剩余服务器；停用整组 → 全部租约结束、目录消失、快照 `client_config_unavailable`（不提示重连）、接入 `group_unavailable` | `TestServerWithdrawalPostgres` | PASS |
+| R3-06 | node_reported：Agent 离线的服务器从不分配，全部离线 `agent_unavailable`；Agent 失联后 grant 不再延长，`/session` 不再续期其租约，对账后租约以 `expired` 结束；`/grants/:id/revoke` 原因白名单（非法 400 `invalid_release`）与 `tunnel_failed` 记健康事件 | `TestGrantAllocationSkipsOfflineAgentsPostgres` | PASS |
+| R3-07 | 软冷却：同一用户报告 4 次不触发；第 3 个不同用户触发（冷却至 +300 秒）；冷却中只在健康服务器满载时被使用；301 秒后自动恢复；管理员清除同时删除健康事件并记审计 | `TestSoftCooldownPostgres` | PASS |
+| R3-08 | 版本：改容量/备注不改服务器版本、任何会话原因与目录修订号；冷却不改；改某台 YAML 只让该服务器的会话 `profile_changed` 且目录修订号不变；改组倍率让全组 `profile_changed`、组版本 +1、服务器旧列双写且服务器版本不变，重新接入按组倍率计费 | `TestProfileVersionRulesPostgres` | PASS |
+| R3-09 | 管理 API：同范围重名（含“所有套餐”）拒绝、不相交套餐允许、保留名与未知套餐拒绝；组/空组删除的乐观版本冲突；同名服务器导入同组；分组请求体校验与未知组 404；旧请求体不能编辑受管组服务器；在线数聚合与逐台统计一致、容量合计；调低容量不踢人并显示 `over_capacity`；非空组不可删；审计条数精确 | `TestAdminGroupAPIPostgres` | PASS |
+| R3-10 | 契约：native-v3 新增两例严格解码，`/client/nodes` 带连接摘要与 `grant_revoke` 响应的字段形状与夹具一致；共享快照一致 | `TestV3FixtureFitsLiveTypes`、上述形状断言、`sync-backend-shared.py --check` | PASS |
+| R3-11 | 全量后端测试（私有 PG、`-race`），含真实 Core、Node Agent 与 billtest 端到端；既有 grant、Agent、目录、管理节点、第 1/2 轮测试按新语义（夹具建组）全部通过 | `python3 scripts/test-native.py` | PASS（322 PASS、0 FAIL；9 SKIP = 7 个按环境变量启用的夹具装配 + 2 个按需运行的耗时测试） |
+| R3-12 | 500 并发接入同一组（5 台各容量 200，本机私有 PG，连接池 80，进程内 httptest） | `ADMISSION_TIMING=500 go test -run TestAdmissionTimingPostgres` | **未达标**：p95 2.23–2.32 s（目标 200 ms），p50 0.80–0.83 s，吞吐约 200 次/秒/组；同一测试串行时单次 p50 3.0 ms、p95 7.8 ms。分析见下 |
+| R3-13 | 第 1 轮真实二进制迁移/回滚演练在本轮代码上（目录、配置、网站目录、管理列表与旧版逐字节一致） | `python3 scripts/test-node-groups-migration.py` | PASS（7 项） |
+| R3-14 | `go vet`、`gofmt`、仅后端目录独立构建 | `go vet ./...`、`gofmt -l`、`scripts/test-backend-standalone.py` | PASS（107 个文件，tests/vet、Linux amd64/arm64） |
+| R3-15 | `/traffic` 耗时对比第 2 轮（同一私有 PG、1000 次上报） | `TRAFFIC_TIMING_REPORTS=1000 go test -run TestTrafficTimingBaseline` | PASS：与 c6abd5a 交替各 3 次，p50 446 → 475 µs（+6%），p95 719 → 776 µs（+8%）；快照多一次组联表，属预期 |
+| R3-16 | 节点目录真实浏览器验收（管理端旧页面仍走旧请求体） | `scripts/test-node-catalog.py --skip-build`（CI） | 以 PR 的 CI 结果为准；本轮无前端改动，本机未运行 |
+| R3-17 | 网站节点组管理界面、Core 适配（重新分配自动重连、`avoid_node_id` 重试、释放原因） | — | NOT RUN（第 4、5 轮） |
+
+- **关键数据**：200 并发抢 25 个名额，20 次运行均恰好 25 成功、0 超额；5×5 组依次 25 个用户每台恰好 5；1000 次同负载分配 5 台分布在 140–260 之内；500 并发同组 p95 约 2.3 s、吞吐约 200 次/秒。
+- **R3-12 瓶颈分析与取舍**：分配按规划 6.3 在节点组行锁内串行，同组接入必然排队；单次接入在锁内约 9 次数据库往返（组锁、候选+负载+首选合并查询、Agent 表、可见目录与选中服务器密文、首选写入、结束旧租约、统计其他设备、写租约、会话更新、提交），每条语句库内耗时均 <0.1 ms，时间主要是往返和高并发下的调度等待（串行 3 ms/次，并发时锁内约 5 ms/次）。500 个同时到达的请求在 200 ms 内全部完成需要每次持锁 <0.4 ms，在“组行锁串行化”的设计下不可达；本轮已把锁内语句从约 14 次减到约 9 次（Agent 表只读一次、候选与负载合并、响应快照复用、两条结束租约合并、`last_seen_at` 并入会话更新），提升约 6%。取舍：保留组锁换取“统计负载与写租约之间不可插入”的精确容量与严格的负载均衡；实际场景中设备连接分散到达，同一组瞬时 500 并发相当于全组用户同秒连接，按 200 次/秒约 2.5 秒排空，不丢请求、不超额。若以后需要更高单组吞吐，可改为“无锁读负载 → 只锁选中服务器行 → 锁内复核该服务器负载，满则换下一台”，同组不同服务器可并行（负载均衡变为近似，容量仍精确），留待第 7 轮压测结果决定。
+- **设计取舍（实施中确定）**：管理端 `/admin/nodes` 同时接受分组与旧请求体，避免第 4 轮前端改造前现有管理页与发布演练失效；旧请求体只能操作“一组一台”。无组服务器（迁移后由旧二进制写入）不再按 D3 视为自身组，客户端看不到，直到下一次 `-migrate` 回填（doctor 的 `ungrouped_servers` 会提示）。整组停用/删除使用新的结束原因 `group_unavailable`，以区别于“换服务器重连”。`connection` 摘要只给 v3 租约，旧 Core 的目录修订号不受在线状态影响。发布时目录标签可能变化一次（见 DEPLOYMENT.md 本轮第 1 条）。
+- **遗留与归属**：组的套餐或线路类型修改使部分在线用户不再可见时，其租约不立即结束（下一次快照为 `client_config_unavailable`，`/traffic` 仍会续期至断开），第 5 轮 Core 处理该原因后再评估是否在保存组时结束；网站节点组管理与 `/nodes` 页（第 4 轮）；Core 的重新分配自动重连、`avoid_node_id` 重试与释放原因（第 5 轮）；单组高并发吞吐（见上，第 7 轮压测决定）；旧请求体在第 4 轮前端改造后移除。

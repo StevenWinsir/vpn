@@ -96,45 +96,70 @@ func (s *Server) createConnection(c *gin.Context) {
 		if lease == nil && sess.SubscriptionID != nil && in.LastSequence != sess.LastSequence {
 			return &apiError{409, "traffic_sequence", "切换节点前必须确认当前流量批次"}
 		}
-		server := ""
+		var profile catalogProfile
 		if lease != nil {
-			server = lease.NodeID
+			p, e := s.catalogProfile(tx, sub, lease.NodeID)
+			if e != nil || p.Node.ID != lease.NodeID {
+				return groupUnavailable()
+			}
+			profile = p
 		} else {
-			var e error
-			if server, e = s.groupServer(tx, groupID.String(), avoid); e != nil {
+			alloc, e := s.allocate(tx, sess, sub, groupID.String(), avoid, admitConnections, now)
+			if e != nil {
 				return e
 			}
-		}
-		profile, e := s.catalogProfile(tx, sub, server)
-		if e != nil || profile.Node.ID != server {
-			return groupUnavailable()
-		}
-		governed, e := s.agentNodes(tx)
-		if e != nil {
-			return e
-		}
-		if _, ok := governed[server]; ok {
-			return &apiError{409, "grant_required", "此线路需使用节点授权连接"}
-		}
-		if lease == nil {
-			if lease, e = s.acquireLease(tx, sess, sub, catalogTarget(profile.Node), model.LeaseByConnections, "", key, now); e != nil {
+			profile = alloc.Profile
+			if lease, e = s.acquireLease(tx, sess, sub, alloc.Target, model.LeaseByConnections, "", key, now); e != nil {
 				return e
 			}
 			fingerprint := nativeEntitlementFingerprint(sub)
 			sess.SubscriptionID, sess.SubscriptionStartsAt = &sub.ID, &sub.StartsAt
 			sess.EntitlementFingerprint, sess.ProfileVersion, sess.MeteringSource = fingerprint, nativeProfileVersion(profile.Data), meteringClient
-			sess.NodeID, sess.RatePermille = profile.Node.ID, profile.Node.RatePermille
-			if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion, "node_id": sess.NodeID, "rate_permille": sessionRate(*sess), "metering_source": meteringClient}).Error; e != nil {
+			sess.NodeID, sess.RatePermille, sess.LastSeenAt = profile.Node.ID, profile.Node.RatePermille, now // stamped in the same update
+			if e = tx.Model(sess).Updates(map[string]any{"subscription_id": sub.ID, "subscription_starts_at": sub.StartsAt, "entitlement_fingerprint": fingerprint, "profile_version": sess.ProfileVersion, "node_id": sess.NodeID, "rate_permille": sessionRate(*sess), "metering_source": meteringClient, "last_seen_at": now}).Error; e != nil {
 				return e
 			}
 		}
-		out = connectionResponse{Connection: connectionOf(*lease, now), NodeID: server, YAML: string(profile.Data), Version: nativeProfileVersion(profile.Data), Nodes: profile.Nodes, Session: s.nativeSnapshot(*sess, sub, now, tx)}
+		var snapshot nativeState
+		if status == http.StatusOK {
+			snapshot = s.nativeSnapshot(*sess, sub, now, tx) // a replay: its lease may not be the latest
+		} else {
+			snapshot = s.admittedSnapshot(*sess, sub, now, tx, lease, &profile)
+		}
+		out = connectionResponse{Connection: connectionOf(*lease, now), NodeID: profile.Node.ID, YAML: string(profile.Data), Version: nativeProfileVersion(profile.Data), Nodes: profile.Nodes, Session: snapshot}
 		return nil
 	})
 	if s.nativeFailure(c, err) {
 		return
 	}
 	c.JSON(status, out)
+}
+
+// endWithReport ends an active lease for a client-given reason. A failure reason
+// (tunnel_unhealthy, tunnel_failed) is also a health report against the lease's
+// server; the group lock is taken first, so the order matches admissions and the
+// admin API (plan 4.3: group -> server -> lease). An already ended lease (an admin
+// withdrew it meanwhile) is left as it is and reports nothing.
+func (s *Server) endWithReport(tx *gorm.DB, lease *model.ConnectionLease, reason string, now time.Time) error {
+	failure := reason == model.LeaseTunnelUnhealthy || reason == model.LeaseTunnelFailed
+	if failure {
+		if _, e := s.lockGroup(tx, lease.GroupID); e != nil && !errors.As(e, new(*apiError)) {
+			return e
+		}
+	}
+	result := tx.Model(&model.ConnectionLease{}).Where("id = ? AND state = ?", lease.ID, model.LeaseActive).
+		Updates(map[string]any{"state": model.LeaseEnded, "ended_at": now, "end_reason": reason})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return tx.Take(lease, "id = ?", lease.ID).Error
+	}
+	lease.State, lease.EndedAt, lease.EndReason = model.LeaseEnded, &now, reason
+	if failure {
+		return s.reportFailure(tx, lease.UserID, lease.NodeID, reason, now)
+	}
+	return nil
 }
 
 // releaseConnection ends this session's lease (idempotent). The Core calls it after it
@@ -168,8 +193,7 @@ func (s *Server) releaseConnection(c *gin.Context) {
 			return &apiError{409, "grant_required", "此线路需使用节点授权连接"}
 		}
 		if lease.State == model.LeaseActive {
-			lease.State, lease.EndedAt, lease.EndReason = model.LeaseEnded, &now, endReason
-			if e := tx.Model(&lease).Updates(map[string]any{"state": lease.State, "ended_at": now, "end_reason": endReason}).Error; e != nil {
+			if e := s.endWithReport(tx, &lease, endReason, now); e != nil {
 				return e
 			}
 		}

@@ -29,6 +29,8 @@ type leaseTarget struct {
 	GroupID, NodeID string
 	// MaxConnections is the server's capacity; 0 means not limited (static profile).
 	MaxConnections int
+	// checked: the allocator already holds the group lock and verified capacity.
+	checked bool
 }
 
 // connectionView is the client-facing summary of one lease.
@@ -80,32 +82,6 @@ func groupUnavailable() error {
 	return &apiError{503, "group_unavailable", "该线路暂无可用服务器，请选择其他线路"}
 }
 
-// groupServer picks the server for an admission to group id. Until the allocator
-// lands (round 3) every group holds exactly one server, so this is that server; an id
-// naming a server is resolved to its group first (D3), and avoid (a server the client
-// just failed on) is never chosen.
-func (s *Server) groupServer(tx *gorm.DB, id, avoid string) (string, error) {
-	query := tx.Model(&model.Node{}).Select("id").Where("group_id = ? AND enabled = ?", id, true)
-	if avoid != "" {
-		query = query.Where("id <> ?", avoid)
-	}
-	var server model.Node
-	err := query.Order("id").Take(&server).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		var named model.Node
-		if e := tx.Select("id", "group_id", "enabled").Take(&named, "id = ?", id).Error; e == nil {
-			switch {
-			case named.GroupID != nil && *named.GroupID != id:
-				return s.groupServer(tx, *named.GroupID, avoid)
-			case named.GroupID == nil && named.Enabled && named.ID != avoid:
-				return named.ID, nil // ungrouped server: its own group (D3)
-			}
-		}
-		return "", groupUnavailable()
-	}
-	return server.ID, err
-}
-
 // catalogTarget is the lease target of a server chosen by the catalog.
 func catalogTarget(n model.Node) leaseTarget {
 	group := n.ID
@@ -120,16 +96,20 @@ func catalogTarget(n model.Node) leaseTarget {
 // full, and writes a new active lease. The caller holds the user, session and
 // subscription locks; a refusal rolls the whole request back, the ended lease included.
 func (s *Server) acquireLease(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, target leaseTarget, method, grantID, key string, now time.Time) (*model.ConnectionLease, error) {
-	if err := s.lockTarget(tx, target); err != nil {
-		return nil, err
+	if !target.checked {
+		if err := s.lockTarget(tx, target); err != nil {
+			return nil, err
+		}
 	}
-	if err := s.endLeases(tx, now, model.LeaseReplaced, "session_id = ? OR (user_id = ? AND device_id = ?)", sess.ID, sess.UserID, sess.DeviceID); err != nil {
-		return nil, err
-	}
-	// Devices whose authorization a subscription change invalidated can no longer renew;
-	// they leave now instead of holding a slot until their lease lapses (plan 5.4).
-	if err := s.endLeases(tx, now, model.LeaseEntitlementEnded, "user_id = ? AND session_id IN (SELECT id FROM "+s.cfg.Schema+".native_sessions WHERE user_id = ? AND id <> ? AND (subscription_id IS DISTINCT FROM ? OR subscription_starts_at IS DISTINCT FROM ? OR entitlement_fingerprint <> ?))",
-		sess.UserID, sess.UserID, sess.ID, sub.ID, sub.StartsAt, nativeEntitlementFingerprint(sub)); err != nil {
+	// One statement ends this device's (and session's) previous lease (replaced) and
+	// the leases of the user's sessions whose authorization a subscription change
+	// invalidated: those can no longer renew, so they leave now instead of holding a
+	// slot until they lapse (plan 5.4).
+	own := "session_id = @session OR device_id = @device"
+	if err := leaseEndQuery(tx, "user_id = @user AND ("+own+" OR session_id IN (SELECT id FROM "+s.cfg.Schema+".native_sessions WHERE user_id = @user AND id <> @session AND (subscription_id IS DISTINCT FROM @sub OR subscription_starts_at IS DISTINCT FROM @starts OR entitlement_fingerprint <> @fingerprint)))",
+		sql.Named("user", sess.UserID), sql.Named("session", sess.ID), sql.Named("device", sess.DeviceID), sql.Named("sub", sub.ID), sql.Named("starts", sub.StartsAt), sql.Named("fingerprint", nativeEntitlementFingerprint(sub))).
+		Updates(map[string]any{"state": model.LeaseEnded, "ended_at": now,
+			"end_reason": gorm.Expr("CASE WHEN session_id = ? OR device_id = ? THEN ? ELSE ? END", sess.ID, sess.DeviceID, model.LeaseReplaced, model.LeaseEntitlementEnded)}).Error; err != nil {
 		return nil, err
 	}
 	var others int64
@@ -139,13 +119,13 @@ func (s *Server) acquireLease(tx *gorm.DB, sess *model.NativeSession, sub *model
 	if others >= int64(s.deviceLimit(sub)) {
 		return nil, &apiError{403, "device_limit", "已达到同时在线设备上限，请先断开其他设备"}
 	}
-	if target.MaxConnections > 0 {
+	if target.MaxConnections > 0 && !target.checked {
 		var load int64
 		if err := s.liveLeases(tx, now).Where("l.node_id = ?", target.NodeID).Count(&load).Error; err != nil {
 			return nil, err
 		}
 		if load >= int64(target.MaxConnections) {
-			return nil, &apiError{409, "group_full", "该线路当前已满，请稍后再试或选择其他线路"}
+			return nil, groupFull()
 		}
 	}
 	lease := model.ConnectionLease{ID: uuid.NewString(), UserID: sess.UserID, SessionID: sess.ID, DeviceID: sess.DeviceID, Platform: sess.Platform, AppVersion: sess.AppVersion,
@@ -230,7 +210,9 @@ func (s *Server) renewGrantLease(tx *gorm.DB, sess *model.NativeSession, sub *mo
 
 func latestLease(tx *gorm.DB, sessionID string) (*model.ConnectionLease, error) {
 	var lease model.ConnectionLease
-	err := tx.Where("session_id = ?", sessionID).Order("acquired_at DESC, id DESC").Take(&lease).Error
+	// The active lease (at most one per session) is the latest by definition; among
+	// ended ones the last acquired, then the last ended, wins.
+	err := tx.Where("session_id = ?", sessionID).Order("state = 'active' DESC, acquired_at DESC, ended_at DESC NULLS FIRST, id DESC").Take(&lease).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -293,8 +275,14 @@ func (s *Server) withLease(out *nativeState, l *model.ConnectionLease, now time.
 	}
 	expires := l.ExpiresAt.UTC()
 	out.ConnectionID, out.ConnectionState, out.ConnectionExpiresAt = l.ID, leaseState(*l, now), &expires
-	if out.Reason == "" {
-		if reason := s.leaseReason(l, now); reason != "" {
+	switch reason := s.leaseReason(l, now); {
+	case reason == "":
+	case out.Reason == "":
+		blockSnapshot(out, reason)
+	case reason == "connection_reassigned" || reason == "profile_changed":
+		// The session's server was withdrawn, so its profile no longer renders; what the
+		// client must do is reconnect to the group, not give the line up (plan 6.4).
+		if out.Reason == "client_config_unavailable" || out.Reason == "profile_changed" {
 			blockSnapshot(out, reason)
 		}
 	}
