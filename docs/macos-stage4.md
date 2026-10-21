@@ -134,3 +134,26 @@ cp .env.example /etc/asterlink/nodeagent.env && chmod 600 /etc/asterlink/nodeage
 * 回退客户端：旧客户端在生产环境会收到 `426 client_upgrade_required`（不会静默降级到共享凭据）。
 * 回退服务端：保持新表不动即可（只增不删）；把 `NODE_AGENT_ADDR` 置空会停用 Agent 接口，生产随即不再下发任何代理。开发环境仍可用 `client_reported`。
 * 不要用 `APP_ENV=development` 冒充来恢复生产代理交付。
+
+## 9. 在线状态与名额释放（节点组第 6 轮）
+
+规划 `handoff_node_use_history_and_load_balancing_c.md` 第 6 轮。Core 只在连接时取得在线租约，网站“连接与客户端”、同时在线上限（默认 2 台）与服务器负载都按租约统计。macOS 的 Core 是 Helper 管理的 `asterlink-core` 工作进程：
+
+| 事件 | 路径 | 名额 |
+| --- | --- | --- |
+| 点击断开 | `disconnect` → `stopTunnel` | 立即释放 |
+| 退出 App（⌘Q / 菜单“退出”） | `SessionController.shutdown` → Helper `stopWorker` → IPC `shutdown` → `Service.Close` → `Shutdown` | 立即释放 |
+| Helper 宽限后 `terminate()`、注销、系统关机（SIGTERM） | 第 6 轮修复：Core 的信号处理先恢复 DNS，再在 4 秒内执行 `Shutdown`（原先直接退出，网站要等 90 秒租约到期才显示离线） | 立即释放 |
+| 合盖睡眠 | 网络与进程挂起，无法上报 | 约 90 秒后网站显示离线；唤醒后桌面端按第 5 轮约定提示“在线状态已过期，请重新连接”，不自动重连 |
+| 工作进程被强杀、断电 | 无代码可运行 | 90 秒后过期 |
+| 管理员停用所在服务器 | Core 停止 → 结账 → 自动改连同线路另一台；期间快照保持 `preparing`，界面显示 Core 文案“线路服务器已调整，正在为你重新连接” | 换到新服务器 |
+
+证据：`TestCoreExitPathsReleaseTheSlot`（真实 `asterlink-core` 二进制对真实 API）分别走 IPC `shutdown`、命令管道关闭与 SIGTERM，均在约 10 ms 内以 `released` 结束租约（SIGTERM 用例在旧 `main.go` 上失败）；`Stage2Tests` 的 `testDeviceLimitAtConnectIsShownInTheCoresWordsAndStaysSignedIn`、`testServerSideMoveIsFollowedWithoutACommand`。
+
+本机实测（需要安装本轮构建并批准 Helper、断开其他 VPN，会改变系统路由，须本人在场）：
+
+1. 网站 `/dashboard` 登录同一账号，App 连接任一线路，确认“在线设备 1 / 2”。
+2. 点击断开，记录网站变为 0 的秒数（预期一次刷新内，默认 15 秒）。
+3. 再次连接后 ⌘Q 退出 App，记录秒数（预期同上）。
+4. 再次连接后合盖 3 分钟，期间在另一设备看网站：约 90 秒后显示离线；开盖后 App 显示需要重新连接。
+5. 两台其他设备在线时连接，App 应显示“已达到同时在线设备上限，请先断开其他设备”。

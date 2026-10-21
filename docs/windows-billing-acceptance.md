@@ -109,6 +109,31 @@ adapter, routes, DNS and filters disappear with the process (round 2 `T09-kill`)
 acknowledged stays pending in the *server's* view only until the next login settles it; re-running the tool
 does that.
 
+## Online presence (node groups round 6)
+
+Since node groups round 5 the Core takes an online lease only when it connects; the website's
+"连接与客户端" card, the per-account limit (2 by default) and each server's load count those leases.
+On Windows the Core runs inside `AsterLink.Service`, one Core worker per GUI session:
+
+| Event | Path | Slot |
+| --- | --- | --- |
+| Disconnect in the GUI or tray | `disconnect` command → `stopTunnel` | released at once |
+| Tray "Exit" | `SessionController.ShutdownAsync`: disconnect, then the pipe closes | released at once |
+| GUI closed to the tray | nothing reaches the service | stays online (the tunnel keeps running) |
+| GUI crashed / its pipe vanished, service stop, system shutdown | `CoreHost.StopAsync` closes the command pipe → the Core reads end-of-file → `Service.Close` → `Shutdown` (15 s grace before the job is killed) | released at once |
+| A console control event or `SIGTERM` reaching the worker | round 6: the Core's signal handler now runs `Shutdown` within 4 s before exiting (it used to exit at once) | released at once |
+| The worker killed outright (job terminated, power loss) | nothing runs | offline after the 90 s lease |
+
+Evidence: `TestCoreExitPathsReleaseTheSlot` (backend, real `asterlink-core` binary against the real
+API) drives the IPC `shutdown` command, the pipe closing and `SIGTERM`; each ends with the lease
+`released` within about 10 ms. The Windows job runs the whole Core's `go test ./...` natively, which
+includes the device-limit refusals, the reconnect after a withdrawn server and
+`TestShutdownSettlesThenReleasesThenRevokes`; `AsterLink.Tests` checks that a connect-time
+`device_limit` shows the Core's sentence and keeps the account signed in, and that a server-side move
+(`preparing` with `connection_reassigned`) shows progress, not a Connect button. A real service stop
+and a reassignment on the authorised Windows machine use `asterlink-billtest --presence` (P01 device
+limit, P02 full line, P03 reassignment) and remain to be run there.
+
 ## What the unit/CI part covers on every pull request
 
 `go test` (race on macOS/Linux) over `meter`, `managed`, `apiclient`, `asterlink-billtest` and
