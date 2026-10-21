@@ -285,6 +285,10 @@ func pct(counted, body int64) string {
 }
 
 func (r *runner) runCases(ctx context.Context) {
+	if r.cfg.Only == "presence" {
+		r.presenceCases(ctx)
+		return
+	}
 	up, down := r.cfg.UploadMiB<<20, r.cfg.DownloadMiB<<20
 
 	// ---- B01: the same controlled bytes at 1x (dedicated, Shadowsocks) and 0.5x (ordinary, VLESS).

@@ -36,7 +36,10 @@ Implemented suites (rounds 1-2):
       place of a utun (Go tag asterlink_harness, a test-only framework that no app links), the real
       Gin/PostgreSQL backend world, the controlled test node, the traffic sink and (B04) the real node
       agent, all on the Mac's loopback; "simulator" runs the Core inside an iOS Simulator process. Needs
-      initdb and pg_ctl; changes no network setting. Without --harness those cases are NOT_RUN. The
+      initdb and pg_ctl; changes no network setting. The harness also runs the online-presence cases
+      P01-P05 of node groups round 6 (device limit at connect, the reconnect after a withdrawn
+      server, release on disconnect and Shutdown); --harness-cases presence runs only those (seconds,
+      the CI step). Without --harness those cases are NOT_RUN. The
       device-billing cases are BLOCKED without a signed device; unit proofs never stand in for either.
   device-tun  round 2 device acceptance (D-T01..D-T09, D-CYCLES, D-MEM-idle). Checks the
       prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
@@ -235,7 +238,12 @@ BILLING_GO = (
                           'TestEstimatedRemainingUsesIntegerUnitsAndFloorsAtZero')),
     ('./internal/managed', ('TestLostAcknowledgementReplaysTheSameBatch', 'TestLogoutSettlesTailBeforeRevoking',
                             'TestUnconfirmedTailBlocksReconnectUntilAcknowledged', 'TestHandoffRoundTrip',
-                            'TestHandoffExportRefusesUnsettled')),
+                            'TestHandoffExportRefusesUnsettled',
+                            # node groups round 6: the device limit at connect, the reconnect after a
+                            # withdrawn server (busy throughout), release on exit, the hand-over guard
+                            'TestAdmissionRefusals', 'TestReassignmentReconnectsOnce', 'TestReassignmentStaysBusyUntilReconnected',
+                            'TestShutdownSettlesThenReleasesThenRevokes', 'TestHandoffRefusesAnUnreleasedLease',
+                            'TestGateReadmitsAnExpiredLease')),
 )
 BILLING_SWIFT = ('MeteringArithmeticTests', 'TunnelFlowTests', 'TunnelBridgeTests', 'TunnelWatchTests')
 HARNESS_CASES = (
@@ -245,9 +253,10 @@ HARNESS_CASES = (
     ('A04.harness', 'rate change / disabled line / plan end / quota end stop the real connection and settle the tail'),
     ('C01.harness', 'disconnect then immediate reconnect through a real extension hand-over'),
 )
+PRESENCE_CASE = ('P.harness', 'online presence: device limit at connect, reconnect after a withdrawn server, release on disconnect and Shutdown')
 
 
-def check_billing(harness=None, wanted=None):
+def check_billing(harness=None, wanted=None, cases='all'):
     for package, names in BILLING_GO:
         pattern = '^(%s)$' % '|'.join(names)
         run = subprocess.run(['go', 'test', '-count=1', '-v', '-run', pattern, package], cwd=CORE,
@@ -265,9 +274,12 @@ def check_billing(harness=None, wanted=None):
            else (kit.stdout + kit.stderr).strip()[-600:])
     stages = {'host': ('host',), 'simulator': ('simulator',), 'both': ('host', 'simulator')}.get(harness or '', ())
     for stage in stages:
-        check_harness(stage, wanted)
-    if not stages:
+        check_harness(stage, wanted, cases)
+    if stages and cases == 'presence':
         for case_id, what in HARNESS_CASES:
+            record(case_id, False, 'NOT_RUN: ' + what + ' (this run: --harness-cases presence)', status='NOT_RUN')
+    if not stages:
+        for case_id, what in HARNESS_CASES + (PRESENCE_CASE,):
             record(case_id, False, 'NOT_RUN: ' + what + '. Run with --harness host|simulator|both (needs initdb and pg_ctl); '
                    'the unit proofs above do not stand in for it', status='NOT_RUN')
     record('device-billing', False, 'BLOCKED: 20 MiB + 80 MiB through a real TUN needs a paid Apple team (packet-tunnel-provider) and a paired iPhone',
@@ -300,7 +312,7 @@ def build_harness_runner(work):
     return runner
 
 
-def check_harness(stage, wanted):
+def check_harness(stage, wanted, cases='all'):
     """One full run of the harness acceptance in a fresh backend world (it mutates plans and lines)."""
     prefix = 'billing.%s.' % stage
     missing = [t for t in ('go', 'initdb', 'pg_ctl') if not shutil.which(t)]
@@ -339,6 +351,8 @@ def check_harness(stage, wanted):
         cache.mkdir()
         config = {'world': facts, 'sink': {'host': '127.0.0.1', 'port': int(sink['port']), 'token': sink['token']},
                   'upload_mib': 20, 'download_mib': 80, 'background_bytes': 2 << 20, 'cache_dir': str(cache)}
+        if cases == 'presence':
+            config['only'] = "presence"
         config_file, report_file = Path(scratch) / 'config.json', Path(scratch) / 'report.json'
         config_file.write_text(json.dumps(config))
         config_file.chmod(0o600)
@@ -926,6 +940,8 @@ def main():
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--harness', choices=('host', 'simulator', 'both'),
                         help='billing suite: also run the harness acceptance (needs initdb and pg_ctl; changes no network setting)')
+    parser.add_argument('--harness-cases', choices=('all', 'presence'), default='all',
+                        help='billing: with --harness, "presence" runs only the online-presence cases P01-P05 (node groups round 6), in seconds')
     parser.add_argument('--release-dir', help='release suite: the package folder (default artifacts/native-ios/release)')
     parser.add_argument('--device', help='device-tun: the iPhone name or UDID to use')
     parser.add_argument('--runtime', default=LOCK['ios']['simulator_runtime']['wanted'].split()[-1],
@@ -953,7 +969,7 @@ def main():
     elif args.suite == 'account':
         check_account(out_dir, args.runtime)
     elif args.suite == 'billing':
-        check_billing(args.harness, args.runtime)
+        check_billing(args.harness, args.runtime, args.harness_cases)
     elif args.suite == 'device-tun':
         check_device(args.device)
     elif args.suite == 'lifecycle':

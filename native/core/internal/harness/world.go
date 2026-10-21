@@ -46,6 +46,9 @@ type Config struct {
 	BackgroundBytes int64 `json:"background_bytes"`
 	// CacheDir is where the engine keeps its scratch (the app's private directory on a device).
 	CacheDir string `json:"cache_dir"`
+	// Only, when "presence", runs just the online-presence cases P01-P05 (a few seconds; the
+	// suite's CI step), not the 200 MiB billing transfers.
+	Only string `json:"only,omitempty"`
 }
 
 // Case is one acceptance result. Status is PASS, FAIL or BLOCKED.
