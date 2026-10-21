@@ -1,7 +1,7 @@
 //go:build asterlink_harness
 
 // Package harness is the iOS billing acceptance of handoff_app_ios.md 8.8 (B01, B02, B04, A04,
-// C01), run against the real Core (managed.Manager, the meter, the lease, the gates), the real
+// C01, and the online presence cases P01-P05 of node groups round 6), run against the real Core (managed.Manager, the meter, the lease, the gates), the real
 // pinned Mihomo with the in-process injection engine instead of a TUN, and the real
 // Gin/PostgreSQL backend started by scripts/test-native-ios.py --suite billing (the backend's
 // billing world). It is compiled only under the `asterlink_harness` tag, which no shipped build
@@ -34,6 +34,7 @@ type Config struct {
 		AgentTarget  string            `json:"agent_target"`
 		AgentResolve bool              `json:"agent_target_resolves"`
 		ReportSecs   int               `json:"report_interval_seconds"`
+		LeaseSecs    int               `json:"lease_seconds"`
 	} `json:"world"`
 	Sink struct {
 		Host  string `json:"host"`

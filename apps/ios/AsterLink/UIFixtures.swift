@@ -114,9 +114,12 @@ enum UIFixtures {
         case "connect-quota-zero": return UIFixture(apply: signedIn(CoreSnapshot(generation: 5, state: "blocked", user: user,
             entitlement: denied("quota_exhausted", "流量已用完", plan: "VIP", total: 100 << 30, remaining: 0, expires: "2030-12-31T15:59:59Z"),
             nodes: [], catalogRevision: revision, tunnelHealth: "idle", metering: MeteringView())))
-        case "connect-device-limit": return UIFixture(apply: signedIn(CoreSnapshot(generation: 5, state: "blocked", user: user,
-            entitlement: denied("device_limit", "已达到套餐允许的设备数量，请先在其它设备上退出登录", plan: "VIP", total: 100 << 30, remaining: 68 << 30, expires: "2030-12-31T15:59:59Z"),
-            nodes: nodes, catalogRevision: revision, tunnelHealth: "idle", metering: MeteringView())))
+        // The device limit is checked when connecting (node groups round 6): the connect is refused
+        // in the Core's words, the account stays signed in and may try again.
+        case "connect-device-limit": return UIFixture(apply: signedIn({ var s = ready(); s.lastError = ErrorView(code: "device_limit", message: "已达到同时在线设备上限，请先断开其他设备"); return s }(),
+                                                                       message: .core("device_limit", "已达到同时在线设备上限，请先断开其他设备")))
+        // The administrator withdrew this device's server: the Core reconnects by itself.
+        case "connect-reassigning": return UIFixture(apply: signedIn({ var s = ready(); s.state = "preparing"; s.lastError = ErrorView(code: "connection_reassigned", message: "线路服务器已调整，正在为你重新连接"); return s }()))
         case "connect-no-line": return UIFixture(apply: signedIn(ready(selected: nil)))
         case "connect-syncing": return UIFixture(apply: signedIn(ready(selected: nil, nodes: [])))
         case "connect-preparing": return UIFixture(apply: signedIn(ready(), activity: .connecting))

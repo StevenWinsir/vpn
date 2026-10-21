@@ -249,6 +249,20 @@ struct TunnelWatchTests {
         }
     }
 
+    // Node groups round 6: after connection_reassigned the Core stops the segment and reconnects
+    // by itself, staying busy throughout; the extension must keep its tunnel. A reconnect that
+    // fails ends it with the Core's reason.
+    @Test func aServerSideMoveKeepsTheTunnelAndAFailedOneEndsIt() {
+        for state in [CoreSnapshot.State.stopping, CoreSnapshot.State.preparing, CoreSnapshot.State.connecting] {
+            var moving = vipSnapshot(state: state, selected: "a")
+            moving.lastError = ErrorView(code: "connection_reassigned", message: "线路服务器已调整，正在为你重新连接")
+            #expect(TunnelWatch.evaluate(moving) == .running, "\(state)")
+        }
+        var failed = vipSnapshot(state: "ready", selected: "a")
+        failed.lastError = ErrorView(code: "group_full", message: "该线路当前已满，请稍后再试或选择其他线路")
+        #expect(TunnelWatch.evaluate(failed) == .ended(TunnelEnd(notice: .core("group_full", "该线路当前已满，请稍后再试或选择其他线路"))))
+    }
+
     @Test func aTunnelThatEndedNamesTheCoresReason() {
         var snapshot = vipSnapshot(state: CoreSnapshot.State.blocked)
         snapshot.lastError = ErrorView(code: "quota_exhausted", message: "流量已用完")

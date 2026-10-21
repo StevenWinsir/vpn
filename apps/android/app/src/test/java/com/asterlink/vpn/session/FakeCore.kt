@@ -115,7 +115,7 @@ class FakeCore : CoreTransport {
         }
         if (deviceLimit) {
             snapshot = CoreSnapshot.Empty.copy(generation = snapshot.generation + 1)
-            return respond(request, encode(snapshot, ErrorView("device_limit", "已达到套餐同时在线设备上限，请先在其他设备退出")))
+            return respond(request, encode(snapshot, ErrorView("device_limit", "已达到同时在线设备上限，请先断开其他设备")))
         }
         val authorized = account.entitlement.accountAuthorized
         snapshot = CoreSnapshot(

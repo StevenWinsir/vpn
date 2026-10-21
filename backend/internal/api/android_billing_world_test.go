@@ -37,7 +37,8 @@ import (
 // node-reported line, for B04.
 //
 // Besides the real /api/v1 router it answers loopback-only control calls under /__world/:
-// what an administrator does (re-rate, disable a line, end a plan, lower a quota), the server's
+// what an administrator does (re-rate, disable a line, end a plan, lower a quota, and since node
+// groups round 6 the presence calls of presence_world_test.go), the server's
 // own ledger, the sink's independent byte counts, and a one-shot "lost acknowledgement": the
 // next /traffic report is committed by the real handler and then its reply is thrown away by
 // closing the connection, which is exactly what a lost ACK looks like to the client. That
@@ -110,6 +111,9 @@ func TestAndroidBillingWorld(t *testing.T) {
 	makeUser("grant", "user", 4<<30, 4)  // B04: node-reported
 	makeUser("idle", "user", 4<<30, 4)   // spare
 	makeUser("life", "user", 4<<30, 4)   // round 5: lifecycle (scripts/test-native-android.py --suite lifecycle)
+	// Node groups round 6: device limit, reassignment, release (presence_world_test.go). The plan
+	// allows 4 devices; the effective limit is CLIENT_MAX_ONLINE_DEVICES (2, decision D1).
+	makeUser("presence", "user", 4<<30, 4)
 
 	// The administrator's web session, as in the console.
 	webCall := func(method, path string, cookies []*http.Cookie, body any) *httptest.ResponseRecorder {
@@ -188,6 +192,15 @@ func TestAndroidBillingWorld(t *testing.T) {
 		}
 		ids["agent"], names["agent"] = agentNode.node.ID, agentNode.node.Name
 	}
+	emails := map[string]string{}
+	for k, u := range users {
+		emails[k] = u.Email
+	}
+	presence := newPresenceWorld(t, db, cfg, router, func(method, path string, body any) *httptest.ResponseRecorder {
+		return webCall(method, path, cookies, body)
+	}, ss, password, emails)
+	defer presence.stopAll()
+	ids["pair"], names["pair"] = presence.groupID, pairLine
 	// B04's target: a name only the node resolves, to the host's loopback (RFC 6761 *.localhost).
 	// Whether this machine's resolver does so decides whether B04 can run here at all.
 	const agentTarget = "sink.asterlink.localhost"
@@ -246,6 +259,7 @@ func TestAndroidBillingWorld(t *testing.T) {
 			User      string `json:"user"`
 			Remaining int64  `json:"remaining_bytes"`
 			Offline   bool   `json:"offline"`
+			Count     int    `json:"count"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		answer := func(v any) {
@@ -343,7 +357,9 @@ func TestAndroidBillingWorld(t *testing.T) {
 			once.Do(func() { close(stop) })
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			http.NotFound(w, r)
+			if !presence.handle(strings.TrimPrefix(r.URL.Path, "/__world/"), in.User, in.Count, answer, func(code int, message string) { http.Error(w, message, code) }) {
+				http.NotFound(w, r)
+			}
 		}
 	}
 
@@ -416,14 +432,10 @@ func TestAndroidBillingWorld(t *testing.T) {
 	go func() { _ = server.Serve(listener) }()
 	defer server.Close()
 
-	emails := map[string]string{}
-	for k, u := range users {
-		emails[k] = u.Email
-	}
 	address := listener.Addr().String()
 	facts, _ := json.Marshal(map[string]any{
 		"api_base": "http://" + address + "/api/v1/client", "password": password, "emails": emails, "nodes": ids, "names": names,
-		"report_interval_seconds": int(cfg.ClientReportInterval / time.Second), "node_reported": agentNode != nil,
+		"report_interval_seconds": int(cfg.ClientReportInterval / time.Second), "lease_seconds": int(cfg.ClientLease / time.Second), "node_reported": agentNode != nil,
 		"agent_target": agentTarget, "agent_target_resolves": agentTargetOK,
 	})
 	if err := os.WriteFile(out, facts, 0o600); err != nil {

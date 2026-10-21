@@ -80,6 +80,27 @@ class PresentationTest {
     }
 
     @Test
+    fun onlinePresenceRefusalsShowTheCoreTextAndOfferNoPurchase() {
+        // Node groups round 6: the new codes are real server codes (native-v3.json) and each is a
+        // connect-time refusal shown in the Core's words; none sends the user to buy or update.
+        val v3 = Json.parseToJsonElement(contracts.resolve("native-v3.json").readText()).jsonObject
+        val serverCodes = v3.getValue("errors").jsonObject.keys + v3.getValue("session_reasons").jsonObject.keys
+        val ready = fixtures().getValue("ready_with_selection")
+        for (code in listOf("device_limit", "group_full", "group_unavailable", "grant_required", "connection_not_found", "connection_expired", "connection_reassigned")) {
+            assertTrue("$code is not in native-v3.json", code in serverCodes)
+            val view = ConnectionView.from(ready.copy(lastError = ErrorView(code, "core text for $code")), false, SessionActivity.None)
+            assertEquals(Notice.core(code, "core text for $code"), view.failure)
+            assertTrue(code, view.canConnect)
+            assertFalse(code, view.needsPurchase)
+            assertFalse(code, view.needsUpdate)
+        }
+        // While the Core reconnects after a server change the page shows progress, not a Connect button.
+        val moving = ConnectionView.from(ready.copy(state = CoreSnapshot.State.PREPARING, lastError = ErrorView("connection_reassigned", "x")), false, SessionActivity.None)
+        assertEquals(ConnectionStatus.Preparing, moving.status)
+        assertFalse(moving.showConnect)
+    }
+
+    @Test
     fun aServerVersionRefusalOffersTheDownloadPage() {
         // client_upgrade_required is a real server code (426, native-v2.json), and only it offers "download".
         val v2 = Json.parseToJsonElement(contracts.resolve("native-v2.json").readText()).jsonObject

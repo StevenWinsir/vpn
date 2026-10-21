@@ -143,9 +143,16 @@ final class ScreenshotTests: XCTestCase {
 
     func test10_connectDeviceLimit() {
         launch("connect-device-limit")
-        said("blocker-text", "设备数量", contains: true)
-        XCTAssertFalse(el("connect-button").isEnabled)
+        said("message-banner", "已达到同时在线设备上限，请先断开其他设备")
+        XCTAssertTrue(el("connect-button").isEnabled) // once another device disconnects, trying again works
         capture("10-connect-device-limit")
+    }
+
+    func test10b_connectReassigning() {
+        launch("connect-reassigning")
+        said("status-text", "正在准备")
+        XCTAssertFalse(el("connect-button").isEnabled)
+        capture("10b-connect-reassigning")
     }
 
     func test11_connectNoLineSelected() {

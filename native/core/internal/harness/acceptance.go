@@ -408,6 +408,9 @@ func (r *runner) runCases(ctx context.Context) {
 
 	// ---- B04: a node-reported line, through the real node agent.
 	r.nodeReported(ctx)
+
+	// ---- P01-P05: online presence (node groups round 6), last: it ends with a Shutdown.
+	r.presenceCases(ctx)
 }
 
 func (r *runner) reconnectCase(ctx context.Context) {

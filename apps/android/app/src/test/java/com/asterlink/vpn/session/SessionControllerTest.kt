@@ -560,6 +560,63 @@ class SessionControllerTest {
         assertTrue(rig.alerts.stopped.isEmpty())
     }
 
+    // ---- node groups round 6: online presence -----------------------------------------------------
+
+    @Test
+    fun aServerSideMoveIsNotAnEndedTunnel() = runTest {
+        // connection_reassigned: the Core stops the segment and reconnects by itself to another
+        // server of the line, staying in the busy states throughout. The app must neither alert
+        // nor stop its VPN service (the service's Disconnect would cancel that reconnect).
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.connectNow()
+        val reassigned = ErrorView("connection_reassigned", "线路服务器已调整，正在为你重新连接")
+        for (state in listOf(State.STOPPING, State.PREPARING, State.CONNECTING)) {
+            rig.core.mutate { it.copy(state = state, lastError = reassigned) }
+            rig.controller.pollNow()
+            assertTrue(rig.state.connection.showProgress)
+            assertFalse(rig.state.connection.showConnect)
+        }
+        rig.core.mutate { it.copy(state = State.CONNECTED, lastError = null) }
+        rig.controller.pollNow()
+        assertEquals(ConnectionStatus.Connected, rig.state.connection.status)
+        assertTrue(rig.alerts.stopped.isEmpty())
+        assertEquals(0, rig.tunnel.stops)
+        assertTrue(rig.tunnel.running)
+    }
+
+    @Test
+    fun aFailedAutomaticReconnectAlertsWithItsReasonOnce() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.controller.connectNow()
+        rig.core.mutate { it.copy(state = State.PREPARING, lastError = ErrorView("connection_reassigned", "线路服务器已调整，正在为你重新连接")) }
+        rig.controller.pollNow()
+        val full = ErrorView("group_full", "该线路当前已满，请稍后再试或选择其他线路")
+        rig.core.mutate { it.copy(state = State.READY, lastError = full) }
+        rig.controller.pollNow()
+        rig.controller.pollNow()
+        assertEquals(listOf(Notice(full.code, full.message)), rig.alerts.stopped)
+        assertEquals(1, rig.tunnel.stops)
+        assertEquals(full.message, rig.state.connection.failure?.text)
+        assertTrue(rig.state.connection.canConnect) // the user may try again or pick another line
+    }
+
+    @Test
+    fun aConnectRefusedForTheDeviceLimitIsShownNotAlerted() = runTest {
+        val rig = rig()
+        rig.signedInWithLine()
+        rig.core.connectFailure = ErrorView("device_limit", "已达到同时在线设备上限，请先断开其他设备")
+        rig.controller.connectNow()
+        rig.controller.pollNow()
+        assertEquals(Notice("device_limit", "已达到同时在线设备上限，请先断开其他设备"), rig.state.message)
+        assertEquals(AppPhase.SignedIn, rig.state.phase) // only this connect is refused, not the sign-in
+        assertTrue(rig.alerts.stopped.isEmpty())
+        assertFalse(rig.tunnel.running)
+        assertTrue(rig.state.connection.canConnect)
+        assertFalse(rig.state.connection.needsPurchase)
+    }
+
     // ---- round 5: the authorization gate and a revoked VPN ---------------------------------------
 
     @Test
