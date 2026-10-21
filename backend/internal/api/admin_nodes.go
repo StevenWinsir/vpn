@@ -194,6 +194,9 @@ func (s *Server) adminNodeSave(c *gin.Context) {
 			if e != nil {
 				return e
 			}
+			if e = mirrorLegacyGroup(tx, &node, string(planJSON)); e != nil {
+				return e
+			}
 			if e = tx.Save(&node).Error; e != nil {
 				return e
 			}
@@ -257,6 +260,13 @@ func (s *Server) adminNodeDelete(c *gin.Context) {
 		if e := tx.Delete(&node).Error; e != nil {
 			return e
 		}
+		// The server's group goes with its last server (always the case until groups are
+		// managed on their own).
+		if node.GroupID != nil {
+			if e := tx.Where("id = ? AND NOT EXISTS (SELECT 1 FROM "+s.cfg.Schema+".nodes WHERE group_id = ?)", *node.GroupID, *node.GroupID).Delete(&model.NodeGroup{}).Error; e != nil {
+				return e
+			}
+		}
 		return tx.Create(&model.AdminAudit{ID: uuid.NewString(), ActorID: actor.ID, Action: "node.deleted", TargetID: node.ID, Version: node.Version}).Error
 	})
 	if s.adminFailure(c, err) {
@@ -264,6 +274,36 @@ func (s *Server) adminNodeDelete(c *gin.Context) {
 	}
 	s.catalogUpdates.notify()
 	c.JSON(http.StatusOK, gin.H{"deleted": true, "id": id.String(), "version": in.Version})
+}
+
+// mirrorLegacyGroup keeps the group of a server saved through the per-server admin
+// API in step with it: the group carries the same public metadata and plan list, and
+// its version moves only when that metadata changes. A new server gets a group with
+// its own id (D3). Every node_groups writer holds advisory lock 708614922 here.
+func mirrorLegacyGroup(tx *gorm.DB, node *model.Node, planJSON string) error {
+	groupID := node.ID
+	if node.GroupID != nil {
+		groupID = *node.GroupID
+	}
+	var group model.NodeGroup
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&group, "id = ?", groupID).Error
+	created := errors.Is(err, gorm.ErrRecordNotFound)
+	if err != nil && !created {
+		return err
+	}
+	before := group
+	group.ID, group.Name, group.Region, group.LineType, group.RatePermille, group.PlanIDs, group.Enabled = groupID, node.Name, node.Region, node.LineType, node.RatePermille, planJSON, node.Enabled
+	node.GroupID = &group.ID
+	switch {
+	case created:
+		group.Version = 1
+		return tx.Create(&group).Error
+	case group == before:
+		return nil
+	default:
+		group.Version++
+		return tx.Save(&group).Error
+	}
 }
 
 func (s *Server) adminFailure(c *gin.Context, err error) bool {

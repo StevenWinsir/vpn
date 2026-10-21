@@ -19,6 +19,7 @@ import (
 	"vpn/backend/internal/api"
 	"vpn/backend/internal/authmail"
 	"vpn/backend/internal/config"
+	"vpn/backend/internal/maintenance"
 	"vpn/backend/internal/operations"
 	"vpn/backend/internal/store"
 )
@@ -107,6 +108,18 @@ func main() {
 		}()
 		go reconcileLoop(ctx, db, c)
 	}
+	// Presence and usage-history housekeeping; one instance at a time via an advisory lock.
+	maintenanceDone := make(chan struct{})
+	go func() {
+		defer close(maintenanceDone)
+		maintenance.New(db, c.Schema).Run(ctx)
+	}()
+	defer func() {
+		select {
+		case <-maintenanceDone:
+		case <-time.After(10 * time.Second):
+		}
+	}()
 	mailDone := startAuthMail(ctx, db, c)
 	log.Printf("API listening on http://%s", c.Addr)
 	if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

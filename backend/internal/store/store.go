@@ -46,12 +46,26 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err := tx.Exec(`CREATE SCHEMA IF NOT EXISTS "` + c.Schema + `"`).Error; err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}); err != nil {
+		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}); err != nil {
 			return err
 		}
-		// One active proof per (purpose, email). The predicate is a constant state, never
-		// the current time; expiry is checked when reading (handoff_auth.md 4.1).
-		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_challenge_active ON "` + c.Schema + `".email_auth_challenges (purpose, email) WHERE status = 'active'`).Error; err != nil {
+		s := `"` + c.Schema + `".`
+		// Partial indexes use constant predicates, never the current time: expiry is
+		// always checked when reading. One active proof per (purpose, email)
+		// (handoff_auth.md 4.1); one active lease per device and per native session.
+		for _, stmt := range []string{
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_challenge_active ON ` + s + `email_auth_challenges (purpose, email) WHERE status = 'active'`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_active_device ON ` + s + `connection_leases (user_id, device_id) WHERE state = 'active'`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_active_session ON ` + s + `connection_leases (session_id) WHERE state = 'active'`,
+			`CREATE INDEX IF NOT EXISTS idx_lease_active_node ON ` + s + `connection_leases (node_id, expires_at) WHERE state = 'active'`,
+			`CREATE INDEX IF NOT EXISTS idx_lease_active_user ON ` + s + `connection_leases (user_id, expires_at) WHERE state = 'active'`,
+			`CREATE INDEX IF NOT EXISTS idx_lease_ended ON ` + s + `connection_leases (ended_at) WHERE state = 'ended'`,
+		} {
+			if err := tx.Exec(stmt).Error; err != nil {
+				return err
+			}
+		}
+		if err := backfillNodeGroups(tx, s); err != nil {
 			return err
 		}
 		const gib = int64(1024 * 1024 * 1024)
@@ -62,4 +76,20 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		}
 		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&plans).Error
 	})
+}
+
+// backfillNodeGroups gives every server without a group a one-server group with the
+// same id (decision D3), copying its public metadata and plan list. Servers that
+// already have a group are skipped, so the step is repeatable; it also adopts servers
+// an older binary inserted after a rollback. Server rows keep their version and
+// updated_at; subscriptions, sessions and ledgers are not touched.
+func backfillNodeGroups(tx *gorm.DB, s string) error {
+	if err := tx.Exec(`INSERT INTO ` + s + `node_groups (id, name, region, line_type, rate_permille, plan_ids, enabled, sort, version, created_at, updated_at)
+		SELECT n.id, n.name, n.region, n.line_type, n.rate_permille, COALESCE(c.plan_ids, '[]'), n.enabled, 0, n.version, n.created_at, n.updated_at
+		FROM ` + s + `nodes AS n LEFT JOIN ` + s + `node_configs AS c ON c.node_id = n.id
+		WHERE n.group_id IS NULL
+		ON CONFLICT (id) DO NOTHING`).Error; err != nil {
+		return err
+	}
+	return tx.Exec(`UPDATE ` + s + `nodes SET group_id = id WHERE group_id IS NULL`).Error
 }

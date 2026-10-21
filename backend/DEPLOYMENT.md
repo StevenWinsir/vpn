@@ -87,6 +87,18 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 2. **发布演练**：`python3 scripts/test-release-rehearsal.py --output <新目录>` 现在使用三个普通 API 二进制——产生旧数据的旧版本（缺省 `67e7b37`，无邮箱验证）、当前代码、回滚目标（缺省 `c84de59`，即第 3 轮，已强制验证与密码版本）——并在浏览器阶段以 Go 测试装配 `TestReleaseRehearsalFixture` 提供捕获收件箱（普通二进制只信任系统证书库，无法向本机测试 SMTP 投递）。`summary.json` 的 `identical_binaries` 会如实列出相同的二进制：后端生产代码未变的版本与回滚目标相同时，回滚步骤只是同一二进制在新数据上的重启；需要跨版本证据时加 `--rollback-ref 6bc0742`（第 2 轮）。
 3. **回滚目标的选择**：演练与正式回滚都只回到已包含强制邮箱验证的版本；回到 `67e7b37` 或更早会重新开放无验证码注册（见第 2 轮第 4 条）。
 
+## 节点组与在线状态的数据基础（handoff_node_use_history_and_load_balancing_c.md 第 1 轮）
+
+本轮只建立数据模型、迁移、配置与维护任务骨架；**客户端、网站与管理端可见行为不变**（目录、配置、管理列表与升级前逐字节一致）。在线设备、设备上限、流量历史和节点组分配在后续轮次接入。
+
+1. **迁移**：新增 `node_groups`、`connection_leases`、`node_assignments`、`usage_buckets`、`node_health_events` 五张表；`nodes` 新增可空 `group_id`（外键，组内有服务器时不能删除组）、`max_connections`（默认 1000，范围 1–10000）、`label`（默认空）、`unhealthy_until`（可空）。迁移在原有 advisory lock 708614921 事务内，为每台尚无组的服务器建立**同 ID** 的单服务器组（决策 D3），复制名称、地区、线路、倍率、启用、版本和 `node_configs.plan_ids`，然后回填 `group_id`。已有组的服务器跳过，可重复执行；不修改订阅、会话、账本，也不修改既有 `nodes.version`。生产 `AUTO_MIGRATE=false`：先备份，再在维护窗口执行一次 `bin/api.next -migrate`。
+2. **容量初值**：迁移后所有服务器 `max_connections=1000`（相当于不限，避免上线即锁死用户）。本轮还不按容量拒绝接入；节点组管理界面上线后（第 4 轮）再由管理员改为真实容量。
+3. **配置**：新增 `CLIENT_MAX_ONLINE_DEVICES`（默认 2，1–100；有效上限 = min(订阅 `max_devices`, 此值)）、`NODE_HEALTH_FAILURE_USERS`（默认 3，2–50）、`NODE_HEALTH_COOLDOWN_SECONDS`（默认 300，60–3600）。越界或非数字拒绝启动并只报告变量名。在线租约时长复用 `CLIENT_LEASE_SECONDS`，续期周期复用 `CLIENT_REPORT_INTERVAL_SECONDS`。本轮这三项只被加载和校验，尚未影响任何请求。
+4. **维护循环**：API 进程内新增维护循环：每 15 秒结束过期在线租约、每 5 分钟分批删除 24 小时窗口之外的流量历史、每小时清理 1 小时前的健康事件、24 小时前结束的租约和 30 天未用的固定分配。每次扫描以 `pg_try_advisory_xact_lock(708614923)` 保证多实例同一时刻只有一个实例执行，其余实例跳过；所有删除和更新都有单批上限。失败只记录“will retry”，不输出数据库细节。
+5. **管理端过渡双写**：本轮管理端仍按服务器保存；保存时同步维护该服务器的单服务器组（新服务器建同 ID 组，修改公开属性时组版本递增，仅改 YAML 不递增），删除最后一台服务器时删除其空组。
+6. **检查**：`bin/doctor` 的 `missing_tables` 覆盖五张新表；新增 `node_groups`（组数量）与 `ungrouped_servers`（无组服务器数）。`ungrouped_servers > 0` 时给出 `servers_without_group_run_migration` 警告，表示有服务器在上次迁移后由旧二进制写入，需要再执行一次 `-migrate`。
+7. **演练与回滚**：`python3 scripts/test-node-groups-migration.py --output <新目录>` 用 `a63a882` 的普通二进制经其自身 API 产生数据，当前二进制迁移两次并逐行比对，比较新旧二进制的客户端目录、配置、网站目录与管理列表，再用旧二进制在迁移后的库上启动、读写节点，最后再次迁移确认收编。回滚到 `a63a882`：旧二进制忽略新表和新列（新列有默认值或可空，旧版插入服务器仍然有效）；不要删除新表。回滚期间旧版新增的服务器会在下次 `-migrate` 时自动建组；旧版对已有服务器的属性修改不会写回组，再次升级时以组表为准（handoff 第 14 节）。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：
