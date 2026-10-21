@@ -60,6 +60,9 @@ func Migrate(db *gorm.DB, c config.Config) error {
 			`CREATE INDEX IF NOT EXISTS idx_lease_active_node ON ` + s + `connection_leases (node_id, expires_at) WHERE state = 'active'`,
 			`CREATE INDEX IF NOT EXISTS idx_lease_active_user ON ` + s + `connection_leases (user_id, expires_at) WHERE state = 'active'`,
 			`CREATE INDEX IF NOT EXISTS idx_lease_ended ON ` + s + `connection_leases (ended_at) WHERE state = 'ended'`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_idempotency ON ` + s + `connection_leases (session_id, idempotency_key) WHERE idempotency_key <> ''`,
+			`CREATE INDEX IF NOT EXISTS idx_lease_grant ON ` + s + `connection_leases (grant_id) WHERE grant_id <> ''`,
+			`CREATE INDEX IF NOT EXISTS idx_lease_session_latest ON ` + s + `connection_leases (session_id, acquired_at DESC)`,
 		} {
 			if err := tx.Exec(stmt).Error; err != nil {
 				return err

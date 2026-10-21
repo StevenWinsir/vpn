@@ -1,0 +1,312 @@
+{
+  "contract_version": 3,
+  "notes": [
+    "Capability-negotiated addition to native-v2: every v1/v2 request and response keeps its shape; v3 adds optional fields and two endpoints.",
+    "A device is online while it holds a connection lease. A lease is taken when the device actually connects (POST /connections or POST /grants), never by login, catalog reads or selection.",
+    "client_reported leases are renewed by POST /traffic; node_reported leases by GET /session while the grant is live. Leases last lease_seconds; a lapsed lease is never renewed.",
+    "The session snapshot gains connection_id, connection_state (active, expired or ended) and connection_expires_at, present once the session has held a lease.",
+    "Session reasons connection_expired (lease lapsed) and connection_reassigned (server withdrawn; reconnect to the same group) apply to leases taken by v3 calls; an older Core admitted through GET /config is told profile_changed instead.",
+    "POST /connections/:id/release is idempotent and only accepts the listed reasons; tunnel_unhealthy and tunnel_failed are recorded as failure reports.",
+    "Online devices per user are capped at min(subscription max_devices, server CLIENT_MAX_ONLINE_DEVICES); a device counts once however often it connects.",
+    "node_id in POST /grants names the group; a server id from an older client resolves to its group. avoid_node_id excludes one server for a single retry."
+  ],
+  "cases": {
+    "capabilities": {
+      "method": "GET",
+      "path": "/capabilities",
+      "status": 200,
+      "response": {
+        "contract_versions": [
+          1,
+          2,
+          3
+        ],
+        "metering_modes": [
+          "client_reported",
+          "node_reported"
+        ],
+        "min_app_version": "",
+        "core_policy_revision": "70f0570405c3c2c47bb113b88db95006d239b346"
+      }
+    },
+    "connection_create": {
+      "method": "POST",
+      "path": "/connections",
+      "status": 201,
+      "headers": {
+        "Idempotency-Key": "connect-0001"
+      },
+      "request": {
+        "group_id": "66666666-6666-4666-8666-666666666666",
+        "last_sequence": 0,
+        "avoid_node_id": ""
+      },
+      "response": {
+        "connection": {
+          "id": "77777777-7777-4777-8777-777777777777",
+          "group_id": "66666666-6666-4666-8666-666666666666",
+          "state": "active",
+          "expires_at": "2030-01-01T00:01:30Z"
+        },
+        "node_id": "66666666-6666-4666-8666-666666666666",
+        "yaml": "# catalog: 0000000000000000000000000000000000000000000000000000000000000000\nmode: rule\nproxies:\n    - name: Fixture-Node\n      port: 9\n      server: 127.0.0.1\n      type: vless\n      udp: true\n      uuid: 44444444-4444-4444-8444-444444444444\nproxy-groups:\n    - name: VPN\n      proxies:\n        - Fixture-Node\n      type: select\nrules:\n    - MATCH,VPN\n",
+        "version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+        "nodes": [
+          {
+            "id": "66666666-6666-4666-8666-666666666666",
+            "name": "Fixture-Node",
+            "region": "HK",
+            "line_type": "direct",
+            "rate_permille": 1000,
+            "version": 1
+          }
+        ],
+        "session": {
+          "server_time": "2030-01-01T00:00:00Z",
+          "subscription_expires_at": "2030-01-01T00:10:00Z",
+          "authorization_expires_at": "2030-01-01T00:01:30Z",
+          "session_idle_timeout_seconds": 180,
+          "profile_version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+          "session_id": "11111111-1111-4111-8111-111111111111",
+          "expires_at": "2030-01-01T01:00:00Z",
+          "can_connect": true,
+          "reason": "",
+          "remaining_bytes": 1048576,
+          "total_bytes": 1048576,
+          "used_units": 0,
+          "plan_name": "VIP",
+          "last_sequence": 0,
+          "upload_bytes": 0,
+          "download_bytes": 0,
+          "report_interval_seconds": 60,
+          "lease_seconds": 90,
+          "metering_source": "client_reported",
+          "rate_permille": 1000,
+          "connection_id": "77777777-7777-4777-8777-777777777777",
+          "connection_state": "active",
+          "connection_expires_at": "2030-01-01T00:01:30Z"
+        }
+      }
+    },
+    "connection_release": {
+      "method": "POST",
+      "path": "/connections/77777777-7777-4777-8777-777777777777/release",
+      "status": 200,
+      "request": {
+        "reason": "user"
+      },
+      "response": {
+        "connection": {
+          "id": "77777777-7777-4777-8777-777777777777",
+          "group_id": "66666666-6666-4666-8666-666666666666",
+          "state": "ended",
+          "expires_at": "2030-01-01T00:01:30Z"
+        },
+        "session": {
+          "server_time": "2030-01-01T00:00:00Z",
+          "subscription_expires_at": "2030-01-01T00:10:00Z",
+          "authorization_expires_at": "2030-01-01T00:01:30Z",
+          "session_idle_timeout_seconds": 180,
+          "profile_version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+          "session_id": "11111111-1111-4111-8111-111111111111",
+          "expires_at": "2030-01-01T01:00:00Z",
+          "can_connect": true,
+          "reason": "",
+          "remaining_bytes": 1048576,
+          "total_bytes": 1048576,
+          "used_units": 0,
+          "plan_name": "VIP",
+          "last_sequence": 0,
+          "upload_bytes": 0,
+          "download_bytes": 0,
+          "report_interval_seconds": 60,
+          "lease_seconds": 90,
+          "metering_source": "client_reported",
+          "rate_permille": 1000,
+          "connection_id": "77777777-7777-4777-8777-777777777777",
+          "connection_state": "ended",
+          "connection_expires_at": "2030-01-01T00:01:30Z"
+        }
+      }
+    },
+    "session_connection_expired": {
+      "method": "GET",
+      "path": "/session",
+      "status": 200,
+      "response": {
+        "server_time": "2030-01-01T00:00:00Z",
+        "subscription_expires_at": "2030-01-01T00:10:00Z",
+        "authorization_expires_at": null,
+        "session_idle_timeout_seconds": 180,
+        "profile_version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "expires_at": "2030-01-01T01:00:00Z",
+        "can_connect": false,
+        "reason": "connection_expired",
+        "remaining_bytes": 1048576,
+        "total_bytes": 1048576,
+        "used_units": 0,
+        "plan_name": "VIP",
+        "last_sequence": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "report_interval_seconds": 60,
+        "lease_seconds": 90,
+        "metering_source": "client_reported",
+        "rate_permille": 1000,
+        "connection_id": "77777777-7777-4777-8777-777777777777",
+        "connection_state": "expired",
+        "connection_expires_at": "2030-01-01T00:01:30Z"
+      }
+    },
+    "grant_create": {
+      "method": "POST",
+      "path": "/grants",
+      "headers": {
+        "Idempotency-Key": "fixture-key-0001"
+      },
+      "status": 202,
+      "request": {
+        "node_id": "66666666-6666-4666-8666-666666666666",
+        "avoid_node_id": ""
+      },
+      "response": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "state": "pending",
+        "reason": "grant_pending"
+      }
+    },
+    "grant_ready": {
+      "method": "GET",
+      "path": "/grants/55555555-5555-4555-8555-555555555555",
+      "status": 200,
+      "response": {
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "state": "ready",
+        "yaml": "# catalog: 0000000000000000000000000000000000000000000000000000000000000000\nmode: rule\nproxies:\n    - name: Fixture-Node\n      port: 9\n      server: 127.0.0.1\n      type: vless\n      udp: true\n      uuid: 44444444-4444-4444-8444-444444444444\nproxy-groups:\n    - name: VPN\n      proxies:\n        - Fixture-Node\n      type: select\nrules:\n    - MATCH,VPN\n",
+        "version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+        "node_id": "66666666-6666-4666-8666-666666666666",
+        "session": {
+          "server_time": "2030-01-01T00:00:00Z",
+          "subscription_expires_at": "2030-01-01T00:10:00Z",
+          "authorization_expires_at": "2030-01-01T00:01:30Z",
+          "session_idle_timeout_seconds": 180,
+          "profile_version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+          "session_id": "11111111-1111-4111-8111-111111111111",
+          "expires_at": "2030-01-01T01:00:00Z",
+          "can_connect": true,
+          "reason": "",
+          "remaining_bytes": 1048576,
+          "total_bytes": 1048576,
+          "used_units": 0,
+          "plan_name": "VIP",
+          "last_sequence": 0,
+          "upload_bytes": 0,
+          "download_bytes": 0,
+          "report_interval_seconds": 60,
+          "lease_seconds": 90,
+          "metering_source": "node_reported",
+          "rate_permille": 500,
+          "grant_id": "55555555-5555-4555-8555-555555555555",
+          "grant_state": "ready",
+          "grant_expires_at": "2030-01-01T00:01:30Z",
+          "connection_id": "77777777-7777-4777-8777-777777777777",
+          "connection_state": "active",
+          "connection_expires_at": "2030-01-01T00:01:30Z"
+        }
+      }
+    },
+    "session_node_reported": {
+      "method": "GET",
+      "path": "/session",
+      "status": 200,
+      "response": {
+        "server_time": "2030-01-01T00:00:00Z",
+        "subscription_expires_at": "2030-01-01T00:10:00Z",
+        "authorization_expires_at": "2030-01-01T00:01:30Z",
+        "session_idle_timeout_seconds": 180,
+        "profile_version": "f33cce7a0f5115535a6c9c7f60e2330d59d63b634ea04f64c6285f5a0cadc49d",
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "expires_at": "2030-01-01T01:00:00Z",
+        "can_connect": true,
+        "reason": "",
+        "remaining_bytes": 1048576,
+        "total_bytes": 1048576,
+        "used_units": 0,
+        "plan_name": "VIP",
+        "last_sequence": 0,
+        "upload_bytes": 0,
+        "download_bytes": 0,
+        "report_interval_seconds": 60,
+        "lease_seconds": 90,
+        "metering_source": "node_reported",
+        "rate_permille": 500,
+        "grant_id": "55555555-5555-4555-8555-555555555555",
+        "grant_state": "ready",
+        "grant_expires_at": "2030-01-01T00:01:30Z",
+        "connection_id": "77777777-7777-4777-8777-777777777777",
+        "connection_state": "active",
+        "connection_expires_at": "2030-01-01T00:01:30Z"
+      }
+    }
+  },
+  "release_reasons": [
+    "user",
+    "stopped",
+    "network_changed",
+    "lifecycle",
+    "tunnel_unhealthy",
+    "tunnel_failed"
+  ],
+  "connection_states": [
+    "active",
+    "expired",
+    "ended"
+  ],
+  "session_reasons": {
+    "connection_expired": "lease lapsed; connect again",
+    "connection_reassigned": "server withdrawn; reconnect to the same group once"
+  },
+  "errors": {
+    "device_limit": {
+      "status": 403,
+      "where": "POST /connections, GET /config, POST /grants; also a POST /traffic session reason for a re-admitted older Core"
+    },
+    "group_full": {
+      "status": 409,
+      "where": "POST /connections, GET /config, POST /grants"
+    },
+    "group_unavailable": {
+      "status": 503,
+      "where": "POST /connections, POST /grants"
+    },
+    "grant_required": {
+      "status": 409,
+      "where": "POST /connections (node_reported group), POST /connections/:id/release (grant lease)"
+    },
+    "connection_not_found": {
+      "status": 404,
+      "where": "POST /connections/:id/release"
+    },
+    "invalid_release": {
+      "status": 400,
+      "where": "POST /connections/:id/release"
+    },
+    "idempotency_conflict": {
+      "status": 409,
+      "where": "POST /connections"
+    },
+    "invalid_idempotency_key": {
+      "status": 400,
+      "where": "POST /connections"
+    },
+    "traffic_sequence": {
+      "status": 409,
+      "where": "POST /connections"
+    },
+    "client_upgrade_required": {
+      "status": 426,
+      "where": "POST /connections, GET /config (CLIENT_MIN_APP_VERSION)"
+    }
+  }
+}

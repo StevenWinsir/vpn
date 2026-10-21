@@ -20,6 +20,7 @@ class SharedSourcesTests(unittest.TestCase):
             self.write(relative, shared.read_file(shared.ROOT, relative))
         self.write(shared.CONTRACT, shared.read_file(shared.ROOT, shared.CONTRACT))
         self.write(shared.CONTRACT_V2, shared.read_file(shared.ROOT, shared.CONTRACT_V2))
+        self.write(shared.CONTRACT_V3, shared.read_file(shared.ROOT, shared.CONTRACT_V3))
 
     def write(self, relative, data):
         path = self.root / relative
@@ -30,7 +31,7 @@ class SharedSourcesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             shared.synchronize(self.root, check=True)
         self.assertFalse((self.root / 'backend').exists())
-        self.assertEqual(len(shared.synchronize(self.root, check=False)), 8)
+        self.assertEqual(len(shared.synchronize(self.root, check=False)), 9)
         self.assertEqual(shared.synchronize(self.root, check=True), [])
         self.assertEqual(shared.synchronize(self.root, check=False), [])
         for name in shared.POLICY_FILES:

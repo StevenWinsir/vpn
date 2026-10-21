@@ -99,6 +99,19 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 6. **检查**：`bin/doctor` 的 `missing_tables` 覆盖五张新表；新增 `node_groups`（组数量）与 `ungrouped_servers`（无组服务器数）。`ungrouped_servers > 0` 时给出 `servers_without_group_run_migration` 警告，表示有服务器在上次迁移后由旧二进制写入，需要再执行一次 `-migrate`。
 7. **演练与回滚**：`python3 scripts/test-node-groups-migration.py --output <新目录>` 用 `a63a882` 的普通二进制经其自身 API 产生数据，当前二进制迁移两次并逐行比对，比较新旧二进制的客户端目录、配置、网站目录与管理列表，再用旧二进制在迁移后的库上启动、读写节点，最后再次迁移确认收编。回滚到 `a63a882`：旧二进制忽略新表和新列（新列有默认值或可空，旧版插入服务器仍然有效）；不要删除新表。回滚期间旧版新增的服务器会在下次 `-migrate` 时自动建组；旧版对已有服务器的属性修改不会写回组，再次升级时以组表为准（handoff 第 14 节）。
 
+## 在线租约、设备上限与流量历史（handoff_node_use_history_and_load_balancing_c.md 第 2 轮）
+
+本轮起后端按真实连接统计在线设备，并在接入时执行设备上限；网站仪表盘界面在第 4 轮接入，四平台新 Core 在第 5、6 轮接入。
+
+1. **迁移**：`connection_leases` 新增 `idempotency_key` 列（默认空）与三个索引（`idx_lease_idempotency`、`idx_lease_grant`、`idx_lease_session_latest`），附加迁移，照常先备份再执行一次 `bin/api.next -migrate`。
+2. **行为变化（发布前须知）**：设备上限从“已绑定线路且 180 秒内活跃的会话”改为“持有有效在线租约的设备”，有效上限 = min(订阅 `max_devices`, `CLIENT_MAX_ONLINE_DEVICES`，默认 2)。因此发布后 pro/max 订阅的同时在线上限立即变为 2；需要放开时调高 `CLIENT_MAX_ONLINE_DEVICES` 并重启 API。上限调低不踢出已在线设备，只拒绝新接入。
+3. **旧版 APP**：无需升级即生效。旧 Core 在“选择线路”（`GET /config`）时建立租约，连接期间由每 60 秒的流量上报续期；断开或被杀后最长 `CLIENT_LEASE_SECONDS`（90 秒）让出名额；暂停后再次连接时由首次上报重新接入。选择线路后若 90 秒内未连接，该选择暂时占用名额直至过期。
+4. **容量**：本轮已按服务器 `max_connections` 拒绝超额接入（`group_full`）；迁移值为 1000，相当于不限，节点组管理界面上线（第 4 轮）前不要手工调低。
+5. **新接口**：原生 `POST /api/v1/client/connections` 与 `POST /api/v1/client/connections/:id/release`（新 Core 使用）；网站 `GET /api/v1/me/devices`、`GET /api/v1/me/usage-history`；`GET /api/v1/me/dashboard` 的 `metering_connected` 改为“24 小时内有计量数据”，并新增 `online_devices`、`device_limit`。网站接口只返回平台、版本、设备 UUID 后 6 位、线路组名和时间/字节数，不返回服务器、会话、租约 ID 或地址。
+6. **流量历史**：每次入账在同一事务内写入 5 分钟汇总桶，维护循环按第 1 轮规则删除 24 小时窗口之外的行；计费账本不受影响。
+7. **`CLIENT_MIN_APP_VERSION`**：从仅作用于 `/grants` 扩展到 `/config` 与 `/connections`。在四平台新 Core 发布之前设置它会让旧 APP 无法选择线路，请保持为空。
+8. **回滚**：回滚到第 1 轮二进制时新列与表被忽略，设备上限回到旧语义；租约行保留，维护循环（第 1 轮已有）照常过期与清理。不要删除新列或表。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：

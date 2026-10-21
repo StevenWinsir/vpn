@@ -57,12 +57,15 @@ type ConnectionLease struct {
 	NodeID     string        `gorm:"type:uuid;not null"`
 	Method     string        `gorm:"size:16;not null;check:method IN ('connections','legacy_config','grant')"`
 	GrantID    string        `gorm:"size:36;not null;default:''"`
-	State      string        `gorm:"size:8;not null;check:state IN ('active','ended')"`
-	AcquiredAt time.Time     `gorm:"not null"`
-	RenewedAt  time.Time     `gorm:"not null"`
-	ExpiresAt  time.Time     `gorm:"not null"`
-	EndedAt    *time.Time
-	EndReason  string `gorm:"size:24;not null;default:''"`
+	// IdempotencyKey is the client's Idempotency-Key for POST /client/connections; ""
+	// for leases created by /config or /grants. Unique per session when set.
+	IdempotencyKey string    `gorm:"size:64;not null;default:''"`
+	State          string    `gorm:"size:8;not null;check:state IN ('active','ended')"`
+	AcquiredAt     time.Time `gorm:"not null"`
+	RenewedAt      time.Time `gorm:"not null"`
+	ExpiresAt      time.Time `gorm:"not null"`
+	EndedAt        *time.Time
+	EndReason      string `gorm:"size:24;not null;default:''"`
 	// Session counters when the lease began, so "this connection" traffic is a difference.
 	StartUploadBytes   int64 `gorm:"not null;default:0"`
 	StartDownloadBytes int64 `gorm:"not null;default:0"`

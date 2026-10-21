@@ -12,6 +12,11 @@
       "sha256": "5684f674fea6e4a1e24a087bf2ca7e8e6c6805e3c70862d434ca55c338afe34b"
     },
     {
+      "source": "shared/contracts/native-v3.json",
+      "destination": "backend/internal/api/testdata/native_v3_contract.json",
+      "sha256": "6c2105206a5ced696353d3c9f5e17e68ca175440ee7611ecc18a57847ca09e33"
+    },
+    {
       "source": "shared/nodepolicy/go.mod",
       "destination": "backend/nodepolicy/go.mod",
       "sha256": "b049fed62e93d3354791c28213ed96ff94bb9f779c72e924771de4a4ccf8885a"

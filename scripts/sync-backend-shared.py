@@ -18,6 +18,8 @@ CONTRACT = Path('shared/contracts/native-v1.json')
 CONTRACT_COPY = Path('backend/internal/api/testdata/native_client_contract.json')
 CONTRACT_V2 = Path('shared/contracts/native-v2.json')
 CONTRACT_V2_COPY = Path('backend/internal/api/testdata/native_v2_contract.json')
+CONTRACT_V3 = Path('shared/contracts/native-v3.json')
+CONTRACT_V3_COPY = Path('backend/internal/api/testdata/native_v3_contract.json')
 MANIFEST = Path('backend/shared-sources.json')
 README = b'''# Generated standalone dependency\n\nDo not edit this directory independently. Its Go source, tests and fixtures are\nbyte-identical snapshots of shared/nodepolicy. From the repository root:\n\n    python3 scripts/sync-backend-shared.py --write\n    python3 scripts/sync-backend-shared.py --check\n\nCommit the regenerated files together with canonical changes. CI rejects drift,\nmissing files, unexpected files and symlinks. The pinned-schema compatibility\ntest remains in the canonical Core module because it needs Mihomo source.\nServers need only the complete backend directory; Python, Flutter and Mihomo\nsource are not required to build the API. See ../DEPLOYMENT.md.\n'''
 
@@ -63,6 +65,7 @@ def expected_files(root: Path) -> dict:
     mapping = {BUNDLE / name: POLICY / name for name in POLICY_FILES}
     mapping[CONTRACT_COPY] = CONTRACT
     mapping[CONTRACT_V2_COPY] = CONTRACT_V2
+    mapping[CONTRACT_V3_COPY] = CONTRACT_V3
     result, entries = {}, []
     for destination, source in sorted(mapping.items()):
         data = read_file(root, source)

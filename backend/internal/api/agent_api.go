@@ -141,7 +141,7 @@ func (s *Server) agentSync(c *gin.Context) {
 	}
 	slices.Sort(in.Protocols)
 	protocols, _ := json.Marshal(slices.Compact(in.Protocols))
-	now := time.Now().UTC()
+	now := s.now()
 	result := s.database(c).Model(&model.NodeAgent{}).Where("id = ? AND epoch <= ?", agent.ID, in.Epoch).
 		Updates(map[string]any{"epoch": in.Epoch, "agent_version": in.AgentVersion, "protocols": string(protocols), "last_seen_at": now})
 	if result.Error != nil {
@@ -296,11 +296,18 @@ func (s *Server) syncGrant(tx *gorm.DB, grantID string, agent model.NodeAgent, e
 	// Removal confirmed by the node, with the final cursor already recorded.
 	if removed && !held && closedCleanly(g) {
 		finalize(&g, period, now)
+		if err = endGrantLease(tx, now, model.LeaseReleased, g.ID); err != nil {
+			return nil, err
+		}
 		return nil, saveGrant(tx, &g, period)
 	}
 	reason, deadline := s.grantVerdict(tx, g, user, period, sub, now)
 	if reason != "" && (g.State == grantPending || g.State == grantReady) {
 		g.State = grantRevoking
+		// The device stops being online with its grant, in the same transaction.
+		if err = endGrantLease(tx, now, grantEndReason(reason), g.ID); err != nil {
+			return nil, err
+		}
 	}
 	if g.State == grantRevoking {
 		if err = saveGrant(tx, &g, period); err != nil {
@@ -469,6 +476,10 @@ func (s *Server) agentUsage(c *gin.Context) {
 		if e = tx.Omit("Grant").Create(&record).Error; e != nil {
 			return e
 		}
+		// Node-reported traffic enters the same 24-hour history as client reports.
+		if e = addUsage(tx, g.UserID, s.now(), up, down, units); e != nil {
+			return e
+		}
 		if e = tx.Save(period).Error; e != nil {
 			return e
 		}
@@ -523,6 +534,9 @@ func ReconcileGrants(ctx context.Context, db *gorm.DB, cfg config.Config) (int, 
 				g.NeedsReconcile = true
 			}
 			finalize(&g, period, now)
+			if e = endGrantLease(tx, now, model.LeaseExpired, g.ID); e != nil {
+				return e
+			}
 			released++
 			return saveGrant(tx, &g, period)
 		})

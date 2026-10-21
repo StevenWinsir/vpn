@@ -42,7 +42,17 @@ func (s *Server) dashboard(c *gin.Context) {
 		fail(c, 503, "database_unavailable", "订单数据暂时不可用")
 		return
 	}
-	c.JSON(200, gin.H{"user": currentUser(c), "subscription": sub, "entitlement_active": billing.Eligible(sub, time.Now().UTC(), s.allowTest()), "order_count": count, "metering_connected": false, "proxy_service_ready": false})
+	now := s.now()
+	// metering_connected: this account has metered traffic in the last 24 hours.
+	var metered, online int64
+	start, _ := usageWindow(now)
+	if s.database(c).Model(&model.UsageBucket{}).Where("user_id = ? AND bucket_start >= ?", currentUser(c).ID, start).Limit(1).Count(&metered).Error != nil ||
+		s.liveLeases(s.database(c), now).Where("l.user_id = ?", currentUser(c).ID).Count(&online).Error != nil {
+		fail(c, 503, "database_unavailable", "用户数据暂时不可用")
+		return
+	}
+	c.JSON(200, gin.H{"user": currentUser(c), "subscription": sub, "entitlement_active": billing.Eligible(sub, now, s.allowTest()), "order_count": count,
+		"metering_connected": metered > 0, "proxy_service_ready": false, "online_devices": online, "device_limit": s.deviceLimit(sub)})
 }
 func (s *Server) orders(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))

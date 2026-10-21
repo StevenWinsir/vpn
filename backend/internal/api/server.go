@@ -23,7 +23,17 @@ type Server struct {
 	dummyHash      []byte
 	mail           *authmail.Service
 	catalogUpdates catalogSignal
+	// clock is time.Now in production; tests inject one to step through lease expiry.
+	clock func() time.Time
 }
+
+func (s *Server) now() time.Time {
+	if s.clock == nil {
+		return time.Now().UTC()
+	}
+	return s.clock().UTC()
+}
+
 type apiError struct {
 	Status        int
 	Code, Message string
@@ -41,9 +51,14 @@ func New(db *gorm.DB, cfg config.Config) *gin.Engine {
 
 // newServer lets tests share a mail service with an injected clock and limits.
 func newServer(db *gorm.DB, cfg config.Config, mail *authmail.Service) *gin.Engine {
+	return newServerAt(db, cfg, mail, time.Now)
+}
+
+// newServerAt also injects the clock the native and presence handlers read.
+func newServerAt(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock func() time.Time) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	hash, _ := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), cfg.BcryptCost)
-	s := &Server{db: db, cfg: cfg, dummyHash: hash, mail: mail}
+	s := &Server{db: db, cfg: cfg, dummyHash: hash, mail: mail, clock: clock}
 	r := gin.New()
 	// Only explicitly configured proxies (TRUSTED_PROXIES) may supply X-Forwarded-For;
 	// otherwise the TCP peer is the client address and forged headers are ignored.
@@ -112,6 +127,8 @@ func newServer(db *gorm.DB, cfg config.Config, mail *authmail.Service) *gin.Engi
 	secured.Use(s.requireAuth())
 	secured.GET("/auth/me", s.me)
 	secured.GET("/me/dashboard", s.dashboard)
+	secured.GET("/me/devices", s.meDevices)
+	secured.GET("/me/usage-history", s.meUsageHistory)
 	secured.GET("/orders", s.orders)
 	secured.POST("/orders/test-purchase", s.testPurchase)
 	secured.GET("/client/bootstrap", s.bootstrap)
@@ -137,6 +154,8 @@ func newServer(db *gorm.DB, cfg config.Config, mail *authmail.Service) *gin.Engi
 	native.GET("/nodes", s.nativeNodes)
 	native.GET("/config", s.nativeConfig)
 	native.POST("/traffic", s.nativeTraffic)
+	native.POST("/connections", s.createConnection)
+	native.POST("/connections/:id/release", s.releaseConnection)
 	native.POST("/grants", s.createGrant)
 	native.GET("/grants/:id", s.getGrant)
 	native.POST("/grants/:id/revoke", s.revokeGrant)

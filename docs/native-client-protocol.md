@@ -88,6 +88,19 @@ authorization_expires_at = min(server_time + 90 秒,
 
 配置重新绑定会更新版本，但不会清零 `last_sequence`、上传或下载累计。后端返回 `can_connect=true` 仅代表服务器授权，不能跳过本机验证。下载/校验/应用失败不得退回旧配置继续连接；已有等待报告不能在同步过程中被新内容覆盖。不同权限指纹或新周期需重新登录，不走同会话热切换。
 
+## 在线租约与 contract v3（节点组交接书第 2 轮）
+
+`/capabilities` 的 `contract_versions` 增加 3，夹具为 `shared/contracts/native-v3.json`（后端副本 `backend/internal/api/testdata/native_v3_contract.json`，由 `scripts/sync-backend-shared.py` 维护）。v1/v2 的请求与响应字段全部保留，v3 只增加可选字段和两个接口，旧 Core 的 JSON 解码忽略未知字段。
+
+- **在线 = 持有有效租约**：租约为 active、`expires_at` 晚于服务端当前时间、所属原生会话未撤销未过期、账号为 active。登录、读目录、选择线路不占名额。租约长度 = `lease_seconds`（`CLIENT_LEASE_SECONDS`）。
+- **获取**：新 Core 连接时调用 `POST /client/connections`（`Idempotency-Key`，请求体 `group_id`、`last_sequence`、可选 `avoid_node_id`；同 key 重放返回同一租约，换组返回 `idempotency_conflict`；Agent 管理的组返回 `grant_required`）。node_reported 组仍走 `POST /grants`，`node_id` 现为组 ID（旧服务器 ID 解析到其组），可选 `avoid_node_id`；grant 与租约同事务建立。旧 Core 的 `GET /config` 在绑定时建立 `legacy_config` 租约。三条路径同样受 `CLIENT_MIN_APP_VERSION`、设备上限和服务器容量约束。
+- **设备上限**：有效上限 = min(订阅 `max_devices`, `CLIENT_MAX_ONLINE_DEVICES`)。接入时先结束本设备旧租约，再统计本用户其他设备的有效租约；同设备反复连接只占 1 个名额。订阅变化使其他会话授权失效时，这些会话的租约在接入时即结束（`entitlement_ended`），不再占名额等待过期。超出返回 403 `device_limit`；服务器满载返回 409 `group_full`；组内无可用服务器返回 503 `group_unavailable`。
+- **续期**：client_reported 只由每次被接受的 `POST /traffic` 续期，`GET /session` 不续期；node_reported 由 grant 有效期间的 `GET /session` 续期。已过期的租约从不延长。旧 Core 在暂停后再次上报（它连接时的首报）会按完整检查重新接入；被上限拒绝时该批流量照常入账，快照原因为 `device_limit`。
+- **释放**：`POST /client/connections/:id/release`，请求体只允许 `reason` ∈ `user`、`stopped`、`network_changed`、`lifecycle`、`tunnel_unhealthy`、`tunnel_failed`；幂等；只能释放本会话的租约（否则 404 `connection_not_found`）；grant 租约随 `POST /grants/:id/revoke` 结束。
+- **快照**：新增 `connection_id`、`connection_state`（`active`/`expired`/`ended`）、`connection_expires_at`，会话持有过租约后出现。v3 租约在最近（空闲窗口内）过期时原因为 `connection_expired`，被服务端以服务器不可用结束时为 `connection_reassigned`；旧 Core 的 `legacy_config` 租约过期不报告原因（下一次上报自动重新接入），服务端结束时报告 `profile_changed`。
+- **撤销同步结束**：同设备重新登录、`/client/logout`、密码重置（`authmail.RevokeAllSessions`）、grant 结束（Agent 同步判定、对账过期）在同一事务内结束租约。目前没有管理员停用账号的接口；直接停用的账号由统计查询排除。
+- **流量历史**：每个新入账批次（`/traffic` 与 Agent 用量）在同一事务内累加到用户当前 5 分钟桶（服务端接收时间），重放不累加；历史写入失败时整笔回滚、不扣费。
+
 ## 隔离数据库与可控网络夹具
 
 `python3 scripts/test-native.py` 建立仅监听私有 Unix socket 的临时 PostgreSQL，强制 `RUN_DB_TESTS=0`，提供临时 `NATIVE_TEST_DSN`。原网页 `TestPostgresIntegration` 现在优先使用该 DSN，与原生测试共享建库辅助函数但使用不同随机 schema；该分支不加载真实 `.env`。没有 DSN 时，真实数据库分支仍必须显式 `RUN_DB_TESTS=1` 授权。

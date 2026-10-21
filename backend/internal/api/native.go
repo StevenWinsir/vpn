@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"vpn/backend/internal/billing"
+	"vpn/backend/internal/config"
 	"vpn/backend/internal/model"
 )
 
@@ -52,6 +53,11 @@ type nativeState struct {
 	GrantID        string     `json:"grant_id,omitempty"`
 	GrantState     string     `json:"grant_state,omitempty"`
 	GrantExpiresAt *time.Time `json:"grant_expires_at,omitempty"`
+	// Present once the session has held an online lease (contract v3): the latest
+	// lease, its state now (active, expired or ended) and its expiry.
+	ConnectionID        string     `json:"connection_id,omitempty"`
+	ConnectionState     string     `json:"connection_state,omitempty"`
+	ConnectionExpiresAt *time.Time `json:"connection_expires_at,omitempty"`
 }
 
 func (s *Server) nativeLogin(c *gin.Context) {
@@ -92,12 +98,16 @@ func (s *Server) nativeLogin(c *gin.Context) {
 		fail(c, 503, "session_failed", "无法创建客户端会话")
 		return
 	}
-	now := time.Now().UTC()
+	now := s.now()
 	sess := model.NativeSession{ID: uuid.NewString(), UserID: user.ID, TokenHash: refreshHash(token), DeviceID: device.String(), Platform: in.Platform, AppVersion: in.AppVersion, LastSeenAt: now, ExpiresAt: now.Add(s.cfg.SessionTTL)}
 	var status nativeState
 	err = s.database(c).Transaction(func(tx *gorm.DB) error {
 		// Same guard as the web login: a reset that committed after bcrypt wins.
 		if e := lockVerifiedUser(tx, &user); e != nil {
+			return e
+		}
+		// Signing in again on a device replaces its session; its lease ends with it.
+		if e := s.endLeases(tx, now, model.LeaseSessionRevoked, "user_id = ? AND device_id = ?", user.ID, device.String()); e != nil {
 			return e
 		}
 		if e := tx.Model(&model.NativeSession{}).Where("user_id = ? AND device_id = ? AND revoked_at IS NULL", user.ID, device.String()).Update("revoked_at", now).Error; e != nil {
@@ -131,7 +141,7 @@ func (s *Server) requireNativeSession() gin.HandlerFunc {
 			return
 		}
 		var sess model.NativeSession
-		now := time.Now().UTC()
+		now := s.now()
 		err := s.database(c).Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", refreshHash(strings.TrimPrefix(header, "Bearer ")), now, now.Add(-s.cfg.IdleTTL())).First(&sess).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			fail(c, 401, "native_session_expired", "客户端会话已失效，请重新登录")
@@ -157,7 +167,7 @@ func (s *Server) nativeTransaction(c *gin.Context, action func(*gorm.DB, *model.
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sess, "id = ? AND user_id = ?", identity.ID, identity.UserID).Error; e != nil {
 			return e
 		}
-		now := time.Now().UTC()
+		now := s.now()
 		if sess.RevokedAt != nil || !now.Before(sess.ExpiresAt) || !sess.LastSeenAt.After(now.Add(-s.cfg.IdleTTL())) {
 			return &apiError{401, "native_session_expired", "客户端会话已失效，请重新登录"}
 		}
@@ -167,6 +177,9 @@ func (s *Server) nativeTransaction(c *gin.Context, action func(*gorm.DB, *model.
 		}
 		if e = action(tx, &sess, sub, now); e != nil {
 			return e
+		}
+		if sess.LastSeenAt.Equal(now) {
+			return nil // the action already stamped the session in its own update
 		}
 		return tx.Model(&sess).Update("last_seen_at", now).Error
 	})
@@ -221,6 +234,27 @@ func nativeAuthorizationBound(sess model.NativeSession, sub *model.Subscription)
 }
 
 func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time, transactions ...*gorm.DB) nativeState {
+	out := s.sessionSnapshot(sess, sub, now, transactions...)
+	// Lease fields need the request's transaction; snapshots built without one (the
+	// shared contract tests) keep the original shape.
+	if len(transactions) == 1 {
+		if lease, err := latestLease(transactions[0], sess.ID); err == nil {
+			s.withLease(&out, lease, now)
+		}
+	}
+	return out
+}
+
+// nativeSnapshotWith is nativeSnapshot for a caller that already holds the session's
+// latest lease (the one it just renewed): one query fewer on every /traffic.
+func (s *Server) nativeSnapshotWith(sess model.NativeSession, sub *model.Subscription, now time.Time, tx *gorm.DB, lease *model.ConnectionLease) nativeState {
+	out := s.sessionSnapshot(sess, sub, now, tx)
+	s.withLease(&out, lease, now)
+	return out
+}
+
+// sessionSnapshot is the session and entitlement verdict without lease fields.
+func (s *Server) sessionSnapshot(sess model.NativeSession, sub *model.Subscription, now time.Time, transactions ...*gorm.DB) nativeState {
 	out := nativeState{ServerTime: now, SessionIdleTimeout: int(s.cfg.IdleTTL() / time.Second), ProfileVersion: sess.ProfileVersion, SessionID: sess.ID, ExpiresAt: sess.ExpiresAt, Reason: s.nativeEntitlement(sub, now), LastSequence: sess.LastSequence, UploadBytes: sess.UploadBytes, DownloadBytes: sess.DownloadBytes, ReportInterval: int(s.cfg.ReportInterval() / time.Second), LeaseSeconds: int(s.cfg.Lease() / time.Second), MeteringSource: sessionSource(sess), RatePermille: sessionRate(sess)}
 	if sub != nil {
 		out.SubscriptionExpiresAt = &sub.ExpiresAt
@@ -282,6 +316,9 @@ func (s *Server) nativeSnapshot(sess model.NativeSession, sub *model.Subscriptio
 func (s *Server) nativeStatus(c *gin.Context) {
 	var status nativeState
 	err := s.nativeTransaction(c, func(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, now time.Time) error {
+		if e := s.renewGrantLease(tx, sess, sub, now); e != nil {
+			return e
+		}
 		status = s.nativeSnapshot(*sess, sub, now, tx)
 		return nil
 	})
@@ -336,6 +373,9 @@ func (s *Server) nativeConfig(c *gin.Context) {
 		nodeID = id.String()
 	}
 	err := s.nativeTransaction(c, func(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, now time.Time) error {
+		if e := s.requireAppVersion(sess); e != nil {
+			return e
+		}
 		if reason := s.nativeEntitlement(sub, now); reason != "" {
 			return &apiError{403, reason, "请先升级有效的付费 VIP 套餐并确认剩余流量"}
 		}
@@ -346,6 +386,7 @@ func (s *Server) nativeConfig(c *gin.Context) {
 			return &apiError{409, "metering_source_mismatch", "此会话已使用节点计量，不能同时使用客户端上报"}
 		}
 		var e error
+		target := staticTarget
 		if s.cfg.ClientNodeCatalog {
 			if sess.SubscriptionID != nil {
 				sequence, parseErr := strconv.ParseInt(c.Query("last_sequence"), 10, 64)
@@ -366,6 +407,7 @@ func (s *Server) nativeConfig(c *gin.Context) {
 			}
 			catalog = &profile
 			data, sess.NodeID, sess.RatePermille = profile.Data, profile.Node.ID, profile.Node.RatePermille
+			target = catalogTarget(profile.Node)
 		} else {
 			data, e = s.readNativeProfile(sub.PlanID)
 			if e != nil {
@@ -373,7 +415,9 @@ func (s *Server) nativeConfig(c *gin.Context) {
 			}
 		}
 		fingerprint := nativeEntitlementFingerprint(sub)
-		if e = s.checkDeviceLimit(tx, sess, sub, fingerprint, now); e != nil {
+		// An older Core selects (and later connects) through /config: it is admitted here,
+		// under the same online cap and capacity as POST /connections (plan 5.5).
+		if _, e = s.acquireLease(tx, sess, sub, target, model.LeaseByLegacy, "", "", now); e != nil {
 			return e
 		}
 		sess.SubscriptionID, sess.SubscriptionStartsAt = &sub.ID, &sub.StartsAt
@@ -394,14 +438,11 @@ func (s *Server) nativeConfig(c *gin.Context) {
 	c.JSON(200, response)
 }
 
-// checkDeviceLimit enforces the plan's concurrent-device cap for the session's user.
-func (s *Server) checkDeviceLimit(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, fingerprint string, now time.Time) error {
-	var active int64
-	if e := tx.Model(&model.NativeSession{}).Where("user_id = ? AND id <> ? AND subscription_id = ? AND subscription_starts_at = ? AND entitlement_fingerprint = ? AND revoked_at IS NULL AND expires_at > ? AND last_seen_at > ?", sess.UserID, sess.ID, sub.ID, sub.StartsAt, fingerprint, now, now.Add(-s.cfg.IdleTTL())).Count(&active).Error; e != nil {
-		return e
-	}
-	if sub.MaxDevices <= 0 || active >= int64(sub.MaxDevices) {
-		return &apiError{403, "device_limit", "已达到套餐同时在线设备上限，请先退出其他设备"}
+// requireAppVersion is the CLIENT_MIN_APP_VERSION gate of every admission path
+// (/config, /connections and /grants).
+func (s *Server) requireAppVersion(sess *model.NativeSession) error {
+	if min := s.cfg.ClientMinAppVersion; min != "" && config.VersionLess(sess.AppVersion, min) {
+		return &apiError{426, "client_upgrade_required", "客户端版本过低，请升级后再连接"}
 	}
 	return nil
 }
@@ -437,6 +478,7 @@ func (s *Server) nativeTraffic(c *gin.Context) {
 			// client report as well would charge the same bytes twice.
 			return &apiError{409, "metering_source_mismatch", "此会话由节点计量，不接受客户端流量上报"}
 		}
+		var delta usageDelta
 		if in.Sequence <= sess.LastSequence {
 			var report model.ClientTrafficReport
 			if e := tx.Where("session_id = ? AND sequence = ?", sess.ID, in.Sequence).First(&report).Error; e != nil {
@@ -462,12 +504,25 @@ func (s *Server) nativeTraffic(c *gin.Context) {
 			if e = tx.Model(sub).Updates(map[string]any{"used_units": sub.UsedUnits, "upload_bytes": sub.UploadBytes, "download_bytes": sub.DownloadBytes}).Error; e != nil {
 				return e
 			}
-			sess.LastSequence, sess.UploadBytes, sess.DownloadBytes = in.Sequence, in.UploadBytes, in.DownloadBytes
-			if e = tx.Model(sess).Updates(map[string]any{"last_sequence": in.Sequence, "upload_bytes": in.UploadBytes, "download_bytes": in.DownloadBytes}).Error; e != nil {
+			sess.LastSequence, sess.UploadBytes, sess.DownloadBytes, sess.LastSeenAt = in.Sequence, in.UploadBytes, in.DownloadBytes, now
+			if e = tx.Model(sess).Updates(map[string]any{"last_sequence": in.Sequence, "upload_bytes": in.UploadBytes, "download_bytes": in.DownloadBytes, "last_seen_at": now}).Error; e != nil {
 				return e
 			}
+			// History is written with the charge, never apart from it (plan 7.1).
+			delta = usageDelta{up, down, units}
 		}
-		status = s.nativeSnapshot(*sess, sub, now, tx)
+		refused, renewed, e := s.renewClientLease(tx, sess, sub, now, delta)
+		if e != nil {
+			return e
+		}
+		if renewed != nil {
+			status = s.nativeSnapshotWith(*sess, sub, now, tx, renewed)
+		} else {
+			status = s.nativeSnapshot(*sess, sub, now, tx)
+		}
+		if refused != "" && status.Reason == "" {
+			blockSnapshot(&status, refused)
+		}
 		return nil
 	})
 	if s.nativeFailure(c, err) {
@@ -478,6 +533,9 @@ func (s *Server) nativeTraffic(c *gin.Context) {
 
 func (s *Server) nativeLogout(c *gin.Context) {
 	err := s.nativeTransaction(c, func(tx *gorm.DB, sess *model.NativeSession, _ *model.Subscription, now time.Time) error {
+		if e := endSessionLeases(tx, now, model.LeaseSessionRevoked, sess.ID); e != nil {
+			return e
+		}
 		return tx.Model(sess).Update("revoked_at", now).Error
 	})
 	if s.nativeFailure(c, err) {

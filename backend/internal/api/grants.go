@@ -96,7 +96,7 @@ func (s *Server) nativeCapabilities(c *gin.Context) {
 	if s.cfg.DevMetering() {
 		modes = []string{meteringClient, meteringNode}
 	}
-	c.JSON(200, gin.H{"contract_versions": []int{1, 2}, "metering_modes": modes, "min_app_version": s.cfg.ClientMinAppVersion, "core_policy_revision": nodepolicy.CoreRevision})
+	c.JSON(200, gin.H{"contract_versions": []int{1, 2, 3}, "metering_modes": modes, "min_app_version": s.cfg.ClientMinAppVersion, "core_policy_revision": nodepolicy.CoreRevision})
 }
 
 // grantProfile renders the exact document a grant holder receives: the node's
@@ -153,20 +153,24 @@ func (s *Server) createGrant(c *gin.Context) {
 	}
 	var in struct {
 		NodeID string `json:"node_id"`
+		// AvoidNodeID is a server the client just failed on (one automatic retry).
+		AvoidNodeID string `json:"avoid_node_id"`
 	}
 	if !decode(c, &in) {
 		return
 	}
+	// node_id names the group (a server id from an older client resolves to its group).
 	nodeID, err := uuid.Parse(in.NodeID)
-	if err != nil || nodeID == uuid.Nil || !s.cfg.ClientNodeCatalog {
+	avoid, avoidOK := optionalUUID(in.AvoidNodeID)
+	if err != nil || nodeID == uuid.Nil || !avoidOK || !s.cfg.ClientNodeCatalog {
 		fail(c, 400, "invalid_managed_selection", "节点选择无效")
 		return
 	}
 	var out grantResponse
 	status := 202
 	err = s.nativeTransaction(c, func(tx *gorm.DB, sess *model.NativeSession, sub *model.Subscription, now time.Time) error {
-		if min := s.cfg.ClientMinAppVersion; min != "" && config.VersionLess(sess.AppVersion, min) {
-			return &apiError{426, "client_upgrade_required", "客户端版本过低，请升级后再连接"}
+		if e := s.requireAppVersion(sess); e != nil {
+			return e
 		}
 		if reason := s.nativeEntitlement(sub, now); reason != "" {
 			return &apiError{403, reason, "请先升级有效的付费 VIP 套餐并确认剩余流量"}
@@ -177,7 +181,9 @@ func (s *Server) createGrant(c *gin.Context) {
 		var existing model.ConnectionGrant
 		switch e := tx.Where("session_id = ? AND idempotency_key = ?", sess.ID, key).First(&existing).Error; {
 		case e == nil:
-			if existing.NodeID != nodeID.String() {
+			var replay model.ConnectionLease
+			sameGroup := tx.Select("group_id").Where("grant_id = ? AND group_id = ?", existing.ID, nodeID.String()).Take(&replay).Error == nil
+			if existing.NodeID != nodeID.String() && !sameGroup {
 				return &apiError{409, "idempotency_conflict", "此请求标识已用于其他线路"}
 			}
 			out = grantView(existing)
@@ -191,13 +197,17 @@ func (s *Server) createGrant(c *gin.Context) {
 		if sess.MeteringSource == meteringClient || sess.LastSequence > 0 {
 			return &apiError{409, "metering_source_mismatch", "此会话已使用客户端上报，不能再使用节点计量"}
 		}
-		profile, e := s.catalogProfile(tx, sub, nodeID.String())
+		server, e := s.groupServer(tx, nodeID.String(), avoid)
+		if e != nil {
+			return e
+		}
+		profile, e := s.catalogProfile(tx, sub, server)
 		if e != nil {
 			return e
 		}
 		var agent model.NodeAgent
 		unavailable := &apiError{503, "agent_unavailable", "该线路的节点控制服务暂不可用"}
-		if e = tx.Where("node_id = ? AND enabled = ?", nodeID.String(), true).First(&agent).Error; e != nil {
+		if e = tx.Where("node_id = ? AND enabled = ?", server, true).First(&agent).Error; e != nil {
 			if errors.Is(e, gorm.ErrRecordNotFound) {
 				return unavailable
 			}
@@ -220,7 +230,10 @@ func (s *Server) createGrant(c *gin.Context) {
 			return unavailable
 		}
 		fingerprint := nativeEntitlementFingerprint(sub)
-		if e = s.checkDeviceLimit(tx, sess, sub, fingerprint, now); e != nil {
+		// The grant and the device's online lease are created together; the previous
+		// grant's lease (same session) is replaced.
+		id := uuid.NewString()
+		if _, e = s.acquireLease(tx, sess, sub, catalogTarget(profile.Node), model.LeaseByGrant, id, "", now); e != nil {
 			return e
 		}
 		period, e := ensurePeriod(tx, sub)
@@ -237,7 +250,6 @@ func (s *Server) createGrant(c *gin.Context) {
 		if e = tx.Model(&model.ConnectionGrant{}).Where("session_id = ? AND state IN ?", sess.ID, []string{grantPending, grantReady}).Updates(map[string]any{"state": grantRevoking}).Error; e != nil {
 			return e
 		}
-		id := uuid.NewString()
 		sealed, e := nodes.SealCredential(s.cfg.NodeEncryptionKey, id, credential)
 		if e != nil {
 			return e
@@ -369,6 +381,9 @@ func (s *Server) revokeGrant(c *gin.Context) {
 			if e = tx.Model(&g).Update("state", grantRevoking).Error; e != nil {
 				return e
 			}
+		}
+		if e = s.endLeases(tx, now, model.LeaseReleased, "grant_id = ?", g.ID); e != nil {
+			return e
 		}
 		if sess.GrantID == g.ID {
 			if e = tx.Model(sess).Update("grant_id", "").Error; e != nil {
