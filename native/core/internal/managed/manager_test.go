@@ -106,8 +106,8 @@ func TestLoginSuccessAndSnapshotRedaction(t *testing.T) {
 	if snap.User == nil || snap.User.Role != "admin" || len(snap.Nodes) != 2 {
 		t.Fatalf("user or nodes missing: %+v", snap)
 	}
-	if f.lastSeqSeen != "0" {
-		t.Fatalf("last_sequence not sent: %q", f.lastSeqSeen)
+	if f.conns.connects.Load() != 0 || f.configHits.Load() != 0 {
+		t.Fatal("selecting a line must not admit the device or fetch a config")
 	}
 	raw, _ := json.Marshal(snap)
 	for _, secret := range []string{fakeToken, secretPW, "192.0.2.10", "8388", "proxies:", "right-password", "aes-256-gcm", "password"} {
@@ -270,13 +270,16 @@ func TestConfigRejection(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFakeAPI(t)
 			f.configYAML = build
-			m := login(t, f, nil)
-			out, err := m.SelectNode(t.Context(), nodeA, m.Snapshot().CatalogRevision)
-			if code(t, err) != "config_rejected" || out.ConfigReady {
+			engine := &recordingEngine{}
+			m := login(t, f, engine)
+			selectA(t, m)
+			out, err := m.Connect(t.Context())
+			if code(t, err) != "config_rejected" || out.State == StateConnected || engine.starts.Load() != 0 {
 				t.Fatalf("accepted: %v %+v", err, out)
 			}
-			if _, err = m.Connect(t.Context()); err == nil {
-				t.Fatal("connected with a rejected config")
+			// The admission that brought the rejected document is given back at once.
+			if r := f.releasesSeen(); len(r) != 1 || r[0].reason != "stopped" || f.activeLeases() != 0 {
+				t.Fatalf("lease of a rejected config kept: %+v", r)
 			}
 		})
 	}
@@ -314,12 +317,11 @@ func TestAdminChangesSyncAndInvalidate(t *testing.T) {
 		return len(s.Nodes) == 2 && s.Nodes[0].Name == "HK Premium" && s.Nodes[0].RatePermille == 2000
 	})
 	t.Logf("admin change observed after %v", time.Since(started))
+	// Nothing is held between connections (contract native-v3): the selection stays and the
+	// next Connect is admitted against the edited line.
 	snap := m.Snapshot()
-	if snap.ConfigReady || snap.Entitlement.CanConnect {
-		t.Fatalf("old config survived a node edit: %+v", snap)
-	}
-	if snap.LastError == nil || snap.LastError.Code != "profile_changed" {
-		t.Fatalf("no profile_changed notice: %+v", snap.LastError)
+	if snap.SelectedNodeID != nodeA || snap.ProfileVersion != "" || snap.LastError != nil {
+		t.Fatalf("an idle selection should survive a node edit: %+v", snap)
 	}
 
 	// Re-select, then the admin disables the node: selection must clear.
@@ -406,15 +408,20 @@ func TestCatalogDoesNotRenewLease(t *testing.T) {
 	f.session.ReportInterval = 3600 // no periodic /session renewal during the test
 	now := time.Now()
 	clock := &now
-	m := New(Options{CoreVersion: "t", Now: func() time.Time { return *clock }, BackoffMin: 5 * time.Millisecond, BackoffMax: 20 * time.Millisecond})
+	m := New(Options{CoreVersion: "t", Engine: &recordingEngine{}, Now: func() time.Time { return *clock }, BackoffMin: 5 * time.Millisecond, BackoffMax: 20 * time.Millisecond})
 	t.Cleanup(func() { m.Shutdown(t.Context()) })
 	if _, err := m.Login(t.Context(), f.params(f.password)); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "catalog", func() bool { return m.Snapshot().CatalogRevision != "" })
 	selectA(t, m)
+	// One connection binds the session; afterwards it carries an authorization of its own.
+	if _, err := m.Connect(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	m.Disconnect(t.Context())
 	if !m.Snapshot().Entitlement.CanConnect {
-		t.Fatal("expected authorization right after bind")
+		t.Fatal("expected authorization right after the bound session's disconnect")
 	}
 	// /session starts failing (e.g. the API's session store is down) while /nodes keeps
 	// answering; time passes beyond the 90s lease.
@@ -435,15 +442,20 @@ func TestCatalogDoesNotRenewLease(t *testing.T) {
 
 func TestDeviceLimitSurfaced(t *testing.T) {
 	f := newFakeAPI(t)
-	m := login(t, f, nil)
+	engine := &recordingEngine{}
+	m := login(t, f, engine)
 	f.mu.Lock()
 	f.configErr = &apiError{403, "device_limit"}
 	f.mu.Unlock()
-	_, err := m.SelectNode(t.Context(), nodeA, m.Snapshot().CatalogRevision)
-	if code(t, err) != "device_limit" {
+	// Selecting never counts against the limit; connecting does.
+	if _, err := m.SelectNode(t.Context(), nodeA, m.Snapshot().CatalogRevision); err != nil {
 		t.Fatal(err)
 	}
-	if s := m.Snapshot(); s.LastError.Code != "device_limit" || !strings.Contains(s.LastError.Message, "设备上限") {
+	snap, err := m.Connect(t.Context())
+	if code(t, err) != "device_limit" || engine.starts.Load() != 0 || snap.State != StateReady {
+		t.Fatalf("%v %+v", err, snap.State)
+	}
+	if s := m.Snapshot(); s.LastError.Code != "device_limit" || !strings.Contains(s.LastError.Message, "设备上限") || s.SelectedNodeID != nodeA {
 		t.Fatalf("%+v", s.LastError)
 	}
 }

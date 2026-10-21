@@ -266,11 +266,38 @@ func (c *Client) Capabilities(ctx context.Context) (Capabilities, error) {
 	return out, err
 }
 
+// Connect asks for an online lease on a client-reported group and returns the one server's
+// document (contract native-v3). The idempotency key makes a retry after a lost reply
+// return the same lease instead of a second one.
+func (c *Client) Connect(ctx context.Context, token, key string, in ConnectionRequest) (ConnectionResponse, error) {
+	var out ConnectionResponse
+	err := c.doWith(ctx, RequestTimeout, http.MethodPost, "/connections", nil, token, map[string]string{"Idempotency-Key": key}, in, &out)
+	if err == nil && (out.Connection.ID == "" || out.Connection.GroupID != in.GroupID || out.Session.SessionID == "") {
+		return ConnectionResponse{}, &Error{Code: "bad_response"}
+	}
+	return out, err
+}
+
+// ReleaseConnection ends this session's lease. It is idempotent on the server.
+func (c *Client) ReleaseConnection(ctx context.Context, token, id, reason string) (ReleaseResponse, error) {
+	var out ReleaseResponse
+	err := c.do(ctx, RequestTimeout, http.MethodPost, "/connections/"+url.PathEscape(id)+"/release", nil, token, map[string]string{"reason": reason}, &out)
+	if err == nil && (out.Connection.ID != id || out.Session.SessionID == "") {
+		return ReleaseResponse{}, &Error{Code: "bad_response"}
+	}
+	return out, err
+}
+
 // CreateGrant asks for a per-user credential on a node-reported node. The idempotency
 // key makes a retry after a lost reply return the same grant instead of a second one.
-func (c *Client) CreateGrant(ctx context.Context, token, nodeID, key string) (GrantStatus, error) {
+// avoid names a server this device just failed on ("" for none).
+func (c *Client) CreateGrant(ctx context.Context, token, nodeID, avoid, key string) (GrantStatus, error) {
 	var out GrantStatus
-	err := c.doWith(ctx, RequestTimeout, http.MethodPost, "/grants", nil, token, map[string]string{"Idempotency-Key": key}, map[string]string{"node_id": nodeID}, &out)
+	body := map[string]string{"node_id": nodeID}
+	if avoid != "" {
+		body["avoid_node_id"] = avoid
+	}
+	err := c.doWith(ctx, RequestTimeout, http.MethodPost, "/grants", nil, token, map[string]string{"Idempotency-Key": key}, body, &out)
 	if err == nil && out.GrantID == "" {
 		return GrantStatus{}, &Error{Code: "bad_response"}
 	}
@@ -287,9 +314,14 @@ func (c *Client) Grant(ctx context.Context, token, id string) (GrantStatus, erro
 	return out, err
 }
 
-// RevokeGrant ends a grant. It is idempotent on the server.
-func (c *Client) RevokeGrant(ctx context.Context, token, id string) (GrantStatus, error) {
+// RevokeGrant ends a grant. It is idempotent on the server. reason is one of the release
+// reasons, or "" (the body stays {} as older Cores sent it).
+func (c *Client) RevokeGrant(ctx context.Context, token, id, reason string) (GrantStatus, error) {
 	var out GrantStatus
-	err := c.do(ctx, RequestTimeout, http.MethodPost, "/grants/"+url.PathEscape(id)+"/revoke", nil, token, struct{}{}, &out)
+	var body any = struct{}{}
+	if reason != "" {
+		body = map[string]string{"reason": reason}
+	}
+	err := c.do(ctx, RequestTimeout, http.MethodPost, "/grants/"+url.PathEscape(id)+"/revoke", nil, token, body, &out)
 	return out, err
 }

@@ -129,8 +129,9 @@ func (m *Manager) snapshotLocked() Snapshot {
 	}
 	if m.profile != nil {
 		out.ConfigReady, out.ProfileVersion = true, m.profile.Version
-	} else if m.selectedNodeReportedLocked() {
-		// Nothing to fetch ahead of time: the credential is minted when connecting.
+	} else if m.selected != "" {
+		// Nothing to fetch ahead of time: the server, its config and the online lease are
+		// assigned when connecting (a grant in node-reported mode).
 		out.ConfigReady = true
 	}
 	if s := m.session; s != nil {

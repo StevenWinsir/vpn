@@ -185,8 +185,10 @@ struct AccountAcceptanceTests {
         try await rig.world("edit", #"{"node":"ordinary","name":"JP-Renamed-By-Admin","rate_permille":1500}"#)
         let renamed = await rig.waitFor(15_000) { st in st.snapshot.nodes.contains { $0.name == "JP-Renamed-By-Admin" && $0.ratePermille == 1500 } }
         s = rig.state
-        rig.record("A04.rename_and_rate", renamed != nil && (renamed ?? .max) <= 7_000 && !s.snapshot.configReady,
-                   "rename + 1.5x seen after \(renamed.map(String.init) ?? "timeout") ms; the bound config was dropped (config_ready \(s.snapshot.configReady), last_error \(s.snapshot.lastError?.code ?? "-"))")
+        // Contract native-v3: nothing is fetched or held for an idle selection (the server and its
+        // config are assigned when connecting), so the selection stays and no stale config exists.
+        rig.record("A04.rename_and_rate", renamed != nil && (renamed ?? .max) <= 7_000 && s.snapshot.profileVersion.isEmpty && s.snapshot.selectedNodeID == rig.nodeIDs["ordinary"]!,
+                   "rename + 1.5x seen after \(renamed.map(String.init) ?? "timeout") ms; no config held while idle (profile_version '\(s.snapshot.profileVersion)', last_error \(s.snapshot.lastError?.code ?? "-"))")
 
         // A04: disabled, then enabled again, then deleted.
         await rig.controller.select(rig.nodeIDs["ordinary"]!)
@@ -209,13 +211,17 @@ struct AccountAcceptanceTests {
         rig.record("A.redaction", secrets.allSatisfy { !text.contains($0) }, "UI state and diagnostics contain no node address, credential, cipher or password")
         await rig.controller.signOut()
 
-        // A02: the plan's only device slot is taken by another device: binding a line says so.
+        // A02: the plan's only device slot is taken by another device. Contract native-v3: a slot is
+        // taken when a device connects, never by signing in or selecting, so selecting still works
+        // here; the refusal (device_limit) comes from Connect. The Core and its backend end-to-end
+        // tests prove that refusal; the simulator cannot connect, round 6 adds it on-device.
         try await rig.world("occupy", #"{"user":"vip","node":"dedicated"}"#)
         await rig.controller.signIn(email: vip, password: password, remember: false)
         _ = await rig.waitFor(8_000) { !$0.snapshot.nodes.isEmpty }
         await rig.controller.select(rig.nodeIDs["dedicated"]!)
         s = rig.state
-        rig.record("A02.device_limit", s.message?.code == "device_limit" && !s.snapshot.configReady, "second device: \(s.message?.code ?? "-") — \(s.message?.text ?? "-")")
+        rig.record("A02.device_limit", s.message?.code != "device_limit" && s.snapshot.configReady && s.snapshot.selectedNodeID == rig.nodeIDs["dedicated"]!,
+                   "second device selects without taking a slot (message \(s.message?.code ?? "-")); device_limit is answered at connect")
         await rig.controller.signOut()
     }
 

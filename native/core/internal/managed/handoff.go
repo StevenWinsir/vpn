@@ -119,6 +119,7 @@ func (m *Manager) ExportHandoff(ctx context.Context) (HandoffTicket, error) {
 	if _, _, _, err := m.handles(); err != nil {
 		return HandoffTicket{}, err
 	}
+	m.bumpIntent()
 	if err := m.stopTunnel(ctx, ""); err != nil {
 		return HandoffTicket{}, codeError("handoff_unsettled")
 	}
@@ -128,15 +129,19 @@ func (m *Manager) ExportHandoff(ctx context.Context) (HandoffTicket, error) {
 	if err := m.settleIdle(ctx, gen); err != nil {
 		return HandoffTicket{}, codeError("handoff_unsettled")
 	}
+	// A release that waited for that tail goes out now; if it still cannot, the lease
+	// stays with this process (below).
+	m.retryRelease(ctx, gen)
 
 	m.mu.Lock()
 	if m.generation != gen || m.client == nil || m.session == nil || m.user == nil {
 		m.mu.Unlock()
 		return HandoffTicket{}, codeError("stale_generation")
 	}
-	// A revocation not yet delivered to a node, or a ledger with anything unacknowledged,
-	// stays with the process that knows about it.
-	if m.grant != nil || m.orphan != "" || (m.meter != nil && !m.meter.Settled()) {
+	// A revocation not yet delivered to a node, an online lease still held or not yet
+	// released, or a ledger with anything unacknowledged, stays with the process that knows
+	// about it.
+	if m.grant != nil || m.orphan != "" || m.admission != nil || m.unreleased != nil || (m.meter != nil && !m.meter.Settled()) {
 		m.mu.Unlock()
 		return HandoffTicket{}, codeError("handoff_unsettled")
 	}
@@ -252,14 +257,5 @@ func (m *Manager) AdoptHandoff(ctx context.Context, t HandoffTicket) (Snapshot, 
 	if t.SelectedNodeID == "" {
 		return m.Snapshot(), nil
 	}
-	m.mu.Lock()
-	nodeMode := m.nodeReportedLocked(t.SelectedNodeID)
-	m.mu.Unlock()
-	if nodeMode {
-		return m.selectGrantNode(gen, t.SelectedNodeID)
-	}
-	if err := m.bindNode(ctx, gen, client, t.Token, t.SelectedNodeID); err != nil {
-		return m.Snapshot(), err
-	}
-	return m.Snapshot(), nil
+	return m.selectLine(gen, t.SelectedNodeID)
 }

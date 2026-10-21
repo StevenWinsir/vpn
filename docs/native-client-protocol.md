@@ -103,11 +103,24 @@ authorization_expires_at = min(server_time + 90 秒,
 
 ## 节点组分配（节点组交接书第 3 轮）
 
-- **目录项是节点组**：`GET /nodes` 的 `nodes[]` 结构不变，`id` 为组 ID、`version` 为组版本。同组服务器的代理名可以相同；下发的配置只含一台服务器，代理名改写为组名，`ParseProfile` 的名称校验不变。`/connections` 响应中的 `node_id` 是不透明的服务器 ID，客户端只在连接失败后的一次重试中作为 `avoid_node_id` 回传。`GET /config` 与就绪的 `GET /grants/:id` 响应中的 `node_id` 回显所选线路（组 ID）：已发布的旧 Core 与当前 Core 都校验它等于所选目录项，组 ID 与服务器 ID 不同时（网站新建的组都是如此）若返回服务器 ID 会被拒绝（第 4 轮修正）。grant 路径如需服务器 ID 用于 `avoid_node_id`，第 5 轮另加字段，不改变 `node_id` 语义。
+- **目录项是节点组**：`GET /nodes` 的 `nodes[]` 结构不变，`id` 为组 ID、`version` 为组版本。同组服务器的代理名可以相同；下发的配置只含一台服务器，代理名改写为组名，`ParseProfile` 的名称校验不变。`/connections` 响应中的 `node_id` 是不透明的服务器 ID，客户端只在连接失败后的一次重试中作为 `avoid_node_id` 回传。`GET /config` 与就绪的 `GET /grants/:id` 响应中的 `node_id` 回显所选线路（组 ID）：已发布的旧 Core 与当前 Core 都校验它等于所选目录项，组 ID 与服务器 ID 不同时（网站新建的组都是如此）若返回服务器 ID 会被拒绝（第 4 轮修正）。grant 路径的服务器 ID 由第 5 轮新增的就绪 grant 字段 `server_id` 提供（只用于 `avoid_node_id`），`node_id` 语义不变。
 - **分配**：本设备已在线的服务器 → 用户在该组的固定服务器（健康且未满）→ 负载率最低（相同则随机）→ 冷却中的服务器（仅当没有健康且未满的服务器）。满载与冷却不进入目录或修订号。
 - **目录中的本会话连接**：会话持有过 v3 调用（`/connections`、`/grants`）取得的租约后，`GET /nodes` 带 `connection`（`id`、`group_id`、`state`），并计入修订号；服务器被撤下时长轮询数秒内返回，`state` 变为 `ended`。它不含到期时间，续期不会唤醒长轮询。没有 v3 租约的会话（旧 Core）目录与修订号保持 v2 原样。
 - **重新分配与线路消失**：服务器被停用、删除或移到其他组时租约以 `node_unavailable` 结束，快照原因 `connection_reassigned`（优先于此时的 `client_config_unavailable`/`profile_changed`），客户端应对同一组重新接入一次；旧 Core 收到 `profile_changed`。整组停用或删除时租约以 `group_unavailable` 结束，不报告 `connection_reassigned`，快照为 `client_config_unavailable`，线路从目录消失。
 - **失败报告**：释放原因 `tunnel_unhealthy`、`tunnel_failed` 同时是对该服务器的健康报告；`POST /grants/:id/revoke` 新增可选 `reason`（同一白名单，旧 Core 发送 `{}` 照常有效）。夹具新增 `catalog_connection` 与 `grant_revoke` 两例。
+
+## 共享 Core 的在线租约（节点组交接书第 5 轮）
+
+四个平台共用的 Go Core（`native/core/internal/managed`）按 contract v3 工作，APP 不需要业务改动，快照结构（`snapshot-v1.json`）不变。
+
+- **选择只记录**：两种计量模式下 `SelectNode` 都只记录所选线路（节点组），不发请求、不占名额、不预取配置；`config_ready` 为“已选即就绪”，`profile_version` 只在连接期间有值。iOS 会话交接接管后同样只恢复选择。
+- **连接**：确认旧尾账 → `GET /session` → 物理网络检查 → `POST /connections`（同一 `Idempotency-Key` 重试网络错误与 5xx；`group_unavailable`、`agent_unavailable` 是对线路的答复，不重试）→ 校验配置（代理名 = 组名、版本哈希、会话的 `connection_id` = 租约 ID）→ 计量首报 → 引擎启动 → 探测。node_reported 线路走 `POST /grants`，`node_id` 为组 ID。
+- **探测失败重试一次**：探测（`Verify`）失败时，关闭数据通道、结清探测流量后以 `tunnel_unhealthy`/`tunnel_failed` 释放（grant 路径以同一原因撤销），并带上一次的服务器 ID（`/connections` 的 `node_id` 或就绪 grant 的 `server_id`）作为 `avoid_node_id` 重新接入一次；组内没有其他服务器（`group_unavailable`/`group_full`/`agent_unavailable`）时向用户显示原始探测失败。引擎启动失败属于本机问题，按 `stopped` 释放、不重试、不计入健康报告。
+- **断开与释放**：`stopTunnel` 在确认尾账之后、状态迁移之前释放租约（限时 5 秒）；原因：用户断开 `user`，网络变化 `network_changed`，休眠/时钟 `lifecycle`，其他守卫 `stopped`。尾账未确认时不先释放，由保活循环结清后再释放；释放失败（网络、5xx）同样由保活循环重试，成功或得到确定答复（404 等）后不再重复。服务端已结束的租约（快照 `connection_state` 非 active）不再释放。登出与进程退出走同一路径。
+- **重新分配**：快照原因 `connection_reassigned`（来自 `/traffic` 回执、`/session` 或目录长轮询唤醒后的会话刷新）→ 正常停止流程（结尾账）→ 对同一线路自动重新接入一次；期间 `last_error` 为“线路服务器已调整，正在为你重新连接”，成功后清除，失败则停在断开状态显示失败原因。用户在此期间的任何操作（连接、断开、切换线路、登出、交接）优先，自动重连放弃。Android（ResumeGate）恢复时若收到 `connection_expired` 同样重新接入一次，名额已被占用则停止并提示 `device_limit`；桌面端收到 `connection_expired` 停止并提示重新连接。
+- **迟到响应与交接**：接入回复到达时会话已变化（generation 不同）则不安装，并在后台释放该租约。持有租约或有待释放的租约时，`ExportHandoff` 返回 `handoff_unsettled`。
+- **新文案**（Core 维护，APP 直接显示）：`device_limit`“已达到同时在线设备上限，请先断开其他设备”、`group_full`、`group_unavailable`、`connection_reassigned`、`connection_not_found`、`connection_expired`、`grant_required`，均不结束登录会话。
+- **验收工具**：`asterlink-billtest --presence --use-device-slots` 以同一账号的多个设备经生产 Manager 运行 P01 设备上限、P02 满载（`--full-line`）、P03 重新分配（`--reassign-wait-seconds`，由操作者在后台停用该设备所在服务器）；默认使用无数据通道的控制面引擎，`--tun` 让设备 1 使用真实引擎（需特权）。
 
 ## 隔离数据库与可控网络夹具
 

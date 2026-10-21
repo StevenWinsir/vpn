@@ -21,6 +21,8 @@ type grantFake struct {
 
 	pendingPolls   int // polls answered "pending" before the node confirms
 	createErr      *apiError
+	avoids         []string // avoid_node_id of every creation
+	revokeReasons  []string
 	revokeFailures int  // revocations answered 503 before one succeeds
 	revokeHold     bool // the node never confirms removal
 
@@ -29,6 +31,7 @@ type grantFake struct {
 
 type fakeGrant struct {
 	id, node, state string
+	server          string
 	polls           int
 	yaml, version   string
 	uuid            string
@@ -44,13 +47,15 @@ func (f *fakeAPI) grantCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	f.grants.creates.Add(1)
 	var in struct {
-		NodeID string `json:"node_id"`
+		NodeID      string `json:"node_id"`
+		AvoidNodeID string `json:"avoid_node_id"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	key := r.Header.Get("Idempotency-Key")
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	g := &f.grants
+	g.avoids = append(g.avoids, in.AvoidNodeID)
 	if g.createErr != nil {
 		writeError(w, *g.createErr)
 		return
@@ -73,8 +78,19 @@ func (f *fakeAPI) grantCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, apiError{400, "invalid_managed_selection"})
 		return
 	}
+	server := ""
+	for _, s := range f.conns.serversOf(node.ID) {
+		if s != in.AvoidNodeID && !f.conns.down[s] {
+			server = s
+			break
+		}
+	}
+	if server == "" {
+		writeError(w, apiError{503, "agent_unavailable"})
+		return
+	}
 	g.seq++
-	gr := &fakeGrant{id: fmt.Sprintf("55555555-5555-4555-8555-%012d", g.seq), node: node.ID, state: apiclient.GrantPending, uuid: fmt.Sprintf("44444444-4444-4444-8444-%012d", g.seq)}
+	gr := &fakeGrant{id: fmt.Sprintf("55555555-5555-4555-8555-%012d", g.seq), node: node.ID, server: server, state: apiclient.GrantPending, uuid: fmt.Sprintf("44444444-4444-4444-8444-%012d", g.seq)}
 	gr.yaml = grantYAML(node.Name, gr.uuid)
 	gr.version = sha(gr.yaml)
 	g.items[gr.id], g.byKey[key] = gr, gr.id
@@ -101,6 +117,11 @@ func (f *fakeAPI) grantByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if revoke {
 		g.revokes.Add(1)
+		var in struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		g.revokeReasons = append(g.revokeReasons, in.Reason)
 		if g.revokeFailures > 0 {
 			g.revokeFailures--
 			writeError(w, apiError{503, "client_service_unavailable"})
@@ -135,7 +156,7 @@ func (f *fakeAPI) grantByID(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(apiclient.GrantStatus{GrantID: id, State: gr.state, Reason: "grant_pending"})
 	case apiclient.GrantReady:
 		snap := f.snapshotSession()
-		json.NewEncoder(w).Encode(apiclient.GrantStatus{GrantID: id, State: gr.state, YAML: gr.yaml, Version: gr.version, NodeID: gr.node, Session: &snap})
+		json.NewEncoder(w).Encode(apiclient.GrantStatus{GrantID: id, State: gr.state, YAML: gr.yaml, Version: gr.version, NodeID: gr.node, ServerID: gr.server, Session: &snap})
 	default:
 		json.NewEncoder(w).Encode(apiclient.GrantStatus{GrantID: id, State: gr.state})
 	}
@@ -378,15 +399,11 @@ func TestNodeLosingItsAgentFallsBackToReselection(t *testing.T) {
 	// The admin removes the agent: the node is still listed but no longer node-metered.
 	h.f.mutate(func() { h.f.nodes[0].MeteringSource = "" })
 	waitFor(t, "catalog to reflect the change", func() bool { return h.m.Snapshot().Nodes[0].MeteringSource == "" })
-	// The held selection now follows the development path and binds a config on connect.
-	snap := h.m.Snapshot()
-	if snap.Entitlement == nil || snap.Entitlement.CanConnect {
-		t.Fatalf("a changed node must not stay connectable on a stale mode: %+v", snap.Entitlement)
-	}
-	selectA(t, h.m)
+	// Nothing is held for the selection, so the next Connect follows the line's current
+	// mode: an online lease through POST /connections, never a grant.
 	h.connect(t)
-	if h.f.configHits.Load() == 0 || h.f.grants.creates.Load() != 0 {
-		t.Fatal("a shared-credential node must use the config path")
+	if h.f.conns.connects.Load() == 0 || h.f.grants.creates.Load() != 0 {
+		t.Fatal("a shared-credential node must use the connections path")
 	}
 }
 

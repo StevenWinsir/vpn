@@ -280,9 +280,10 @@ func (s *Server) withLease(out *nativeState, l *model.ConnectionLease, now time.
 	case out.Reason == "":
 		blockSnapshot(out, reason)
 	case reason == "connection_reassigned" || reason == "profile_changed":
-		// The session's server was withdrawn, so its profile no longer renders; what the
-		// client must do is reconnect to the group, not give the line up (plan 6.4).
-		if out.Reason == "client_config_unavailable" || out.Reason == "profile_changed" {
+		// The session's server was withdrawn, so its profile no longer renders (or, node
+		// reported, its grant was revoked with it); what the client must do is reconnect to
+		// the group, not give the line up (plan 6.4).
+		if out.Reason == "client_config_unavailable" || out.Reason == "profile_changed" || out.Reason == "grant_expired" && reason == "connection_reassigned" {
 			blockSnapshot(out, reason)
 		}
 	}
