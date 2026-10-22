@@ -682,3 +682,21 @@
   - Windows 的 Core 会话属于 GUI 的管道会话：托盘“退出”与 GUI 消失都会结束会话并立即释放；仅关闭窗口到托盘时保持在线。这与规划 10.2“UI 进程退出不影响服务内连接的在线状态”不同，是 Windows 前几轮既定设计，在线状态始终如实，本轮不改。
   - 测试世界的占位设备用真实 `/traffic` 周期上报保持在线，而不是直接改库，保证上限判断走生产查询。
 - **遗留与归属**：R6-12/R6-13 的 CI 结果（本 PR）；R6-14 macOS 实测秒数、R6-15 Windows 授权机、R6-17 真实流量改连（第 7 轮或用户在场时）；iOS 真机仍 BLOCKED；旧按服务器请求体移除（第 7 轮）。
+
+#### 第 6 轮合并后补记：main 上 Android 计费验收 N01 失败（2026-10-22）
+
+- **现象**：#56 合并后，main 的 `Android connection and billing acceptance` 只有 `N01-notification` 一项失败，本轮新增的 P/L 用例在 main 上全部通过，PR 上同一用例也通过。失败时通知显示 “JP-Direct-01”。该用例在 B01 断开后立即选择 HK-IEPL-01 再连接。
+- **根因（真实产品缺陷，第 3/5 轮引入）**：服务端目录修订号包含本会话的租约摘要（第 3 轮），每次连接、断开都会变，线路列表却不变；Core 的 `SelectNode` 要求修订号完全相等。断开后 Core 的长轮询很快拿到新修订号，APP 若在下一次轮询前选择线路，就被拒为 `stale_catalog`，选择未生效；测试没有检查选择结果，于是在旧线路上连接。用户侧表现为：断开后马上换线路，偶尔提示目录已变化。同一原因还让每次连接后长轮询额外调用一次 `GET /session`，在连接期间续期了 Core 的授权租约，违背第 2 轮“连接期间只由 /traffic 续期”的约定。测试用的假 API 修订号不含租约摘要，所以一直未暴露。
+- **修复**（分支 `worktree-nodes-round6-fix-select`）：
+  - Core 记住线路列表与原因均未变的最近 16 个修订号，`SelectNode` 接受这些修订号；列表真正变化时全部作废，仍返回 `stale_catalog`。
+  - 长轮询只在两种情况下读取 `/session`：线路列表或原因变化；摘要显示正在运行的分段租约已结束（即 `connection_reassigned` 的信号）。
+  - 假 API 的修订号改为与服务端一致（包含租约摘要）。
+  - Android `BillingAcceptanceTest` 的 `measure`、`stopCase` 和 N01 先确认选择真的生效；N01 选择被拒时单独报告 `N01-select`。
+  - 线束新增 `P06-select-after-disconnect`（对真实服务端），iOS CI 步骤改为要求 7 个 P 用例全部通过。
+- **验证**：
+  - `TestSelectRightAfterADisconnectIsNotStale` 修复前 FAIL（`stale_catalog`），修复后 PASS。
+  - 假 API 改为真实语义后，`TestPeriodicReportsAreTheOnlyRenewalWhileConnected` 与 `TestAuthorizationLossStopsTheTunnel/lease_expiry…` 在旧逻辑下失败，新逻辑通过。
+  - `internal/managed` `-race -count=3` 通过；Core 全模块 `-race` 与 `go vet`（含 `GOOS=windows`）通过。
+  - 真实 Core 对真实后端通过：`TestCoreOnlineLeasesEndToEnd`、`TestNativeCoreEndToEnd`、`TestCoreExitPathsReleaseTheSlot`、billtest presence。
+  - 线束 P06 对真实服务端：修复前 FAIL（`stale_catalog`），修复后 PASS。
+  - Android/Windows 以 PR CI 为准。

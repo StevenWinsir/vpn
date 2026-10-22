@@ -182,6 +182,30 @@ func TestShutdownSettlesThenReleasesThenRevokes(t *testing.T) {
 	}
 }
 
+// The catalog revision also covers this session's lease summary, so it moves on every connect
+// and disconnect while the list of lines stays the same. A selection made against the list
+// the user was looking at a moment ago is still valid; only a changed list is stale. (Seen on
+// CI: the Android app selected another line right after a disconnect, got stale_catalog, and
+// connected on the old line.)
+func TestSelectRightAfterADisconnectIsNotStale(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	seen := h.m.Snapshot().CatalogRevision
+	h.m.Disconnect(t.Context())
+	waitFor(t, "the long-poll to report the ended lease", func() bool { return h.m.Snapshot().CatalogRevision != seen })
+	s, err := h.m.SelectNode(t.Context(), nodeB, seen)
+	if err != nil || s.SelectedNodeID != nodeB {
+		t.Fatalf("select with the revision of an unchanged list: %v %s", err, s.SelectedNodeID)
+	}
+	// A list that really changed is still refused for an old revision.
+	now := h.m.Snapshot().CatalogRevision
+	h.f.mutate(func() { h.f.nodes[0].Name = "Renamed" })
+	waitFor(t, "the renamed list", func() bool { return h.m.Snapshot().CatalogRevision != now })
+	if _, err := h.m.SelectNode(t.Context(), nodeA, now); codeOf(err) != "stale_catalog" {
+		t.Fatalf("an old revision of a changed list: %v", err)
+	}
+}
+
 // The administrator withdraws the server: the Core stops, settles, and reconnects once to
 // the same line on another server, with a continuous ledger.
 func TestReassignmentReconnectsOnce(t *testing.T) {

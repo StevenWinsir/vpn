@@ -80,15 +80,15 @@ func (m *Manager) syncCatalog(ctx context.Context, gen uint64, client *apiclient
 
 // SelectNode records the user's choice of line (a node group). It sends nothing and takes
 // no slot: the online lease and the one server's config are obtained when the user connects
-// (contract native-v3), in either metering mode. catalogRevision must equal the revision the
-// UI was looking at.
+// (contract native-v3), in either metering mode. catalogRevision must be the revision the UI
+// was looking at, or an earlier one whose list of lines is unchanged (rememberSameListLocked).
 func (m *Manager) SelectNode(ctx context.Context, nodeID, catalogRevision string) (Snapshot, error) {
 	gen, client, token, err := m.handles()
 	if err != nil {
 		return m.Snapshot(), err
 	}
 	m.mu.Lock()
-	if catalogRevision != m.revision {
+	if catalogRevision != m.revision && !m.sameList[catalogRevision] {
 		m.mu.Unlock()
 		return m.Snapshot(), codeError("stale_catalog")
 	}

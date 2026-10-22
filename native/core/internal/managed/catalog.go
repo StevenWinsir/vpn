@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"asterlink/core/internal/apiclient"
@@ -57,16 +58,17 @@ func (m *Manager) watchCatalog(ctx context.Context, gen uint64, client *apiclien
 			continue
 		}
 		backoff = m.opts.BackoffMin
-		changed := catalog.Revision != revision
+		refresh := catalog.Revision != revision && m.catalogNewsLocked(catalog)
 		m.applyCatalogLocked(catalog)
 		if m.pauses == pauses {
 			m.catalogStale = false
 		}
 		m.mu.Unlock()
 		revision = catalog.Revision
-		if changed {
-			// An entitlement or node edit: pull the matching session promptly so the
-			// plan, quota and authorization shown are the server's current view.
+		if refresh {
+			// An entitlement or node edit, or the running segment's lease ended at the
+			// server: pull the matching session promptly so the plan, quota, authorization
+			// and a reassignment are the server's current view.
 			m.refreshSession(ctx, gen, client, token)
 		}
 		if gap := minPollGap - time.Since(began); gap > 0 && !sleepCtx(ctx, gap) {
@@ -104,9 +106,45 @@ func (m *Manager) refreshSession(ctx context.Context, gen uint64, client *apicli
 	return nil
 }
 
+// catalogNewsLocked reports whether a catalog with a new revision says something the session
+// must be re-read for. The revision also moves with this session's own lease summary on every
+// connect and disconnect; that alone is not news (re-reading /session then would make it a
+// second renewal writer while connected), except when the summary says the lease of the
+// running segment has ended (an administrator withdrew its server: connection_reassigned).
+func (m *Manager) catalogNewsLocked(c apiclient.Catalog) bool {
+	if m.revision == "" || c.Reason != m.catalogReason || !slices.Equal(c.Nodes, m.nodes) {
+		return true
+	}
+	return m.conn != nil && c.Connection != nil && c.Connection.State != apiclient.ConnectionActive
+}
+
+// sameListRevisions bounds how many earlier revisions of an unchanged list are remembered
+// (each connect and disconnect adds one).
+const sameListRevisions = 16
+
+// rememberSameListLocked keeps the outgoing revision acceptable for SelectNode when the new
+// catalog lists exactly the same lines: the revision also covers this session's lease
+// summary, which moves on every connect and disconnect, and a choice made against the list
+// the user is looking at must not be refused for that (stale_catalog). Any change to the
+// lines themselves forgets every earlier revision.
+func (m *Manager) rememberSameListLocked(c apiclient.Catalog) {
+	if m.revision == "" || c.Revision == m.revision {
+		return
+	}
+	if c.Reason != m.catalogReason || !slices.Equal(c.Nodes, m.nodes) {
+		m.sameList = nil
+		return
+	}
+	if m.sameList == nil || len(m.sameList) >= sameListRevisions {
+		m.sameList = map[string]bool{}
+	}
+	m.sameList[m.revision] = true
+}
+
 // applyCatalogLocked installs a new catalog and invalidates whatever depended on a
 // node that has changed or vanished.
 func (m *Manager) applyCatalogLocked(c apiclient.Catalog) {
+	m.rememberSameListLocked(c)
 	m.nodes, m.revision, m.catalogReady, m.catalogReason = c.Nodes, c.Revision, true, c.Reason
 	if c.Reason != "" {
 		m.profile = nil
