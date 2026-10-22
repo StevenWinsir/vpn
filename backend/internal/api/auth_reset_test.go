@@ -372,7 +372,7 @@ func TestResetRevokesAllSessionsAndKeepsAccount(t *testing.T) {
 	other := e.historicalUser(t, "bystander-"+uuid.NewString()[:8]+"@outlook.com", "user", "active")
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	sub := model.Subscription{ID: uuid.NewString(), UserID: u.ID, PlanID: "pro", PlanName: "VIP", StartsAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), TrafficLimitBytes: 1 << 30, UsedUnits: 4242, MaxDevices: 8}
-	order := model.Order{ID: uuid.NewString(), UserID: u.ID, IdempotencyKey: uuid.NewString(), PlanID: "pro", PlanName: "VIP", PriceCents: 100, DurationDays: 30, TrafficBytes: 1 << 30, Status: "paid", Provider: "test", PaidAt: now}
+	order := model.Order{ID: uuid.NewString(), UserID: u.ID, IdempotencyKey: uuid.NewString(), PlanID: "pro", PlanName: "VIP", PriceCents: 100, DurationDays: 30, TrafficBytes: 1 << 30, Status: "paid", Provider: "test", PaidAt: &now}
 	for _, row := range []any{&sub, &order} {
 		if err := e.db.Create(row).Error; err != nil {
 			t.Fatal(err)

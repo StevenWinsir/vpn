@@ -17,4 +17,7 @@ type AdminAudit struct {
 	TargetID  string `gorm:"type:uuid;not null;index"`
 	Version   int64  `gorm:"not null"`
 	CreatedAt time.Time
+	// Detail is a short non-secret JSON summary (handoff_payment_account.md 13): never
+	// passwords, tokens, signatures or raw callbacks.
+	Detail string `gorm:"type:text;not null;default:''"`
 }

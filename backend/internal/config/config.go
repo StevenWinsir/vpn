@@ -45,6 +45,8 @@ type Config struct {
 	// The lease length is ClientLease and renewal follows ClientReportInterval.
 	ClientMaxOnlineDevices, NodeHealthFailureUsers int
 	NodeHealthCooldown                             time.Duration
+	// Payment gateway (handoff_payment_account.md 4). The secret never leaves the backend.
+	Payment Payment
 }
 
 func Load() (Config, error) {
@@ -158,6 +160,9 @@ func Load() (Config, error) {
 		c.Origins = append(c.Origins, origin)
 	}
 	if err := loadMail(&c); err != nil {
+		return c, err
+	}
+	if err := loadPayment(&c); err != nil {
 		return c, err
 	}
 	if c.Host == "" || c.Database == "" || c.User == "" || c.Password == "" {

@@ -46,7 +46,7 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err := tx.Exec(`CREATE SCHEMA IF NOT EXISTS "` + c.Schema + `"`).Error; err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}); err != nil {
+		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}, &model.PaymentNotification{}, &model.Coupon{}); err != nil {
 			return err
 		}
 		s := `"` + c.Schema + `".`
@@ -63,6 +63,10 @@ func Migrate(db *gorm.DB, c config.Config) error {
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_lease_idempotency ON ` + s + `connection_leases (session_id, idempotency_key) WHERE idempotency_key <> ''`,
 			`CREATE INDEX IF NOT EXISTS idx_lease_grant ON ` + s + `connection_leases (grant_id) WHERE grant_id <> ''`,
 			`CREATE INDEX IF NOT EXISTS idx_lease_session_latest ON ` + s + `connection_leases (session_id, acquired_at DESC)`,
+			// Live pending gateway orders: the per-user cap and the reconciler's scan
+			// (handoff_payment_account.md 5.1).
+			`CREATE INDEX IF NOT EXISTS idx_order_pending_user ON ` + s + `orders (user_id, expires_at) WHERE status = 'pending'`,
+			`CREATE INDEX IF NOT EXISTS idx_order_pending_expiry ON ` + s + `orders (expires_at) WHERE status = 'pending'`,
 		} {
 			if err := tx.Exec(stmt).Error; err != nil {
 				return err

@@ -79,6 +79,14 @@ func main() {
 	if c.TestPurchase {
 		log.Print("WARNING: TEST PURCHASE ENABLED; no real payment is processed; any enabled proxy access is development-only and client-reported")
 	}
+	if c.Payment.Enabled {
+		if len(c.Payment.NotifyAllowed) == 0 {
+			log.Print("WARNING: PAYMENT_NOTIFY_ALLOWED_IPS is empty; every gateway callback goes to manual review and no order is fulfilled automatically")
+		}
+		if c.Payment.TestPrice {
+			log.Printf("WARNING: PAYMENT TEST PRICE ENABLED (%d listed accounts; empty list = every account); real gateway payments are taken at the test price", len(c.Payment.TestEmails))
+		}
+	}
 	handler := api.New(db, c)
 	srv := &http.Server{Addr: c.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: c.RequestTimeout + 5*time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -120,6 +128,9 @@ func main() {
 		case <-time.After(10 * time.Second):
 		}
 	}()
+	if c.Payment.Enabled {
+		go paymentLoop(ctx, db, c)
+	}
 	mailDone := startAuthMail(ctx, db, c)
 	log.Printf("API listening on http://%s", c.Addr)
 	if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -203,6 +214,26 @@ func reconcileLoop(ctx context.Context, db *gorm.DB, c config.Config) {
 				log.Print("grant reconciliation failed (will retry)")
 			} else if released > 0 {
 				log.Printf("grant reconciliation released %d lapsed grants", released)
+			}
+		}
+	}
+}
+
+// paymentLoop settles gateway orders whose window has passed (handoff_payment_account.md
+// 6.4). Instances claim orders with SKIP LOCKED, so several may run at once.
+func paymentLoop(ctx context.Context, db *gorm.DB, c config.Config) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			changed, err := api.ReconcilePayments(ctx, db, c)
+			if err != nil && ctx.Err() == nil {
+				log.Print("payment reconciliation failed (will retry)")
+			} else if changed > 0 {
+				log.Printf("payment reconciliation settled %d orders", changed)
 			}
 		}
 	}

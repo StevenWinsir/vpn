@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"math"
 	"strconv"
 	"time"
 
@@ -122,34 +121,12 @@ func (s *Server) testPurchase(c *gin.Context) {
 			}
 			return err
 		}
-		if plan.DurationDays <= 0 || plan.DurationDays > 365 || plan.TrafficBytes <= 0 || plan.TrafficBytes > 1<<50 || plan.PriceCents < 0 {
-			return &apiError{409, "invalid_plan", "套餐配置不可用"}
-		}
 		now := time.Now().UTC()
-		var sub model.Subscription
-		err = tx.Where("user_id = ?", user.ID).First(&sub).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		if _, err := applyPlan(tx, user.ID, plan, now, true); err != nil {
 			return err
 		}
-		active := err == nil && now.Before(sub.ExpiresAt)
-		if active && (!sub.IsTest || sub.PlanID != plan.ID) {
-			return &apiError{409, "plan_change_not_supported", "有效套餐期间仅支持续购相同的测试套餐"}
-		}
-		if !active {
-			sub = model.Subscription{ID: sub.ID, CreatedAt: sub.CreatedAt, UserID: user.ID, PlanID: plan.ID, PlanName: plan.Name, StartsAt: now, ExpiresAt: now, TrafficLimitBytes: 0, MaxDevices: plan.MaxDevices, AllowDedicated: plan.AllowDedicated, IsTest: true}
-			if sub.ID == "" {
-				sub.ID = uuid.NewString()
-			}
-		}
-		if sub.TrafficLimitBytes > math.MaxInt64/1000-plan.TrafficBytes || sub.TrafficLimitBytes+plan.TrafficBytes > 1<<50 || sub.ExpiresAt.After(now.AddDate(10, 0, 0)) {
-			return &apiError{409, "renewal_limit", "续购超过允许的套餐上限"}
-		}
-		sub.TrafficLimitBytes += plan.TrafficBytes
-		sub.ExpiresAt = sub.ExpiresAt.AddDate(0, 0, plan.DurationDays)
-		if err := tx.Omit("User", "Plan").Save(&sub).Error; err != nil {
-			return err
-		}
-		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: plan.PriceCents, DurationDays: plan.DurationDays, TrafficBytes: plan.TrafficBytes, Status: "paid_test", Provider: "test", PaidAt: now}
+		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: plan.PriceCents, DurationDays: plan.DurationDays, TrafficBytes: plan.TrafficBytes, Status: model.OrderPaidTest, Provider: "test", PaidAt: &now,
+			ListPriceCents: plan.PriceCents, AmountCents: plan.PriceCents, PriceSource: "test_purchase"}
 		return tx.Omit("User").Create(&order).Error
 	})
 	if err != nil {

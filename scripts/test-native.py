@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # load_balancing_c.md round 7): its Core is what every installed app runs until the new
 # Core ships, so TestReleasedCoreAgainstNodeGroupsPostgres drives it against this tree.
 RELEASED_CORE_REF = "a63a882ff41d83f04a0527128c96d9b8a9782365"
-AUTH_MAIL_PREFIXES = ('SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES')
+AUTH_MAIL_PREFIXES = ('SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES', 'PAYMENT_')
 
 
 def main() -> None:
@@ -36,8 +36,8 @@ def main() -> None:
             if startup.returncode:
                 raise SystemExit((directory / "postgres.log").read_text())
             started = True
-            # Never inherit real mail settings from the runner (handoff_auth.md 11.1): tests use
-            # synthetic SMTP values, a Fake Mailer and a private SMTP server only.
+            # Never inherit real mail or payment settings from the runner (handoff_auth.md 11.1,
+            # handoff_payment_account.md 15.1): tests use synthetic values, a Fake Mailer and a fake gateway.
             environment = {key: value for key, value in os.environ.items() if not key.startswith(AUTH_MAIL_PREFIXES)}
             # The real Core binary (built with the test-only fake engine: no root, no routes) is exercised against the real API (TestNativeCoreEndToEnd).
             core_bin = directory / "asterlink-core"

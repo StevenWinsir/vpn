@@ -119,11 +119,17 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 		}
 		c.JSON(200, gin.H{"status": "ok", "database": "connected"})
 	})
+	// The gateway callback has no user, no Origin and a fixed source; it is kept out of
+	// the per-IP API limit and judged by its own rules (handoff_payment_account.md 6.3).
+	r.POST("/api/v1/payments/notify", rateLimit(600), s.paymentNotify)
 	v := r.Group("/api/v1")
 	v.Use(rateLimit(cfg.APIRate))
 	v.GET("/meta", func(c *gin.Context) {
 		meta := gin.H{"test_purchase_enabled": cfg.TestPurchase && cfg.Env != "production", "currency": "CNY", "traffic_unit": "GiB", "proxy_service_ready": false}
 		for key, value := range authMeta(cfg) {
+			meta[key] = value
+		}
+		for key, value := range paymentMeta(cfg) {
 			meta[key] = value
 		}
 		c.JSON(200, meta)
@@ -148,6 +154,17 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	secured.GET("/orders", s.orders)
 	secured.POST("/orders/test-purchase", s.testPurchase)
 	secured.GET("/client/bootstrap", s.bootstrap)
+	secured.POST("/payments/quote", s.paymentQuote)
+	secured.POST("/payments/orders", s.createPaymentOrder)
+	secured.GET("/payments/orders/:id", s.paymentOrder)
+	// The account console is separate from node administration and does not depend on
+	// the node catalog switch (handoff_payment_account.md 9.1).
+	console := secured.Group("/admin/console")
+	console.Use(s.requireConsoleAdmin())
+	console.GET("/coupons", s.adminCouponList)
+	console.POST("/coupons", s.adminCouponSave)
+	console.POST("/coupons/:id", s.adminCouponSave)
+	console.DELETE("/coupons/:id", s.adminCouponDelete)
 	admin := secured.Group("/admin")
 	admin.Use(s.requireAdmin())
 	admin.GET("/nodes", s.adminNodeList)

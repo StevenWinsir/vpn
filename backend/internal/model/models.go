@@ -79,8 +79,36 @@ type Order struct {
 	Status         string    `gorm:"size:24;not null" json:"status"`
 	Provider       string    `gorm:"size:24;not null" json:"provider"`
 	CreatedAt      time.Time `gorm:"index" json:"created_at"`
-	PaidAt         time.Time `json:"paid_at"`
+	// PaidAt is nil while a gateway order is unpaid. Legacy rows always have it.
+	PaidAt *time.Time `json:"paid_at"`
+	// Gateway orders (handoff_payment_account.md 5.1). Legacy test orders keep the zero
+	// values; PriceCents of a gateway order is its payable amount (AmountCents).
+	TradeNo        *string    `gorm:"size:20;uniqueIndex" json:"trade_no,omitempty"`
+	PayType        string     `gorm:"size:12;not null;default:''" json:"pay_type,omitempty"`
+	ListPriceCents int64      `gorm:"not null;default:0" json:"list_price_cents"`
+	DiscountCents  int64      `gorm:"not null;default:0" json:"discount_cents"`
+	AmountCents    int64      `gorm:"not null;default:0" json:"amount_cents"`
+	PaidCents      *int64     `json:"paid_cents"`
+	CouponID       *string    `gorm:"type:uuid;index" json:"-"`
+	CouponCode     string     `gorm:"size:32;not null;default:''" json:"coupon_code,omitempty"`
+	PriceSource    string     `gorm:"size:16;not null;default:''" json:"price_source,omitempty"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	ReviewReason   string     `gorm:"size:32;not null;default:''" json:"-"`
+	// GatewayCheckedAt throttles status queries (reconciler and result page).
+	GatewayCheckedAt *time.Time `json:"-"`
+	// Written from the injected clock, never by GORM's own time.Now.
+	UpdatedAt *time.Time `gorm:"autoUpdateTime:false" json:"-"`
 }
+
+// Order statuses. paid means paid and fulfilled, in one transaction.
+const (
+	OrderPending  = "pending"
+	OrderPaid     = "paid"
+	OrderExpired  = "expired"
+	OrderFailed   = "failed"
+	OrderReview   = "review"
+	OrderPaidTest = "paid_test"
+)
 
 // Public metadata only. Never put shared proxy credentials in public-facing models.
 //
