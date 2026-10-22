@@ -5,16 +5,22 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"asterlink/core/internal/engine"
 	"asterlink/core/internal/ipc"
 	"asterlink/core/internal/managed"
 	"asterlink/core/internal/service"
 )
+
+// signalShutdownBudget bounds the session's end after a signal: well inside the Helper's
+// 12-second wait and the few seconds a system shutdown leaves a process.
+const signalShutdownBudget = 4 * time.Second
 
 // Set with -ldflags "-X main.version=... -X main.mihomoRevision=...".
 var (
@@ -50,18 +56,33 @@ func main() {
 	if err := engine.RestoreSystemDNS(); err != nil {
 		fmt.Fprintln(os.Stderr, "network recovery failed:", err)
 	}
+	manager := managed.New(managed.Options{CoreVersion: version, Engine: newEngine()})
 	// The Helper's terminate() and a logout send signals that would otherwise exit
 	// without Stop; the resolver must not stay pointed at a vanished tunnel. On Windows
 	// the same channel carries console control events (Ctrl+C, Ctrl+Break, logoff,
-	// shutdown), which the Go runtime delivers as SIGINT/SIGTERM.
+	// shutdown), which the Go runtime delivers as SIGINT/SIGTERM. The resolver comes back
+	// first; then, within a short budget, the session ends as on a normal exit (the data
+	// path closed, the last batch settled, the online slot released), so a machine that
+	// shuts down shows the device offline at once instead of after the lease runs out.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
 		<-signals
 		_ = engine.RestoreSystemDNS()
+		ctx, cancel := context.WithTimeout(context.Background(), signalShutdownBudget)
+		done := make(chan struct{})
+		go func() {
+			manager.Shutdown(ctx)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+		cancel()
+		_ = engine.RestoreSystemDNS()
 		os.Exit(1)
 	}()
-	manager := managed.New(managed.Options{CoreVersion: version, Engine: newEngine()})
 	if err := ipc.ServeWith(channel, ipc.BuildInfo{CoreVersion: version, MihomoRevision: mihomoRevision}, service.New(manager)); err != nil {
 		fmt.Fprintln(os.Stderr, "ipc terminated:", err)
 		os.Exit(1)

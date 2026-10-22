@@ -285,6 +285,10 @@ func pct(counted, body int64) string {
 }
 
 func (r *runner) runCases(ctx context.Context) {
+	if r.cfg.Only == "presence" {
+		r.presenceCases(ctx)
+		return
+	}
 	up, down := r.cfg.UploadMiB<<20, r.cfg.DownloadMiB<<20
 
 	// ---- B01: the same controlled bytes at 1x (dedicated, Shadowsocks) and 0.5x (ordinary, VLESS).
@@ -408,6 +412,9 @@ func (r *runner) runCases(ctx context.Context) {
 
 	// ---- B04: a node-reported line, through the real node agent.
 	r.nodeReported(ctx)
+
+	// ---- P01-P05: online presence (node groups round 6), last: it ends with a Shutdown.
+	r.presenceCases(ctx)
 }
 
 func (r *runner) reconnectCase(ctx context.Context) {

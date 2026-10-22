@@ -271,6 +271,34 @@ public class PresentationTests
     [InlineData(ServiceErrors.WorkerExited, "重新登录")]
     public void Service_errors_have_specific_text(string code, string fragment) => Assert.Contains(fragment, ErrorText.ForService(code));
 
+    // Node groups round 6: online-presence refusals arrive at connect time in the Core's words; the
+    // account can try again (another device may disconnect, another line may have room).
+    [Theory]
+    [InlineData("device_limit", "已达到同时在线设备上限，请先断开其他设备")]
+    [InlineData("group_full", "该线路当前已满，请稍后再试或选择其他线路")]
+    [InlineData("group_unavailable", "该线路暂无可用服务器，请选择其他线路")]
+    [InlineData("connection_expired", "在线状态已过期，请重新连接")]
+    public void An_online_presence_refusal_shows_the_core_text_and_allows_a_retry(string code, string message)
+    {
+        var view = ConnectionView.From(Replies.Plan(selected: Replies.NodeA, configReady: true, lastError: new ErrorView { Code = code, Message = message }), false);
+        Assert.Equal(message, view.Detail);
+        Assert.True(view.ShowConnect);
+        Assert.True(view.CanConnect);
+    }
+
+    // connection_reassigned: while the Core moves to another server of the line by itself the
+    // page shows progress, never a Connect button.
+    [Fact]
+    public void A_server_side_move_shows_progress_and_no_connect_button()
+    {
+        var moving = Replies.Plan(state: "preparing", selected: Replies.NodeA, configReady: true,
+            lastError: new ErrorView { Code = "connection_reassigned", Message = "线路服务器已调整，正在为你重新连接" });
+        var view = ConnectionView.From(moving, false);
+        Assert.Equal("正在准备…", view.StatusText);
+        Assert.False(view.ShowConnect);
+        Assert.True(view.ShowProgress);
+    }
+
     [Fact]
     public void Diagnostics_hold_state_but_no_secret_shaped_fields()
     {
@@ -495,6 +523,24 @@ public class SessionControllerTests
         Assert.Equal("隧道启动失败", harness.Session.Message);
         Assert.NotEqual("connected", harness.Session.Snapshot.State);
         Assert.False(harness.Session.Connection.ShowDisconnect);
+    }
+
+    [Fact]
+    public async Task A_device_limit_at_connect_is_shown_and_the_account_stays_signed_in()
+    {
+        var limit = new ErrorView { Code = "device_limit", Message = "已达到同时在线设备上限，请先断开其他设备" };
+        var snapshot = Replies.Plan(selected: Replies.NodeA, configReady: true);
+        var harness = new Harness();
+        harness.Transport.Handler = (command, _, _) => Task.FromResult(command == IpcCommands.Connect
+            ? Replies.Snapshot(Replies.Plan(selected: Replies.NodeA, configReady: true, lastError: limit), limit)
+            : Replies.Snapshot(snapshot));
+        await harness.Session.LaunchAsync();
+        await harness.Session.SignInAsync("user@example.com", "pw", false);
+        await harness.Session.ConnectAsync();
+
+        Assert.Equal(limit.Message, harness.Session.Message);
+        Assert.Equal(AppPhase.SignedIn, harness.Session.Phase);
+        Assert.True(harness.Session.Connection.CanConnect);
     }
 
     [Fact]

@@ -25,10 +25,14 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -46,7 +50,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Round-4 connection and billing acceptance (handoff_app_android.md B01, B02, A04, B04) on the
+ * Round-4 connection and billing acceptance (handoff_app_android.md B01, B02, A04, B04; and the
+ * online presence cases P01-P05 of node groups round 6) on the
  * device, through everything that ships: the app's SessionController, AsterVpnService with
  * VpnService.Builder and protect(), the Go Core's managed session (gates, first metering ACK,
  * TUN, Verify, the meter, the stop paths) and the real Gin/PostgreSQL backend started by
@@ -532,6 +537,9 @@ class BillingAcceptanceTest {
 
         // ---- B04: a node-reported line, through the real node agent: no client report, the node bills.
         nodeReported()
+
+        // ---- P01-P05: online presence (node groups round 6).
+        presenceCases()
     }
 
     /**
@@ -578,6 +586,185 @@ class BillingAcceptanceTest {
             if (units != counted * rate) add("charged $units units for $counted bytes, expected x $rate")
         }, "stopped by itself ${stoppedAfter} ms after the change with \"$code\" (${s.snapshot.lastError?.message}); tail settled, VPN and service gone after ${vpnGone} ms; " +
             "the segment's $counted bytes charged $units units at its own $rate‰")
+    }
+
+    // ---------------------------------------------------------------- online presence (node groups round 6)
+
+    private data class Lease(val lease: String, val holder: Boolean, val server: String, val label: String, val line: String, val reason: String)
+
+    private data class Presence(val live: List<Lease>, val ended: List<Lease>) {
+        val own: Lease? get() = live.firstOrNull { !it.holder }
+    }
+
+    /** The server's own view of the presence account: live leases and the latest ended ones. */
+    private fun presence(): Presence {
+        val o = Json.parseToJsonElement(world("presence", """{"user":"presence"}""")).jsonObject
+        fun list(key: String) = o.getValue(key).jsonArray.map { e ->
+            val l = e.jsonObject
+            fun s(k: String) = l[k]?.jsonPrimitive?.content.orEmpty()
+            Lease(s("lease"), l["holder"]?.jsonPrimitive?.boolean == true, s("server"), s("label"), s("line"), s("end_reason"))
+        }
+        return Presence(list("live"), list("ended"))
+    }
+
+    private suspend fun waitPresence(millis: Long, predicate: (Presence) -> Boolean): Pair<Long?, Presence> {
+        val start = SystemClock.elapsedRealtime()
+        var last = presence()
+        while (SystemClock.elapsedRealtime() - start < millis) {
+            last = presence()
+            if (predicate(last)) return (SystemClock.elapsedRealtime() - start) to last
+            delay(100)
+        }
+        return null to last
+    }
+
+    /**
+     * P01-P05 (handoff_node_use_history_and_load_balancing_c.md round 6) on the device: the
+     * device limit when connecting, one automatic reconnect after the administrator withdraws the
+     * server this phone is on (in the foreground and with the app in the background, where only
+     * the /traffic replies carry the news), and the online slot released by Disconnect and by
+     * signing out. The account is "presence"; the line "pair" is one node group of two servers.
+     */
+    private suspend fun presenceCases() {
+        if (!nodeIds.containsKey("pair")) {
+            record("P", "BLOCKED", "this billing world has no two-server line (backend older than node groups round 6)")
+            return
+        }
+        try {
+            runPresence()
+        } finally {
+            container.core.setForeground(true)
+            runCatching { world("vacate", """{"user":"presence"}""") }
+            runCatching { world("restore") }
+        }
+    }
+
+    private suspend fun runPresence() {
+        val lease = world.getValue("lease_seconds").jsonPrimitive.long * 1000
+        val c = signIn("presence")
+        // ---- P01: two other devices of the account are online: this phone is refused at connect.
+        world("occupy", """{"user":"presence","count":2}""")
+        main { c.selectNow(nodeIds.getValue("pair")) }
+        main { c.connectNow() }
+        var s = c.state.value
+        var p = presence()
+        val want = "已达到同时在线设备上限，请先断开其他设备"
+        verdict("P01-device-limit", buildList {
+            if (s.snapshot.state == State.CONNECTED) add("connected with two other devices online")
+            if (s.message?.code != "device_limit" || s.message?.text != want) add("the app says ${s.message}")
+            if (vpnNetworkUp() || container.vpnHosts.current != null) add("VPN network ${vpnNetworkUp()}, service ${container.vpnHosts.current != null} after the refusal")
+            if (p.live.size != 2 || p.own != null) add("server: ${p.live.size} live, own ${p.own}")
+        }, "two of two slots held by other devices: Connect refused, the app shows \"${s.message?.text}\" (code ${s.message?.code}); no VPN network or service left; the server still counts 2 online, none of them this phone")
+
+        // ---- P01: one of them disconnects; this phone is admitted at once.
+        world("vacate", """{"user":"presence","count":1}""")
+        val started = SystemClock.elapsedRealtime()
+        main { c.connectNow() }
+        val took = SystemClock.elapsedRealtime() - started
+        s = c.state.value
+        p = presence()
+        verdict("P01-after-release", buildList {
+            if (s.snapshot.state != State.CONNECTED || !vpnNetworkUp()) add("not connected: ${s.snapshot.state} ${s.message?.code} VPN ${vpnNetworkUp()}")
+            if (p.live.size != 2 || p.own?.line != "pair") add("server: ${p.live.size} live, own ${p.own}")
+        }, "after another device disconnected this phone connected in $took ms; the server counts 2 of 2, this phone on ${p.own?.label}")
+        if (s.snapshot.state != State.CONNECTED) return
+        world("vacate", """{"user":"presence"}""")
+
+        // ---- P03: the administrator disables this phone's server, in the foreground and then
+        // with the app in the background (the catalog long-poll paused).
+        if (!reassignCase("P03-reassign", c, background = false)) return
+        world("restore")
+        reassignCase("P03-reassign-background", c, background = true)
+        container.core.setForeground(true)
+
+        // The ledger is continuous across the moves: server = the Core's confirmed counters.
+        main { c.disconnectNow() }
+        waitFor(c, 15_000) { !it.snapshot.tunnelBusy && it.snapshot.metering?.pending != true }
+        val m = c.state.value.snapshot.metering
+        val l = ledger("presence")
+        verdict("P03-ledger", buildList {
+            if (m == null || m.pending || l.uploadBytes != m.confirmedUploadBytes || l.downloadBytes != m.confirmedDownloadBytes) add("server ${l.uploadBytes}/${l.downloadBytes}, Core ${m?.confirmedUploadBytes}/${m?.confirmedDownloadBytes} pending ${m?.pending}")
+            if (l.downloadBytes < 4L shl 20) add("the server counted ${l.downloadBytes} download bytes for 4 MiB through three servers")
+        }, "after two moves and a disconnect: server up ${l.uploadBytes} / down ${l.downloadBytes} = the Core's confirmed counters, nothing pending")
+        world("restore")
+
+        // ---- P04 / P05: Disconnect and signing out release the slot at once (not by expiry).
+        releaseCase("P04-disconnect-release", c, lease) { main { c.disconnectNow() } }
+        releaseCase("P05-signout-release", c, lease) { main { c.signOutNow() } }
+    }
+
+    /**
+     * Connect on the pair line, download 1 MiB, withdraw the server this phone is on, and require
+     * one automatic reconnect to the other server: the app never shows an idle tunnel meanwhile
+     * (it would stop its VPN service), the service stays, and the tunnel forwards again.
+     */
+    private suspend fun reassignCase(id: String, c: SessionController, background: Boolean): Boolean {
+        if (c.state.value.snapshot.state != State.CONNECTED) {
+            main { c.selectNow(nodeIds.getValue("pair")) }
+            main { c.connectNow() }
+        }
+        val (_, before) = waitPresence(5_000) { it.own != null }
+        val old = before.own
+        if (c.state.value.snapshot.state != State.CONNECTED || old == null) {
+            record(id, "FAIL", "could not connect first: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}, own lease $old")
+            return false
+        }
+        val first = runCatching { download(sink.str("name"), 1L shl 20) }.getOrNull()
+        if (background) container.core.setForeground(false)
+        val idle = CopyOnWriteArrayList<String>()
+        val serviceLost = AtomicBoolean(false)
+        val sawMessage = AtomicBoolean(false)
+        val sampler = CoroutineScope(Dispatchers.Default).launch {
+            while (true) {
+                val st = c.state.value
+                if (!st.snapshot.tunnelBusy) idle += st.snapshot.state
+                if (container.vpnHosts.current == null || container.vpnHosts.current?.isEnding == true) serviceLost.set(true)
+                if (st.snapshot.lastError?.code == "connection_reassigned") sawMessage.set(true)
+                delay(20)
+            }
+        }
+        val withdrawn = SystemClock.elapsedRealtime()
+        world("withdraw", """{"user":"presence"}""")
+        val (moved, after) = waitPresence(30_000) { it.own != null && it.own?.server != old.server }
+        val reconnected = waitFor(c, 20_000) { it.snapshot.state == State.CONNECTED }
+        val total = SystemClock.elapsedRealtime() - withdrawn
+        delay(300)
+        sampler.cancel()
+        val second = runCatching { download(sink.str("name"), 1L shl 20) }
+        val endedOld = after.ended.firstOrNull { it.lease == old.lease }?.reason
+        verdict(id, buildList {
+            if (moved == null) add("this phone is not on another server: ${after.own}")
+            if (reconnected == null) add("not connected again: ${c.state.value.snapshot.state} ${c.state.value.snapshot.lastError?.code}")
+            if (idle.isNotEmpty()) add("the app saw an idle tunnel ${idle.size} times during the reconnect (${idle.first()})")
+            if (serviceLost.get()) add("the VPN service stopped during the reconnect")
+            if (first != 1L shl 20 || second.getOrNull() != 1L shl 20) add("downloads before/after: $first / ${second.getOrNull() ?: second.exceptionOrNull()?.message}")
+            if (!vpnNetworkUp()) add("no VPN network after the reconnect")
+            if (endedOld != "node_unavailable") add("the withdrawn lease ended \"$endedOld\"")
+        }, "${if (background) "in the background: " else ""}server ${old.label} disabled; this phone was on ${after.own?.label} after $moved ms and connected again after $total ms " +
+            "(reassignment message seen: ${sawMessage.get()}); never idle and the VPN service kept (sampled every 20 ms); the old lease ended node_unavailable; 1 MiB downloads before and after")
+        return moved != null && reconnected != null
+    }
+
+    private suspend fun releaseCase(id: String, c: SessionController, leaseMillis: Long, end: suspend () -> Unit) {
+        if (c.state.value.snapshot.state != State.CONNECTED) {
+            main { c.selectNow(nodeIds.getValue("pair")) }
+            main { c.connectNow() }
+        }
+        val (_, online) = waitPresence(5_000) { it.own != null }
+        if (online.own == null) {
+            record(id, "FAIL", "not online first: ${c.state.value.snapshot.state} ${c.state.value.message?.code}")
+            return
+        }
+        val began = SystemClock.elapsedRealtime()
+        end()
+        val returned = SystemClock.elapsedRealtime() - began
+        val (offline, p) = waitPresence(10_000) { it.own == null }
+        val reason = p.ended.firstOrNull { it.lease == online.own?.lease }?.reason
+        verdict(id, buildList {
+            if (offline == null) add("still online 10 s later")
+            if (reason != "released") add("ended \"$reason\", expected released")
+            if (offline != null && returned + offline >= leaseMillis) add("offline only after ${returned + offline} ms, not before the ${leaseMillis} ms lease ran out")
+        }, "the call returned in $returned ms; the server showed this phone offline (released) $offline ms after it, inside one lease ($leaseMillis ms)")
     }
 
     private suspend fun nodeReported() {

@@ -67,6 +67,20 @@ python3 scripts/test-native-ios.py --suite billing --harness host|simulator|both
 - **它不覆盖的**（只能真机）：utun、系统 DNS、IPv6、扩展进程、通知。报告里这些用例的环境写 `harness`，从不写 `device`。
 - **不覆盖 Swift 侧**：Swift 的 SessionController / 桥由 AsterLinkKit 的 63 个测试与 ui、account 套件覆盖；线束用 Go 直接驱动 Manager，所以“界面显示的每连接用量”在这里按同一公式在 Go 里核对（`B01-*-ui`），不是截图。
 
+## 3.2 在线状态与名额（节点组第 6 轮）
+
+规划 `handoff_node_use_history_and_load_balancing_c.md` 第 6 轮。Core 只在连接时取得在线租约，网站“连接与客户端”、每账号同时在线上限（默认 2 台）与服务器负载都按租约统计。
+
+```text
+python3 scripts/test-native-ios.py --suite billing --harness simulator --harness-cases presence
+```
+
+- **世界**：仍是 `TestAndroidBillingWorld`，新增两台服务器组成的线路 `pair`（节点组 `Pair-01`）、账号 `presence` 与控制调用（`occupy` 让同账号的其他设备经真实 API 连接并按周期上报保持在线；`vacate`；`presence` 读服务端的在线与最近结束租约；`withdraw` 经管理接口停用本设备所在服务器；`restore`），见 `backend/internal/api/presence_world_test.go`。
+- **用例**（`internal/harness/presence.go`，Core 在 iOS 模拟器进程内运行）：P01-device-limit（另两台在线时连接被拒，显示 Core 文案“已达到同时在线设备上限，请先断开其他设备”，服务端仍为 2 台且不含本机）；P01-after-release（另一台断开后立即可连）；P03-reassign（停用本机所在服务器后约 1 秒自动改连同线路另一台，期间每 10 ms 取样快照始终处于忙碌状态，旧租约以 `node_unavailable` 结束，前后各下载 1 MiB）；P03-ledger（服务端计数 = Core 已确认计数）；P04/P05（断开、`Shutdown` 后服务端立即显示离线，原因 `released`，远早于租约到期）。
+- **CI**：`ios.yml` 的“Online presence in the simulator”步骤每个 PR 运行，约 30 秒；六个 P 用例必须全部在模拟器内运行且通过，`BLOCKED` 不算通过。完整运行（`--harness-cases all`，默认）在 B01–C01 之后同样执行 P 用例。
+- **扩展侧**：`TunnelWatch` 把 `preparing/connecting/stopping` 视为运行中，Core 在“停止 → 自动重连”之间保持 `preparing`（第 6 轮修复：原先重连的首个 `/session` 往返期间快照为 `ready`，扩展的结束监视会把它当作“隧道已自行结束”而取消隧道）；重连失败才按 Core 原因结束并通知。Kit 测试 `aServerSideMoveKeepsTheTunnelAndAFailedOneEndsIt`、`aServerSideMoveIsNotAnEndedTunnel` 覆盖。
+- **真机**：扩展内释放、系统杀死扩展后 90 秒过期、交接保护需要付费团队签名的真机，记为 BLOCKED（`TestHandoffRefusesAnUnreleasedLease` 在 Go 层证明持有或待释放租约时拒绝交接）。
+
 ## 4. 已知限制与待真机核实
 
 - **模拟器无法区分“用户拒绝系统弹窗”与“模拟器不支持 NE”**：两者都是 `NEVPNErrorDomain code=5`，所以模拟器上点“继续”会显示“需要允许添加 VPN 配置”。真机上的实际拒绝码待核实。

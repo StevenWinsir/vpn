@@ -130,7 +130,7 @@ class ScreenshotTest {
     @Test
     fun loginDeviceLimit() = shoot(
         "04-login-device-limit",
-        SessionState(phase = AppPhase.SignedOut, identity = identity, email = "vip@example.com", message = Notice.core("device_limit", "已达到套餐同时在线设备上限，请先在其他设备退出")),
+        SessionState(phase = AppPhase.SignedOut, identity = identity, email = "vip@example.com", message = Notice.core("device_limit", "已达到同时在线设备上限，请先断开其他设备")),
     )
 
     @Test

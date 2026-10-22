@@ -165,6 +165,23 @@ func TestLogoutReleasesTheLease(t *testing.T) {
 	}
 }
 
+// Shutdown is what every platform's exit runs (service.Close on the desktop worker's pipe
+// closing or IPC shutdown, mobile.Stop in the Android VPN process and the iOS extension): the
+// tail is settled and the lease released before the session is revoked.
+func TestShutdownSettlesThenReleasesThenRevokes(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	h.engine.up.Store(3 * mib)
+	h.m.Shutdown(t.Context())
+	r := h.f.releasesSeen()
+	if len(r) != 1 || r[0].reason != "user" || h.f.logoutHits.Load() != 1 {
+		t.Fatalf("shutdown: releases %+v logouts %d", r, h.f.logoutHits.Load())
+	}
+	if _, up, _, seq := h.ledger(); up != 3*mib || h.f.conns.atRelease[0] != seq {
+		t.Fatalf("released before the tail was settled: up %d, sequence at release %d of %d", up, h.f.conns.atRelease[0], seq)
+	}
+}
+
 // The administrator withdraws the server: the Core stops, settles, and reconnects once to
 // the same line on another server, with a continuous ledger.
 func TestReassignmentReconnectsOnce(t *testing.T) {
@@ -203,6 +220,52 @@ func TestReassignmentReconnectsOnce(t *testing.T) {
 	h.m.Disconnect(t.Context())
 	if units2, up2, _, seq2 := h.ledger(); up2 != 2*mib || units2 != 2*mib*1000 || seq2 <= seq {
 		t.Fatalf("ledger continuity: %d units, %d up, sequence %d -> %d", units2, up2, seq, seq2)
+	}
+}
+
+// Between the stop and the automatic reconnect the snapshot never looks like a tunnel that
+// ended by itself: the apps act on that (Android stops its VPN service and the Disconnect
+// cancels the reconnect; the iOS extension cancels the tunnel). A slow GET /session (the
+// reconnect's first request) used to leave the state at ready for a whole round trip.
+func TestReassignmentStaysBusyUntilReconnected(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	h.f.mu.Lock()
+	h.f.sessionDelay = 300 * time.Millisecond
+	h.f.mu.Unlock()
+	h.f.reassign()
+	var idle []State
+	waitFor(t, "automatic reconnect", func() bool {
+		s := h.m.Snapshot()
+		switch s.State {
+		case StateConnected:
+			return h.f.conns.connects.Load() == 2
+		case StatePreparing, StateConnecting, StateStopping:
+		default:
+			idle = append(idle, s.State)
+		}
+		return false
+	})
+	if len(idle) > 0 {
+		t.Fatalf("the reconnect showed an idle tunnel %d times (%v)", len(idle), idle[0])
+	}
+}
+
+// A reconnect that cannot get past its first request settles back to an idle state with its
+// reason instead of staying "preparing".
+func TestReassignmentWithoutASessionSettles(t *testing.T) {
+	h := newHarness(t, 1000)
+	h.connect(t)
+	h.f.mu.Lock()
+	h.f.sessionErr = &apiError{503, "service_unavailable"}
+	h.f.mu.Unlock()
+	h.f.reassign()
+	waitFor(t, "the reconnect to give up", func() bool {
+		s := h.m.Snapshot()
+		return (s.State == StateReady || s.State == StateBlocked) && s.LastError != nil
+	})
+	if n := h.f.conns.connects.Load(); n != 1 {
+		t.Fatalf("admissions: %d", n)
 	}
 }
 

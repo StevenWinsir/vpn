@@ -74,6 +74,22 @@ jobs:
           python3 scripts/test-native-ios.py --suite billing
           code=$?
           test $code -eq 0 -o $code -eq 3
+      - name: Online presence in the simulator (node groups round 6 P01-P05, the real Core in an iOS Simulator process against the real backend world)
+        run: |
+          # Private PostgreSQL for the backend world (Unix socket only; nothing is installed system-wide).
+          if ! command -v initdb >/dev/null; then
+            brew install postgresql@16 >/dev/null
+            export PATH="$(brew --prefix postgresql@16)/bin:$PATH"
+          fi
+          # Exit 3 is expected (the other harness cases are NOT_RUN in this run, device billing BLOCKED); a FAIL is exit 1.
+          mkdir -p artifacts/native-ios/presence
+          set +e
+          python3 scripts/test-native-ios.py --suite billing --harness simulator --harness-cases presence --runtime latest --report artifacts/native-ios/presence/presence-report.json
+          code=$?
+          set -e
+          test $code -eq 0 -o $code -eq 3
+          # BLOCKED is not good enough here: every presence case must have run in the simulator and passed.
+          python3 -c "import json,sys; cases={c['case_id']:c['status'] for c in json.load(open('artifacts/native-ios/presence/presence-report.json'))['cases']}; want=['billing.simulator.'+p for p in ('P01-device-limit','P01-after-release','P03-reassign','P03-ledger','P04-disconnect-release','P05-shutdown-release')]; bad=[w+'='+cases.get(w,'missing') for w in want if cases.get(w)!='PASS']; print('presence cases:', 'all PASS' if not bad else bad); sys.exit(1 if bad else 0)"
       - name: Lifecycle proofs (round 5 app-side lifecycle tests, device cases reported blocked)
         run: |
           # Exit 3 is expected: D-L01..D-L07 and D-MEM need a signed device. A FAIL is exit 1.

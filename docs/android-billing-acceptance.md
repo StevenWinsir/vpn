@@ -98,6 +98,35 @@ Before the fixes above, the same suite measured: every first connect of a proces
 (establish without `prepare()`); stop reasons empty after the keep-alive (A04 ×3, N02); Connect
 right after Disconnect refused with `vpn_stopping`.
 
+## Online presence (node groups round 6)
+
+`handoff_node_use_history_and_load_balancing_c.md` round 6. Since round 5 the Core takes an online
+lease only when it connects; the website's "连接与客户端" card, the device limit (2 by default) and
+each server's load all count those leases. The billing world (`TestAndroidBillingWorld`, with
+`backend/internal/api/presence_world_test.go`) adds one line made of two servers (`pair`, node group
+`Pair-01`), an account `presence`, and control calls: `occupy` (other devices of the account sign in
+and connect through the real API, and keep their slots by reporting `/traffic` every interval),
+`vacate`, `presence` (the server's live and recently ended leases), `withdraw` (the administrator
+disables the server this phone is on, through the admin API) and `restore`.
+
+| Case | Suite | What must hold |
+| --- | --- | --- |
+| P01-device-limit | billing | two other devices online: Connect is refused, the app shows the Core's "已达到同时在线设备上限，请先断开其他设备", no VPN network or service is left, the server still counts 2 and none is this phone |
+| P01-after-release | billing | one of them disconnects: this phone connects at once |
+| P03-reassign | billing | its server is disabled: the phone is on the other server of the line after about a second, without the user; sampled every 20 ms the app never shows an idle tunnel and the VPN service never stops (it would cancel the Core's reconnect); the old lease ended `node_unavailable`; 1 MiB downloads before and after |
+| P03-reassign-background | billing | the same with the app in the background (`setForeground(false)`: the catalog long-poll is paused, only the `/traffic` replies carry the news) |
+| P03-ledger | billing | after both moves the server's counters equal the Core's confirmed ones |
+| P04-disconnect-release, P05-signout-release | billing | the server shows the phone offline with reason `released` right after Disconnect / sign-out, well inside one lease |
+| L01-readmitted | lifecycle | a 15 s stall outlasts the lease (6 s in the world): the old lease lapses and the reopened gate holds one new lease |
+| L02-online | lifecycle | 15 s of Doze: the same lease is renewed throughout (the website never shows the phone offline) |
+| L04-release | lifecycle | another VPN app takes over (`onRevoke`): the service's disconnect releases the slot (`released`, not lapsed) |
+
+What a failure points at: P01 text → the Core's message table; P03 "idle" or "service stopped" →
+the Core's busy bridge between the stop and the reconnect (`TestReassignmentStaysBusyUntilReconnected`)
+or `SessionController.apply`; P04/P05/L04 `expired` instead of `released` → a stop path that skips
+`stopTunnel`. Results of each run are in the PR's CI artifacts (`android-billing-evidence`,
+`android-lifecycle-evidence`) and in section 16 of the handoff.
+
 ## Manual check on the emulator (or a phone) against demo.hyshentou.cn
 
 The suite cannot sign in to the demo server (it needs your account password) and cannot press the

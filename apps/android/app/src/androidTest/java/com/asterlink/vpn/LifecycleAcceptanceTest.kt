@@ -40,6 +40,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
@@ -251,6 +252,29 @@ class LifecycleAcceptanceTest {
     private fun hits(): Map<String, Int> =
         Json.parseToJsonElement(world("hits")).jsonObject.mapValues { it.value.jsonPrimitive.int }
 
+    /** The server's online leases of the lifecycle account (node groups round 6): live ids, and the latest ended ones' reasons by id. */
+    private data class Online(val live: List<String>, val ended: Map<String, String>)
+
+    private fun online(): Online {
+        val o = Json.parseToJsonElement(world("presence", """{"user":"life"}""")).jsonObject
+        val live = o.getValue("live").jsonArray.map { it.jsonObject.getValue("lease").jsonPrimitive.content }
+        val ended = o.getValue("ended").jsonArray.associate { it.jsonObject.getValue("lease").jsonPrimitive.content to (it.jsonObject["end_reason"]?.jsonPrimitive?.content ?: "") }
+        return Online(live, ended)
+    }
+
+    private suspend fun waitOnline(millis: Long, predicate: (Online) -> Boolean): Pair<Long?, Online> {
+        val start = SystemClock.elapsedRealtime()
+        var last = online()
+        while (SystemClock.elapsedRealtime() - start < millis) {
+            last = online()
+            if (predicate(last)) return (SystemClock.elapsedRealtime() - start) to last
+            delay(100)
+        }
+        return null to last
+    }
+
+    private val leaseMillis get() = (world["lease_seconds"]?.jsonPrimitive?.long ?: 6) * 1000
+
     private fun sinkDown(): Long = Json.parseToJsonElement(world("sink")).jsonObject.getValue("down_sent").jsonPrimitive.long
 
     private val connectivity: ConnectivityManager get() = context.getSystemService(ConnectivityManager::class.java)
@@ -437,6 +461,7 @@ class LifecycleAcceptanceTest {
         if (!ready(c, "L01-stall")) return
         val since = c.state.value.connectedSinceMillis
         val next = closures(c) + 1
+        val leaseBefore = online().live
         val began = SystemClock.elapsedRealtime()
         stall(15)
         val resumed = SystemClock.elapsedRealtime()
@@ -454,6 +479,14 @@ class LifecycleAcceptanceTest {
             if (!forwarded) add("did not forward after reopening")
             if (!vpnNetworkUp()) add("the VPN network disappeared")
         }, "stopped ${(resumed - began) / 1000} s; ${describe(gate)}; connected again within $reopenedAfter ms of resuming without any user action; same connection, forwards")
+        // The stall outlasted the online lease: the server let it lapse, and the gate took a new one.
+        val after = online()
+        verdict("L01-readmitted", buildList {
+            if (leaseBefore.size != 1) add("before the stall the server showed ${leaseBefore.size} online leases")
+            if (after.live.size != 1) add("after reopening the server shows ${after.live.size} online leases")
+            else if (after.live == leaseBefore) add("still the old lease after a ${(resumed - began) / 1000} s stall (lease ${leaseMillis} ms)")
+            if (leaseBefore.isNotEmpty() && after.ended[leaseBefore.first()] !in setOf("expired", "replaced")) add("the lapsed lease ended \"${after.ended[leaseBefore.first()]}\"")
+        }, "the ${(resumed - began) / 1000} s stall outlasted the ${leaseMillis} ms online lease: the old one lapsed (${leaseBefore.firstOrNull()?.let { after.ended[it] }}), the reopened gate holds one new lease, so the website shows the phone online again")
     }
 
     /** L01 (screen): screen off for a while, then on: still the same connection, no user action. */
@@ -513,6 +546,7 @@ class LifecycleAcceptanceTest {
     private suspend fun doze(c: SessionController) {
         if (!ready(c, "L02-doze")) return
         val since = c.state.value.connectedSinceMillis
+        val leaseBefore = online().live
         shell("dumpsys deviceidle enable deep")
         shell("dumpsys battery unplug")
         dozing = true
@@ -536,6 +570,10 @@ class LifecycleAcceptanceTest {
             if (!forwarded) add("did not forward in Doze")
             if (!connected(c) || c.state.value.connectedSinceMillis != since) add("the connection did not survive Doze: ${c.state.value.snapshot.state} ${c.state.value.snapshot.lastError?.code}")
         }, "deep idle '$stateIn' (still '$stillIdle' after 15 s): $reports traffic reports and ${during["session"] ?: 0} session reads reached the server, a 256 KiB download through the tunnel worked; out of Doze still the same connection")
+        val after = online().live
+        verdict("L02-online", buildList {
+            if (leaseBefore.size != 1 || after != leaseBefore) add("online leases before $leaseBefore, after $after")
+        }, "15 s of Doze (more than the ${leaseMillis} ms lease): the reports renewed the same online lease throughout; the website never showed the phone offline")
     }
 
     /** 7.6: in the background the catalog long-poll pauses, and a server verdict still stops the tunnel promptly. */
@@ -640,6 +678,7 @@ class LifecycleAcceptanceTest {
     /** L04: another VPN app takes over: the tunnel stops, the tail is settled, and the user is told why. */
     private suspend fun revokedByAnotherVpn(c: SessionController) {
         if (!ready(c, "L04-revoke")) return
+        val leaseBefore = online().live
         synchronized(alerts) { alerts.clear() }
         shell("appops set com.asterlink.vpn.test ACTIVATE_VPN allow")
         competitor = true
@@ -647,6 +686,8 @@ class LifecycleAcceptanceTest {
         shell("am start -W -n com.asterlink.vpn.test/com.asterlink.vpn.CompetitorActivity")
         val stoppedIn = waitFor(c, 30_000) { !it.snapshot.tunnelBusy && it.snapshot.metering?.pending != true }
         val s = c.state.value
+        val (offline, presence) = waitOnline(10_000) { it.live.isEmpty() }
+        val offlineAfter = SystemClock.elapsedRealtime() - started
         val alerted = synchronized(alerts) { alerts.toList() }
         val serviceGone = container.vpnHosts.current == null || container.vpnHosts.current?.isEnding == true
         val ledger = Json.parseToJsonElement(world("ledger", """{"user":"life"}""")).jsonObject
@@ -671,6 +712,12 @@ class LifecycleAcceptanceTest {
             if (!gone) add("a VPN network remained after the competitor stopped")
         }, "the competitor's VPN revoked ours: stopped and settled in ${stoppedIn} ms (${SystemClock.elapsedRealtime() - started} ms incl. the competitor), " +
             "server ledger = Core's confirmed counters, the user is told '${LocalCodes.VPN_REVOKED}' once; no VPN left after the competitor stopped")
+        val released = leaseBefore.singleOrNull()?.let { presence.ended[it] }
+        verdict("L04-release", buildList {
+            if (leaseBefore.size != 1) add("before: ${leaseBefore.size} online leases")
+            if (offline == null) add("still online 10 s after the stop")
+            if (released != "released") add("the lease ended \"$released\", expected released (onRevoke -> Disconnect -> release)")
+        }, "onRevoke: the service's disconnect released the online slot; the server showed the phone offline (released, not lapsed) $offlineAfter ms after the competitor was started")
         if (!connect(c)) record("L04-reconnect", "FAIL", "could not reconnect after the competitor: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}")
         else record("L04-reconnect", "PASS", "connected again (the app prepares itself as the VPN owner again)")
     }

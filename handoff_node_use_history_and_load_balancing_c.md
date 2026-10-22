@@ -638,3 +638,47 @@
   - 自动重连失败的原因作为停止原因保留（重复运行测试时发现：否则下一次保活续期会把“为什么断开”清掉）。
   - 第 3 轮遗留评估（组可见性变化时在线租约不立即结束）：新 Core 连接中收到 `client_config_unavailable` 会按守卫停止并立即释放，最长一个上报周期；不再需要在保存组时结束租约，维持现状。
 - **遗留与归属**：四平台在设备上的“连接时 `device_limit`”与“重新分配自动重连”证据、`PresentationTest`/`PresentationTests` 新码、Android `FakeCore`/`ScreenshotTest` 夹具中的旧 `device_limit` 文案、平台生命周期释放验收（第 6 轮）；真实流量重新分配 R5-12（第 6/7 轮）；旧按服务器请求体移除（第 7 轮，见第 4 轮记录）。
+
+### 第 6 轮：四平台 APP 集成与生命周期验收（2026-10-21）
+
+- **分支/PR**：`worktree-nodes-round6-apps`，PR StevenWinsir/vpn#56。基线 0534ced（#55 合并后）。本轮无新表、新列、新配置项，无需迁移；快照契约 `snapshot-v1.json` 未改。
+- **发现并修复的两个问题（共享 Core）**
+  - **重新分配的自动重连会被 APP 自己取消**：`connection_reassigned` 后 Core 停止分段，快照先变成 `ready`，要等重连的第一个 `GET /session` 往返结束才变成 `preparing`。这段时间里 Android `SessionController.apply` 认为“隧道已自行结束”，发停连提醒并停止 VPN 服务（服务的 Disconnect 进而取消重连）；iOS 扩展的结束监视会 `cancelTunnelWithError`。第 5 轮的 Core 测试用假引擎、无 APP 层，因此未暴露。修复：`stopSegment` 在随后要自动重连时以 `preparing` 交接（`bridge`），重连无论如何结束都由 `settleBridge` 收尾（未能开始则回到服务端判定状态并保留原因）。`TestReassignmentStaysBusyUntilReconnected`（`/session` 延迟 300 ms）修复前取样到 54 次空闲，修复后 0 次；`TestReassignmentWithoutASessionSettles` 防止停在 `preparing`。
+  - **桌面 Core 收到信号时不释放名额**：`asterlink-core` 对 SIGTERM/SIGINT/SIGHUP（macOS Helper 宽限后的 `terminate()`、注销、系统关机；Windows 控制台事件）只恢复 DNS 就退出，网站要等 90 秒租约到期才显示离线。修复：恢复 DNS 后在 4 秒内执行 `Shutdown`（结账、释放、撤销）再退出。`TestCoreExitPathsReleaseTheSlot` 在旧 `main.go` 上 SIGTERM 用例失败（租约仍 active），修复后通过。
+- **交付文件**
+  - Core：`managed/tunnel.go`（`stopSegment`）、`connection.go`（`settleBridge`）、`grant.go`、`manager.go`（`bridge` 字段）；`cmd/asterlink-core/main.go`（信号处理先 `Shutdown`）。测试：`connection_test.go` 新增 3 个，`fakeapi_test.go` 增加 `sessionDelay`。
+  - 后端测试世界：`backend/internal/api/presence_world_test.go`（新，仅测试）：两台服务器组成的线路 `pair`（节点组 `Pair-01`，经管理端组接口创建）与控制调用 `occupy`（同账号其他设备经真实 API 登录、接入并按周期上报保持在线）/`vacate`/`presence`（服务端在线与最近结束租约，条件同 `liveLeases`）/`withdraw`（经管理接口停用本设备所在服务器）/`restore`；`android_billing_world_test.go` 新增账号 `presence`、`lease_seconds`。`core_exit_e2e_test.go`（新）：真实 Core 二进制三种退出路径。
+  - Go 线束（iOS 模拟器与宿主）：`internal/harness/presence.go`（新）P01–P05；`Config.Only="presence"`；`scripts/test-native-ios.py --harness-cases presence`，固定的计费 Go 测试加入 6 个在线/重连用例；`ios.yml` 新步骤“Online presence in the simulator”（约 30 秒，6 个 P 用例必须全部 PASS，BLOCKED 不算通过）。
+  - Android：`BillingAcceptanceTest` P01、P01-after-release、P03-reassign、P03-reassign-background（`setForeground(false)`，只靠 `/traffic` 回执）、P03-ledger、P04-disconnect-release、P05-signout-release；`LifecycleAcceptanceTest` L01-readmitted（停顿超过租约后门禁重新接入新租约）、L02-online（Doze 15 秒同一租约持续续期）、L04-release（onRevoke 释放，原因 released）；单元 `SessionControllerTest` 3 个、`PresentationTest` 1 个；`FakeCore`/`ScreenshotTest` 的 `device_limit` 文案改为 Core 文案。
+  - iOS：`UIFixtures` 的 `connect-device-limit` 改为连接时拒绝（不再是登录后套餐阻塞）、新增 `connect-reassigning`；`ScreenshotTests` test10 改断言、新增 test10b；Kit 测试 `PresentationTests`、`SessionControllerTests` 各新增、`TunnelWatchTests` 新增 1 个。
+  - macOS：`Stage2Tests` 2 个（连接时 `device_limit` 显示 Core 文案并保持登录；服务端改连时只跟随、不发命令）。APP 不需改动：界面在未连接时显示 `last_error`，改连期间即显示“线路服务器已调整，正在为你重新连接”。
+  - Windows：`ClientTests` 3 个（展示 4 个新码、改连显示进度、连接时 `device_limit` 保持登录）。APP 不需改动。
+  - 文档：`docs/android-billing-acceptance.md`、`docs/ios-billing-acceptance.md`、`docs/windows-billing-acceptance.md` 在线状态章节；`docs/macos-stage4.md` 第 9 节（含本机实测步骤）。
+- **测试结果**
+
+| 编号 | 项目 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| R6-01 | Core 全模块 `-race`、`go vet`（含 `GOOS=windows`） | `go test -race ./...`、`go vet ./...` | PASS（15 个包） |
+| R6-02 | 改连期间快照不出现空闲状态 | `TestReassignmentStaysBusyUntilReconnected` | 修复前 FAIL（54 次 `ready`），修复后 PASS |
+| R6-03 | 桌面 Core 三种退出路径释放名额（IPC shutdown = macOS 退出；命令管道关闭 = Windows 服务停止/系统关机/GUI 消失；SIGTERM = terminate/注销/关机） | `python3 scripts/test-native.py -run TestCoreExitPathsReleaseTheSlot` | PASS（三者均约 10 ms 内 `released` 并退出）；SIGTERM 用例在旧 `main.go` 上 FAIL |
+| R6-04 | 全量后端测试（私有 PG、`-race`） | `python3 scripts/test-native.py` | PASS（335 PASS、0 FAIL、9 SKIP，SKIP 与第 5 轮相同） |
+| R6-05 | iOS 线束完整运行（宿主）：B01/B02/A04/B04/C01 + P01–P05 | `test-native-ios.py --suite billing --harness host` | PASS（P03：pair-b 停用后 1050 ms 在 pair-a、1053 ms 重新连接，10 ms 取样从未空闲；P04/P05 调用返回后 0 ms 服务端即离线） |
+| R6-06 | iOS 线束完整运行（Core 在 iOS 模拟器进程内） | `--harness simulator` | PASS（全部用例；P03 999 ms 改连、1003 ms 重新连接；P04 1 ms、P05 0 ms） |
+| R6-07 | iOS 仅在线用例（CI 步骤同款） | `--harness simulator --harness-cases presence` | PASS（6/6，约 30 秒） |
+| R6-08 | AsterLinkKit | `swift test` | PASS（86/86） |
+| R6-09 | iOS UI（含 test10 连接时上限、test10b 改连中） | `test-native-ios.py --suite ui` | PASS（49 个用例、51 张截图）；首次本机运行因 worktree 未先构建 xcframework 为 0 个用例，构建后通过 |
+| R6-10 | macOS 单元（Go IPC 326、Swift 54） | `test-native-macos.py --suite unit` | PASS（8/8） |
+| R6-11 | 共享快照一致、仅后端目录独立构建 | `sync-backend-shared.py --check`、`test-backend-standalone.py` | PASS（113 个文件） |
+| R6-12 | Android 模拟器 billing（P01–P05、后台改连）与 lifecycle（L01-readmitted、L02-online、L04-release）、单元与截图 | PR 的 CI | 以 PR 的 CI 结果为准（本机无 JDK/Android SDK） |
+| R6-13 | Windows `dotnet test`、Windows 原生 `go test ./...` | PR 的 CI | 以 PR 的 CI 结果为准（本机无 dotnet） |
+| R6-14 | macOS 真机 TUN：正常断开、合盖睡眠、退出 App 后网站在线变化秒数 | 手工（`docs/macos-stage4.md` 第 9 节） | NOT RUN：需安装本轮构建并批准 Helper、会改系统路由，须用户在场；本机 Shadowrocket VPN 当前已断开，`/Applications/AsterLink.app` 为旧构建 |
+| R6-15 | Windows 授权测试机：真实服务停止/关机释放、`asterlink-billtest --presence`（P01/P02/P03） | 手工 | NOT RUN（无 Windows 测试机；托管 runner 不改网络） |
+| R6-16 | iOS 真机：扩展内释放、系统杀扩展后 90 秒过期、交接保护 | — | BLOCKED（无付费 Apple 团队，packet-tunnel 无法签名）；交接保护由 `TestHandoffRefusesAnUnreleasedLease` 在 Go 层证明 |
+| R6-17 | 真实流量重新分配（R5-12，两台受控节点账本合计） | — | NOT RUN（需特权 TUN 与两台受控节点）；线束 P03 在真实 Mihomo + 测试节点上证明了账本连续（服务端 = Core 已确认计数） |
+
+- **设计取舍（实施中确定）**
+  - 改连期间状态用已有的 `preparing`，不新增快照字段（四个解码器与契约不变）；`last_error` 同时给出 `connection_reassigned` 文案，桌面端界面直接显示。
+  - 信号处理的 `Shutdown` 限时 4 秒：小于 Helper 的 12 秒等待和系统关机留给进程的时间；超时仍退出，最坏回到 90 秒过期。
+  - Windows 的 Core 会话属于 GUI 的管道会话：托盘“退出”与 GUI 消失都会结束会话并立即释放；仅关闭窗口到托盘时保持在线。这与规划 10.2“UI 进程退出不影响服务内连接的在线状态”不同，是 Windows 前几轮既定设计，在线状态始终如实，本轮不改。
+  - 测试世界的占位设备用真实 `/traffic` 周期上报保持在线，而不是直接改库，保证上限判断走生产查询。
+- **遗留与归属**：R6-12/R6-13 的 CI 结果（本 PR）；R6-14 macOS 实测秒数、R6-15 Windows 授权机、R6-17 真实流量改连（第 7 轮或用户在场时）；iOS 真机仍 BLOCKED；旧按服务器请求体移除（第 7 轮）。

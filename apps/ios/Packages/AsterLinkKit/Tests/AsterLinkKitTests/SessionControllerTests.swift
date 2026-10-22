@@ -165,6 +165,48 @@ struct SessionControllerTests {
         #expect(controller.state.snapshot.state == "ready" && !controller.state.busy && controller.state.activity == .none)
     }
 
+    // Node groups round 6: the device limit is checked when connecting; the refusal is shown in
+    // the Core's words and the account stays signed in.
+    @Test func aConnectRefusedForTheDeviceLimitStaysSignedIn() async {
+        let alerts = RecordingAlerts()
+        let core = ScriptedCore { command in
+            switch command.name {
+            case "connect": .snapshot(vipSnapshot(generation: 2, selected: "a"), action: ErrorView(code: "device_limit", message: "已达到同时在线设备上限，请先断开其他设备"))
+            default: .snapshot(vipSnapshot(generation: 1, selected: "a"))
+            }
+        }
+        let controller = makeController(core: core, alerts: alerts)
+        await controller.signIn(email: "vip@example.invalid", password: "secret-pass", remember: false)
+        await controller.connect()
+        await controller.poll()
+        #expect(controller.state.message == .core("device_limit", "已达到同时在线设备上限，请先断开其他设备"))
+        #expect(controller.state.phase == .signedIn && alerts.notices.isEmpty)
+        #expect(controller.state.connection.canConnect && !controller.state.connection.needsPurchase)
+    }
+
+    // connection_reassigned: stopping, preparing and connecting while the Core moves to another
+    // server of the line are not an ended tunnel (no alert); back to connected without the user.
+    @Test func aServerSideMoveIsNotAnEndedTunnel() async {
+        let alerts = RecordingAlerts()
+        let core = ScriptedCore { _ in .snapshot(vipSnapshot(generation: 2, state: "connected", selected: "a")) }
+        let controller = makeController(core: core, alerts: alerts)
+        await controller.signIn(email: "vip@example.invalid", password: "secret-pass", remember: false)
+        await controller.poll()
+        var generation: UInt64 = 3
+        for state in [CoreSnapshot.State.stopping, CoreSnapshot.State.preparing, CoreSnapshot.State.connecting, CoreSnapshot.State.connected] {
+            var next = vipSnapshot(generation: generation, state: state, selected: "a")
+            if state != CoreSnapshot.State.connected {
+                next.lastError = ErrorView(code: "connection_reassigned", message: "线路服务器已调整，正在为你重新连接")
+            }
+            generation += 1
+            core.replace { _ in .snapshot(next) }
+            await controller.poll()
+            #expect(!controller.state.connection.showConnect, "\(state)")
+        }
+        #expect(alerts.notices.isEmpty)
+        #expect(controller.state.connection.status == .connected)
+    }
+
     @Test func aLostCoreEndsTheSessionAndAlertsOnlyForARunningTunnel() async {
         let alerts = RecordingAlerts()
         let core = ScriptedCore { command in

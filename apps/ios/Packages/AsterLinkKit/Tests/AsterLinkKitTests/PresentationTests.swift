@@ -17,6 +17,25 @@ struct PresentationTests {
         try JSONDecoder().decode(CoreSnapshot.self, from: try #require(try fixture()[name]))
     }
 
+    // Node groups round 6: the online-presence codes are real server codes (native-v3.json); each
+    // is a refusal shown in the Core's words that sends nobody to buy or update.
+    @Test func onlinePresenceRefusalsShowTheCoreTextAndOfferNoPurchase() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent("shared/contracts/native-v3.json"))
+        let v3 = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let codes = Set(try #require(v3["errors"] as? [String: Any]).keys).union(try #require(v3["session_reasons"] as? [String: Any]).keys)
+        let ready = try Self.snapshot("ready_with_selection")
+        for code in ["device_limit", "group_full", "group_unavailable", "grant_required", "connection_not_found", "connection_expired", "connection_reassigned"] {
+            #expect(codes.contains(code), "\(code)")
+            let view = ConnectionView.from(ready.with { $0.lastError = ErrorView(code: code, message: "core text") }, busy: false, activity: .none)
+            #expect(view.failure == .core(code, "core text") && view.canConnect && !view.needsPurchase && !view.needsUpdate, "\(code)")
+        }
+        let moving = ConnectionView.from(ready.with { $0.state = "preparing"; $0.lastError = ErrorView(code: "connection_reassigned", message: "x") }, busy: false, activity: .none)
+        #expect(moving.status == .preparing && !moving.showConnect)
+    }
+
     // E02: the shared snapshot fixture decodes into the full view model.
     @Test func everySharedSnapshotDecodes() throws {
         let all = try Self.fixture()
