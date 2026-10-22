@@ -41,7 +41,7 @@ func TestMigrationRepeatableOverLegacyData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	order := model.Order{ID: uuid.NewString(), UserID: ids[0], IdempotencyKey: "legacy-order", PlanID: "pro", PlanName: "进阶计划", PriceCents: 3990, DurationDays: 30, TrafficBytes: 1 << 30, Status: "paid_test", Provider: "test", CreatedAt: created, PaidAt: created}
+	order := model.Order{ID: uuid.NewString(), UserID: ids[0], IdempotencyKey: "legacy-order", PlanID: "pro", PlanName: "进阶计划", PriceCents: 3990, DurationDays: 30, TrafficBytes: 1 << 30, Status: "paid_test", Provider: "test", CreatedAt: created, PaidAt: &created}
 	if err := e.db.Create(&order).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestMigrationRepeatableOverLegacyData(t *testing.T) {
 		}
 	}
 	var gotOrder model.Order
-	if err := e.db.Where("id = ?", order.ID).Take(&gotOrder).Error; err != nil || gotOrder.Status != "paid_test" || gotOrder.PriceCents != 3990 || !gotOrder.PaidAt.Equal(created) {
+	if err := e.db.Where("id = ?", order.ID).Take(&gotOrder).Error; err != nil || gotOrder.Status != "paid_test" || gotOrder.PriceCents != 3990 || gotOrder.PaidAt == nil || !gotOrder.PaidAt.Equal(created) {
 		t.Fatal("order changed by migration")
 	}
 	// A later migration never resets AuthVersion.
@@ -676,7 +676,7 @@ func TestNoSecretsAtRestAndCleanup(t *testing.T) {
 	ctx := context.Background()
 	s := e.service()
 	u := e.user(t, "keep@corp.example")
-	order := model.Order{ID: uuid.NewString(), UserID: u.ID, IdempotencyKey: "keep", PlanID: "pro", PlanName: "进阶计划", PriceCents: 3990, DurationDays: 30, TrafficBytes: 1 << 30, Status: "paid_test", Provider: "test", PaidAt: e.clock.Now()}
+	order := model.Order{ID: uuid.NewString(), UserID: u.ID, IdempotencyKey: "keep", PlanID: "pro", PlanName: "进阶计划", PriceCents: 3990, DurationDays: 30, TrafficBytes: 1 << 30, Status: "paid_test", Provider: "test", PaidAt: func() *time.Time { t := e.clock.Now(); return &t }()}
 	if err := e.db.Create(&order).Error; err != nil {
 		t.Fatal(err)
 	}

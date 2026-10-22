@@ -45,6 +45,21 @@ type ReadinessReport struct {
 	// Registration and mail (handoff_auth.md 3.1). Configuration facts and queue
 	// counts only: the probe never sends mail and never prints SMTP settings.
 	Mail MailReadiness `json:"auth_mail"`
+	// Payment gateway (handoff_payment_account.md 4). Switches and order counts only:
+	// never the merchant number, secret or callback address.
+	Payment PaymentReadiness `json:"payment"`
+}
+
+type PaymentReadiness struct {
+	Enabled bool `json:"enabled"`
+	// AutoFulfil is false while PAYMENT_NOTIFY_ALLOWED_IPS is empty: every callback
+	// then waits for manual review.
+	AutoFulfil        bool  `json:"auto_fulfil"`
+	TestPrice         bool  `json:"test_price"`
+	TestPriceAccounts int   `json:"test_price_accounts"`
+	PendingOrders     int64 `json:"pending_orders"`
+	ReviewOrders      int64 `json:"review_orders"`
+	RejectedNotify24h int64 `json:"rejected_callbacks_24h"`
 }
 
 type MailReadiness struct {
@@ -70,6 +85,13 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		TestAccessEnabled: cfg.Env != "production" && cfg.TestPurchase && cfg.ClientAllowTestEntitlements,
 		AccountReason:     "account_not_checked",
 		Mail:              MailReadiness{Configured: cfg.MailEnabled(), RegistrationOpen: cfg.RegistrationOpen(), PasswordReset: cfg.MailEnabled(), ImplicitTLS: cfg.MailEnabled() && cfg.SMTPSecure, RegistrationDomains: cfg.RegistrationDomains, TrustedProxies: len(cfg.TrustedProxies)},
+		Payment:           PaymentReadiness{Enabled: cfg.Payment.Enabled, AutoFulfil: cfg.Payment.Enabled && len(cfg.Payment.NotifyAllowed) > 0, TestPrice: cfg.Payment.Enabled && cfg.Payment.TestPrice, TestPriceAccounts: len(cfg.Payment.TestEmails)},
+	}
+	if cfg.Payment.Enabled && len(cfg.Payment.NotifyAllowed) == 0 {
+		report.Warnings = append(report.Warnings, "payment_callbacks_manual_review_only")
+	}
+	if cfg.Payment.Enabled && cfg.Payment.TestPrice {
+		report.Warnings = append(report.Warnings, "payment_test_price_enabled")
 	}
 	if !cfg.MailEnabled() {
 		report.Warnings = append(report.Warnings, "auth_mail_not_configured")
@@ -95,7 +117,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -146,6 +168,18 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 			return err
 		}
 		report.Mail.OldestPendingSecs = max(0, int64(report.CheckedAt.Sub(oldest).Seconds()))
+		if err := tx.Model(&model.Order{}).Where("status = ?", model.OrderPending).Count(&report.Payment.PendingOrders).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Order{}).Where("status = ?", model.OrderReview).Count(&report.Payment.ReviewOrders).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.PaymentNotification{}).Where("result IN ? AND received_at > ?", []string{model.NotifyIPRejected, model.NotifyInvalid}, report.CheckedAt.Add(-24*time.Hour)).Count(&report.Payment.RejectedNotify24h).Error; err != nil {
+			return err
+		}
+		if report.Payment.ReviewOrders > 0 {
+			report.Warnings = append(report.Warnings, "payment_orders_need_review")
+		}
 		// Node-authoritative means a live agent governs a node; it does not certify that
 		// enforcement was accepted on that protocol (the warning above stays).
 		report.NodeAuthoritative = report.AuthoritativeNodes > 0

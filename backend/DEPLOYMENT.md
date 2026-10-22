@@ -177,6 +177,17 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 
 下一周期会一并移除：旧请求体、旧列双写，以及它在重名时返回的 `node_name_exists`。
 
+## 支付网关后端（handoff_payment_account.md 第 1 轮）
+
+本轮新增 `payment_notifications`、`coupons` 两张表，`orders` 增加网关字段（`paid_at` 改为可空，旧订单的值不变），`admin_audits` 增加 `detail` 列。部署前执行 `-migrate`，可重复执行。网站的支付界面在第 2 轮接入；本轮保持 `PAYMENT_ENABLED=false` 时没有任何可见变化，旧的测试购买照常可用。
+
+1. **配置**：见 `.env.example` 的 Payment 分组。开启支付必须同时配置商户号、密钥、回调地址和 `WEBSITE_BASE_URL`；结果页固定为 `WEBSITE_BASE_URL/pay/result?order=<订单ID>`。生产环境要求网关与回调地址为 HTTPS；开启测试价时必须列出测试账户。`bin/doctor` 的 `payment` 段报告开关、是否自动开通、待付款数与待核对数，不输出商户号、密钥或回调地址。
+2. **回调与自动开通**：网关回调 `POST /api/v1/payments/notify` 不经过登录和通用 IP 限流。每次回调都先写入 `payment_notifications`（来源 IP、金额原文、处理结果），再判断。网关回调没有签名，签名也不覆盖金额，因此只有来源在 `PAYMENT_NOTIFY_ALLOWED_IPS` 内、并且实付不少于应付（最多高出 `PAYMENT_AMOUNT_TOLERANCE_CENTS`）的回调才自动开通。**白名单为空时可以启动**，但所有回调都进入待核对（`review`/`unverified_source`）。第一笔真实回调的来源 IP 可在 `payment_notifications` 中查到（第 4 轮起在管理后台订单详情中显示），确认后填入白名单并重启。来源 IP 依赖 `TRUSTED_PROXIES` 和 Nginx 覆盖转发头的配置（docs/deployment.md“真实来源地址”）；回调地址建议使用后端域名，由 Nginx 直接转发到 Go。
+3. **订单规则**：每人最多 `PAYMENT_MAX_PENDING_PER_USER` 笔待付款订单，每 10 分钟最多下单 20 次。网关对同一支付方式下金额相同的未超时订单逐笔加 0.01；每笔订单各自回调、各自开通。同一套餐先后到账就续期两次；有效期内换套餐的那笔进入待核对，不开通。超过本地窗口（`PAYMENT_PENDING_LIMIT_SECONDS`）的订单由进程内对账循环每 30 秒查询一次网关：超时则关闭，并释放金额与优惠码占用；网关显示已付但没有收到可信回调的，进入待核对；网关持续 30 分钟不可达的，也进入待核对。状态查询本身从不开通订单。
+4. **优惠码**：本轮提供管理接口 `/api/v1/admin/console/coupons`（列表、新建、编辑、删除）。它只要求管理员角色，不依赖节点目录开关；界面在第 5 轮接入。被订单引用过的优惠码不能改折扣，删除时只隐藏（软删），其代码保持占用。
+5. **签名算法**：按文档文字和全部示例代码实现：`MD5(trade_no + secret)` 的小写十六进制。文档“签名示例”给出的结果值与这个算法不一致（实际是 `becd5f2a…`），详见 handoff 第 18 节。部署后的第一笔真实下单（U-01）若被网关以“签名验证失败”拒绝，应先核对这一点。
+6. **回滚**：先把 `PAYMENT_ENABLED` 设为 `false`，停止新下单。旧二进制会忽略新表和新列；但回滚期间到达的回调没有处理程序，对应订单要在回到新版本后由对账循环或人工核对处理。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：
