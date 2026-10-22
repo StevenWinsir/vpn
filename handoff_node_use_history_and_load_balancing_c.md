@@ -700,3 +700,75 @@
   - 真实 Core 对真实后端通过：`TestCoreOnlineLeasesEndToEnd`、`TestNativeCoreEndToEnd`、`TestCoreExitPathsReleaseTheSlot`、billtest presence。
   - 线束 P06 对真实服务端：修复前 FAIL（`stale_catalog`），修复后 PASS。
   - Android/Windows 以 PR CI 为准。
+
+### 第 7 轮：全链路回归、压测、兼容与发布演练（2026-10-22）
+
+- **分支/PR**：`worktree-nodes-round7-release`，PR 见 GitHub（StevenWinsir/vpn）。基线 d1d5caf（#57 合并后）。本轮没有新表、新列、新配置项，**无需迁移**；生产代码（后端、Core、网站、四个 APP）未改，`snapshot-v1.json` 未改。
+- **交付文件**
+  - `backend/internal/api/presence_load_test.go`（新）：`TestPresenceLoadPostgres`，按需启用（`PRESENCE_LOAD_DEVICES` 等环境变量），经完整路由、注入时钟运行。共四个阶段：
+    - 0：全部设备接入；
+    - 1：每模拟分钟分 4 个 15 秒切片上报，维护循环按生产节奏运行，每分钟 1% 的设备漏报一次后重新接入；
+    - 2：每个账户每 5 分钟上报一次，模拟 N 小时，每小时采样行数与表/索引体积；
+    - 3：真实时间下的长轮询 CPU（Go 进程用 getrusage，PostgreSQL 用 ps），以及长轮询期间的 `/traffic`。
+    - 连接池取 `DATABASE_MAX_OPEN` 的缺省值 10。断言：无失败；在线租约数等于租约期内续期过的设备数；维护循环结束的过期租约不少于回来重新接入的设备数；第 24 小时后行数不超过“账户数 × 289”；不存在早于 T−24h 的桶或超过保留期的已结束租约。
+  - `backend/internal/api/released_core_e2e_test.go`（新）：`TestReleasedCoreAgainstNodeGroupsPostgres`，用 a63a882（节点组之前的发布）的真实 `asterlink-core` 二进制（fakeengine）连接本版本后端，复用 `coreProc` IPC 线束。
+  - `scripts/test-native.py`：从 git 历史构建 a63a882 的 Core。用 `git archive` 取出 `native/core`、`native/nodeagent`、`shared`，并以符号链接接上同一个 Mihomo 子模块，然后以 `ASTERLINK_RELEASED_CORE_BIN` 提供给上述测试。缺少该提交时提示并跳过；设置 `REQUIRE_RELEASED_CORE=1` 时直接失败。
+  - `.github/workflows/ci.yml`：后端任务先 `git fetch --depth=1` 取回 a63a882（checkout 是浅克隆），并设置 `REQUIRE_RELEASED_CORE=1`，保证 CI 中该测试不会静默跳过。
+  - 四平台 CI：本 PR 自动触发 Backend、Browser、Core、macOS、iOS 与 Android（Android 的路径过滤包含 `backend/**`）。Windows 被路径过滤，因此在本分支上用其已有的 `workflow_dispatch` 手动触发一次。
+  - `scripts/test-release-rehearsal.py`：缺省回滚目标由 c84de59 改为 **a63a882**（规划第 12 节第 7 轮、第 14 节）。新增两个阶段：
+    - 当前二进制上的节点组阶段：管理员建组 JP1（pro，1.5×），导入 3 台同名服务器，容量各 1；一台设备经 v3 接入，一台经旧 `/config` 接入；`device_limit`、`group_full`；`/me/devices`、`/me/usage-history`；管理端在线数；双写校验。
+    - 回滚后的旧二进制检查：管理列表与客户端目录按服务器列出 3 条“JP1”，倍率、地区、套餐来自双写列；能下发服务器配置；上报按组倍率计费、账本连续；旧二进制不读写租约表。然后再次升级，组恢复。
+  - 文档：`backend/DEPLOYMENT.md` 新增第 7 轮章节（发布清单、旧 APP 行为、回滚、容量与压测数据、旧请求体的去留）；`docs/admin-node-metering.md`、`docs/user-node-list.md`、`docs/native-client-protocol.md` 各新增一节。
+- **测试结果**
+
+| 编号 | 项目 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| R7-01 | 发布演练（旧版 67e7b37 → 本版本 → 回滚 a63a882，三个二进制互不相同）：网页旧数据迁移两次后列值不变；注册关闭；共享余额并发上报只扣一次；真实 Next.js/Chromium 注册购买流程；邮件链接重置；**本期节点组阶段**；完整备份恢复后 22 张表指纹一致；**回滚到 a63a882 的旧二进制服务组数据**；**再次升级后组恢复**；回滚后的验证码、密码、撤销与订单检查 | `python3 scripts/test-release-rehearsal.py --output <新目录>` | PASS（11 项检查，`distinct_backend_versions=true`）。首次运行在本期新增的历史断言处 FAIL：24 小时窗口里还包含同一账户在更早阶段以 1× 上报的 1000 字节，这是正确的产品行为，修正断言后通过 |
+| R7-02 | 旧客户端兼容：a63a882 的真实 Core 三个进程（同一账号三台设备）对本版本后端 | `python3 scripts/test-native.py -run TestReleasedCoreAgainstNodeGroupsPostgres ./internal/api` | PASS（7 个子用例）。逐条结果见下方说明 |
+| R7-03 | 压测：2000 台设备（1000 个账户 × 2），每 60 秒上报，模拟 30 分钟；48 小时历史；2000 个长轮询 | `PRESENCE_LOAD_DEVICES=2000 PRESENCE_LOAD_MINUTES=30 PRESENCE_LOAD_HISTORY_HOURS=48 go test -run TestPresenceLoadPostgres ./internal/api` | PASS（158 秒）；数据见“关键数据” |
+| R7-04 | 全量后端测试（私有 PG、`-race`，含真实 Core、旧 Core、Node Agent、billtest 端到端） | `REQUIRE_RELEASED_CORE=1 python3 scripts/test-native.py` | PASS（343 PASS、0 FAIL、10 SKIP；SKIP = 第 6 轮的 9 项 + 按需运行的压测） |
+| R7-05 | Core 全模块 `-race`、`go vet`（含 `GOOS=windows`） | `go test -race ./...`、`go vet ./...` | PASS（15 个包） |
+| R7-06 | 网站：`tsc`、`eslint`、`next build --webpack`；单元 `test:dashboard` 6、`test:nodes` 3、`test:downloads` 6、`test:api-proxy` 15 | `npm run …` | PASS |
+| R7-07 | 节点目录真实浏览器验收与旧 Core 真实 Mihomo 账本 | `scripts/test-node-catalog.py --skip-build` | PASS（浏览器 10/10，Mihomo 倍率账本通过） |
+| R7-08 | 第 1 轮迁移/回滚演练（a63a882 → 当前 → 回滚 → 再迁移） | `scripts/test-node-groups-migration.py` | PASS（7 项） |
+| R7-09 | 共享快照一致与单元测试、仅后端目录独立构建 | `sync-backend-shared.py --check`、`test-backend-shared.py`、`test-backend-standalone.py` | PASS（115 个文件，tests/vet、Linux amd64/arm64） |
+| R7-10 | 四平台 CI 再跑一轮（Backend、Browser、Core、macOS、Android 全部任务、iOS、Windows 两个任务） | PR 的 CI | 以 PR 的 CI 结果为准，见下方“CI” |
+| R7-11 | 真实流量重新分配（R5-12/R6-17：两台受控节点的账本合计） | — | NOT RUN：需要特权 TUN 和两台受控节点。控制面与账本连续性已由 R5-03、R5-05、R6-05/06（线束 P03 使用真实 Mihomo 与测试节点）和本轮 R7-02 证明 |
+| R7-12 | macOS 真机 TUN：正常断开、合盖睡眠、退出 App 后网站显示离线的秒数（R6-14） | 手工（`docs/macos-stage4.md` 第 9 节） | NOT RUN：需要安装本期构建并批准 Helper，会改动系统路由，须用户在场 |
+| R7-13 | Windows 授权测试机：真实服务停止/关机释放、`asterlink-billtest --presence`（R6-15） | 手工 | NOT RUN（没有 Windows 测试机；托管 runner 不改网络） |
+| R7-14 | iOS 真机：扩展内释放、系统杀扩展后 90 秒过期、交接保护（R6-16） | — | BLOCKED（没有付费 Apple 团队，packet-tunnel 无法签名）；交接保护由 Go 层 `TestHandoffRefusesAnUnreleasedLease` 证明 |
+| R7-15 | 生产库升级演练（规划第 14 节第 1 步在真实备份上执行） | — | NOT RUN：本轮只演练私有合成数据，没有接触任何线上或历史生产库；正式发布前按 `backend/DEPLOYMENT.md` 第 7 轮清单第 1 步执行 |
+
+R7-02 的 7 个子用例：
+- 目录中组只出现一次（同名服务器不重复）。
+- 登录不占位，选择即占位；第三台设备选择时被拒（`device_limit`）。
+- 连接后的上报续期 legacy 租约；`/me/devices` 显示 2 台、线路 JP1；历史计入。
+- 管理员停用服务器后，旧 Core 收到 `profile_changed` 停止，尾账已结清；再次选择分到同组另一台，账本序号连续。
+- 退出旧 Core 时会话登出（`session_revoked`），名额立即释放。
+- 强杀的旧 Core 在租约期满前 1 秒仍占位，期满后释放。
+- 满载服务器返回 `group_full`，旧 Core 显示通用文案“操作失败，请稍后重试”。
+
+- **关键数据（R7-03，本机 10 核 Apple Silicon，私有 PostgreSQL 16，连接池 10，32 个并发客户端）**
+  - 接入：2000 台设备分到 4 组 × 5 台，全部成功；p50 13.7 ms、p95 28.7 ms、约 2100 次/秒。
+  - `/traffic`：59,400 次，p50 4.2 ms、p95 9.3 ms、p99 13.1 ms，饱和吞吐约 6400 次/秒。实际需要约 33 次/秒，延迟主要来自 32 个并发争用 10 个连接。
+  - 维护循环单次：租约过期 p50 2.2 ms、p95 2.7 ms；24 小时窗口清理（每次删除约 1000 行）p50 2.2 ms、p95 16 ms、最大 28 ms；每小时清理 p95 0.8 ms。
+  - 漏报：600 次漏报中，维护循环以 `expired` 结束 580 个租约；575 台回来时收到 `connection_expired` 并重新接入，在线计数与租约一致。
+  - `usage_buckets`（1000 个账户，写满 48 小时）：第 24 小时起行数恒为 289,000，等于上限。表体积约 24.9 MB，自第 25 小时不变；索引约 26.7 MB，自第 34 小时不变；合计 52.9 MB。小规模 96 小时运行同样在第 37 小时后完全不变。压测中每模拟 1 小时执行一次 `VACUUM`，代替真实时间下的 autovacuum。
+  - 租约表：48 小时后 3430 行（含 24 小时保留期内已结束的行），未超保留期的已结束租约为 0。
+  - 长轮询：2000 个等待中的会话在 20 秒内用了 20.6 秒 Go CPU 和 12.1 秒 PostgreSQL CPU，即约 1.0 个 Go 核 + 0.6 个数据库核；每个会话约 0.51 ms Go CPU/秒；空闲时接近 0。同时的 `/traffic` p95 为 15.5 ms。
+- **决策与发现**
+  - **长轮询是空闲状态下的主要开销**：每个等待者每秒读一次目录（进程内通知之外再按秒轮询，用于发现其他实例的修改）。这与节点组无关，在节点目录引入时就已存在；它也与 `CLIENT_NODE_WATCH_SECONDS` 无关，因为内层按秒轮询。本轮不改生产行为，只在 DEPLOYMENT.md 给出容量估算：每 1000 台常驻桌面设备约 0.5 个 Go 核 + 0.3 个数据库核。若要降低，可以把每秒的完整目录读取改为先读一个全局“目录代次”，或拉长内层轮询间隔；这需要另行设计，并验证多实例下的唤醒时延。
+  - **R3-12（单组高并发吞吐）结论**：设备分散到达时，组行锁不构成瓶颈（2000 台接入 p95 29 ms）。只有全组用户在同一秒集中接入才排队，约 200 次/秒/组，不丢请求、不超额。因此保留组行锁带来的精确容量与严格均衡，不改为“只锁选中服务器”。
+  - **旧按服务器请求体**（第 4 轮遗留）：**保留一个发布周期**，不在本轮移除，理由有两点：
+    - 它与旧列双写属于同一个“保留一个发布周期”的兼容层，维护窗口内旧网页与新后端可能短时并存；
+    - 移除它需要改约 11 个测试文件，不带来产品价值，还会增加发布前的风险。
+    - 下一周期一并移除：旧请求体、旧列双写，以及它在重名时返回的 `node_name_exists`。DEPLOYMENT.md 已写明。
+  - **旧 APP 的行为**写入 DEPLOYMENT.md 与协议文档：选择即占位；`group_full` 显示通用文案；撤下服务器后需要用户再次选择，不会自动重连。新 Core 的 APP 全部发布后，再用 `CLIENT_MIN_APP_VERSION` 淘汰旧版。
+  - **回滚到 a63a882 的效果**（规划第 14 节第 5 条）：客户端看到“每台服务器一条线路”，同组服务器显示为多条同名线路；新表保留且不被读写；再次升级后组恢复，组表优先。
+- **CI**：见 PR。首次推送（fb05c4c）给 `android.yml`、`windows.yml` 加了 `workflow_dispatch`，但两个文件末尾早已有这一项，重复的键使 GitHub 判定工作流文件无效（两个工作流 0 秒失败、PR 上不出现），本地用 Ruby 的 YAML 解析器校验时未能发现。已恢复为 main 的版本。教训：校验工作流时要检查重复键，并确认每个平台的检查确实出现在 `gh pr checks` 中。
+- **遗留与归属（本期全部代码轮次已完成）**：
+  - R7-11 真实流量重新分配、R7-12 macOS 真机秒数、R7-13 Windows 授权机：需要用户在场或专用设备。
+  - R7-14 iOS 真机：受签名阻塞。
+  - R7-15 生产库升级：发布当天执行。
+  - 下一发布周期：移除旧请求体与旧列双写。
+  - 长轮询开销优化：如有需要，另行规划。

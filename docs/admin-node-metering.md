@@ -44,3 +44,13 @@ Do not publish a development debug bundle, simulate successful payment in produc
 ## 阶段 4 更新（节点权威计量）
 
 上文"生产代理交付被阻止"的原因（共享凭据不能按用户撤销、客户端自报不可信）由阶段 4 的节点代理方案解决：已登记并在线的节点由节点代理按用户发放独立凭据、直接读取转发器计数并强制撤销/到期/预算。生产环境仍然拒绝共享凭据与客户端上报，只允许有节点代理的线路。详见 [macos-stage4.md](macos-stage4.md)。`doctor` 现在额外报告 `agents_online`、`authoritative_nodes`、`grants_needing_reconcile`；`node_authoritative` 表示有在线代理，**不等于**该协议的强制控制已在真实节点验收（报告里的 `enforcement_must_be_accepted_per_protocol_on_the_real_node` 警告保留）。
+
+## 节点组运营要点（节点组交接书第 7 轮）
+
+`/admin/nodes` 按“套餐筛选 → 节点组 → 服务器”管理线路。用户只看到节点组；组内的服务器可以同名，每台设置自己的最大在线设备数。
+
+- **容量在设备实际连接时生效**。登录、拉取目录、选择线路都不占名额（旧版 APP 例外：它在选择线路时就绑定配置，因此选择即占位，见 `backend/DEPLOYMENT.md` 第 7 轮）。调低容量不会踢掉在线设备，只拒绝新的接入，后台显示“超出”。
+- **分配顺序**：本设备已在线的服务器 → 用户在该组的固定服务器 → 负载率最低的服务器（负载率相同时随机）。全组满载时返回 `group_full`。
+- **停用、删除或移组服务器**：其上的设备会改连同组的其他服务器。新版 APP 自动重连一次；旧版 APP 停止，并提示“线路配置已更新，请重新选择线路”。删除确认框会写明受影响的在线设备数。
+- **计费**：倍率属于节点组。改连前后各段按各自的组倍率结算，账本序号连续（由 `TestCoreOnlineLeasesEndToEnd` 与 `TestReleasedCoreAgainstNodeGroupsPostgres` 验证）。
+- **发布与回滚**：迁移得到的服务器容量为 1000（相当于不限），发布后应立即改为真实值。回滚到节点组之前的版本时，同组的多台服务器会以同名的多条线路出现，倍率和套餐来自双写的旧列；再次升级后组恢复。完整清单与压测数据见 `backend/DEPLOYMENT.md` 第 7 轮。

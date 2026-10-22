@@ -122,6 +122,17 @@ authorization_expires_at = min(server_time + 90 秒,
 - **新文案**（Core 维护，APP 直接显示）：`device_limit`“已达到同时在线设备上限，请先断开其他设备”、`group_full`、`group_unavailable`、`connection_reassigned`、`connection_not_found`、`connection_expired`、`grant_required`，均不结束登录会话。
 - **验收工具**：`asterlink-billtest --presence --use-device-slots` 以同一账号的多个设备经生产 Manager 运行 P01 设备上限、P02 满载（`--full-line`）、P03 重新分配（`--reassign-wait-seconds`，由操作者在后台停用该设备所在服务器）；默认使用无数据通道的控制面引擎，`--tun` 让设备 1 使用真实引擎（需特权）。
 
+## 旧 Core 兼容与发布（节点组交接书第 7 轮）
+
+新 Core 发布之前，四个平台已安装的 APP 都运行 a63a882 的 Core。它不调用 `/connections`、不释放租约，只在选择线路时调用 `/config`、连接后调用 `/traffic`。后端对它的处理如下：
+
+- **目录**：节点组以 contract v1/v2 的 `nodes[]` 形式出现。目录修订号不含连接摘要（只有 v3 租约才有），因此旧会话的长轮询不会因在线状态变化而被唤醒。
+- **接入**：`GET /config?node_id=<组 ID>`（传入旧的服务器 ID 时，会解析为它所属的组）在组行锁内分配服务器，并建立 `legacy_config` 租约。设备上限和服务器容量照常生效，被拒时分别返回 `device_limit`、`group_full`。旧 Core 没有 `group_full` 的文案，会显示通用文案。响应的 `node_id` 回显组 ID。
+- **续期与过期**：租约只由 `/traffic` 续期。旧 Core 闲置时，租约在 `CLIENT_LEASE_SECONDS` 后过期，期间不打扰；之后再次上报时，按完整检查重新接入。正常退出时会话登出（`session_revoked`），名额立即释放。
+- **撤下服务器**：返回旧 Core 已认识的 `profile_changed`。旧 Core 收到后停止，用户再次选择线路时被分到同组的其他服务器。
+- **验证**：`TestReleasedCoreAgainstNodeGroupsPostgres`。`scripts/test-native.py` 从 git 历史构建 a63a882 的 `asterlink-core`（fakeengine），并通过 `ASTERLINK_RELEASED_CORE_BIN` 提供给该测试。CI 的后端任务会先取回该提交，并设置 `REQUIRE_RELEASED_CORE=1`，缺少这个提交时直接失败，而不是跳过。
+- **淘汰**：四个平台的新 Core 都发布后，才按需要设置 `CLIENT_MIN_APP_VERSION`。
+
 ## 隔离数据库与可控网络夹具
 
 `python3 scripts/test-native.py` 建立仅监听私有 Unix socket 的临时 PostgreSQL，强制 `RUN_DB_TESTS=0`，提供临时 `NATIVE_TEST_DSN`。原网页 `TestPostgresIntegration` 现在优先使用该 DSN，与原生测试共享建库辅助函数但使用不同随机 schema；该分支不加载真实 `.env`。没有 DSN 时，真实数据库分支仍必须显式 `RUN_DB_TESTS=1` 授权。
