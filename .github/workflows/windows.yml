@@ -12,11 +12,8 @@ name: Windows client CI
 # downgrade-refused and uninstalled for real. It is signed with a throw-away certificate nobody trusts; no trusted signature exists.
 # The real TUN run (cases T01-T09) is done with asterlink-tuntest.exe on an authorised
 # machine; see docs/windows-tun-poc.md.
-# workflow_dispatch lets a release regression run every platform on a branch whose
-# changes the path filters would otherwise skip (presence plan round 7).
 
 on:
-  workflow_dispatch:
   pull_request:
     paths:
       - 'apps/windows/**'

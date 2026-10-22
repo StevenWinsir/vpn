@@ -714,7 +714,7 @@
   - `backend/internal/api/released_core_e2e_test.go`（新）：`TestReleasedCoreAgainstNodeGroupsPostgres`，用 a63a882（节点组之前的发布）的真实 `asterlink-core` 二进制（fakeengine）连接本版本后端，复用 `coreProc` IPC 线束。
   - `scripts/test-native.py`：从 git 历史构建 a63a882 的 Core。用 `git archive` 取出 `native/core`、`native/nodeagent`、`shared`，并以符号链接接上同一个 Mihomo 子模块，然后以 `ASTERLINK_RELEASED_CORE_BIN` 提供给上述测试。缺少该提交时提示并跳过；设置 `REQUIRE_RELEASED_CORE=1` 时直接失败。
   - `.github/workflows/ci.yml`：后端任务先 `git fetch --depth=1` 取回 a63a882（checkout 是浅克隆），并设置 `REQUIRE_RELEASED_CORE=1`，保证 CI 中该测试不会静默跳过。
-  - `.github/workflows/android.yml`、`windows.yml`：增加 `workflow_dispatch`，发布回归可以在任意分支手动跑全平台。本 PR 改了 `windows.yml`，因此 Windows 任务也在本 PR 上运行（它原本被路径过滤）。
+  - 四平台 CI：本 PR 自动触发 Backend、Browser、Core、macOS、iOS 与 Android（Android 的路径过滤包含 `backend/**`）。Windows 被路径过滤，因此在本分支上用其已有的 `workflow_dispatch` 手动触发一次。
   - `scripts/test-release-rehearsal.py`：缺省回滚目标由 c84de59 改为 **a63a882**（规划第 12 节第 7 轮、第 14 节）。新增两个阶段：
     - 当前二进制上的节点组阶段：管理员建组 JP1（pro，1.5×），导入 3 台同名服务器，容量各 1；一台设备经 v3 接入，一台经旧 `/config` 接入；`device_limit`、`group_full`；`/me/devices`、`/me/usage-history`；管理端在线数；双写校验。
     - 回滚后的旧二进制检查：管理列表与客户端目录按服务器列出 3 条“JP1”，倍率、地区、套餐来自双写列；能下发服务器配置；上报按组倍率计费、账本连续；旧二进制不读写租约表。然后再次升级，组恢复。
@@ -765,7 +765,7 @@ R7-02 的 7 个子用例：
     - 下一周期一并移除：旧请求体、旧列双写，以及它在重名时返回的 `node_name_exists`。DEPLOYMENT.md 已写明。
   - **旧 APP 的行为**写入 DEPLOYMENT.md 与协议文档：选择即占位；`group_full` 显示通用文案；撤下服务器后需要用户再次选择，不会自动重连。新 Core 的 APP 全部发布后，再用 `CLIENT_MIN_APP_VERSION` 淘汰旧版。
   - **回滚到 a63a882 的效果**（规划第 14 节第 5 条）：客户端看到“每台服务器一条线路”，同组服务器显示为多条同名线路；新表保留且不被读写；再次升级后组恢复，组表优先。
-- **CI**：见 PR。
+- **CI**：见 PR。首次推送（fb05c4c）给 `android.yml`、`windows.yml` 加了 `workflow_dispatch`，但两个文件末尾早已有这一项，重复的键使 GitHub 判定工作流文件无效（两个工作流 0 秒失败、PR 上不出现），本地用 Ruby 的 YAML 解析器校验时未能发现。已恢复为 main 的版本。教训：校验工作流时要检查重复键，并确认每个平台的检查确实出现在 `gh pr checks` 中。
 - **遗留与归属（本期全部代码轮次已完成）**：
   - R7-11 真实流量重新分配、R7-12 macOS 真机秒数、R7-13 Windows 授权机：需要用户在场或专用设备。
   - R7-14 iOS 真机：受签名阻塞。
