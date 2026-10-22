@@ -2,8 +2,14 @@
 """Exercise local web/native compatibility, additive migration, backup restore and rollback.
 
 Three normal API binaries take part: the legacy release that produced the existing data
-(before mailbox verification), the current tree, and the rollback target (an accepted release
-that already enforces verification and password versions; handoff_auth.md 12.2). The browser
+(before mailbox verification), the current tree, and the rollback target (the last release
+before node groups, which already enforces verification and password versions;
+handoff_auth.md 12.2, handoff_node_use_history_and_load_balancing_c.md 12 round 7 and 14).
+On the current binary an administrator builds a node group of same-named servers with real
+capacities, and native devices are admitted through both the v3 and the older /config path
+under the device cap and server capacity; after the rollback the old binary serves the
+dual-written columns (one line per server, the pre-group behaviour) and the next upgrade
+restores the groups. The browser
 stage needs a mail inbox, which a normal binary cannot have without trusting a test SMTP server
 in the machine's trust store; it runs the current API as a Go test assembly instead, with the
 real worker delivering into a capture inbox (TestReleaseRehearsalFixture).
@@ -38,8 +44,10 @@ ALL_TABLES = WEB_TABLES + ['native_sessions', 'client_traffic_reports', 'node_co
     'node_groups', 'connection_leases', 'node_assignments', 'usage_buckets', 'node_health_events']
 # main before handoff_auth.md round 1: open registration, no mailbox verification.
 LEGACY_REF = '67e7b37f935e654e4378c14a32bc888ccff2065f'
-# Round 3 merge: verified registration, mail reset, password versions and session revocation.
-ROLLBACK_REF = 'c84de59'
+# PR #49 merge, the last release before node groups (presence plan 14 step 5); it also has
+# verified registration, mail reset, password versions and session revocation.
+ROLLBACK_REF = 'a63a882'
+LEASES_QUERY = "SELECT count(*) || ':' || md5(COALESCE(string_agg(id::text || state, ',' ORDER BY id), '')) FROM rehearsal.connection_leases"
 ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key',
     'node_assignments': "user_id::text || group_id", 'usage_buckets': "user_id::text || bucket_start"}
 
@@ -91,7 +99,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--legacy-ref', default=LEGACY_REF, help='release that produced the existing data')
-    parser.add_argument('--rollback-ref', default=ROLLBACK_REF, help='accepted release to roll back to (must enforce verification)')
+    parser.add_argument('--rollback-ref', default=ROLLBACK_REF, help='accepted release to roll back to (must enforce verification and predate node groups)')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -100,14 +108,15 @@ def main():
     os.umask(0o077)
     env = {key: value for key, value in os.environ.items() if not key.startswith(
         ('DATABASE_', 'PG', 'JWT_', 'APP_', 'API_', 'NEXT_PUBLIC_', 'HTTP_', 'CLIENT_', 'AUTO_MIGRATE', 'COOKIE_', 'TEST_PURCHASE', 'ALLOWED_ORIGINS',
-         'SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES', 'CATALOG_', 'REHEARSAL_', 'NATIVE_TEST_'))}
+         'SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES', 'CATALOG_', 'REHEARSAL_', 'NATIVE_TEST_',
+         'NODE_', 'GRANT_'))}
     env.update(PATH='/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:' + env.get('PATH', ''),
         LC_ALL='C', LANG='C', GOPROXY='off', GOTOOLCHAIN='local', CGO_ENABLED='0',
         NEXT_TELEMETRY_DISABLED='1')
     for tool in ['initdb', 'pg_ctl', 'pg_dump', 'pg_restore', 'psql', 'createdb', 'go', 'node']:
         if not shutil.which(tool, path=env['PATH']):
             raise SystemExit('Missing local tool: ' + tool)
-    summary = {'passed': False, 'checks': [], 'scope': 'private synthetic web-only schema from the legacy release; legacy, current and rollback normal API binaries; real browser/Next/PostgreSQL against the current API test assembly with a capture inbox',
+    summary = {'passed': False, 'checks': [], 'scope': 'private synthetic web-only schema from the legacy release; legacy, current and rollback normal API binaries; real browser/Next/PostgreSQL against the current API test assembly with a capture inbox; node groups, online leases and usage history on the current binary, served by the rollback binary through the dual-written columns',
         'production_modified': False, 'tls_acceptance': False, 'started_at_unix': time.time()}
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix='vpn-release-', dir='/tmp') as temporary:
@@ -160,8 +169,8 @@ def main():
                 f"FROM (SELECT {only[table] if only else '*'} FROM rehearsal.{table}) t")
                 for table in tables}
 
-        def api_env(database, port, mail=False):
-            return dict(env, **(mail_env if mail else {}), APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
+        def api_env(database, port, mail=False, catalog=False):
+            return dict(env, **(mail_env if mail else {}), **(catalog_env if catalog else {}), APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
                 DATABASE_HOST='127.0.0.1', DATABASE_PORT=str(pg_port), DATABASE_NAME=database,
                 DATABASE_USER='postgres', DATABASE_PASSWORD=secret, DATABASE_SCHEMA='rehearsal',
                 DATABASE_SSLMODE='disable', JWT_SECRET=jwt, ALLOWED_ORIGINS=web_url,
@@ -169,9 +178,9 @@ def main():
                 CLIENT_ALLOW_TEST_ENTITLEMENTS='true', CLIENT_PROFILE_DIR=str(profiles),
                 BCRYPT_COST='10', AUTH_REQUESTS_PER_MINUTE='10000', API_REQUESTS_PER_MINUTE='100000')
 
-        def start_api(binary, database, name, mail=False):
+        def start_api(binary, database, name, mail=False, catalog=False):
             port = free_port()
-            process = spawn(name, [str(binary)], api_env(database, port, mail))
+            process = spawn(name, [str(binary)], api_env(database, port, mail, catalog))
             client = Client(f'http://127.0.0.1:{port}')
             for _ in range(150):
                 if process.poll() is not None:
@@ -228,6 +237,9 @@ def main():
                 'SMTP_FROM_NAME': 'AsterLink VPN', 'WEBSITE_BASE_URL': web_url,
                 'AUTH_MAIL_SECRET': base64.b64encode(secrets.token_bytes(32)).decode()}
             pg_env = dict(env, PGHOST=str(socket_dir), PGPORT=str(pg_port), PGUSER='postgres', PGPASSWORD=secret)
+            # The database node catalog (servers sealed with a drill-only key); the earlier
+            # stages use the static per-plan profile, as the legacy release did.
+            catalog_env = {'CLIENT_NODE_CATALOG_ENABLED': 'true', 'NODE_ENCRYPTION_KEY': base64.b64encode(secrets.token_bytes(32)).decode()}
             profiles = root / 'profiles'
             profiles.mkdir(mode=0o700)
             (profiles / 'pro.yaml').write_text('proxies:\n  - {name: Drill-Only, type: http, server: 127.0.0.1, port: 9}\nproxy-groups:\n  - {name: VIP, type: select, proxies: [Drill-Only]}\nrules: ["MATCH,VIP"]\n')
@@ -396,6 +408,68 @@ def main():
             processes.remove(fixture)
             if fixture.returncode:
                 raise RuntimeError('Rehearsal API test assembly failed; see api-fixture.log')
+            ledger_units = 1000000
+
+            # Node groups on the current binary (presence plan 3.1, 6, 12 round 7): an administrator
+            # and a second customer are console accounts, as the groups drill makes them.
+            admin_email, second_email = 'admin-' + str(uuid.uuid4()) + '@example.invalid', 'second-' + str(uuid.uuid4()) + '@example.invalid'
+            admin_password, second_password = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+            for account, value in [(admin_email, admin_password), (second_email, second_password)]:
+                run('create-account', [str(current_binary), '-create-admin', account], environment=api_env('upgrade', free_port()), stdin=json.dumps({'password': value}))
+            sql('upgrade', f"UPDATE rehearsal.users SET role = 'user' WHERE email = '{second_email}'")
+            process, current = start_api(current_binary, 'upgrade', 'api-groups', catalog=True)
+            admin = Client(current.url)
+            admin.call('/auth/login', {'email': admin_email, 'password': admin_password}, origin=web_url)
+            group = admin.call('/admin/node-groups', {'name': 'JP1', 'region': 'JP', 'line_type': 'direct', 'rate_permille': 1500,
+                'plan_ids': ['pro'], 'enabled': True, 'sort': 0, 'version': 0}, origin=web_url, expected=201)['group']
+            servers = []
+            for index in range(3):
+                proxy = f'{{name: JP1, type: ss, server: 127.0.0.1, port: {19001 + index}, cipher: aes-256-gcm, password: drill-{secrets.token_hex(6)}}}'
+                servers += admin.call('/admin/nodes', {'yaml': f'proxies: [{proxy}]', 'group_id': group['id'], 'max_connections': 1,
+                    'label': f'jp1-{index + 1}', 'enabled': True, 'version': 0}, origin=web_url, expected=201)['nodes']
+            server_ids = sorted(server['id'] for server in servers)
+            assert len(set(server_ids)) == 3 and group['id'] not in server_ids
+
+            def native_login(url, account, value):
+                return Client(url).call('/client/login', {'email': account, 'password': value, 'device_id': str(uuid.uuid4()),
+                    'platform': 'android', 'app_version': 'release-drill'})['token']
+
+            def admit(url, token, expected=201, code=None):
+                return Client(url).call('/client/connections', {'group_id': group['id'], 'last_sequence': 0}, token=token, key=str(uuid.uuid4()), expected=expected, code=code)
+            devices = [native_login(current.url, email, new_password) for _ in range(3)]
+            catalog = Client(current.url).call('/client/nodes', token=devices[0])
+            assert [(node['id'], node['name']) for node in catalog['nodes']] == [(group['id'], 'JP1')], catalog['nodes']
+            v3 = admit(current.url, devices[0])
+            legacy = Client(current.url).call('/client/config?' + urllib.parse.urlencode({'node_id': group['id']}), token=devices[1])
+            assert legacy['node_id'] == group['id'] and v3['node_id'] in server_ids and v3['connection']['group_id'] == group['id']
+            admit(current.url, devices[2], 403, 'device_limit')
+            second = Client(current.url)
+            second.call('/auth/login', {'email': second_email, 'password': second_password}, origin=web_url)
+            second.call('/orders/test-purchase', {'plan_id': 'pro'}, origin=web_url, key=str(uuid.uuid4()), expected=201)
+            others = [native_login(current.url, second_email, second_password) for _ in range(2)]
+            admit(current.url, others[0])
+            admit(current.url, others[1], 409, 'group_full')
+            Client(current.url).call('/client/traffic', {'sequence': 1, 'upload_bytes': 1000, 'download_bytes': 3000}, token=devices[0])
+            Client(current.url).call('/client/traffic', {'sequence': 1, 'upload_bytes': 2000, 'download_bytes': 6000}, token=devices[1])
+            ledger_units += 12000 * 1500
+            owner = Client(current.url)
+            owner.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            online = owner.call('/me/devices')
+            assert online['online_count'] == 2 and online['device_limit'] == 2 and {device['line'] for device in online['online']} == {'JP1'}, online
+            history = owner.call('/me/usage-history')
+            # The window also holds the 1000 bytes the shared-balance stage reported at 1x.
+            assert len(history['buckets']) == 8 and history['total_upload_bytes'] + history['total_download_bytes'] == 13000 and history['total_charged_units'] == 1000000 + 12000 * 1500, history
+            listing = [entry for entry in admin.call('/admin/node-groups')['groups'] if entry['id'] == group['id']][0]
+            assert sorted(server['online'] for server in listing['servers']) == [1, 1, 1], listing
+            # Dual write (plan 4.1): every server's legacy columns and plan list follow its group.
+            assert sql('upgrade', f"""SELECT count(*) FROM rehearsal.nodes n JOIN rehearsal.node_groups g ON g.id = n.group_id JOIN rehearsal.node_configs c ON c.node_id = n.id
+                WHERE g.id = '{group['id']}' AND n.name = g.name AND n.region = g.region AND n.line_type = g.line_type AND n.rate_permille = g.rate_permille AND c.plan_ids = g.plan_ids""") == '3'
+            assert sql('upgrade', "SELECT count(*) FROM rehearsal.connection_leases WHERE state = 'active'") == '3'
+            assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
+            stop(process)
+            summary['checks'].append('current binary with the database catalog: an administrator creates group JP1 (pro, 1.5x) and imports 3 same-named servers of capacity 1; the client catalog lists the group once; one device admitted through /connections and one through the older /config (echoing the group id), the third refused (403 device_limit); a second account takes the last slot and its next device is refused (409 group_full); every server 1/1 online; /me/devices shows 2 online on JP1, /me/usage-history 8 intervals holding the 12000 new bytes at 1.5x (plus the earlier 1000 at 1x); legacy server columns and plan lists dual-written from the group')
+            leases_before_rollback = sql('upgrade', LEASES_QUERY)
+
             before_restore = fingerprint('upgrade', ALL_TABLES)
             full_dump = root / 'upgraded.dump'
             run('backup-upgraded', ['pg_dump', '-Fc', '-d', 'upgrade', '--schema=rehearsal', '-f', str(full_dump)], environment=pg_env)
@@ -406,7 +480,7 @@ def main():
             assert fingerprint('restored', ALL_TABLES) == before_restore
             summary['checks'].append(f'custom-format full backup restored into a second database; all {len(ALL_TABLES)} table fingerprints match before/after migration')
             # Rollback with registration switched on: the accepted release still demands a code.
-            process, old = start_api(rollback_binary, 'upgrade', 'api-rollback', mail=True)
+            process, old = start_api(rollback_binary, 'upgrade', 'api-rollback', mail=True, catalog=True)
             users_before = sql('upgrade', 'SELECT count(*) FROM rehearsal.users')
             Client(old.url).call('/auth/register', {'name': 'Bypass', 'email': 'bypass-' + str(uuid.uuid4()) + '@gmail.com',
                 'password': secrets.token_urlsafe(24), 'remember': False}, origin=web_url, expected=400, code='verification_required')
@@ -416,9 +490,34 @@ def main():
             assert old.call('/orders')['total'] == 1
             for index, token_value in enumerate(tokens):
                 Client(old.url).call('/client/traffic', payloads[index], token=token_value, expected=401, code='native_session_expired')
-            assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == '1000000'
+            assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
             assert sql('upgrade', f"SELECT auth_version FROM rehearsal.users WHERE email = '{email}'") == '2'
+            # Pre-group behaviour over the dual-written columns: one line per server, all named JP1.
+            old_admin = Client(old.url)
+            old_admin.call('/auth/login', {'email': admin_email, 'password': admin_password}, origin=web_url)
+            old_servers = old_admin.call('/admin/nodes')['nodes']
+            assert sorted(node['id'] for node in old_servers) == server_ids
+            assert all(node['name'] == 'JP1' and node['region'] == 'JP' and node['rate_permille'] == 1500 and node['plan_ids'] == ['pro'] and node['enabled'] for node in old_servers), old_servers
+            token = native_login(old.url, email, new_password)
+            old_catalog = Client(old.url).call('/client/nodes', token=token)
+            assert sorted(node['id'] for node in old_catalog['nodes']) == server_ids and {node['name'] for node in old_catalog['nodes']} == {'JP1'}, old_catalog['nodes']
+            profile = Client(old.url).call('/client/config?' + urllib.parse.urlencode({'node_id': server_ids[0]}), token=token)
+            assert profile['node_id'] == server_ids[0] and 'JP1' in profile['yaml']
+            Client(old.url).call('/client/traffic', {'sequence': 1, 'upload_bytes': 400, 'download_bytes': 600}, token=token)
+            ledger_units += 1000 * 1500
+            assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
+            # The old binary neither reads nor writes the new tables.
+            assert sql('upgrade', LEASES_QUERY) == leases_before_rollback
             stop(process)
+            summary['checks'].append('rollback binary over the group data: admin list shows the 3 servers with the group\'s dual-written region/rate/plans; the client catalog lists one line per server (3 x "JP1", the pre-group behaviour), a server profile is served and a report is charged at the group rate (ledger continuous); lease rows untouched')
+            # Upgrading again: the groups come back for the session created on the old binary.
+            run('migration-after-rollback', [str(current_binary), '-migrate'], environment=api_env('upgrade', free_port()))
+            process, again = start_api(current_binary, 'upgrade', 'api-reupgraded', catalog=True)
+            regrouped = Client(again.url).call('/client/nodes', token=token)
+            assert [(node['id'], node['name']) for node in regrouped['nodes']] == [(group['id'], 'JP1')], regrouped['nodes']
+            assert sql('upgrade', 'SELECT count(*) FROM rehearsal.nodes WHERE group_id IS NULL') == '0'
+            stop(process)
+            summary['checks'].append('re-upgrade after the rollback: migration repeatable, no ungrouped server, the catalog lists group JP1 once again for the session created on the old binary')
             process, restored = start_api(current_binary, 'restored', 'api-restored')
             Client(restored.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
             restored.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)

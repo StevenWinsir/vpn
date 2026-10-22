@@ -10,6 +10,10 @@ import tempfile
 import prepare_mihomo
 
 ROOT = Path(__file__).resolve().parents[1]
+# The last release before node groups and online leases (handoff_node_use_history_and_
+# load_balancing_c.md round 7): its Core is what every installed app runs until the new
+# Core ships, so TestReleasedCoreAgainstNodeGroupsPostgres drives it against this tree.
+RELEASED_CORE_REF = "a63a882ff41d83f04a0527128c96d9b8a9782365"
 AUTH_MAIL_PREFIXES = ('SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES')
 
 
@@ -39,6 +43,7 @@ def main() -> None:
             core_bin = directory / "asterlink-core"
             subprocess.run(["go", "build", "-tags", "fakeengine", "-o", str(core_bin), "./cmd/asterlink-core"], cwd=ROOT / "native/core", check=True, env=dict(os.environ, CGO_ENABLED="0"))
             environment["ASTERLINK_CORE_BIN"] = str(core_bin)
+            build_released_core(directory, environment)
             # The real node agent (reference VLESS forwarder) is run against the real API (TestNodeAgentEndToEnd*).
             agent_bin = directory / "asterlink-nodeagent"
             subprocess.run(["go", "build", "-o", str(agent_bin), "./cmd/asterlink-nodeagent"], cwd=ROOT / "native/nodeagent", check=True, env=dict(os.environ, CGO_ENABLED="0"))
@@ -55,6 +60,25 @@ def main() -> None:
         finally:
             if started:
                 subprocess.run(["pg_ctl", "-D", str(data), "-m", "fast", "-w", "stop"], check=True)
+
+
+def build_released_core(directory: Path, environment: dict) -> None:
+    """Build the released Core (fake engine) from git history next to the pinned Mihomo."""
+    present = subprocess.run(["git", "cat-file", "-e", RELEASED_CORE_REF + "^{commit}"], cwd=ROOT, stderr=subprocess.DEVNULL).returncode == 0
+    if not present:
+        if os.environ.get("REQUIRE_RELEASED_CORE"):
+            raise SystemExit(f"released Core commit {RELEASED_CORE_REF} is not in this clone (fetch it first)")
+        print(f"note: released Core commit {RELEASED_CORE_REF[:7]} not in this clone; its compatibility test will skip", flush=True)
+        return
+    tree = directory / "released"
+    tree.mkdir()
+    archive = subprocess.run(["git", "archive", "--format=tar", RELEASED_CORE_REF, "native/core", "native/nodeagent", "shared"], cwd=ROOT, check=True, capture_output=True).stdout
+    subprocess.run(["tar", "-x", "-C", str(tree)], input=archive, check=True)
+    # Same submodule commit and lifecycle patch as this tree (unchanged since that release).
+    (tree / "native/third_party").symlink_to(ROOT / "native/third_party", target_is_directory=True)
+    binary = directory / "asterlink-core-released"
+    subprocess.run(["go", "build", "-tags", "fakeengine", "-o", str(binary), "./cmd/asterlink-core"], cwd=tree / "native/core", check=True, env=dict(os.environ, CGO_ENABLED="0"))
+    environment["ASTERLINK_RELEASED_CORE_BIN"] = str(binary)
 
 
 if __name__ == "__main__":
