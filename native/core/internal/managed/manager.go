@@ -155,6 +155,8 @@ type Manager struct {
 	// bridge: StatePreparing was set by stopSegment for the automatic reconnect that follows,
 	// not by a connect attempt (settleBridge undoes it if that reconnect never starts).
 	bridge bool
+	// sameList: earlier catalog revisions with exactly the current list of lines.
+	sameList map[string]bool
 }
 
 type errorInfo struct {
@@ -324,7 +326,7 @@ func (m *Manager) resetLocked(keepError bool) {
 	m.profileNode = apiclient.NodeChoice{}
 	m.meter = nil
 	m.grant, m.orphan, m.local = nil, "", nil
-	m.admission, m.unreleased, m.bridge = nil, nil, false
+	m.admission, m.unreleased, m.bridge, m.sameList = nil, nil, false, nil
 	m.gate, m.lastGate, m.gateClosures = nil, nil, 0
 	m.state = StateSignedOut
 	if !keepError {

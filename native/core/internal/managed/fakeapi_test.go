@@ -188,7 +188,12 @@ func (f *fakeAPI) catalogJSON() apiclient.Catalog {
 	if f.catalogRsn == "" {
 		c.Nodes = append(c.Nodes, f.nodes...)
 	}
-	c.Revision = sha(fmt.Sprintf("%d|%s", f.revision, f.catalogRsn))
+	// As on the server (node groups round 3), this session's lease summary is part of the
+	// revision: connecting and disconnecting move it while the list stays the same.
+	if f.session.ConnectionID != "" {
+		c.Connection = &apiclient.CatalogConnection{ID: f.session.ConnectionID, State: f.session.ConnectionState}
+	}
+	c.Revision = sha(fmt.Sprintf("%d|%s|%s|%s", f.revision, f.catalogRsn, f.session.ConnectionID, f.session.ConnectionState))
 	return c
 }
 

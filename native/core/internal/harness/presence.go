@@ -218,6 +218,7 @@ func (r *runner) presenceCases(ctx context.Context) {
 		"the old lease ended node_unavailable, 1 MiB downloads before and after", before.Label, labelOf(after.own()), moved.Milliseconds(), reconnected.Milliseconds(), sawMessage))
 
 	// The ledger is continuous across the move: the server's counters equal the Core's confirmed ones.
+	revisionWhileConnected := r.m.Snapshot().CatalogRevision
 	settled := r.disconnectAndSettle(ctx)
 	l, lerr := r.world.ledger(ctx, "presence")
 	problems = nil
@@ -228,6 +229,20 @@ func (r *runner) presenceCases(ctx context.Context) {
 		problems = append(problems, fmt.Sprintf("server counted %d download bytes for 2 MiB through two servers", l.DownloadBytes))
 	}
 	r.verdict("P03-ledger", problems, fmt.Sprintf("after the move and a disconnect: server up %d / down %d = the Core's confirmed counters, nothing pending", l.UploadBytes, l.DownloadBytes))
+
+	// ---- P06: the server's catalog revision moved with the ended lease (same lines): choosing
+	// another line against the list the user saw just before must not be refused as stale.
+	r.waitFor(ctx, 10*time.Second, func(s managed.Snapshot) bool { return s.CatalogRevision != revisionWhileConnected })
+	revisionMoved := r.m.Snapshot().CatalogRevision != revisionWhileConnected
+	chosen, selErr := r.m.SelectNode(ctx, r.cfg.World.Nodes["dedicated"], revisionWhileConnected)
+	problems = nil
+	if !revisionMoved {
+		problems = append(problems, "the catalog revision did not move after the disconnect (nothing was tested)")
+	}
+	if selErr != nil || chosen.SelectedNodeID != r.cfg.World.Nodes["dedicated"] {
+		problems = append(problems, fmt.Sprintf("select refused: %v (selected %s)", selErr, chosen.SelectedNodeID))
+	}
+	r.verdict("P06-select-after-disconnect", problems, "after the disconnect the server's catalog revision moved with the ended lease while the lines stayed the same; selecting another line against the revision seen while connected was accepted")
 
 	// ---- P04: Disconnect releases the slot at once (not after the lease runs out).
 	r.releaseCase(ctx, "P04-disconnect-release", func() { r.m.Disconnect(ctx) })

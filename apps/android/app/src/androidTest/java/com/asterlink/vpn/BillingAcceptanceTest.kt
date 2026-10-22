@@ -304,6 +304,10 @@ class BillingAcceptanceTest {
         return c
     }
 
+    /** The selection really took (a refused select leaves the previous line selected and ready). */
+    private fun selected(c: SessionController, node: String): Boolean =
+        c.state.value.snapshot.selectedNodeId == nodeIds.getValue(node) && c.state.value.snapshot.configReady
+
     private data class Measured(
         val ledgerBefore: Ledger, val ledgerAfter: Ledger,
         val clientUp: Long, val clientDown: Long,
@@ -322,8 +326,8 @@ class BillingAcceptanceTest {
      */
     private suspend fun measure(tag: String, c: SessionController, who: String, node: String, up: Long, down: Long, during: suspend () -> Unit = {}): Measured? {
         main { c.selectNow(nodeIds.getValue(node)) }
-        if (!c.state.value.snapshot.configReady) {
-            record("$tag-select", "FAIL", "line not ready: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}")
+        if (!selected(c, node)) {
+            record("$tag-select", "FAIL", "line not selected: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}")
             return null
         }
         val ledgerBefore = ledger(who)
@@ -430,11 +434,16 @@ class BillingAcceptanceTest {
         // so the extra bytes stay out of the B01 segments).
         run {
             main { c.selectNow(nodeIds.getValue("dedicated")) }
+            // Selected right after B01's disconnect: the catalog revision has just moved with the
+            // lease summary (the list is the same), which must not make the selection stale.
+            val chosen = selected(c, "dedicated")
+            val refusal = c.state.value.message?.code
             main { c.connectNow() }
             val text = if (c.state.value.snapshot.state == State.CONNECTED) notificationWhileDownloading() else ""
             main { c.disconnectNow() }
             val gone = waitUntil(10_000) { notification(VpnNotifications.ID) == null }
             val live = Regex("↓([1-9][0-9.]*) ").containsMatchIn("$text ")
+            if (!chosen) record("N01-select", "FAIL", "selecting the line right after a disconnect was refused: $refusal")
             record("N01-notification", if (text.contains(names.getValue("dedicated")) && text.contains("↑") && live && gone != null) "PASS" else "FAIL",
                 "during a download the ongoing notification read \"$text\"; removed ${gone} ms after Disconnect")
         }
@@ -550,6 +559,10 @@ class BillingAcceptanceTest {
      */
     private suspend fun stopCase(id: String, c: SessionController, who: String, node: String, rate: Long, reasons: Set<String>, drive: Boolean = false, trigger: suspend () -> Unit) {
         main { c.selectNow(nodeIds.getValue(node)) }
+        if (!selected(c, node)) {
+            record(id, "FAIL", "line not selected: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}")
+            return
+        }
         val before = ledger(who)
         main { c.connectNow() }
         if (c.state.value.snapshot.state != State.CONNECTED) {
