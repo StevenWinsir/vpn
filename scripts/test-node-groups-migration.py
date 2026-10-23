@@ -24,7 +24,6 @@ import json
 import os
 import secrets
 import shutil
-import socket
 import subprocess
 import tempfile
 import time
@@ -32,6 +31,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+from loopback_port import free_port
 
 ROOT = Path(__file__).resolve().parents[1]
 # main after PR #49, the last release without node groups.
@@ -41,12 +42,6 @@ LEGACY_TABLES = ['users', 'plans', 'sessions', 'subscriptions', 'orders', 'nodes
     'connection_grants', 'node_usage_reports', 'email_auth_challenges', 'auth_mail_jobs', 'auth_rate_buckets']
 NEW_TABLES = ['node_groups', 'connection_leases', 'node_assignments', 'usage_buckets', 'node_health_events']
 ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key'}
-
-
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):

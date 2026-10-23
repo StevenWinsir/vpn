@@ -25,11 +25,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	mathrand "math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -80,8 +83,56 @@ func uuid() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// freePort asks the kernel for an unused TCP port on host (UDP shares the number).
+// Ports below the kernel's ephemeral range: a port from bind(0) that is closed again before
+// Mihomo binds it can meanwhile go to any other bind(0) or outgoing connection on the host
+// (adb, the emulator, the backend world); one below that range is never handed out by the
+// kernel, so once checked free only an explicit bind can take it (scripts/loopback_port.py).
+const portFloor = 20000
+
+var issuedPorts = map[int]bool{}
+
+// ephemeralStart is the first port the kernel hands out by itself (Linux says; macOS and
+// Windows default to 49152).
+func ephemeralStart() int {
+	if runtime.GOOS == "linux" {
+		if raw, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range"); err == nil {
+			if fields := strings.Fields(string(raw)); len(fields) > 0 {
+				if n, err := strconv.Atoi(fields[0]); err == nil {
+					return n
+				}
+			}
+		}
+		return 32768
+	}
+	return 49152
+}
+
+func bindable(addr string) bool {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	defer l.Close()
+	pc, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return false
+	}
+	return pc.Close() == nil
+}
+
+// freePort picks a port on host that is free for TCP and UDP (Shadowsocks relays UDP on the
+// same number), below the ephemeral range, and not handed out before.
 func freePort(host string) int {
+	if top := ephemeralStart(); top-portFloor >= 1000 {
+		for range 500 {
+			port := portFloor + mathrand.IntN(top-portFloor)
+			if !issuedPorts[port] && bindable(net.JoinHostPort(host, strconv.Itoa(port))) {
+				issuedPorts[port] = true
+				return port
+			}
+		}
+	}
+	// No room below the ephemeral range on this host: the kernel's choice.
 	l, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
 		log.Fatal(err)

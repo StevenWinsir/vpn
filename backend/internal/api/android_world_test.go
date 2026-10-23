@@ -48,6 +48,7 @@ func TestClientAccountWorld(t *testing.T) {
 
 func serveNativeAccountWorld(t *testing.T, out, port string) {
 	t.Helper()
+	listener := listenWorld(t, port)
 	db, cfg := newIsolatedNativeDatabase(t)
 	cfg.ClientNodeCatalog = true
 	cfg.NodeEncryptionKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
@@ -173,10 +174,6 @@ func serveNativeAccountWorld(t *testing.T, out, port string) {
 		w.WriteHeader(http.StatusNoContent)
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
-	if err != nil {
-		t.Fatal(err)
-	}
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/__world/") {
 			control(w, r)

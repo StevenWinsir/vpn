@@ -5,19 +5,14 @@ import argparse
 import json
 import os
 import shutil
-import socket
 import subprocess
 import tempfile
 import time
 import urllib.request
 
+from loopback_port import free_port
+
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def free_port():
-    with socket.socket() as listener:
-        listener.bind(('127.0.0.1', 0))
-        return listener.getsockname()[1]
 
 
 def main():
