@@ -207,7 +207,6 @@ func (m *Manager) releaseStale(client *apiclient.Client, token, id string) {
 func (m *Manager) reconnect(gen, intent uint64) {
 	defer m.settleBridge(gen)
 	if !m.opMu.TryLock() {
-		trace("reconnect: skipped, an operation is running")
 		return // the user is connecting, switching or handing off right now
 	}
 	defer m.opMu.Unlock()
@@ -215,15 +214,11 @@ func (m *Manager) reconnect(gen, intent uint64) {
 	ok := m.generation == gen && m.intent == intent && m.conn == nil && m.selected != ""
 	m.mu.Unlock()
 	if !ok {
-		trace("reconnect: dropped (generation or intent moved, or connected, or nothing selected)")
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), reconnectBudget)
 	defer cancel()
-	trace("reconnect: start")
-	_, err := m.connect(ctx)
-	trace("reconnect: done err=%v", codeOfNil(err))
-	if err != nil {
+	if _, err := m.connect(ctx); err != nil {
 		// The user did not ask for this attempt: its failure is why the VPN is off now, so a
 		// later renewal must not erase it (like any stop reason).
 		m.mu.Lock()
@@ -289,13 +284,6 @@ func (m *Manager) connect(ctx context.Context) (Snapshot, error) {
 		return m.snapshotLocked(), err
 	}
 	return retried, retryErr
-}
-
-func codeOfNil(err error) string {
-	if err == nil {
-		return "none"
-	}
-	return codeOf(err)
 }
 
 func codeOf(err error) string {
@@ -391,7 +379,6 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 		snap, failure := fail(codeOf(err), false, false, apiclient.ReleaseStopped)
 		return snap, "", failure
 	}
-	trace("connect: admitted (avoid=%t)", avoid != "")
 	ref := &admission{id: response.Connection.ID, groupID: groupID, serverID: response.NodeID}
 	profile, parseErr := ParseProfile(groupID, node.Name, response.Version, response.YAML)
 	m.mu.Lock()
@@ -470,16 +457,12 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 
 	// From here the data path may exist, so every failure must close it.
 	m.opts.Egress.Set(iface)
-	trace("connect: engine start")
 	if err = m.opts.Engine.Start(ctx, profile); err != nil {
-		trace("connect: engine start failed %s", engineCode(err))
 		// Starting is local (TUN, routes): not evidence against the server.
 		snap, failure := fail(engineCode(err), true, false, apiclient.ReleaseStopped)
 		return snap, "", failure
 	}
-	trace("connect: verify")
 	if err = m.opts.Engine.Verify(ctx); err != nil {
-		trace("connect: verify failed %s", engineCode(err))
 		// The probe itself used the tunnel and was counted; that tail is acknowledged before
 		// the lease is released with the failure, which reports the server.
 		probe := engineCode(err)
@@ -501,7 +484,6 @@ func (m *Manager) connectClient(ctx context.Context, gen uint64, client *apiclie
 	m.lastError = nil
 	snap := m.snapshotLocked()
 	m.mu.Unlock()
-	trace("connect: connected")
 	// The clock watch is primed here, before the goroutine exists, so a sleep that
 	// begins right after Connect is still seen.
 	var watch clockWatch

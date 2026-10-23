@@ -620,6 +620,22 @@ class BillingAcceptanceTest {
         return Presence(list("live"), list("ended"))
     }
 
+    /**
+     * Waits until a snapshot the Core has just answered says connected. The app's own view
+     * (state.value) is only refreshed by its poll, once a second while a tunnel exists, so
+     * after the Core reconnected by itself it can still show the state from before the move, or
+     * one caught in the ~200 ms the reconnect takes. Every check reads a fresh snapshot first.
+     */
+    private suspend fun connectedNow(c: SessionController, millis: Long): Long? {
+        val start = SystemClock.elapsedRealtime()
+        while (SystemClock.elapsedRealtime() - start < millis) {
+            main { c.pollNow() }
+            if (c.state.value.snapshot.state == State.CONNECTED) return SystemClock.elapsedRealtime() - start
+            delay(50)
+        }
+        return null
+    }
+
     /** One line of what the app and the server think, for the evidence of a failing case. */
     private fun describe(c: SessionController): String {
         val st = c.state.value
@@ -694,11 +710,8 @@ class BillingAcceptanceTest {
         // ---- P03: the administrator disables this phone's server, in the foreground and then
         // with the app in the background (the catalog long-poll paused).
         if (!reassignCase("P03-reassign", c, background = false)) return
-        val beforeRestore = describe(c)
         world("restore")
-        val afterRestore = describe(c)
         reassignCase("P03-reassign-background", c, background = true)
-        record("P03-diag", "PASS", "before restore: $beforeRestore | right after restore: $afterRestore | after the second case: ${describe(c)}")
         container.core.setForeground(true)
 
         // The ledger is continuous across the moves: server = the Core's confirmed counters.
@@ -723,7 +736,9 @@ class BillingAcceptanceTest {
      * (it would stop its VPN service), the service stays, and the tunnel forwards again.
      */
     private suspend fun reassignCase(id: String, c: SessionController, background: Boolean): Boolean {
-        if (c.state.value.snapshot.state != State.CONNECTED) {
+        // Not connected for real (a fresh read, not the app's last poll, which may predate the
+        // previous case's reconnect): connect now.
+        if (connectedNow(c, 5_000) == null) {
             main { c.selectNow(nodeIds.getValue("pair")) }
             main { c.connectNow() }
         }
@@ -750,7 +765,7 @@ class BillingAcceptanceTest {
         val withdrawn = SystemClock.elapsedRealtime()
         world("withdraw", """{"user":"presence"}""")
         val (moved, after) = waitPresence(30_000) { it.own != null && it.own?.server != old.server }
-        val reconnected = waitFor(c, 20_000) { it.snapshot.state == State.CONNECTED }
+        val reconnected = connectedNow(c, 20_000)
         val total = SystemClock.elapsedRealtime() - withdrawn
         delay(300)
         sampler.cancel()
