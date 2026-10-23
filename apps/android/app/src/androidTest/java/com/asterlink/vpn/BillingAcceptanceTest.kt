@@ -683,6 +683,8 @@ class BillingAcceptanceTest {
         world("occupy", """{"user":"presence","count":2}""")
         main { c.selectNow(nodeIds.getValue("pair")) }
         main { c.connectNow() }
+        // The service closes itself after the refusal, a moment after Connect has answered.
+        waitUntil(10_000) { !vpnNetworkUp() && container.vpnHosts.current == null }
         var s = c.state.value
         var p = presence()
         val want = "已达到同时在线设备上限，请先断开其他设备"
