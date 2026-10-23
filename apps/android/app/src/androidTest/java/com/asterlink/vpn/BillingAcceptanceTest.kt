@@ -620,6 +620,30 @@ class BillingAcceptanceTest {
         return Presence(list("live"), list("ended"))
     }
 
+    /**
+     * Waits until a snapshot the Core has just answered says connected. The app's own view
+     * (state.value) is only refreshed by its poll, once a second while a tunnel exists, so
+     * after the Core reconnected by itself it can still show the state from before the move, or
+     * one caught in the ~200 ms the reconnect takes. Every check reads a fresh snapshot first.
+     */
+    private suspend fun connectedNow(c: SessionController, millis: Long): Long? {
+        val start = SystemClock.elapsedRealtime()
+        while (SystemClock.elapsedRealtime() - start < millis) {
+            main { c.pollNow() }
+            if (c.state.value.snapshot.state == State.CONNECTED) return SystemClock.elapsedRealtime() - start
+            delay(50)
+        }
+        return null
+    }
+
+    /** One line of what the app and the server think, for the evidence of a failing case. */
+    private fun describe(c: SessionController): String {
+        val st = c.state.value
+        val p = runCatching { presence() }.getOrNull()
+        return "app ${st.snapshot.state} busy=${st.busy} activity=${st.activity} tunnelBusy=${st.snapshot.tunnelBusy} message=${st.message?.code} lastError=${st.snapshot.lastError?.code}; " +
+            "server live=${p?.live?.map { it.label + (if (it.holder) "(other)" else "") }} ended=${p?.ended?.take(3)?.map { it.label + ":" + it.reason }}"
+    }
+
     private suspend fun waitPresence(millis: Long, predicate: (Presence) -> Boolean): Pair<Long?, Presence> {
         val start = SystemClock.elapsedRealtime()
         var last = presence()
@@ -659,6 +683,8 @@ class BillingAcceptanceTest {
         world("occupy", """{"user":"presence","count":2}""")
         main { c.selectNow(nodeIds.getValue("pair")) }
         main { c.connectNow() }
+        // The service closes itself after the refusal, a moment after Connect has answered.
+        waitUntil(10_000) { !vpnNetworkUp() && container.vpnHosts.current == null }
         var s = c.state.value
         var p = presence()
         val want = "已达到同时在线设备上限，请先断开其他设备"
@@ -712,14 +738,16 @@ class BillingAcceptanceTest {
      * (it would stop its VPN service), the service stays, and the tunnel forwards again.
      */
     private suspend fun reassignCase(id: String, c: SessionController, background: Boolean): Boolean {
-        if (c.state.value.snapshot.state != State.CONNECTED) {
+        // Not connected for real (a fresh read, not the app's last poll, which may predate the
+        // previous case's reconnect): connect now.
+        if (connectedNow(c, 5_000) == null) {
             main { c.selectNow(nodeIds.getValue("pair")) }
             main { c.connectNow() }
         }
         val (_, before) = waitPresence(5_000) { it.own != null }
         val old = before.own
         if (c.state.value.snapshot.state != State.CONNECTED || old == null) {
-            record(id, "FAIL", "could not connect first: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}, own lease $old")
+            record(id, "FAIL", "could not connect first: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}, own lease $old; ${describe(c)}")
             return false
         }
         val first = runCatching { download(sink.str("name"), 1L shl 20) }.getOrNull()
@@ -739,7 +767,7 @@ class BillingAcceptanceTest {
         val withdrawn = SystemClock.elapsedRealtime()
         world("withdraw", """{"user":"presence"}""")
         val (moved, after) = waitPresence(30_000) { it.own != null && it.own?.server != old.server }
-        val reconnected = waitFor(c, 20_000) { it.snapshot.state == State.CONNECTED }
+        val reconnected = connectedNow(c, 20_000)
         val total = SystemClock.elapsedRealtime() - withdrawn
         delay(300)
         sampler.cancel()
