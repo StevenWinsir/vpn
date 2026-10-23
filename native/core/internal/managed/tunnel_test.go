@@ -189,10 +189,20 @@ func TestLostAcknowledgementReplaysTheSameBatch(t *testing.T) {
 		n := len(h.f.bodies)
 		return h.f.loseAcks == 0 && n >= 2 && h.f.bodies[n-1] == h.f.bodies[n-2]
 	})
-	snap := h.m.Disconnect(t.Context())
+	// The replay has reached the server; let the Core fold its acknowledgement in before the
+	// disconnect cancels whatever request is still in flight.
+	waitFor(t, "replay acknowledged", func() bool {
+		m := h.m.Snapshot().Metering
+		return m.LastSequence >= 2 && !m.Pending
+	})
+	h.m.Disconnect(t.Context())
+	// keepAlive may still be sending an empty renewal batch at this instant (its first tick
+	// falls about a second after connect, right where this test disconnects); it carries no
+	// bytes. What matters is that the tail is settled and nothing stays unacknowledged.
+	waitFor(t, "nothing pending after disconnect", func() bool { return !h.m.Snapshot().Metering.Pending })
 	units, up, _, _ := h.ledger()
-	if units != 1*mib*1000 || up != 1*mib || snap.Metering.Pending {
-		t.Fatalf("units=%d up=%d view=%+v", units, up, snap.Metering)
+	if units != 1*mib*1000 || up != 1*mib {
+		t.Fatalf("units=%d up=%d view=%+v", units, up, h.m.Snapshot().Metering)
 	}
 }
 
