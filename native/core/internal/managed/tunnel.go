@@ -167,6 +167,8 @@ func (m *Manager) stopTunnel(ctx context.Context, reason string) error {
 func (m *Manager) stopSegment(ctx context.Context, reason string, bridge bool) error {
 	m.stopMu.Lock()
 	defer m.stopMu.Unlock()
+	trace("stop: begin reason=%q bridge=%t", reason, bridge)
+	defer trace("stop: end reason=%q", reason)
 
 	m.mu.Lock()
 	gen, conn, mt, grant, local := m.generation, m.conn, m.meter, m.grant, m.local
@@ -254,6 +256,7 @@ func (m *Manager) requestStop(gen uint64, reason string) {
 			return
 		}
 		again := m.reconnects(reason)
+		trace("requestStop: reason=%q again=%t", reason, again)
 		_ = m.stopSegment(ctx, reason, again)
 		if again {
 			m.reconnect(gen, intent)

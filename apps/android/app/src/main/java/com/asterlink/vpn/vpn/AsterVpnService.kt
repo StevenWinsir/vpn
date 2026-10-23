@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
+import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.asterlink.vpn.AppContainer
@@ -93,7 +94,12 @@ class AsterVpnService : VpnService(), VpnHost {
         return START_NOT_STICKY
     }
 
+    private fun trace(text: String) {
+        Log.i("AsterTrace", "service: $text (ending=$ending finished=$finished connectAfterEnd=$connectAfterEnd session=${session?.isActive})")
+    }
+
     private fun begin() {
+        trace("begin")
         // startForegroundService obliges startForeground even when the request is dropped.
         goForeground(TunnelNotice.Connecting)
         // A start that reached this instance after its teardown finished (it was stopping
@@ -125,6 +131,7 @@ class AsterVpnService : VpnService(), VpnHost {
 
     /** The one way out: close the data path (bounded), then leave the foreground and stop. Main thread. */
     private fun end() {
+        trace("end")
         if (ending) {
             // A second disconnect (the notification's) also cancels a connect queued behind the first.
             if (connectAfterEnd) {
@@ -153,6 +160,7 @@ class AsterVpnService : VpnService(), VpnHost {
 
     /** The teardown is complete: run the connect that waited for it, or leave. Main thread. */
     private fun ended() {
+        trace("ended")
         if (connectAfterEnd && !destroyed) {
             connectAfterEnd = false
             ending = false
@@ -173,6 +181,7 @@ class AsterVpnService : VpnService(), VpnHost {
     }
 
     override fun onRevoke() {
+        trace("onRevoke")
         // The system has already deactivated the interface (another VPN app took over, or the
         // user turned it off in Settings); the Core must stop forwarding and settle what was
         // carried, and the user is told why (L04).
@@ -209,6 +218,7 @@ class AsterVpnService : VpnService(), VpnHost {
     override fun protectSocket(fd: Int): Boolean = protect(fd)
 
     override fun establish(spec: TunSpec): Int {
+        trace("establish")
         val builder = Builder()
             .setSession("AsterLink")
             .setConfigureIntent(

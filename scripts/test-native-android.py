@@ -1064,7 +1064,7 @@ def run_billing_suite(args):
                if not leaked else 'logcat contains secret #%s' % leaked)
         if not leaked and any(case['status'] != 'PASS' for case in cases):
             # Evidence for a failing case: the app's own lines only, and only when the leak check passed.
-            lines = [line for line in logcat.splitlines() if any(tag in line for tag in ('asterlink', 'AsterLink', 'Core', 'mihomo'))]
+            lines = [line for line in logcat.splitlines() if any(tag in line for tag in ('asterlink', 'AsterLink', 'Core', 'mihomo', 'GoLog', 'AsterTrace'))]
             (emu.out_dir / 'billing-logcat.txt').write_text('\n'.join(lines[-4000:]) + '\n')
         (emu.out_dir / 'billing-report.json').write_text(json.dumps({
             'device': emu.facts, 'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'mihomo_patch', 'aar_sha256', 'tuntest_hooks')},
