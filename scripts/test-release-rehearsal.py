@@ -27,7 +27,6 @@ import json
 import os
 import secrets
 import shutil
-import socket
 import subprocess
 import tempfile
 import time
@@ -35,6 +34,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+from loopback_port import free_port
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_TABLES = ['users', 'plans', 'sessions', 'subscriptions', 'orders', 'nodes']
@@ -51,12 +52,6 @@ ROLLBACK_REF = 'a63a882'
 LEASES_QUERY = "SELECT count(*) || ':' || md5(COALESCE(string_agg(id::text || state, ',' ORDER BY id), '')) FROM rehearsal.connection_leases"
 ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key',
     'node_assignments': "user_id::text || group_id", 'usage_buckets': "user_id::text || bucket_start"}
-
-
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):

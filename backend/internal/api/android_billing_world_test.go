@@ -48,6 +48,8 @@ func TestAndroidBillingWorld(t *testing.T) {
 	if out == "" {
 		t.Skip("set by scripts/test-native-android.py --suite billing")
 	}
+	// Bound before the node agent and the presence world open listeners of their own.
+	listener := listenWorld(t, os.Getenv("ASTERLINK_ANDROID_WORLD_PORT"))
 	var testnode struct {
 		SSPort     int    `json:"ss_port"`
 		SSCipher   string `json:"ss_cipher"`
@@ -418,10 +420,6 @@ func TestAndroidBillingWorld(t *testing.T) {
 		_, _ = w.Write(recorder.Body.Bytes())
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:"+os.Getenv("ASTERLINK_ANDROID_WORLD_PORT"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/__world/") {
 			control(w, r)

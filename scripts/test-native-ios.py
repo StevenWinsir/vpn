@@ -72,6 +72,7 @@ import subprocess
 import tempfile
 import sys
 import time
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 IOS = ROOT / 'apps' / 'ios'
@@ -853,13 +854,6 @@ def check_ui(out_dir: Path, wanted):
 
 # ---------------------------------------------------------------- account (round 3)
 
-def free_port():
-    import socket
-    with socket.socket() as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
-
-
 def start_world(scratch):
     """Private PostgreSQL (Unix socket only) + the backend's TestClientAccountWorld on 127.0.0.1."""
     data, sock = Path(scratch) / 'pg', Path(scratch) / 'sock'
@@ -869,16 +863,16 @@ def start_world(scratch):
                    check=True, stdout=subprocess.DEVNULL, env=env)
     subprocess.run(['pg_ctl', '-D', str(data), '-l', str(Path(scratch) / 'postgres.log'), '-o', "-k %s -c listen_addresses=''" % sock, '-w', 'start'],
                    check=True, stdout=subprocess.DEVNULL, env=env)
-    port = free_port()
     world_file = Path(scratch) / 'world.json'
     log = open(Path(scratch) / 'world.log', 'wb')
     world = subprocess.Popen(['go', 'test', '-count=1', '-timeout', '70m', '-run', '^TestClientAccountWorld$', '-v', './internal/api'], cwd=ROOT / 'backend',
                              env=dict(env, NATIVE_TEST_DSN='host=%s user=postgres dbname=postgres sslmode=disable' % sock, RUN_DB_TESTS='0',
-                                      ASTERLINK_CLIENT_WORLD_PORT=str(port), GOFLAGS='-buildvcs=false', ASTERLINK_CLIENT_WORLD=str(world_file)),
+                                      ASTERLINK_CLIENT_WORLD_PORT='0', GOFLAGS='-buildvcs=false', ASTERLINK_CLIENT_WORLD=str(world_file)),
                              stdout=log, stderr=subprocess.STDOUT)
     for _ in range(3000):
         if world_file.is_file() and world_file.stat().st_size > 0:
-            return data, world, world_file, port
+            # The world binds 127.0.0.1:0 itself and reports where (scripts/loopback_port.py says why).
+            return data, world, world_file, urlsplit(json.loads(world_file.read_text())['api_base']).port
         if world.poll() is not None:
             break
         time.sleep(0.1)

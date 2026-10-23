@@ -120,6 +120,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -128,6 +129,7 @@ ANDROID = ROOT / 'apps' / 'android'
 CORE = ROOT / 'native' / 'core'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_env  # noqa: E402
+from loopback_port import free_port  # noqa: E402,F401 (android_release_suite uses ctx.free_port)
 
 LOCK = json.loads((ANDROID / 'toolchain.lock.json').read_text())
 EXIT_PASS, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 3
@@ -637,13 +639,6 @@ TUN_CLASS = 'com.asterlink.vpn.TunAcceptanceTest'
 LOOPBACK, EMULATOR_HOST, TARGET_NAME = '127.0.0.1', '10.0.2.2', 'example.com'
 
 
-def free_port(host=LOOPBACK):
-    import socket
-    with socket.socket() as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
-
-
 def write_private(adb, serial, name, data: bytes):
     """Into the debug app's private files through run-as and stdin: never argv, never logcat."""
     process = subprocess.run([str(adb), '-s', serial, 'shell', 'run-as %s sh -c "mkdir -p files/tuntest && cat > files/tuntest/%s"' % (PACKAGE, name)],
@@ -875,7 +870,9 @@ ACCOUNT_CLASS = 'com.asterlink.vpn.AccountAcceptanceTest'
 
 
 def start_world(scratch, test='TestAndroidAccountWorld', output_env='ASTERLINK_ANDROID_WORLD', extra_env=None, port=None):
-    """Private PostgreSQL (Unix socket only) + a backend world test on 127.0.0.1 (port: default a free one)."""
+    """Private PostgreSQL (Unix socket only) + a backend world test on 127.0.0.1. Without a port the
+    world binds 127.0.0.1:0 itself, first thing, and reports its address: no port is picked here and
+    released for something else on the host to take before the world binds it."""
     data, sock = Path(scratch) / 'pg', Path(scratch) / 'sock'
     sock.mkdir(mode=0o700)
     env = dict(os.environ, LC_ALL='C', LANG='C')
@@ -883,16 +880,15 @@ def start_world(scratch, test='TestAndroidAccountWorld', output_env='ASTERLINK_A
                    check=True, stdout=subprocess.DEVNULL, env=env)
     subprocess.run(['pg_ctl', '-D', str(data), '-l', str(Path(scratch) / 'postgres.log'), '-o', "-k %s -c listen_addresses=''" % sock, '-w', 'start'],
                    check=True, stdout=subprocess.DEVNULL, env=env)
-    port = port or free_port()
     world_file = Path(scratch) / 'world.json'
     log = open(Path(scratch) / 'world.log', 'wb')
     world = subprocess.Popen(['go', 'test', '-count=1', '-timeout', '70m', '-run', '^%s$' % test, '-v', './internal/api'], cwd=ROOT / 'backend',
                              env=dict(env, NATIVE_TEST_DSN='host=%s user=postgres dbname=postgres sslmode=disable' % sock, RUN_DB_TESTS='0',
-                                      ASTERLINK_ANDROID_WORLD_PORT=str(port), GOFLAGS='-buildvcs=false', **{output_env: str(world_file)}, **(extra_env or {})),
+                                      ASTERLINK_ANDROID_WORLD_PORT=str(port or 0), GOFLAGS='-buildvcs=false', **{output_env: str(world_file)}, **(extra_env or {})),
                              stdout=log, stderr=subprocess.STDOUT)
     for _ in range(3000):
         if world_file.is_file() and world_file.stat().st_size > 0:
-            return data, world, world_file, port
+            return data, world, world_file, urlsplit(json.loads(world_file.read_text())['api_base']).port
         if world.poll() is not None:
             break
         time.sleep(0.1)
