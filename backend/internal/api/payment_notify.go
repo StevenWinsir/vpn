@@ -141,8 +141,10 @@ func (s *Server) judgeNotification(ctx context.Context, n payment.Notification, 
 // callback already put under review keeps that verdict for the administrator.
 func successProcessable(o model.Order) bool {
 	switch o.Status {
-	case model.OrderPending, model.OrderExpired, model.OrderFailed:
+	case model.OrderPending, model.OrderExpired:
 		return true
+	case model.OrderFailed:
+		return o.ReviewReason != model.ReviewClosed
 	case model.OrderReview:
 		return o.ReviewReason == model.ReviewCallbackMissing || o.ReviewReason == model.ReviewGatewayUnreachable
 	}

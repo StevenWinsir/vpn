@@ -36,6 +36,8 @@ const (
 	ReviewStateConflict      = "state_conflict"
 	ReviewCallbackMissing    = "callback_missing"
 	ReviewGatewayUnreachable = "gateway_unreachable"
+	// ReviewClosed marks a failed order an administrator closed by hand; it is final.
+	ReviewClosed = "closed_by_admin"
 )
 
 // Coupon is an administrator-defined discount code. UsedCount only ever grows (paid

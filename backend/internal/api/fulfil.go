@@ -91,24 +91,31 @@ func applyPlan(tx *gorm.DB, userID string, plan model.Plan, now time.Time, test 
 	} else {
 		sub = model.Subscription{UserID: userID, PlanID: plan.ID, PlanName: plan.Name, StartsAt: now, ExpiresAt: now, MaxDevices: plan.MaxDevices, AllowDedicated: plan.AllowDedicated, IsTest: test}
 		if current != nil {
-			sub.ID, sub.CreatedAt = current.ID, current.CreatedAt
+			sub.ID, sub.CreatedAt, sub.Version = current.ID, current.CreatedAt, current.Version
 		} else {
 			sub.ID = uuid.NewString()
 		}
 	}
 	sub.TrafficLimitBytes += plan.TrafficBytes
 	sub.ExpiresAt = sub.ExpiresAt.AddDate(0, 0, plan.DurationDays)
-	if err = tx.Omit("User", "Plan").Save(&sub).Error; err != nil {
+	sub.Version++
+	return saveSubscription(tx, &sub)
+}
+
+// saveSubscription writes sub and mirrors it into its current period when that period
+// already has a ledger row (created on the first grant).
+func saveSubscription(tx *gorm.DB, sub *model.Subscription) (*model.Subscription, error) {
+	if err := tx.Omit("User", "Plan").Save(sub).Error; err != nil {
 		return nil, err
 	}
 	var period model.SubscriptionPeriod
-	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("subscription_id = ? AND starts_at = ?", sub.ID, sub.StartsAt).First(&period).Error
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("subscription_id = ? AND starts_at = ?", sub.ID, sub.StartsAt).First(&period).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return &sub, nil
+		return sub, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	syncPeriod(&period, &sub)
-	return &sub, tx.Save(&period).Error
+	syncPeriod(&period, sub)
+	return sub, tx.Save(&period).Error
 }
