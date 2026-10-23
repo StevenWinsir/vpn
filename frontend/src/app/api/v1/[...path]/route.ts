@@ -6,6 +6,8 @@ export const dynamic = 'force-dynamic';
 
 type Context = { params: Promise<{ path: string[] }> };
 const defaultMaxBodyBytes = 8192;
+// Login records keep a short browser description (handoff_payment_account.md 8).
+const maxUserAgentLength = 200;
 const requestHeaders = [
   'accept',
   'authorization',
@@ -13,6 +15,7 @@ const requestHeaders = [
   'cookie',
   'origin',
   'idempotency-key',
+  'user-agent',
   'access-control-request-method',
   'access-control-request-headers',
 ];
@@ -91,7 +94,8 @@ async function proxy(request: Request, context: Context) {
     const headers = new Headers();
     for (const name of requestHeaders) {
       const value = request.headers.get(name);
-      if (value !== null) headers.set(name, value);
+      if (value !== null)
+        headers.set(name, name === 'user-agent' ? value.slice(0, maxUserAgentLength) : value);
     }
     // Do not forward client-controlled Host/Forwarded headers or manufacture a trusted Origin.
     // The only forwarded address is the one the configured ingress header vouches for; Go

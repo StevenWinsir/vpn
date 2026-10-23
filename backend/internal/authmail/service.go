@@ -245,6 +245,15 @@ func (s *Service) EnqueuePasswordChanged(tx *gorm.DB, email string) error {
 	return s.enqueue(tx, nil, TemplatePasswordChanged, mailPayload{To: email}, nil, s.now())
 }
 
+// EnqueueAccountDeleted queues the deletion notice inside the deletion transaction. It
+// has no challenge, so neither challenge cleanup nor the purge pipeline drops it.
+func (s *Service) EnqueueAccountDeleted(tx *gorm.DB, email string) error {
+	if !s.cfg.MailEnabled() {
+		return nil
+	}
+	return s.enqueue(tx, nil, TemplateAccountDeleted, mailPayload{To: email}, nil, s.now())
+}
+
 // VerifyRegistration checks a code and, only if it matches, runs onSuccess (which
 // creates the account) in the same transaction as consuming the challenge. A wrong
 // code is recorded and COMMITTED before the error is returned, so failures can never

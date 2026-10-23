@@ -146,10 +146,16 @@ func (s *Server) register(c *gin.Context) {
 	var user model.User
 	var sess model.Session
 	var raw string
+	src := requestSource(c)
 	err = s.mail.VerifyRegistration(c.Request.Context(), in.VerificationID, email, in.Code, func(tx *gorm.DB) error {
 		verified := s.mail.Now().UTC()
 		// Role, status and verification are fixed by the server, never by the request.
 		user = model.User{ID: uuid.NewString(), Email: email, Name: name, PasswordHash: string(hash), Role: "user", Status: "active", EmailVerifiedAt: &verified, AuthVersion: 1}
+		// A registration is the account's first sign-in and fixes its registration address.
+		if src.ip != "" {
+			signedUp := s.now()
+			user.RegisterIP, user.LastLoginIP, user.LastLoginAt = &src.ip, &src.ip, &signedUp
+		}
 		if e := tx.Create(&user).Error; e != nil {
 			return e
 		}
@@ -170,5 +176,6 @@ func (s *Server) register(c *gin.Context) {
 		fail(c, 500, "session_failed", "注册已完成，但创建登录会话失败，请直接登录")
 		return
 	}
+	s.recordLogin(s.loginEvent(src, user.ID, model.LoginWeb, "", model.LoginSuccess, ""))
 	c.JSON(201, gin.H{"user": user})
 }

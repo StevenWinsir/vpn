@@ -48,6 +48,17 @@ type ReadinessReport struct {
 	// Payment gateway (handoff_payment_account.md 4). Switches and order counts only:
 	// never the merchant number, secret or callback address.
 	Payment PaymentReadiness `json:"payment"`
+	// Account deletion and login records (handoff_payment_account.md 7.3, 8). Counts only.
+	Account AccountReadiness `json:"account"`
+}
+
+type AccountReadiness struct {
+	GeoConfigured bool `json:"geo_lookup_configured"`
+	// DeletingAccounts are deleted accounts the purge loop has not removed yet; the oldest
+	// one has been waiting OldestDeletingSecs.
+	DeletingAccounts   int64 `json:"deleting_accounts"`
+	OldestDeletingSecs int64 `json:"oldest_deleting_seconds"`
+	PendingGeoRecords  int64 `json:"pending_geo_records"`
 }
 
 type PaymentReadiness struct {
@@ -85,6 +96,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		TestAccessEnabled: cfg.Env != "production" && cfg.TestPurchase && cfg.ClientAllowTestEntitlements,
 		AccountReason:     "account_not_checked",
 		Mail:              MailReadiness{Configured: cfg.MailEnabled(), RegistrationOpen: cfg.RegistrationOpen(), PasswordReset: cfg.MailEnabled(), ImplicitTLS: cfg.MailEnabled() && cfg.SMTPSecure, RegistrationDomains: cfg.RegistrationDomains, TrustedProxies: len(cfg.TrustedProxies)},
+		Account:           AccountReadiness{GeoConfigured: cfg.Geo.Enabled()},
 		Payment:           PaymentReadiness{Enabled: cfg.Payment.Enabled, AutoFulfil: cfg.Payment.Enabled && len(cfg.Payment.NotifyAllowed) > 0, TestPrice: cfg.Payment.Enabled && cfg.Payment.TestPrice, TestPriceAccounts: len(cfg.Payment.TestEmails)},
 	}
 	if cfg.Payment.Enabled && len(cfg.Payment.NotifyAllowed) == 0 {
@@ -117,7 +129,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons", "login_events", "ip_geo_caches"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -175,6 +187,22 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 			return err
 		}
 		if err := tx.Model(&model.PaymentNotification{}).Where("result IN ? AND received_at > ?", []string{model.NotifyIPRejected, model.NotifyInvalid}, report.CheckedAt.Add(-24*time.Hour)).Count(&report.Payment.RejectedNotify24h).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.User{}).Where("status = ?", model.UserDeleting).Count(&report.Account.DeletingAccounts).Error; err != nil {
+			return err
+		}
+		if report.Account.DeletingAccounts > 0 {
+			var oldest time.Time
+			if err := tx.Model(&model.User{}).Where("status = ?", model.UserDeleting).Select("COALESCE(MIN(deletion_requested_at), ?)", report.CheckedAt).Scan(&oldest).Error; err != nil {
+				return err
+			}
+			report.Account.OldestDeletingSecs = max(0, int64(report.CheckedAt.Sub(oldest).Seconds()))
+			if report.Account.OldestDeletingSecs > 3600 {
+				report.Warnings = append(report.Warnings, "account_purge_stuck")
+			}
+		}
+		if err := tx.Model(&model.LoginEvent{}).Where("geo_status = ?", model.GeoPending).Count(&report.Account.PendingGeoRecords).Error; err != nil {
 			return err
 		}
 		if report.Payment.ReviewOrders > 0 {

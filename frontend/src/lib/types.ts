@@ -210,3 +210,15 @@ export const orderStatusLabel: Record<string, { text: string; color: string }> =
 };
 export const payTypeLabel: Record<string, string> = { wxpay: '微信支付', alipay: '支付宝' };
 export const orderIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const adminPasswordMinBytes = 16;
+// One row of GET /me/logins. geo_status is pending, done, failed or skipped.
+export type AccountLogin = {
+  occurred_at: string;
+  channel: 'web' | 'native';
+  platform: string;
+  ip: string;
+  result: 'success' | 'failure';
+  geo_status: string;
+  geo_text: string;
+};

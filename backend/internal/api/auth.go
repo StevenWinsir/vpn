@@ -66,7 +66,15 @@ func (s *Server) login(c *gin.Context) {
 		hash = []byte(user.PasswordHash)
 	}
 	match := bcrypt.CompareHashAndPassword(hash, []byte(in.Password)) == nil
+	src := requestSource(c)
 	if err != nil || !match || user.Status != "active" {
+		if err == nil && user.Status != model.UserDeleting {
+			reason := loginBadPassword
+			if match {
+				reason = loginDisabled
+			}
+			s.recordLoginAsync(s.loginEvent(src, user.ID, model.LoginWeb, "", model.LoginFailure, reason))
+		}
 		fail(c, 401, "invalid_credentials", "邮箱或密码不正确")
 		return
 	}
@@ -79,10 +87,13 @@ func (s *Server) login(c *gin.Context) {
 			return e
 		}
 		var e error
-		sess, raw, e = s.createSession(tx, user.ID, in.Remember)
-		return e
+		if sess, raw, e = s.createSession(tx, user.ID, in.Remember); e != nil {
+			return e
+		}
+		return s.stampLogin(tx, user.ID, src)
 	})
 	if errors.Is(err, errStaleCredentials) {
+		s.recordLoginAsync(s.loginEvent(src, user.ID, model.LoginWeb, "", model.LoginFailure, loginStale))
 		fail(c, 401, "invalid_credentials", "邮箱或密码不正确")
 		return
 	}
@@ -94,6 +105,7 @@ func (s *Server) login(c *gin.Context) {
 		fail(c, 500, "session_failed", "无法创建登录会话")
 		return
 	}
+	s.recordLogin(s.loginEvent(src, user.ID, model.LoginWeb, "", model.LoginSuccess, ""))
 	c.JSON(200, gin.H{"user": user})
 }
 
@@ -257,6 +269,7 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 			return
 		}
 		c.Set("user", user)
+		c.Set("session_id", cl.SessionID)
 		c.Next()
 	}
 }

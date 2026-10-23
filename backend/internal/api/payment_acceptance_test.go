@@ -63,8 +63,14 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	emails := map[string]string{}
-	for _, kind := range []string{"alice", "bob", "tester"} {
-		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: "user", Status: "active", AuthVersion: 1}
+	// carol, dave and erin are for the account-settings specs (password change, deletion,
+	// deletion blocked by a live order); root is an administrator, who cannot self-delete.
+	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "root"} {
+		role := "user"
+		if kind == "root" {
+			role = "admin"
+		}
+		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}
 		if err = db.Create(&u).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -159,6 +165,47 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			reply(map[string]any{"plan_id": sub.PlanID, "expires_at": sub.ExpiresAt, "traffic_limit_bytes": sub.TrafficLimitBytes, "is_test": sub.IsTest})
+		case "/fixture/user":
+			// Account state for the account specs: whether the row exists, its status and
+			// how many rows of every account-owned table remain.
+			var owner model.User
+			email := r.URL.Query().Get("email")
+			if e := db.First(&owner, "email = ?", email).Error; e != nil {
+				reply(map[string]any{"exists": false})
+				return
+			}
+			counts := map[string]int64{}
+			for _, tbl := range accountTables {
+				if tbl.name != "users" {
+					var n int64
+					db.Model(tbl.model).Where(tbl.where, owner.ID).Count(&n)
+					counts[tbl.name] = n
+				}
+			}
+			reply(map[string]any{"exists": true, "status": owner.Status, "auth_version": owner.AuthVersion, "rows": counts})
+		case "/fixture/pending-order":
+			// A live gateway order for the account, as if it had just been placed.
+			var owner model.User
+			if e := db.First(&owner, "email = ?", r.URL.Query().Get("email")).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			expires := clock.Now().Add(150 * time.Second)
+			trade := clock.Now().Format("20060102") + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+			order := model.Order{ID: uuid.NewString(), UserID: owner.ID, IdempotencyKey: uuid.NewString(), PlanID: "pro", PlanName: "进阶计划", PriceCents: 3990, DurationDays: 30, TrafficBytes: gib,
+				Status: model.OrderPending, Provider: "gateway", CreatedAt: clock.Now(), TradeNo: &trade, PayType: payment.TypeWeChat, AmountCents: 3990, ListPriceCents: 3990, ExpiresAt: &expires}
+			if e := db.Omit("User").Create(&order).Error; e != nil {
+				w.WriteHeader(500)
+				return
+			}
+			w.WriteHeader(204)
+		case "/fixture/purge":
+			res, e := (&Server{db: db, cfg: cfg, clock: clock.Now}).purgeDeletedAccounts(t.Context())
+			if e != nil {
+				w.WriteHeader(500)
+				return
+			}
+			reply(map[string]any{"purged": res.Purged, "waiting": res.Waiting, "failed": len(res.Failed)})
 		case "/fixture/pay":
 			// The customer pays at the gateway and the gateway sends its callback to the
 			// API from a loopback address (the fixture's allow-list). money overrides the
