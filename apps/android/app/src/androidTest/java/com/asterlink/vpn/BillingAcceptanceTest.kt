@@ -620,6 +620,14 @@ class BillingAcceptanceTest {
         return Presence(list("live"), list("ended"))
     }
 
+    /** One line of what the app and the server think, for the evidence of a failing case. */
+    private fun describe(c: SessionController): String {
+        val st = c.state.value
+        val p = runCatching { presence() }.getOrNull()
+        return "app ${st.snapshot.state} busy=${st.busy} activity=${st.activity} tunnelBusy=${st.snapshot.tunnelBusy} message=${st.message?.code} lastError=${st.snapshot.lastError?.code}; " +
+            "server live=${p?.live?.map { it.label + (if (it.holder) "(other)" else "") }} ended=${p?.ended?.take(3)?.map { it.label + ":" + it.reason }}"
+    }
+
     private suspend fun waitPresence(millis: Long, predicate: (Presence) -> Boolean): Pair<Long?, Presence> {
         val start = SystemClock.elapsedRealtime()
         var last = presence()
@@ -686,8 +694,11 @@ class BillingAcceptanceTest {
         // ---- P03: the administrator disables this phone's server, in the foreground and then
         // with the app in the background (the catalog long-poll paused).
         if (!reassignCase("P03-reassign", c, background = false)) return
+        val beforeRestore = describe(c)
         world("restore")
+        val afterRestore = describe(c)
         reassignCase("P03-reassign-background", c, background = true)
+        record("P03-diag", "PASS", "before restore: $beforeRestore | right after restore: $afterRestore | after the second case: ${describe(c)}")
         container.core.setForeground(true)
 
         // The ledger is continuous across the moves: server = the Core's confirmed counters.
@@ -719,7 +730,7 @@ class BillingAcceptanceTest {
         val (_, before) = waitPresence(5_000) { it.own != null }
         val old = before.own
         if (c.state.value.snapshot.state != State.CONNECTED || old == null) {
-            record(id, "FAIL", "could not connect first: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}, own lease $old")
+            record(id, "FAIL", "could not connect first: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}, own lease $old; ${describe(c)}")
             return false
         }
         val first = runCatching { download(sink.str("name"), 1L shl 20) }.getOrNull()
