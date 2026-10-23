@@ -586,3 +586,38 @@ node_usage_reports（属于该用户的 grant）→ connection_grants → subscr
 - NOT RUN：真实邮件投递（用捕获 Mailer 验证内容）；真实 IP 归属地服务（用本地假服务验证解析与限速，解析器按 ip-api、ipapi.co、ipwho.is 的常见字段名编写，上线前用所选服务实测一次）；APP 端界面（本轮不改 APP，兼容行为由 `native_session_expired` 的 Go 测试覆盖，四端实机回到登录页留到第 6 轮 R6-02）；`test-node-catalog.py` 的 Mihomo 浏览器用例（本机未运行，由 CI 执行）；旧版本数据副本上的迁移演练（`test-release-rehearsal.py`，留到第 6 轮 R6-01；本轮新列均可空、新表为增量）。
 - 证据：本机 `artifacts/payment-round3-account/`（浏览器截图：账号页、改密成功、删号对话框、订单阻止删号），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
 - 对后续轮次的影响：第 4 轮的用户列表可直接读取 `register_ip`、`last_login_at`、`last_login_ip` 和 `login_events`（含 `geo_status`）；管理员删除用户走 `requestAccountDeletion` 的同一套第一阶段（抽成不依赖当前会话的函数时，保留“活动订单检查”与审计动作名的区别）；第 5 轮见偏离 1 和 `announcement_reads`。
+
+### 第 4 轮记录（2026-10-23）：管理后台 I
+
+- 分支 `worktree-payment-round4-admin1`，基线 07931df（第 3 轮合并后）。PR 与 CI 结果见 PR 页面，本记录只写本机已执行的内容。
+- 后端（`backend/internal/api/console*.go`，全部在 `/api/v1/admin/console/` 下，沿用第 1 轮的 `requireConsoleAdmin`，不依赖节点目录开关）：
+  - 用户：`GET /users`（服务端分页，每页 20 或 50；筛选：关键词匹配邮箱或姓名并转义 `%`、`_`、`\`，角色、状态、套餐、订阅状态 active/expired/none/test，注册时间与最近登录区间；排序：注册、最近登录、到期；列含注册 IP、最近登录 IP 与归属地、套餐与流量、在线设备数）、`GET /users/:id`（账户、订阅、最近 10 笔订单、最近 10 次登录、在线与已登录设备，不含令牌、节点地址或密码哈希）、`POST /users/:id/password`、`/subscription`、`/subscription/end`、`/delete`。
+  - 订单与支付：`GET /orders`（状态、支付方式、价格来源、邮箱、网关订单号、订单 ID、创建与支付区间；汇总今日与本月已支付笔数和金额，排除测试价，按 UTC+8 的自然日和月）、`GET /orders/:id`（含全部回调流水与来源 IP、上次查询网关时间）、`POST /orders/:id/check`（只读查询网关）、`/confirm`、`/close`。
+  - 登录记录：`GET /logins`（邮箱、IP、渠道、结果、时间区间；快捷筛选 `shared_ip`：24 小时内同一 IP 出现 ≥2 个账号；`burst_failures`：1 小时内同一账号失败 ≥5 次）。
+  - 二次验证：改密、删除、人工确认到账要求管理员本人的当前密码；作用域 `admin_reauth`，按管理员计数，每 15 分钟最多 5 次错误，第 6 次起 429 并带 `Retry-After`。管理员与目标用户两行按主键顺序加锁，事务内复核管理员仍是 active 的管理员且密码未变。
+  - D9：对管理员账号和管理员本人，改密、删除一律 403（`admin_account_protected` / `self_protected`），界面按钮同样禁用；改套餐、结束订阅不受此限制。
+  - 所有写操作写 AdminAudit：`admin.user_password`、`admin.user_subscription`、`admin.user_subscription_end`、`admin.user_delete`、`payment.confirm_manual`、`payment.close`；Detail 只含套餐、到期时间、流量数字、尾 6 位订单号、核实备注等，不含密码、令牌、邮箱。
+- 前端：独立路由 `/admin/console/{users,orders,logins}`（`app/admin/console/layout.tsx` 做门禁与二级导航），侧栏“管理后台”与“节点管理”并列；筛选条件写入 URL 查询参数，时间按浏览器本地时区显示、悬停显示 UTC；用户详情抽屉（改套餐表单、结束订阅、改密、删除弹窗均为危险操作确认框）；订单详情抽屉（回调流水、查询网关、人工确认到账、标记关闭）；登录记录页含两个快捷筛选。优惠码与公告页留给第 5 轮，导航中暂不出现。
+- 偏离与决定：
+  1. **`subscriptions.version`（新列，默认 1，不进 JSON）**：套餐编辑的乐观锁令牌。购买履约（`applyPlan`）和管理员编辑都会使它加 1，因此管理员打开的旧表单也不会覆盖期间到账的续费；流量上报不动它，所以在线用户的用量变化不会造成假冲突。无订阅时令牌为 0。续期写法抽成 `saveSubscription`，与周期账本同步。
+  2. **人工确认要求填写“实付金额”和备注**：金额以商户后台核实为准（第 9.3 节），不要求不低于应付；写入 `paid_cents` 和审计。只处理 `review` 状态；履约冲突（例如有效期内套餐不同）返回 409 `fulfil_conflict`，订单保持 review，管理员先处理订阅再确认。
+  3. **标记关闭**：订单变为 `failed`，`review_reason=closed_by_admin`，之后针对它的回调只记录、不处理（`successProcessable` 排除该状态）。这是对“失败订单可被迟到回调开通”的唯一例外。
+  4. **管理员删用户也受“活动待付订单”限制**（409 `pending_orders` 带 `Retry-After`）：与自助删号共用 `beginDeletion`（本轮从 `requestAccountDeletion` 抽出），审计动作名为 `admin.user_delete`，并向用户发送“账号已删除”通知。
+  5. 改套餐不要求二次验证（第 9.1 节只列四项）；新开套餐必须给套餐和到期时间；到期时间必须晚于现在（要立即结束请用“结束订阅”）、不超过 10 年；换套餐会清除测试标记并复制套餐的设备数与专线权益；修改开始时间会开新周期。
+  6. 订单详情的“对账查询记录”只显示 `gateway_checked_at`（上次查询网关的时间）；本系统不单独保存每次对账查询。
+  7. `meDevices` 的“已登录未连接”查询抽成 `idleDevices`，用户端与后台共用。
+- 本机验收（私有 PostgreSQL 16；`go vet ./...`、`go test -race -count=1 ./...`；前端 `lint`、`typecheck`、`next build --webpack`、api-proxy 单测 16 项；`scripts/test-payment-web.py` 共 18 项浏览器用例，其中后台 6 项）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R4-01 | 部分 PASS | `TestConsoleAccessControl`：13 个后台接口，未登录 401、普通用户 403、管理员放行；`ClientNodeCatalog=false` 时后台可用，`/admin/nodes` 仍受原中间件约束；非法筛选参数 400。浏览器第 1 条：普通用户侧栏无入口、页面显示“无权访问”、接口 403。**模拟会话部分 NOT RUN**：`sessions.impersonator_id` 第 5 轮才加入，第 5 轮必须让 `requireConsoleAdmin` 拒绝模拟会话并补测试（注释已留在该函数） |
+| R4-02 | PASS（含实测） | `TestConsoleUserListFilters`（关键词不区分大小写、按姓名、`%` 和 `_` 和 `\` 按字面匹配、角色/状态/订阅状态/套餐/时间区间/排序/分页的各种组合、未登录过的账号排序最后、注册 IP 与归属地）。`TestConsoleUserListScale`（1 万用户加 1 万条登录记录）实测：用户列表各筛选 4–12 ms，登录记录各筛选 2–10 ms，均远低于 3 秒断言线 |
+| R4-03 | PASS（客户端部分在绑定函数层验证） | `TestConsoleUserSubscription`：版本冲突（两位管理员；期间发生购买也算冲突）、延长到期不改变客户端绑定、换套餐使 `nativeAuthorizationBound` 为假（客户端会收到 `subscription_changed`）、清零与指定用量后 `subscription_periods` 的用量、总量、到期时间与订阅一致、结束订阅同步周期、各种非法输入。浏览器第 2、3 条：改套餐后用户总览显示新套餐；过期表单得到“刚刚被其他操作修改”。**真实 Core 客户端联机的“续期不掉线”留到第 6 轮 R6-02**，本轮未执行 |
+| R4-04 | PASS | `TestConsoleUserPassword`、`TestConsoleUserDelete`：对管理员、自己改密与删除均 403；管理员密码错误 5 次后 429 带 `Retry-After`，窗口过后恢复 |
+| R4-05 | PASS | `TestConsoleOrders`（确认只开通一次、重复确认 409、冲突 409 且订单不动、关闭后回调不重开、审计）、`TestConsoleConfirmRacesCallback`（五轮：对账转入 callback_missing 后，人工确认与迟到回调并发，订阅只增加一份套餐流量，审计行数与确认结果一致，`-race` 通过） |
+| R4-06 | PASS | `TestConsoleAuditDetailsAreClean`：四种用户写操作的 Detail 是合法 JSON，不含新密码、管理员密码、哈希、令牌、邮箱；订单操作的审计在 `TestConsoleOrders` 中检查；`TestConsoleUserDetail` 断言响应不含密码哈希、令牌、网关链接 |
+| R4-07 | PASS | `admin-console.spec.ts` 第 2 条：管理员筛选（URL 带参数，刷新保留，`%` 不匹配任何人）→ 打开详情 → 修改套餐 → 另一浏览器上下文中该用户的总览显示新套餐 → 结束订阅。另有订单人工确认（二次验证错误提示、核实后订单已支付且订阅开通）、登录记录、删除用户（邮箱加密码，按钮在两项齐全前禁用）、管理员账号按钮禁用 |
+
+- NOT RUN：模拟会话相关项（第 5 轮）；真实 Core 客户端联机验证；`test-node-catalog.py` 的 Mihomo 浏览器用例（本机未运行，由 CI 执行）；真实邮件投递（用捕获 Mailer 验证）；窄屏下后台表格的自动化截图（表格在 `ScrollArea` 内横向滚动，未做截图用例）。
+- 证据：本机 `artifacts/payment-round4-admin1c/`（`browser-artifacts/screens/` 下后台用户列表、用户详情、订单详情、登录记录截图），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
+- 对后续轮次的影响：第 5 轮要做的事有三件已记录在案——让 `requireConsoleAdmin` 拒绝模拟会话；`changePassword`、`requestAccountDeletion` 拒绝模拟会话；`announcement_reads` 加入 `account_purge.go`。用户详情抽屉的“模拟登录”按钮和后台导航中的“优惠码”“公告”入口由第 5 轮加入。

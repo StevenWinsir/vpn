@@ -65,7 +65,8 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	emails := map[string]string{}
 	// carol, dave and erin are for the account-settings specs (password change, deletion,
 	// deletion blocked by a live order); root is an administrator, who cannot self-delete.
-	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "root"} {
+	// frank, gina and hank belong to the console spec (plan edit, deletion, manual confirmation).
+	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "root"} {
 		role := "user"
 		if kind == "root" {
 			role = "admin"
@@ -199,6 +200,24 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			w.WriteHeader(204)
+		case "/fixture/review-order":
+			// An order waiting for an administrator, as after a callback from an unknown address.
+			var owner model.User
+			if e := db.First(&owner, "email = ?", r.URL.Query().Get("email")).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			trade := clock.Now().Format("20060102") + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+			paid := int64(3990)
+			order := model.Order{ID: uuid.NewString(), UserID: owner.ID, IdempotencyKey: uuid.NewString(), PlanID: "pro", PlanName: "进阶计划", PriceCents: 3990, DurationDays: 30, TrafficBytes: gib,
+				Status: model.OrderReview, ReviewReason: model.ReviewUnverifiedSource, Provider: "gateway", CreatedAt: clock.Now(), TradeNo: &trade, PayType: payment.TypeWeChat, AmountCents: 3990, ListPriceCents: 3990,
+				PaidCents: &paid, PriceSource: priceList}
+			note := model.PaymentNotification{ID: uuid.NewString(), TradeNo: trade, OrderID: &order.ID, MoneyText: "39.90", TradeStatus: payment.TradeSuccess, Name: "进阶计划", SourceIP: "203.0.113.77", Result: model.NotifyReview, ReceivedAt: clock.Now()}
+			if e := db.Omit("User").Create(&order).Error; e != nil || db.Create(&note).Error != nil {
+				w.WriteHeader(500)
+				return
+			}
+			reply(map[string]any{"id": order.ID, "trade_no": trade})
 		case "/fixture/purge":
 			res, e := (&Server{db: db, cfg: cfg, clock: clock.Now}).purgeDeletedAccounts(t.Context())
 			if e != nil {

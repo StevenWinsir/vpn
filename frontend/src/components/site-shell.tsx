@@ -26,6 +26,7 @@ import {
   IconShieldLock,
   IconStack2,
   IconUserCog,
+  IconUsersGroup,
 } from '@tabler/icons-react';
 import { useAuth } from './providers';
 import { appName } from '@/lib/types';
@@ -40,6 +41,9 @@ const links = [
   { href: '/download', label: '下载客户端', icon: IconDownload },
   { href: '/account', label: '账号设置', icon: IconUserCog },
 ];
+// The console has several pages under one navigation entry.
+const current = (href: string, path: string) =>
+  href === '/admin/console/users' ? path.startsWith('/admin/console') : path === href;
 export function Logo() {
   return (
     <Link className="brand" href="/">
@@ -76,7 +80,11 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     ) || path.startsWith('/admin/');
   const navigation =
     user?.role === 'admin'
-      ? [...links, { href: '/admin/nodes', label: '节点管理', icon: IconShieldLock }]
+      ? [
+          ...links,
+          { href: '/admin/console/users', label: '管理后台', icon: IconUsersGroup },
+          { href: '/admin/nodes', label: '节点管理', icon: IconShieldLock },
+        ]
       : links;
   const signout = async () => {
     setLeaving(true);
@@ -183,7 +191,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                 onClick={close}
                 key={href}
                 href={href}
-                className={`nav-link ${path === href ? 'active' : ''}`}
+                className={`nav-link ${current(href, path) ? 'active' : ''}`}
               >
                 <Icon size={19} stroke={1.6} />
                 {label}

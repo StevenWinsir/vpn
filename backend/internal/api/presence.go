@@ -82,22 +82,10 @@ func (s *Server) meDevices(c *gin.Context) {
 		return
 	}
 	// Signed in (session within its idle window) but not connected: takes no slot.
-	var idle []struct {
-		Platform, AppVersion, DeviceID string
-		LastSeenAt                     time.Time
-	}
-	err = s.database(c).Table(s.cfg.Schema+".native_sessions AS ns").
-		Select("ns.platform, ns.app_version, ns.device_id::text AS device_id, ns.last_seen_at").
-		Where("ns.user_id = ? AND ns.revoked_at IS NULL AND ns.expires_at > ? AND ns.last_seen_at > ?", user.ID, now, now.Add(-s.cfg.IdleTTL())).
-		Where("NOT EXISTS (SELECT 1 FROM "+s.cfg.Schema+".connection_leases AS l WHERE l.session_id = ns.id AND l.state = ? AND l.expires_at > ?)", model.LeaseActive, now).
-		Order("ns.last_seen_at DESC, ns.id").Limit(50).Scan(&idle).Error
+	signedIn, err := s.idleDevices(s.database(c), user.ID, now)
 	if err != nil {
 		fail(c, 503, "database_unavailable", "设备状态暂时不可用")
 		return
-	}
-	signedIn := make([]signedInDevice, 0, len(idle))
-	for _, r := range idle {
-		signedIn = append(signedIn, signedInDevice{Platform: r.Platform, AppVersion: r.AppVersion, Device: shortDevice(r.DeviceID), LastSeenAt: r.LastSeenAt.UTC()})
 	}
 	c.JSON(200, gin.H{"server_time": now, "device_limit": s.deviceLimit(sub), "online_count": len(online), "online": online, "signed_in": signedIn,
 		"lease_seconds": int(s.cfg.Lease() / time.Second)})

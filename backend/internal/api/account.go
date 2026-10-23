@@ -177,26 +177,7 @@ func (s *Server) requestAccountDeletion(c *gin.Context) {
 		if e := lockVerifiedUser(tx, &user); e != nil {
 			return e
 		}
-		// Checked under the user lock: a payment order created meanwhile waits for this
-		// lock, and then finds the account no longer active.
-		var live []model.Order
-		if e := livePending(tx.Select("id", "expires_at"), now).Where("user_id = ?", user.ID).Order("expires_at desc").Find(&live).Error; e != nil {
-			return e
-		}
-		if len(live) > 0 {
-			wait := max(1, secondsUntil(*live[0].ExpiresAt, now))
-			retryAfter(c, *live[0].ExpiresAt, now)
-			return &apiError{409, "pending_orders", fmt.Sprintf("还有未完成的订单，请等待约 %d 秒，待订单失效后再删除账号", wait)}
-		}
-		if e := tx.Model(&model.User{}).Where("id = ?", user.ID).
-			Updates(map[string]any{"status": model.UserDeleting, "deletion_requested_at": now, "updated_at": now}).Error; e != nil {
-			return e
-		}
-		if e := authmail.RevokeAllSessions(tx, user.ID, now); e != nil {
-			return e
-		}
-		if e := tx.Model(&model.ConnectionGrant{}).Where("user_id = ? AND state IN ?", user.ID, []string{grantPending, grantReady}).
-			Updates(map[string]any{"state": grantRevoking, "updated_at": now}).Error; e != nil {
+		if e := beginDeletion(tx, c, user.ID, now); e != nil {
 			return e
 		}
 		if e := tx.Create(&model.AdminAudit{ID: uuid.NewString(), ActorID: user.ID, TargetID: user.ID, Action: AuditDeleteRequested, Version: user.AuthVersion, CreatedAt: now}).Error; e != nil {
@@ -225,4 +206,29 @@ func (s *Server) myLogins(c *gin.Context) {
 			"result": ev.Result, "geo_status": ev.GeoStatus, "geo_text": ev.GeoText})
 	}
 	c.JSON(200, gin.H{"logins": items})
+}
+
+// beginDeletion is phase one of a deletion, shared by the account owner and the
+// administrator console. The caller holds the user's row lock and writes the audit.
+// The pending-order check runs under that lock: a payment order created meanwhile
+// waits for it, and then finds the account no longer active.
+func beginDeletion(tx *gorm.DB, hdr interface{ Header(string, string) }, userID string, now time.Time) error {
+	var live []model.Order
+	if e := livePending(tx.Select("id", "expires_at"), now).Where("user_id = ?", userID).Order("expires_at desc").Find(&live).Error; e != nil {
+		return e
+	}
+	if len(live) > 0 {
+		wait := max(1, secondsUntil(*live[0].ExpiresAt, now))
+		retryAfter(hdr, *live[0].ExpiresAt, now)
+		return &apiError{409, "pending_orders", fmt.Sprintf("还有未完成的订单，请等待约 %d 秒，待订单失效后再删除账号", wait)}
+	}
+	if e := tx.Model(&model.User{}).Where("id = ?", userID).
+		Updates(map[string]any{"status": model.UserDeleting, "deletion_requested_at": now, "updated_at": now}).Error; e != nil {
+		return e
+	}
+	if e := authmail.RevokeAllSessions(tx, userID, now); e != nil {
+		return e
+	}
+	return tx.Model(&model.ConnectionGrant{}).Where("user_id = ? AND state IN ?", userID, []string{grantPending, grantReady}).
+		Updates(map[string]any{"state": grantRevoking, "updated_at": now}).Error
 }

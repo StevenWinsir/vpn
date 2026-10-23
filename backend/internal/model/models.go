@@ -68,8 +68,12 @@ type Subscription struct {
 	MaxDevices        int       `gorm:"not null" json:"max_devices"`
 	AllowDedicated    bool      `gorm:"not null" json:"allow_dedicated"`
 	IsTest            bool      `gorm:"not null" json:"is_test"`
-	CreatedAt         time.Time `json:"-"`
-	UpdatedAt         time.Time `json:"-"`
+	// Version moves on every entitlement write (purchase or administrator edit), so an
+	// administrator's stale form cannot overwrite a renewal that landed meanwhile. Traffic
+	// accounting does not touch it.
+	Version   int64     `gorm:"not null;default:1" json:"-"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
 }
 
 type Order struct {
