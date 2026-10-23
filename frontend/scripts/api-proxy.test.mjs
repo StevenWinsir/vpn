@@ -872,6 +872,20 @@ test(
       );
 
       await t.test(
+        'the browser User-Agent reaches the API, cut to 200 characters (login records)',
+        async () => {
+          const short = await (
+            await api('/echo', { headers: { 'User-Agent': 'AccountTest/1.0 (probe)' } })
+          ).json();
+          assert.equal(short.headers['user-agent'], 'AccountTest/1.0 (probe)');
+          const long = await (
+            await api('/echo', { headers: { 'User-Agent': 'U'.repeat(500) } })
+          ).json();
+          assert.equal(long.headers['user-agent'], 'U'.repeat(200));
+        },
+      );
+
+      await t.test(
         'Origin/CSRF checks and both secure Set-Cookie headers survive the proxy',
         async () => {
           const rejected = await api('/echo', {

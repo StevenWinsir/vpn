@@ -25,6 +25,7 @@ import {
   IconServer2,
   IconShieldLock,
   IconStack2,
+  IconUserCog,
 } from '@tabler/icons-react';
 import { useAuth } from './providers';
 import { appName } from '@/lib/types';
@@ -37,6 +38,7 @@ const links = [
   { href: '/plans', label: '套餐与订阅', icon: IconStack2 },
   { href: '/orders', label: '订单记录', icon: IconReceipt },
   { href: '/download', label: '下载客户端', icon: IconDownload },
+  { href: '/account', label: '账号设置', icon: IconUserCog },
 ];
 export function Logo() {
   return (
@@ -69,8 +71,9 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const [leaving, setLeaving] = useState(false);
   const authPage = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
   const workspace =
-    ['/dashboard', '/nodes', '/plans', '/orders', '/download', '/pay/result'].includes(path) ||
-    path.startsWith('/admin/');
+    ['/dashboard', '/nodes', '/plans', '/orders', '/download', '/account', '/pay/result'].includes(
+      path,
+    ) || path.startsWith('/admin/');
   const navigation =
     user?.role === 'admin'
       ? [...links, { href: '/admin/nodes', label: '节点管理', icon: IconShieldLock }]
@@ -142,6 +145,13 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                     leftSection={<IconLayoutDashboard size={16} />}
                   >
                     用户中心
+                  </Menu.Item>
+                  <Menu.Item
+                    component={Link}
+                    href="/account"
+                    leftSection={<IconUserCog size={16} />}
+                  >
+                    账号设置
                   </Menu.Item>
                   <Menu.Divider />
                   <Menu.Item

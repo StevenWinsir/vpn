@@ -89,7 +89,15 @@ func (s *Server) nativeLogin(c *gin.Context) {
 		hash = []byte(user.PasswordHash)
 	}
 	matched := bcrypt.CompareHashAndPassword(hash, []byte(in.Password)) == nil
+	src := requestSource(c)
 	if err != nil || !matched || user.Status != "active" {
+		if err == nil && user.Status != model.UserDeleting {
+			reason := loginBadPassword
+			if matched {
+				reason = loginDisabled
+			}
+			s.recordLoginAsync(s.loginEvent(src, user.ID, model.LoginNative, in.Platform, model.LoginFailure, reason))
+		}
 		fail(c, 401, "invalid_credentials", "邮箱或密码不正确")
 		return
 	}
@@ -121,15 +129,17 @@ func (s *Server) nativeLogin(c *gin.Context) {
 			return e
 		}
 		status = s.nativeSnapshot(sess, sub, now, tx)
-		return nil
+		return s.stampLogin(tx, user.ID, src)
 	})
 	if errors.Is(err, errStaleCredentials) {
+		s.recordLoginAsync(s.loginEvent(src, user.ID, model.LoginNative, in.Platform, model.LoginFailure, loginStale))
 		fail(c, 401, "invalid_credentials", "邮箱或密码不正确")
 		return
 	}
 	if s.nativeFailure(c, err) {
 		return
 	}
+	s.recordLogin(s.loginEvent(src, user.ID, model.LoginNative, in.Platform, model.LoginSuccess, ""))
 	c.JSON(200, gin.H{"token": token, "user": user, "session": status})
 }
 

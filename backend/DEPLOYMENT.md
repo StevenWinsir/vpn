@@ -188,6 +188,16 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 5. **签名算法**：按文档文字和全部示例代码实现：`MD5(trade_no + secret)` 的小写十六进制。文档“签名示例”给出的结果值与这个算法不一致（实际是 `becd5f2a…`），详见 handoff 第 18 节。部署后的第一笔真实下单（U-01）若被网关以“签名验证失败”拒绝，应先核对这一点。
 6. **回滚**：先把 `PAYMENT_ENABLED` 设为 `false`，停止新下单。旧二进制会忽略新表和新列；但回滚期间到达的回调没有处理程序，对应订单要在回到新版本后由对账循环或人工核对处理。
 
+## 账号设置、删号清除与登录记录（handoff_payment_account.md 第 3 轮）
+
+本轮新增 `login_events`、`ip_geo_caches` 两张表，`users` 增加 `register_ip`、`last_login_at`、`last_login_ip`、`deletion_requested_at` 四列（均可空，旧用户保持为空，不补造）并为 `created_at`、`last_login_at` 建索引。部署前执行 `-migrate`，可重复执行；旧二进制会忽略新表和新列。
+
+1. **改密码**：`POST /api/v1/me/password`。先校验当前密码（同一账户每 15 分钟最多 5 次错误，数据库计数，多实例共享；超过返回 429），再在用户行锁下复核后写入新密码，撤销该用户全部网站与 APP 会话，并为当前浏览器签发新会话；邮件已配置时发送“密码已修改”通知。
+2. **删除账号**：`POST /api/v1/me/account/delete`，需要当前密码和完整邮箱。管理员账号不能自助删除；有活动中的待付款订单时返回 409 并给出需要等待的秒数。**第一阶段**（同一事务）把状态改为 `deleting`、撤销全部会话、结束租约、把未结清的 grant 置为 `revoking`，之后登录与找回密码都当作账号不存在。**第二阶段**由进程内的清除循环每分钟执行一次（独立 advisory lock `708614924`，多实例只会有一个执行）：当该用户所有 grant 都已由节点确认释放，或已过期超过 `NODE_AGENT_SETTLE_GRACE_SECONDS` 时，在一个事务内按依赖顺序物理删除其全部数据，只保留不含用户标识的回调流水（`payment_notifications.order_id` 置空）。任何一步失败整体回滚，连续失败 3 次起日志出现 `WARNING: account purge has failed …`（只含用户 UUID）。清除完成后，同一邮箱可以重新注册，没有任何历史。`bin/doctor` 的 `account` 段报告处于 `deleting` 的账号数和最久等待秒数，超过 1 小时给出 `account_purge_stuck` 警告。
+3. **登录记录**：网站登录、APP 登录和注册成功都会写一条 `login_events`（成功与失败；失败只在邮箱对应的账号存在时记录，不保存任意输入的邮箱；刷新令牌和模拟登录不算登录）。`users.last_login_at/last_login_ip` 在登录事务内顺带更新。来源 IP 取 Gin 的 `ClientIP`，因此依赖 `TRUSTED_PROXIES` 与 Nginx 覆盖转发头；前端代理会把浏览器的 `User-Agent`（截断到 200 字节）转发给后端。记录保留 180 天，`payment_notifications` 同样保留 180 天，由清除循环旁的每小时任务删除。
+4. **IP 归属地**：`.env` 的 `GEOIP_*` 三项。登录只写 IP，进程内 worker 每 5 秒领取最多 20 条待解析记录（`FOR UPDATE SKIP LOCKED`，多实例安全），先查 `ip_geo_caches`（成功缓存 30 天，失败缓存 1 小时），再按 `GEOIP_REQUESTS_PER_MINUTE` 限速外呼，超时 3 秒、不跟随重定向、响应上限 4 KB；单个地址最多尝试 3 次，之后标记为失败。内网、本机、链路本地和运营商级 NAT 地址直接标为“内网/本机”，不会外发。未配置接口时记录为 `skipped`（界面显示“未解析”），之后补配接口不会回头补解析旧记录。
+5. **回滚**：旧版本的登录与鉴权只认 `active`，状态为 `deleting` 的账号在旧版本中同样无法登录；但没有清除循环，它们的数据要等回到新版本后才会被删除。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：

@@ -13,6 +13,8 @@ const (
 	TemplateRegisterCode    = "register_code"
 	TemplateResetLink       = "reset_link"
 	TemplatePasswordChanged = "password_changed"
+	// TemplateAccountDeleted confirms a self-service deletion (handoff_payment_account.md 7.2).
+	TemplateAccountDeleted = "account_deleted"
 )
 
 const brand = "AsterLink VPN"
@@ -39,6 +41,7 @@ var subjects = map[string]string{
 	TemplateRegisterCode:    brand + " 注册验证码",
 	TemplateResetLink:       brand + " 重置密码",
 	TemplatePasswordChanged: brand + " 密码已修改",
+	TemplateAccountDeleted:  brand + " 账号已删除",
 }
 
 var textTemplates = map[string]*texttemplate.Template{
@@ -74,6 +77,14 @@ var textTemplates = map[string]*texttemplate.Template{
 
 {{.Brand}}
 `)),
+	TemplateAccountDeleted: texttemplate.Must(texttemplate.New("t").Parse(`您好：
+
+您的 {{.Brand}} 账户已按您的要求删除，所有设备上的登录均已退出，账户下的套餐、订单、登录记录等数据将被清除且无法恢复。
+
+如果这不是您本人的操作，请立即联系 {{.Site}} 的客服。
+
+{{.Brand}}
+`)),
 }
 
 const htmlLayout = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{{.Subject}}</title></head>` +
@@ -93,6 +104,8 @@ var htmlTemplates = map[string]*htmltemplate.Template{
 		`<p style="color:#6b7280">如果您多次申请，请只使用最新一封邮件中的链接。如果这不是您本人的操作，请忽略本邮件，您的密码不会改变。</p>{{end}}`),
 	TemplatePasswordChanged: htmlBody(`{{define "body"}}<p>您的 {{.Brand}} 账户密码刚刚已被修改，所有设备上的原有登录均已退出，请使用新密码重新登录。</p>` +
 		`<p style="color:#6b7280">如果这不是您本人的操作，请立即通过 {{.Site}} 的“忘记密码”重新设置密码。</p>{{end}}`),
+	TemplateAccountDeleted: htmlBody(`{{define "body"}}<p>您的 {{.Brand}} 账户已按您的要求删除，所有设备上的登录均已退出，账户下的套餐、订单、登录记录等数据将被清除且无法恢复。</p>` +
+		`<p style="color:#6b7280">如果这不是您本人的操作，请立即联系 {{.Site}} 的客服。</p>{{end}}`),
 }
 
 func htmlBody(body string) *htmltemplate.Template {

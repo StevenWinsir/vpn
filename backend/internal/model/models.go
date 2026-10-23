@@ -9,8 +9,14 @@ type User struct {
 	PasswordHash string    `gorm:"not null" json:"-"`
 	Role         string    `gorm:"size:16;not null;default:user" json:"role"`
 	Status       string    `gorm:"size:16;not null;default:active" json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	CreatedAt    time.Time `gorm:"index" json:"created_at"`
 	UpdatedAt    time.Time `json:"-"`
+	// Sign-in facts (handoff_payment_account.md 5.1). Accounts that predate them keep
+	// NULL: nothing back-fills them. LastLogin* is written inside the login transaction.
+	RegisterIP          *string    `gorm:"size:45" json:"-"`
+	LastLoginAt         *time.Time `gorm:"index" json:"-"`
+	LastLoginIP         *string    `gorm:"size:45" json:"-"`
+	DeletionRequestedAt *time.Time `json:"-"`
 	// Backend-only authentication state (handoff_auth.md 4.1). Existing accounts keep a
 	// NULL EmailVerifiedAt: nothing back-fills it except a completed mailbox proof.
 	EmailVerifiedAt   *time.Time `json:"-"`

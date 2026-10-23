@@ -556,3 +556,33 @@ node_usage_reports（属于该用户的 grant）→ connection_grants → subscr
 - NOT RUN：有公网 HTTPS 测试环境和商户凭据时的真实联调（本机没有；网关也没有测试环境）。移动端视口下的购买弹窗没有单独的截图用例（两张支付卡在窄屏下单列排列，由 CSS 保证，未做自动化验证）。
 - 证据：本机 `artifacts/payment-round2-web/`（summary.json、日志、`browser-artifacts/screens/` 下的结算弹窗、已到账、待核对截图），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
 - 对后续轮次的影响：第 4 轮订单详情仍需展示回调来源 IP（U-02）；`settlePending` 可供第 4 轮“人工确认到账 / 标记关闭”复用同样的锁顺序。
+
+### 第 3 轮记录（2026-10-23）：账号设置、清除管线与登录记录
+
+- 分支 `worktree-payment-round3-account`，基线 fd0f24f（第 2 轮及两个 CI 稳定性修复合并后）。PR 与 CI 结果见 PR 页面，本记录只写本机已执行的内容。
+- 后端：`POST /me/password`（当前密码在锁外校验，同一账户每 15 分钟最多 5 次错误，数据库计数，删号接口共用这份额度；新哈希在锁外计算，事务内 `lockVerifiedUser` 复核；`RevokeAllSessions` 撤销全部网站与 APP 会话后为当前浏览器签发新会话并保留“记住我”选择；审计 `account.password_change`；已配置邮件时发送改密通知）。`POST /me/account/delete`（需要当前密码与完整邮箱；管理员 403 `admin_account_protected`；用户锁下检查活动待付订单，有则 409 `pending_orders` 并给出等待秒数；第一阶段：状态 `deleting`、撤销全部会话与租约、未结清 grant 置 `revoking`、审计 `account.delete_requested`、发送“账号已删除”通知）。`GET /me/logins`（本人最近 10 次，含失败）。
+- 清除管线 `api.PurgeDeletedAccounts`：`cmd/api` 每分钟一次，advisory lock `708614924`；某用户全部 grant 已释放，或已过期超过 `NODE_AGENT_SETTLE_GRACE_SECONDS`（节点已自行停止转发）时，单事务按依赖顺序删除全部数据，只保留 `payment_notifications`（`order_id` 置空）；审计 `account.purged` 只含原 UUID。失败整体回滚，连续 3 次失败输出 `WARNING`（只含 UUID）。`announcement_reads` 在第 5 轮建表时要加入 `account_purge.go` 的步骤列表（文件中已留注释）。
+- 登录记录：网站登录、APP 登录、注册成功写 `login_events`（成功同步插入，带 2 秒超时、失败只写日志；失败记录在后台协程里写，避免“账号存在与否”产生时间差；账号不存在或处于 `deleting` 时不记录；刷新令牌不记录）。`users.last_login_at/last_login_ip` 在登录事务内更新，`register_ip` 在注册事务内写入。`internal/loginlog`：归属地 worker 每 5 秒领取 20 条（`SKIP LOCKED` 加 1 分钟租约），先查 `ip_geo_caches`（成功 30 天、失败 1 小时），再按 `GEOIP_REQUESTS_PER_MINUTE` 限速外呼（超时 3 秒、不跟随重定向、响应上限 4 KB、仅向接口发送 IP、令牌只放 Authorization 头），最多 3 次；内网/本机/链路本地/CGNAT 地址与未配置接口不外呼；每小时清理 180 天前的 `login_events`、`payment_notifications` 和过期缓存。新配置 `GEOIP_LOOKUP_URL`（必须含一个 `{ip}`，不得在主机名中，生产要求 HTTPS）、`GEOIP_LOOKUP_TOKEN`、`GEOIP_REQUESTS_PER_MINUTE`。
+- 前端：`/account`（基本信息、修改密码、最近登录、危险区）；删号对话框列出将清除的内容，密码加完整邮箱，倒计时 5 秒，取消即清空；成功后整页跳转首页；管理员账号只显示说明；侧栏与账户菜单增加“账号设置”；API 代理转发 `User-Agent`（截断到 200 字符）。`doctor` 增加 `account` 段（删除中账号数、最久等待、待解析记录数、`account_purge_stuck` 警告）。
+- 偏离与决定：
+  1. **模拟会话部分推迟到第 5 轮**：R3-05 中“模拟会话不能改密或删号”依赖 `sessions.impersonator_id`，该列第 5 轮才加入。第 5 轮加入模拟会话时，必须让 `changePassword` 与 `requestAccountDeletion` 在入口处拒绝模拟会话，并补测试；这里不放无法测试的空判断。
+  2. 归属地初始状态在插入时就确定（内网直接 `done`、未配置接口 `skipped`），worker 只处理需要外呼的记录；之后补配接口不会回头补解析已标记 `skipped` 的旧记录。
+  3. 错误的当前密码返回 403 `incorrect_password`，不用 401，避免被前端当成会话过期；达到上限返回 429 并带 `Retry-After`。
+  4. 清除条件用 grant 的 `expires_at` 而不是“删除请求时间 + 宽限”，因为 grant 的到期时间已经是它的最晚转发时间；效果等价但更精确。
+  5. `PaymentNotification` 的 180 天保留（第 13 节）在第 1 轮没有实现，一并由本轮的每小时清理任务补上。
+- 本机验收（私有 PostgreSQL 16，Unix socket）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R3-01 | PASS | `TestAccountChangePassword`（错误密码被拒；其他浏览器与 APP 会话 401、当前浏览器保持登录；旧密码不能登录；通知邮件一封；审计）、`TestAccountPasswordAttemptsAreLimited`（第 6 次 429，窗口过后恢复，删号接口共用额度）、`TestAccountChangePasswordKeepsRememberChoice`、`TestAccountPasswordRuleForAdministrators`；浏览器 `account.spec.ts` 第 2 条 |
+| R3-02 | PASS | `TestAccountPasswordChangeRacesLogin`：改密先提交，在途的旧密码登录 401 且无新会话；登录先提交，被改密撤销；两次并发改密，慢的一次 409 |
+| R3-03 | PASS | `TestAccountDeletionFirstPhase`：登录（网站与 APP）立即 `invalid_credentials`，网站会话 401，APP 会话 `native_session_expired`，租约以 `session_revoked` 结束，grant 为 `revoking`，找回密码不发信，只有一封删号通知 |
+| R3-04 | PASS | `TestAccountPurge`（grant 未结清时等待；结清后逐表计数为 0；匿名流水保留且 `order_id` 为空；其他用户数据不变；同一邮箱重新注册没有历史）、`TestAccountPurgeAfterGraceWithoutConfirmation`、`TestAccountPurgeIsAtomic`（外键阻塞时整体回滚并报告，移除后重试成功）、`TestAccountPurgeSingleRunner`；浏览器第 3、4 条（删除后 `purge` 返回 1，用户行消失） |
+| R3-05 | 部分 PASS | 活动待付订单阻止删号（`TestAccountDeletionFirstPhase`、`TestAccountDeletingBlocksPaymentFulfilment`、浏览器第 4 条）；管理员不能自助删号（Go 与浏览器第 5 条）；**模拟会话部分 NOT RUN**，见偏离 1 |
+| R3-06 | PASS | `TestLoginRecords`（网站与 APP 的成功、失败；平台；不存在的邮箱与刷新不记录）、`TestLoginDoesNotWaitForGeoLookup`（接口挂起时三次登录耗时不受影响且外呼 0 次）、`TestLoginSucceedsWhenRecordCannotBeStored`、`TestRegistrationRecordsAddress`、`TestMyLogins`；`internal/loginlog` 的 `TestWorkerResolvesCachesAndSkipsLocal`（缓存命中不外呼、内网不外呼、令牌头）、`TestWorkerRetriesThenFails`、`TestWorkerRejectsBadAnswers`（重定向、超大、HTML、429、超时）、`TestWorkersDoNotShareARecord`、`TestPrune`、`TestParseLocation` |
+| R3-07 | PASS | `TestLoginRecordAddressIgnoresForgedHeaders`：伪造的 `X-Forwarded-For`、`X-Real-IP`、`Forwarded` 不改变记录与最近登录 IP；配置了可信代理后才采用转发地址 |
+| 其他 | PASS | `go vet ./...`、`go test -race -count=1 ./...` 全部通过；`config` 的 `TestGeoConfiguration`；前端 `lint`、`typecheck`、`build --webpack`、api-proxy 单测 16 项（含 UA 转发与截断）；`scripts/test-payment-web.py` 12 项浏览器用例（账号 5 项 + 支付 7 项）通过 |
+
+- NOT RUN：真实邮件投递（用捕获 Mailer 验证内容）；真实 IP 归属地服务（用本地假服务验证解析与限速，解析器按 ip-api、ipapi.co、ipwho.is 的常见字段名编写，上线前用所选服务实测一次）；APP 端界面（本轮不改 APP，兼容行为由 `native_session_expired` 的 Go 测试覆盖，四端实机回到登录页留到第 6 轮 R6-02）；`test-node-catalog.py` 的 Mihomo 浏览器用例（本机未运行，由 CI 执行）；旧版本数据副本上的迁移演练（`test-release-rehearsal.py`，留到第 6 轮 R6-01；本轮新列均可空、新表为增量）。
+- 证据：本机 `artifacts/payment-round3-account/`（浏览器截图：账号页、改密成功、删号对话框、订单阻止删号），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
+- 对后续轮次的影响：第 4 轮的用户列表可直接读取 `register_ip`、`last_login_at`、`last_login_ip` 和 `login_events`（含 `geo_status`）；管理员删除用户走 `requestAccountDeletion` 的同一套第一阶段（抽成不依赖当前会话的函数时，保留“活动订单检查”与审计动作名的区别）；第 5 轮见偏离 1 和 `announcement_reads`。

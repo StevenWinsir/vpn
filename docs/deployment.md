@@ -137,13 +137,15 @@ Go 从工作目录加载 `.env`，因此后端进程的 WorkingDirectory 应是 
 
 前后端未来分开部署时，可以把 `API_INTERNAL_URL` 改为服务器可达的私网地址，或可信的 `https://api.example.com/api/v1`。浏览器依旧只访问前端同源路径。跨公网不得使用明文 HTTP 或关闭 TLS 证书验证。
 
-### 真实来源地址（注册/找回邮件的 IP 额度）
+### 真实来源地址（注册/找回邮件的 IP 额度、登录记录、支付回调）
 
 缺省配置下 Go 不信任任何 `X-Forwarded-For`，经 Next.js 代理的全部浏览器请求在 Go 看来都来自 Next.js 主机，IP 限流（包括邮件申请每 IP 每小时 20 次）按这一个地址聚合，主要依靠邮箱额度与全局额度防滥用。同机部署（Nginx → Next.js:3000 → Go:8080，均在回环）按以下三处一起配置后，Go 才按真实浏览器地址计数：
 
 1. **Nginx**：上面两个 server 块都用 `proxy_set_header` **覆盖**（不是 `$proxy_add_x_forwarded_for` 追加）`X-Real-IP`/`X-Forwarded-For` 为 `$remote_addr`。后端入口也必须覆盖，否则一旦 Go 信任 127.0.0.1，客户端经 `api.example.com` 自带的 `X-Forwarded-For` 会被当作真实地址。
 2. **Next.js**（`frontend/.env`）：`CLIENT_IP_HEADER=X-Real-IP`。代理只从该请求头取最后一个逗号分隔项，且必须恰好是一个 IP，才以 `X-Forwarded-For` 转发给 Go；浏览器自带的 `X-Forwarded-For` 等头从不转发。未设置时不转发任何地址。
 3. **Go**（`backend/.env`）：`TRUSTED_PROXIES=127.0.0.1`（容器或分机部署时填 Next.js/Nginx 的私网地址或 CIDR）。只有这些对端提供的 `X-Forwarded-For` 会被采用。
+
+登录记录（管理后台的“注册 IP / 最近登录 IP”和账号设置页的“最近登录”）、注册 IP 与支付回调白名单读取的是同一个地址，所以上面三处不配置时，它们都会记录 Next.js 主机的地址（同机部署即 `127.0.0.1`，显示为“内网/本机”）。另外，Next.js 代理会把浏览器的 `User-Agent`（截断到 200 字符）转发给 Go，用于登录记录；除此之外不转发其他浏览器头。
 
 前提：3000 和 8080 只监听回环或受防火墙保护的私网，外部无法绕过 Nginx 直连；否则任何人都能自填 `X-Real-IP`。配置后用两个不同出口地址申请验证码，确认各自计数，并确认伪造请求头不改变计数（handoff_auth.md R1-08）。认证限流阈值本身不随此调整。
 

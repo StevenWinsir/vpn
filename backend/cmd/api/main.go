@@ -19,6 +19,7 @@ import (
 	"vpn/backend/internal/api"
 	"vpn/backend/internal/authmail"
 	"vpn/backend/internal/config"
+	"vpn/backend/internal/loginlog"
 	"vpn/backend/internal/maintenance"
 	"vpn/backend/internal/operations"
 	"vpn/backend/internal/store"
@@ -131,6 +132,11 @@ func main() {
 	if c.Payment.Enabled {
 		go paymentLoop(ctx, db, c)
 	}
+	go purgeLoop(ctx, db, c)
+	if !c.Geo.Enabled() {
+		log.Print("login location lookup is not configured (GEOIP_LOOKUP_URL); login records show no location for public addresses")
+	}
+	go loginlog.New(db, c, log.Printf).Run(ctx)
 	mailDone := startAuthMail(ctx, db, c)
 	log.Printf("API listening on http://%s", c.Addr)
 	if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -235,6 +241,38 @@ func paymentLoop(ctx context.Context, db *gorm.DB, c config.Config) {
 			} else if changed > 0 {
 				log.Printf("payment reconciliation settled %d orders", changed)
 			}
+		}
+	}
+}
+
+// purgeLoop finishes account deletions: accounts in the deleting state are removed
+// once their node grants have settled (handoff_payment_account.md 7.3). A failing
+// account is retried every pass and, after repeated failures, reported by id.
+func purgeLoop(ctx context.Context, db *gorm.DB, c config.Config) {
+	ticker := time.NewTicker(api.PurgeInterval)
+	defer ticker.Stop()
+	streak := map[string]int{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			result, err := api.PurgeDeletedAccounts(ctx, db, c)
+			if err != nil && ctx.Err() == nil {
+				log.Print("account purge failed (will retry)")
+				continue
+			}
+			if result.Purged > 0 {
+				log.Printf("account purge removed %d accounts", result.Purged)
+			}
+			failing := map[string]int{}
+			for _, id := range result.Failed {
+				failing[id] = streak[id] + 1
+				if failing[id] >= 3 {
+					log.Printf("WARNING: account purge has failed %d times in a row for user %s; inspect the database", failing[id], id)
+				}
+			}
+			streak = failing
 		}
 	}
 }
