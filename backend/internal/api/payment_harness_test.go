@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -52,6 +53,7 @@ func newFakeGateway(t *testing.T, channel, secret string, now func() time.Time) 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /submit", g.submit)
 	mux.HandleFunc("GET /api/order/status/{trade}", g.status)
+	mux.HandleFunc("GET /page-state/{trade}", g.pageState)
 	g.server = httptest.NewServer(mux)
 	t.Cleanup(g.server.Close)
 	return g
@@ -110,7 +112,46 @@ func (g *fakeGateway) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	g.orders[q.Get("trade_no")] = &fakeGatewayOrder{TradeNo: q.Get("trade_no"), Type: kind, NotifyURL: q.Get("notify_url"), ReturnURL: q.Get("return_url"), Name: q.Get("name"), Cents: cents, Created: now}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprintf(w, "<html><body>%s %s</body></html>", q.Get("name"), payment.FormatAmount(cents))
+	_, _ = fmt.Fprintf(w, gatewayPage, html.EscapeString(q.Get("name")), html.EscapeString(payment.FormatAmount(cents)), html.EscapeString(kind), html.EscapeString(q.Get("trade_no")), html.EscapeString(q.Get("return_url")))
+}
+
+// gatewayPage imitates the pages the document describes: a payment page with the amount, a
+// success state that returns to return_url after 5 seconds, and a timeout state whose button
+// returns to return_url. It only exists in tests.
+const gatewayPage = `<!doctype html><html><head><meta charset="utf-8"><title>gateway</title></head>
+<body data-trade="%[4]s" data-return="%[5]s" data-type="%[3]s">
+<h1 id="name">%[1]s</h1><p id="amount">%[2]s</p><p id="state">pending</p>
+<a id="back" href="%[5]s" hidden>返回商户页面</a>
+<script>
+const body = document.body;
+const state = document.getElementById('state');
+let redirected = false;
+async function poll() {
+  const res = await fetch('/page-state/' + body.dataset.trade);
+  const data = await res.json();
+  state.textContent = data.state;
+  if (data.state === 'paid' && !redirected) {
+    redirected = true;
+    setTimeout(() => { location.href = body.dataset.return; }, 5000);
+  }
+  if (data.state === 'timeout') document.getElementById('back').hidden = false;
+}
+setInterval(poll, 400);
+</script></body></html>`
+
+func (g *fakeGateway) pageState(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	state := "pending"
+	if o, ok := g.orders[r.PathValue("trade")]; !ok {
+		state = "timeout"
+	} else if o.Paid {
+		state = "paid"
+	} else if g.now().Sub(o.Created) >= payment.OrderLifetime {
+		state = "timeout"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintf(w, `{"state":%q}`, state)
 }
 
 func (g *fakeGateway) status(w http.ResponseWriter, r *http.Request) {

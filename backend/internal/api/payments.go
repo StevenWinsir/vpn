@@ -344,8 +344,18 @@ func (s *Server) paymentOrder(c *gin.Context) {
 		now := s.now()
 		claim := s.database(c).Model(&model.Order{}).Where("id = ? AND status = ? AND (gateway_checked_at IS NULL OR gateway_checked_at <= ?)", order.ID, model.OrderPending, now.Add(-statusRecheck)).Update("gateway_checked_at", now)
 		if claim.Error == nil && claim.RowsAffected == 1 {
-			if result, e := s.gateway().Status(c.Request.Context(), *order.TradeNo); e == nil && result.Status == payment.StatusPaid {
-				view.GatewayPaid = true
+			if result, e := s.gateway().Status(c.Request.Context(), *order.TradeNo); e == nil {
+				switch {
+				case result.Status == payment.StatusPaid:
+					view.GatewayPaid = true
+				case (result.Status == payment.StatusTimeout || result.Expired) && now.Sub(order.CreatedAt) >= payment.OrderLifetime:
+					// The gateway's 2 minutes are over: a customer coming back from its timeout
+					// page sees "expired" at once instead of waiting for the local window. A late
+					// callback still fulfils an expired order (handoff_payment_account.md 6.3).
+					if moved, e := s.settlePending(c.Request.Context(), order.ID, model.OrderExpired, "", now); e == nil && moved {
+						view.Status = model.OrderExpired
+					}
+				}
 			}
 		}
 	}

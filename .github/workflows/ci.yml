@@ -110,6 +110,18 @@ jobs:
           go test -race -count=1 ./managed
       - name: Real browser to database to proxy acceptance
         run: python3 scripts/test-node-catalog.py --skip-build --output artifacts/ci-catalog
+      - name: Browser checkout against the local payment gateway fake
+        run: python3 scripts/test-payment-web.py --skip-build --output artifacts/ci-payment
+      - name: Retain payment browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payment-web-evidence
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/ci-payment/summary.json
+            artifacts/ci-payment/browser-artifacts/screens/*.png
       - name: Retain sanitized acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

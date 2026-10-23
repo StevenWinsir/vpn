@@ -624,3 +624,35 @@ func TestTestPurchaseUsesSharedFulfilment(t *testing.T) {
 		t.Fatal("test purchase over a paid subscription")
 	}
 }
+
+// A customer returning from the gateway's timeout page sees "expired" at once, not after
+// the local window; a gateway "paid" never expires or fulfils, and a late callback still
+// opens the subscription of an order that was expired this way.
+func TestPaymentResultPageExpiresAfterGatewayTimeout(t *testing.T) {
+	e := newPayEnv(t, nil)
+	u := e.user("resultpage", "user")
+	lapsed := e.place(u, "starter", payment.TypeWeChat, "")
+	late, _ := e.gw.open(t, lapsed.PayURL)
+	paying := e.place(u, "starter", payment.TypeAlipay, "")
+	pgw, _ := e.gw.open(t, paying.PayURL)
+	status := func(id string) string {
+		out := e.want(e.call(u.cookies, "GET", "/api/v1/payments/orders/"+id, nil, ""), 200)
+		return out["order"].(map[string]any)["status"].(string)
+	}
+	e.clock.Advance(time.Minute)
+	if status(lapsed.Order.ID) != model.OrderPending {
+		t.Fatal("expired before the gateway's 2 minutes")
+	}
+	e.clock.Advance(61 * time.Second)
+	e.gw.markPaid(pgw)
+	if status(lapsed.Order.ID) != model.OrderExpired || e.order(lapsed.Order.ID).Status != model.OrderExpired {
+		t.Fatal("gateway timeout not shown as expired")
+	}
+	if status(paying.Order.ID) != model.OrderPending || e.order(paying.Order.ID).Status != model.OrderPending || e.subscription(u.ID) != nil {
+		t.Fatal("a gateway paid hint must not settle or fulfil the order")
+	}
+	e.gw.markPaid(late)
+	if w := e.notify(gatewayIP, callbackBody(late, payment.TradeSuccess)); w.Code != 200 || e.order(lapsed.Order.ID).Status != model.OrderPaid || e.subscription(u.ID) == nil {
+		t.Fatalf("late callback not fulfilled: %d %+v", w.Code, e.order(lapsed.Order.ID))
+	}
+}
