@@ -532,3 +532,27 @@ node_usage_reports（属于该用户的 grant）→ connection_grants → subscr
 | R1-12 | 本机 `go test -race ./...` 全部通过；`test-node-catalog.py`、`test-native.py` 由 CI 执行 | — |
 
 - 遗留与对后续轮次的影响：网站 `types.ts` 中的 `paid_at` 在第 2 轮改为可空；第 4 轮订单详情显示回调来源 IP，供 U-02 使用。
+
+### 第 2 轮记录（2026-10-22）：网站支付体验与本地模拟网关联调
+
+- 分支 `worktree-payment-round2-web`，基线 09a572f（第 1 轮合并后）。PR 与 CI 结果见 PR 页面，本记录只写本机已执行的内容。
+- 前端：`PurchaseModal`（支付方式两张选择卡，无默认选中；优惠码输入与“应用”；展示服务端报价的标价、测试价、优惠、应付；“去支付”整页跳转网关）；`/pay/result` 结果页（只依据后端订单状态，每 2 秒轮询、最长 5 分钟、页面不可见时暂停；待支付、正在确认到账、已到账、已超时未扣款、失败、待人工核对；超时与失败显示“重新购买”，回到 /plans 并预选套餐和支付方式）；订单页（金额、优惠、实付、支付方式、状态、剩余时间、支付时间，多笔待付显示“请勿重复付款”）；`/meta` 的 `payment_enabled`、`payment_methods` 控制套餐页，`PAYMENT_ENABLED=false` 时旧的测试购买界面原样保留；侧栏文案随开关更新；未登录访问结果页先跳 `/login?next=`，登录后回到同一订单（next 只接受 `/pay/result?order=<uuid>`，其他一律回总览）。
+- 前端不发送任何金额：下单请求只含套餐、支付方式和优惠码；每个（套餐、支付方式、优惠码）组合使用一个 Idempotency-Key，组合变化即新订单；输入框中未“应用”的优惠码或不可用的优惠码会禁用“去支付”，保证屏幕价格就是实扣价格。
+- **后端改动（偏离第 1 轮，为满足 6.8 节第 2 条）**：结果页订单查询（`GET /payments/orders/:id`）在网关查询返回 `timeout` 或 `expired=true`，且订单已创建满网关的 2 分钟时，立即把仍为 pending 的订单标为 expired（用户锁加订单锁内，抽成 `settlePending`，对账循环也改用它）。这样从网关超时页点“返回商户页面”时能直接看到“已超时，未扣款”，不必等本地 3 分钟窗口结束。迟到的可信回调仍然照常开通已超时订单；网关返回 `paid` 仍然只是显示提示，不改状态、不开通。`not_found` 不触发提前过期（订单可能还没被浏览器打开）。
+- 测试资产：`payment_harness_test.go` 的本地模拟网关增加浏览器页面（金额页、成功后 5 秒跳回 return_url、超时页“返回商户页面”按钮）；`payment_acceptance_test.go` 提供可由浏览器访问的假网关夹具（真实 API、可前移的时钟、控制端点：推进时钟、模拟支付与回调、查询订单和订阅），`scripts/test-payment-web.py` 启动私有 PostgreSQL、API、Next.js 并运行 `frontend/tests/payment.spec.ts`。该步骤已加入 CI（web-core 作业）。顺带修复 `scripts/test-release-rehearsal.py` 的表清单（第 1 轮新增的 payment_notifications、coupons 未登记，导致演练在迁移断言处失败；该脚本不在 CI 中）。
+- 本机验收（私有 PostgreSQL 16；Chrome 使用本机 Google Chrome）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R2-01 | PASS（本地模拟网关） | payment.spec.ts 第 1 条：选微信 → 优惠码 SAVE20 → 报价 ¥31.92 → 跳转网关 → 回调 → 5 秒后跳回结果页“已到账” → 订单页（已支付、微信支付、¥31.92、优惠 ¥7.98）与总览同步 |
+| R2-02 | PASS | 第 1、2 条：未选支付方式“去支付”禁用；无效、不适用、已达上限、已使用过、过期各自的原因文案；留空正常；未应用的优惠码禁用支付；会话失效（清 Cookie 后触发 401）弹窗消失。账户切换使弹窗消失沿用原有 `choice.userId` 机制，未单独新增用例 |
+| R2-03 | PASS | 第 4 条：地址栏加 status=success 等参数，待付订单仍显示“待支付”；他人订单和非法 ID 都显示“订单不存在”（后端 404）；登录跳转的 next 只认结果页 |
+| R2-07 | PASS（本地模拟网关） | 第 1、5、6 条：成功后自动跳回；超时页按钮跳回并显示“已超时，未扣款”，“重新购买”预选套餐与方式；直接关窗后订单页有倒计时、可立即重新下单（网关金额 0.02，即 0.01 加 0.01 去重），时钟前移 200 秒后两笔都变为“已超时”；超时后的可信回调仍然开通。另有 Go 测试 `TestPaymentResultPageExpiresAfterGatewayTimeout` |
+| R2-04 | PASS | `test-release-rehearsal.py` 的浏览器阶段：`PAYMENT_ENABLED` 默认关闭，flow.spec 两个用例通过（测试购买 UI 原样）；api-proxy 单测 15 项通过 |
+| R2-05 | PASS（对照假网关）；真实网关 NOT RUN | 第 1 条逐字符比较浏览器地址栏中的 submit 查询串：参数名与顺序、各参数 URL 编码、两位小数金额、小写 MD5 签名、return_url 只含本地订单 ID。真实网关付款不在本轮执行，属“用户部署后实测”，对应第 15.2 节 U-01..U-09，未标记为 PASS |
+| R2-06 | PASS | `npm run lint`、`npm run typecheck`、`npm run build -- --webpack`、`npm run test:api-proxy`（需 PLAYWRIGHT_CHROME_PATH 指向本机 Chrome，本机未安装 Playwright 自带的 Chromium）通过；`go test -race -count=1 ./...` 全部通过 |
+
+- 其他浏览器用例（admin-nodes、dashboard-presence、user-nodes、register、reset）依赖 `test-node-catalog.py` 的 Mihomo 夹具，本机未运行，由 CI 执行。
+- NOT RUN：有公网 HTTPS 测试环境和商户凭据时的真实联调（本机没有；网关也没有测试环境）。移动端视口下的购买弹窗没有单独的截图用例（两张支付卡在窄屏下单列排列，由 CSS 保证，未做自动化验证）。
+- 证据：本机 `artifacts/payment-round2-web/`（summary.json、日志、`browser-artifacts/screens/` 下的结算弹窗、已到账、待核对截图），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
+- 对后续轮次的影响：第 4 轮订单详情仍需展示回调来源 IP（U-02）；`settlePending` 可供第 4 轮“人工确认到账 / 标记关闭”复用同样的锁顺序。

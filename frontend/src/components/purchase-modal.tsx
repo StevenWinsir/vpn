@@ -1,0 +1,321 @@
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Group, Modal, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { api, APIError, message } from '@/lib/api';
+import {
+  gib,
+  money,
+  payTypeLabel,
+  type PayType,
+  type PlacedOrder,
+  type Plan,
+  type Quote,
+} from '@/lib/types';
+
+const methods: { type: PayType; hint: string; color: string }[] = [
+  { type: 'wxpay', hint: '使用微信扫码支付', color: '#07c160' },
+  { type: 'alipay', hint: '使用支付宝扫码支付', color: '#1677ff' },
+];
+const couponPattern = /^[A-Za-z0-9-]{4,32}$/;
+const normalize = (value: string) => value.trim().toUpperCase();
+
+// The checkout the gateway flow needs: pick a payment method, optionally apply a coupon,
+// review the server's quote, then leave for the gateway. Prices are only ever displayed from
+// the quote; the order request carries a plan, a method and a coupon code, never an amount.
+export function PurchaseModal({
+  plan,
+  initialPayType,
+  allowed,
+  onClose,
+}: {
+  plan: Plan | null;
+  initialPayType: PayType | null;
+  allowed: string[];
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal
+      opened={plan !== null}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      title={plan ? `购买 ${plan.name}` : ''}
+      centered
+      radius="lg"
+      closeOnClickOutside={!busy}
+      closeOnEscape={!busy}
+      withCloseButton={!busy}
+    >
+      {plan ? (
+        <Checkout
+          key={plan.id}
+          plan={plan}
+          initialPayType={initialPayType}
+          allowed={allowed}
+          busy={busy}
+          setBusy={setBusy}
+        />
+      ) : null}
+    </Modal>
+  );
+}
+
+// Mounted fresh for every plan the dialog opens on, so no state leaks between purchases.
+function Checkout({
+  plan,
+  initialPayType,
+  allowed,
+  busy,
+  setBusy,
+}: {
+  plan: Plan;
+  initialPayType: PayType | null;
+  allowed: string[];
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+}) {
+  const [payType, setPayType] = useState<PayType | null>(initialPayType);
+  const [coupon, setCoupon] = useState('');
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [pending, setPending] = useState(0);
+  const [quoting, setQuoting] = useState(true);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const attempt = useRef<{ signature: string; key: string } | null>(null);
+  const revision = useRef(0);
+  const planId = plan.id;
+  const quoted = quote?.coupon?.code ?? '';
+  // The coupon box differs from the quoted code: the shown price is stale until applied.
+  const trimmed = normalize(coupon);
+  const stale = trimmed !== quoted;
+  const couponBad = !!quote?.coupon && !quote.coupon.applied;
+
+  // Every quote request supersedes the earlier ones; only the latest may update the dialog.
+  function ask(code: string) {
+    const current = ++revision.current;
+    return api<{ quote: Quote; pending_orders: number }>('/payments/quote', {
+      method: 'POST',
+      body: JSON.stringify({ plan_id: planId, coupon_code: code }),
+    })
+      .then((data) => {
+        if (current !== revision.current) return;
+        setQuote(data.quote);
+        setPending(data.pending_orders);
+        setQuoteError(null);
+      })
+      .catch((e) => {
+        if (current !== revision.current) return;
+        setQuote(null);
+        setQuoteError(message(e));
+      })
+      .finally(() => {
+        if (current === revision.current) setQuoting(false);
+      });
+  }
+  useEffect(() => {
+    const revisions = revision;
+    void ask('');
+    return () => {
+      revisions.current++;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function apply() {
+    if (trimmed && !couponPattern.test(trimmed)) {
+      revision.current++;
+      setQuoting(false);
+      setQuote((q) =>
+        q ? { ...q, coupon: { code: trimmed, applied: false, message: '优惠码无效或已失效' } } : q,
+      );
+      return;
+    }
+    setQuoting(true);
+    void ask(trimmed);
+  }
+
+  async function pay() {
+    if (!payType || !quote?.purchasable || busy || stale || couponBad) return;
+    const code = quoted;
+    // One Idempotency-Key per distinct (plan, method, coupon): a retry of the same request
+    // replays the same order, a changed choice is a new order.
+    const signature = `${planId}|${payType}|${code}`;
+    if (attempt.current?.signature !== signature)
+      attempt.current = { signature, key: crypto.randomUUID() };
+    setBusy(true);
+    setOrderError(null);
+    try {
+      const placed = await api<PlacedOrder>('/payments/orders', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': attempt.current.key },
+        body: JSON.stringify({ plan_id: planId, pay_type: payType, coupon_code: code }),
+      });
+      const target = new URL(placed.pay_url);
+      if (target.protocol !== 'https:' && target.protocol !== 'http:')
+        throw new Error('支付链接无效，请重试。');
+      // Whole-page navigation: the gateway's countdown and its redirect back need the full page.
+      window.location.assign(target.href);
+    } catch (e) {
+      setBusy(false);
+      if (e instanceof APIError && e.code === 'idempotency_conflict') attempt.current = null;
+      setOrderError(message(e));
+    }
+  }
+
+  const couponProblem = quote?.coupon && !quote.coupon.applied ? quote.coupon.message : null;
+  return (
+    <Stack gap="md">
+      <Text size="sm" c="dimmed">
+        {gib(plan.traffic_bytes)} GiB · {plan.duration_days} 天
+        {quote?.kind === 'renew' ? ' · 续费：延长有效期并累加流量' : ''}
+      </Text>
+      <div>
+        <Text size="sm" fw={600} mb={8} id="pay-method-label">
+          支付方式
+        </Text>
+        <div role="radiogroup" aria-labelledby="pay-method-label" className="pay-methods">
+          {methods
+            .filter((m) => allowed.includes(m.type))
+            .map((m) => {
+              const on = payType === m.type;
+              return (
+                <UnstyledButton
+                  key={m.type}
+                  role="radio"
+                  aria-checked={on}
+                  aria-label={payTypeLabel[m.type]}
+                  className={`pay-method ${on ? 'selected' : ''}`}
+                  style={{ ['--pay-color' as string]: m.color }}
+                  disabled={busy}
+                  onClick={() => setPayType(m.type)}
+                >
+                  <span className="pay-dot" />
+                  <span>
+                    <Text size="sm" fw={600}>
+                      {payTypeLabel[m.type]}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {m.hint}
+                    </Text>
+                  </span>
+                </UnstyledButton>
+              );
+            })}
+        </div>
+      </div>
+      <div>
+        <Group gap="xs" align="flex-end" wrap="nowrap">
+          <TextInput
+            label="优惠码（可留空）"
+            placeholder="输入优惠码"
+            value={coupon}
+            maxLength={32}
+            disabled={busy}
+            onChange={(e) => setCoupon(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                apply();
+              }
+            }}
+            style={{ flex: 1 }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <Button variant="light" onClick={apply} disabled={busy || quoting || !stale}>
+            应用
+          </Button>
+        </Group>
+        {couponProblem ? (
+          <Text size="xs" c="red" mt={6} role="alert">
+            {couponProblem}
+          </Text>
+        ) : quote?.coupon?.applied ? (
+          <Text size="xs" c="teal" mt={6}>
+            优惠码 {quote.coupon.code} 已应用
+          </Text>
+        ) : null}
+      </div>
+      {quoteError ? (
+        <Alert color="red" title="报价失败" role="alert">
+          {quoteError}
+        </Alert>
+      ) : null}
+      {quote ? (
+        <Stack gap={6} className="quote-lines">
+          {quote.test_price ? (
+            <Alert color="yellow" py={6}>
+              测试价：当前账户按测试价结算，会产生真实扣款。
+            </Alert>
+          ) : null}
+          <Group justify="space-between">
+            <Text size="sm">标价</Text>
+            <Text size="sm">{money(quote.list_price_cents)}</Text>
+          </Group>
+          {quote.test_price ? (
+            <Group justify="space-between">
+              <Text size="sm">测试价</Text>
+              <Text size="sm">{money(quote.base_cents)}</Text>
+            </Group>
+          ) : null}
+          {quote.discount_cents > 0 ? (
+            <Group justify="space-between">
+              <Text size="sm">优惠</Text>
+              <Text size="sm" c="teal">
+                -{money(quote.discount_cents)}
+              </Text>
+            </Group>
+          ) : null}
+          <Group justify="space-between">
+            <Text size="sm" fw={600}>
+              应付
+            </Text>
+            <Text size="xl" fw={650} aria-label="应付金额">
+              {money(quote.amount_cents)}
+            </Text>
+          </Group>
+          {!quote.purchasable ? (
+            <Alert color="orange" role="alert">
+              {quote.message || '当前无法购买此套餐。'}
+            </Alert>
+          ) : null}
+        </Stack>
+      ) : null}
+      {pending > 0 ? (
+        <Alert color="yellow">
+          你还有 {pending} 笔未完成的订单，请勿重复付款。已关闭支付窗口的订单会在几分钟内自动失效。
+        </Alert>
+      ) : null}
+      <Text size="xs" c="dimmed">
+        点击“去支付”后会跳转到支付网关，请在 2 分钟内完成付款。付款结果以订单状态为准。
+      </Text>
+      {orderError ? (
+        <Alert color="red" title="下单未完成" role="alert">
+          {orderError}
+        </Alert>
+      ) : null}
+      <Button
+        size="md"
+        loading={busy}
+        disabled={!payType || !quote?.purchasable || stale || couponBad || quoting}
+        onClick={() => void pay()}
+      >
+        去支付
+      </Button>
+      {!payType ? (
+        <Text size="xs" c="dimmed" ta="center">
+          请先选择支付方式
+        </Text>
+      ) : stale ? (
+        <Text size="xs" c="dimmed" ta="center">
+          请先点击“应用”确认优惠码，或清空优惠码
+        </Text>
+      ) : couponBad ? (
+        <Text size="xs" c="dimmed" ta="center">
+          优惠码不可用：请更换优惠码，或清空后继续
+        </Text>
+      ) : null}
+    </Stack>
+  );
+}

@@ -29,6 +29,7 @@ import {
 import { useAuth } from './providers';
 import { appName } from '@/lib/types';
 import { message } from '@/lib/api';
+import { useMeta } from '@/lib/use-meta';
 
 const links = [
   { href: '/dashboard', label: '总览', icon: IconLayoutDashboard },
@@ -50,6 +51,16 @@ export function Logo() {
     </Link>
   );
 }
+function SidebarNote() {
+  const { meta } = useMeta();
+  return (
+    <Text size="xs" c="dimmed" lh={1.8}>
+      {meta?.payment_enabled
+        ? '已接入微信支付、支付宝支付。节点与客户端流量正在联调，节点侧强制配额尚未接入。'
+        : '节点与客户端流量正在联调。真实支付和节点侧强制配额尚未接入。'}
+    </Text>
+  );
+}
 export function SiteShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
@@ -58,7 +69,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const [leaving, setLeaving] = useState(false);
   const authPage = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
   const workspace =
-    ['/dashboard', '/nodes', '/plans', '/orders', '/download'].includes(path) ||
+    ['/dashboard', '/nodes', '/plans', '/orders', '/download', '/pay/result'].includes(path) ||
     path.startsWith('/admin/');
   const navigation =
     user?.role === 'admin'
@@ -173,9 +184,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
             <Badge variant="light" color="gray" mb="sm">
               开发联调版
             </Badge>
-            <Text size="xs" c="dimmed" lh={1.8}>
-              节点与客户端流量正在联调。真实支付和节点侧强制配额尚未接入。
-            </Text>
+            <SidebarNote />
             <Link href="/" className="sidebar-home">
               返回首页 <IconArrowUpRight size={14} />
             </Link>

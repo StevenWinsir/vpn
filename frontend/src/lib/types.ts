@@ -89,8 +89,45 @@ export type Order = {
   status: string;
   provider: string;
   created_at: string;
-  paid_at: string;
+  // Null while a gateway order is unpaid.
+  paid_at: string | null;
+  // Gateway orders only (handoff_payment_account.md 5.1); legacy test orders omit them.
+  trade_no?: string;
+  pay_type?: string;
+  list_price_cents?: number;
+  discount_cents?: number;
+  amount_cents?: number;
+  paid_cents?: number | null;
+  coupon_code?: string;
+  price_source?: string;
+  expires_at?: string;
 };
+export type PayType = 'wxpay' | 'alipay';
+export type CouponResult = { code: string; applied: boolean; reason?: string; message?: string };
+export type Quote = {
+  plan_id: string;
+  plan_name: string;
+  duration_days: number;
+  traffic_bytes: number;
+  list_price_cents: number;
+  test_price: boolean;
+  base_cents: number;
+  discount_cents: number;
+  amount_cents: number;
+  coupon: CouponResult | null;
+  purchasable: boolean;
+  kind?: 'new' | 'renew';
+  reason?: string;
+  message?: string;
+};
+export type PlacedOrder = {
+  order: Order;
+  pay_url: string;
+  replayed: boolean;
+  other_pending_orders: number;
+};
+// GET /payments/orders/:id; gateway_paid is only a display hint, never an entitlement.
+export type PaymentOrder = { order: Order & { gateway_paid?: boolean } };
 // Explicit metadata contract. Never add connection parameters or YAML here. Each entry is a
 // node group (a line); the client is assigned one of its servers when it connects.
 export type PublicNode = {
@@ -109,6 +146,10 @@ export type NodeCatalog = {
 };
 export type Meta = {
   test_purchase_enabled: boolean;
+  // Public payment switches (never the merchant, callback address or test-price state).
+  payment_enabled?: boolean;
+  payment_methods?: string[];
+  payment_pending_seconds?: number;
   proxy_service_ready: boolean;
   currency: string;
   traffic_unit: string;
@@ -155,3 +196,17 @@ export const date = (value: string) =>
   new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(
     new Date(value),
   );
+
+// A gateway order is live while pending and before its local expiry.
+export const livePending = (order: Order, now = Date.now()) =>
+  order.status === 'pending' && !!order.expires_at && new Date(order.expires_at).getTime() > now;
+export const orderStatusLabel: Record<string, { text: string; color: string }> = {
+  pending: { text: '待付款', color: 'yellow' },
+  paid: { text: '已支付', color: 'teal' },
+  expired: { text: '已超时', color: 'gray' },
+  failed: { text: '支付失败', color: 'red' },
+  review: { text: '待人工核对', color: 'orange' },
+  paid_test: { text: '测试成功', color: 'teal' },
+};
+export const payTypeLabel: Record<string, string> = { wxpay: '微信支付', alipay: '支付宝' };
+export const orderIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

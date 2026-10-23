@@ -250,21 +250,11 @@ func (s *Server) reconcilePayments(ctx context.Context) (int, error) {
 		if next == "" {
 			continue
 		}
-		err = db.Transaction(func(tx *gorm.DB) error {
-			var o model.Order
-			if e := tx.Select("user_id").First(&o, "id = ?", head.ID).Error; e != nil {
-				return e
-			}
-			if _, e := lockUserRow(tx, o.UserID); e != nil {
-				return e
-			}
-			order, e := lockOrder(tx, head.ID)
-			if e != nil || order == nil || order.Status != model.OrderPending {
-				return e
-			}
+		moved, e := s.settlePending(ctx, head.ID, next, reason, now)
+		if moved {
 			changed++
-			return tx.Model(order).Updates(map[string]any{"status": next, "review_reason": reason, "updated_at": now}).Error
-		})
+		}
+		err = e
 		if err != nil {
 			return changed, err
 		}
@@ -274,4 +264,27 @@ func (s *Server) reconcilePayments(ctx context.Context) (int, error) {
 		err = e
 	}
 	return changed, err
+}
+
+// settlePending moves an order that is still pending to next, under the user and order
+// locks, so it cannot race a callback or a manual confirmation: whichever commits second
+// finds the order already settled. It reports whether it changed the order.
+func (s *Server) settlePending(ctx context.Context, id, next, reason string, now time.Time) (bool, error) {
+	moved := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var o model.Order
+		if e := tx.Select("user_id").First(&o, "id = ?", id).Error; e != nil {
+			return e
+		}
+		if _, e := lockUserRow(tx, o.UserID); e != nil {
+			return e
+		}
+		order, e := lockOrder(tx, id)
+		if e != nil || order == nil || order.Status != model.OrderPending {
+			return e
+		}
+		moved = true
+		return tx.Model(order).Updates(map[string]any{"status": next, "review_reason": reason, "updated_at": now}).Error
+	})
+	return moved && err == nil, err
 }

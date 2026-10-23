@@ -26,6 +26,7 @@ import {
   type RegisterCodeReceipt,
   type User,
 } from '@/lib/types';
+import { safeNext } from '@/lib/next-path';
 import { useMeta } from '@/lib/use-meta';
 import { useAuth } from './providers';
 import { Logo } from './site-shell';
@@ -103,7 +104,9 @@ function LoginForm() {
       );
       setUser(data.user);
       setPassword('');
-      router.replace('/dashboard');
+      router.replace(
+        safeNext(new URLSearchParams(window.location.search).get('next')) || '/dashboard',
+      );
     } catch (err) {
       setError(message(err));
     } finally {

@@ -1,0 +1,211 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+	"vpn/backend/internal/authmail"
+	"vpn/backend/internal/config"
+	"vpn/backend/internal/model"
+	"vpn/backend/internal/payment"
+)
+
+// shiftClock is real time plus an offset the browser test can move forward, so the gateway's
+// 2-minute orders and the 3-minute local window can be crossed without waiting.
+type shiftClock struct {
+	mu     sync.Mutex
+	offset time.Duration
+}
+
+func (c *shiftClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().UTC().Add(c.offset)
+}
+
+func (c *shiftClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.offset += d
+	c.mu.Unlock()
+}
+
+// TestPaymentAcceptanceFixture serves the real API with the payment gateway enabled against
+// the fake gateway of payment_harness_test.go (the document's behaviour, reachable from a
+// browser), plus control endpoints for the Playwright specs. It only runs under
+// scripts/test-payment-web.py.
+func TestPaymentAcceptanceFixture(t *testing.T) {
+	dir := os.Getenv("PAYMENT_ACCEPTANCE_DIR")
+	if dir == "" {
+		t.Skip("only run with the private payment acceptance driver")
+	}
+	origin, err := url.Parse(os.Getenv("PAYMENT_WEB_ORIGIN"))
+	if !strings.HasPrefix(dir, "/tmp/vpn-payment-") || err != nil || origin.Scheme != "http" || origin.Hostname() != "127.0.0.1" || origin.Port() == "" || origin.Path != "" {
+		t.Fatal("private fixture directory and loopback origin required")
+	}
+	db, cfg := newIsolatedNativeDatabase(t)
+	clock := &shiftClock{}
+	password, control := uuid.NewString(), uuid.NewString()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emails := map[string]string{}
+	for _, kind := range []string{"alice", "bob", "tester"} {
+		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: "user", Status: "active", AuthVersion: 1}
+		if err = db.Create(&u).Error; err != nil {
+			t.Fatal(err)
+		}
+		emails[kind] = u.Email
+	}
+	gw := newFakeGateway(t, gatewayName, "test-only-gateway-secret", clock.Now)
+	cfg.Origins = []string{origin.String()}
+	cfg.WebsiteBaseURL = origin.String()
+	cfg.Payment = config.Payment{Enabled: true, GatewayURL: gw.server.URL, Channel: gatewayName, Secret: "test-only-gateway-secret",
+		NotifyURL: "https://api.pay-test.example/api/v1/payments/notify", NotifyAllowed: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		ToleranceCents: 50, MaxPending: 5, PendingWindow: 180 * time.Second,
+		TestPrice: true, TestPriceCents: 1, TestEmails: []string{emails["tester"]}}
+	now := clock.Now()
+	past, future := now.Add(-24*time.Hour), now.Add(24*time.Hour)
+	admin := uuid.NewString()
+	for _, c := range []model.Coupon{
+		{ID: uuid.NewString(), Code: "SAVE20", DiscountType: model.DiscountPercent, PercentOff: 20, PlanIDs: "[]", PerUserLimit: 1, Enabled: true},
+		{ID: uuid.NewString(), Code: "ONLYMAX", DiscountType: model.DiscountPercent, PercentOff: 50, PlanIDs: `["max"]`, PerUserLimit: 1, Enabled: true},
+		{ID: uuid.NewString(), Code: "USEDUP", DiscountType: model.DiscountAmount, AmountOffCents: 500, PlanIDs: "[]", MaxUses: 1, UsedCount: 1, PerUserLimit: 1, Enabled: true},
+		{ID: uuid.NewString(), Code: "OLDCODE", DiscountType: model.DiscountAmount, AmountOffCents: 500, PlanIDs: "[]", EndsAt: &past, PerUserLimit: 1, Enabled: true},
+		{ID: uuid.NewString(), Code: "FUTURE", DiscountType: model.DiscountAmount, AmountOffCents: 500, PlanIDs: "[]", StartsAt: &future, PerUserLimit: 1, Enabled: true},
+	} {
+		c.CreatedBy, c.Version, c.CreatedAt, c.UpdatedAt = admin, 1, now, now
+		if err = db.Create(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	router := newServerAt(db, cfg, authmail.NewService(db, cfg), clock.Now)
+	stop := make(chan struct{})
+	reconciler := &Server{db: db, cfg: cfg, clock: clock.Now}
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				_, _ = reconciler.reconcilePayments(t.Context())
+			}
+		}
+	}()
+	defer close(stop)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/fixture/") {
+			router.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("X-Acceptance-Control") != control {
+			w.WriteHeader(403)
+			return
+		}
+		reply := func(v any) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(v)
+		}
+		switch r.URL.Path {
+		case "/fixture/advance":
+			seconds, _ := strconv.Atoi(r.URL.Query().Get("seconds"))
+			clock.Advance(time.Duration(seconds) * time.Second)
+			w.WriteHeader(204)
+		case "/fixture/orders":
+			var rows []model.Order
+			var owner model.User
+			if e := db.First(&owner, "email = ?", r.URL.Query().Get("email")).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			if e := db.Where("user_id = ?", owner.ID).Order("created_at asc").Find(&rows).Error; e != nil {
+				w.WriteHeader(500)
+				return
+			}
+			out := []map[string]any{}
+			for _, o := range rows {
+				trade := ""
+				if o.TradeNo != nil {
+					trade = *o.TradeNo
+				}
+				out = append(out, map[string]any{"id": o.ID, "trade_no": trade, "status": o.Status, "pay_type": o.PayType, "amount_cents": o.AmountCents, "paid_cents": o.PaidCents, "price_source": o.PriceSource, "coupon_code": o.CouponCode, "review_reason": o.ReviewReason})
+			}
+			reply(out)
+		case "/fixture/subscription":
+			var sub model.Subscription
+			var owner model.User
+			if e := db.First(&owner, "email = ?", r.URL.Query().Get("email")).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			if e := db.First(&sub, "user_id = ?", owner.ID).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			reply(map[string]any{"plan_id": sub.PlanID, "expires_at": sub.ExpiresAt, "traffic_limit_bytes": sub.TrafficLimitBytes, "is_test": sub.IsTest})
+		case "/fixture/pay":
+			// The customer pays at the gateway and the gateway sends its callback to the
+			// API from a loopback address (the fixture's allow-list). money overrides the
+			// callback amount in cents to simulate a short payment.
+			trade := r.URL.Query().Get("trade_no")
+			gw.mu.Lock()
+			o := gw.orders[trade]
+			gw.mu.Unlock()
+			if o == nil {
+				w.WriteHeader(404)
+				return
+			}
+			gw.markPaid(o)
+			cents := o.Cents
+			if v, e := strconv.ParseInt(r.URL.Query().Get("money"), 10, 64); e == nil {
+				cents = v
+			}
+			body := fmt.Sprintf(`{"trade_no":%q,"name":%q,"money":%s,"trade_status":%q}`, o.TradeNo, o.Name, payment.FormatAmount(cents), payment.TradeSuccess)
+			resp, e := http.Post(server.URL+"/api/v1/payments/notify", "application/json", strings.NewReader(body))
+			if e != nil {
+				w.WriteHeader(502)
+				return
+			}
+			_ = resp.Body.Close()
+			w.WriteHeader(204)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	metadata := map[string]any{"api": server.URL, "gateway": gw.server.URL, "password": password, "control": control, "emails": emails}
+	data, _ := json.Marshal(metadata)
+	if err = os.WriteFile(filepath.Join(dir, "fixture.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(20 * time.Minute)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if _, e := os.Stat(filepath.Join(dir, "stop")); e == nil {
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("payment acceptance driver did not stop fixture")
+		}
+	}
+}

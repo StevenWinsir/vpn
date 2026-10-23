@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Alert,
   Badge,
@@ -19,8 +19,17 @@ import {
 import { notifications } from '@mantine/notifications';
 import { IconArrowRight, IconCheck } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
-import { gib, money, type Plan, type Meta, type Order } from '@/lib/types';
+import {
+  gib,
+  money,
+  type Dashboard,
+  type PayType,
+  type Plan,
+  type Meta,
+  type Order,
+} from '@/lib/types';
 import { useAuth } from './providers';
+import { PurchaseModal } from './purchase-modal';
 
 export function PlansView() {
   const { user } = useAuth();
@@ -35,6 +44,12 @@ export function PlansView() {
   const selected = choice && user && choice.userId === user.id ? choice.plan : null;
   const setSelected = (plan: Plan | null) =>
     setChoice(plan && user ? { plan, userId: user.id } : null);
+  const [subscription, setSubscription] = useState<Dashboard['subscription']>(null);
+  const [dismissed, setDismissed] = useState(false);
+  const params = useSearchParams();
+  const presetPlan = params.get('plan');
+  const presetPay = params.get('pay');
+  const payOn = meta?.payment_enabled === true;
   const [busy, setBusy] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const requestKey = useRef<string | null>(null);
@@ -70,11 +85,41 @@ export function PlansView() {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    // The current plan decides the button labels; the server re-checks every purchase.
+    if (!user || !payOn) return;
+    let active = true;
+    void api<Dashboard>('/me/dashboard')
+      .then((d) => {
+        if (active) setSubscription(d.subscription);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [user, payOn]);
+  // "Buy again" from an expired order: the link preselects the plan and method until the
+  // dialog is closed or another plan is chosen.
+  const preset =
+    !dismissed && !selected && payOn && user ? plans.find((p) => p.id === presetPlan) : undefined;
+  const presetType: PayType | null =
+    preset && (presetPay === 'wxpay' || presetPay === 'alipay') ? presetPay : null;
+  const [loadedAt] = useState(() => Date.now());
+  const state = (plan: Plan) => {
+    if (
+      !subscription ||
+      subscription.is_test ||
+      new Date(subscription.expires_at).getTime() <= loadedAt
+    )
+      return 'new';
+    return subscription.plan_id === plan.id ? 'renew' : 'blocked';
+  };
   function choose(plan: Plan) {
     if (!user) {
       router.push('/login');
       return;
     }
+    setDismissed(true);
     requestKey.current = crypto.randomUUID();
     setPurchaseError(null);
     setSelected(plan);
@@ -121,7 +166,11 @@ export function PlansView() {
           </Stack>
         </Alert>
       ) : null}
-      {meta ? (
+      {meta && payOn ? (
+        <Alert mb={28} color="blue" title="支持微信支付与支付宝支付">
+          选择套餐后可使用微信或支付宝扫码付款，并可输入优惠码。付款成功后套餐自动开通或续期。
+        </Alert>
+      ) : meta ? (
         <Alert
           mb={28}
           color={meta.test_purchase_enabled ? 'yellow' : 'gray'}
@@ -165,7 +214,7 @@ export function PlansView() {
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
-                  测试定价 · 人民币
+                  {payOn ? '人民币 · 以结算报价为准' : '测试定价 · 人民币'}
                 </Text>
                 <Divider my={24} />
                 <Stack gap={15} mb={30}>
@@ -180,13 +229,34 @@ export function PlansView() {
                   fullWidth
                   mt="auto"
                   variant={plan.id === 'pro' ? 'filled' : 'light'}
-                  disabled={!meta?.test_purchase_enabled}
+                  disabled={
+                    payOn
+                      ? user !== null && state(plan) === 'blocked'
+                      : !meta?.test_purchase_enabled
+                  }
                   onClick={() => choose(plan)}
                   rightSection={<IconArrowRight size={16} />}
-                  aria-label={`测试购买 ${plan.name}`}
+                  aria-label={
+                    payOn
+                      ? `${state(plan) === 'renew' ? '续费' : '购买'} ${plan.name}`
+                      : `测试购买 ${plan.name}`
+                  }
                 >
-                  {user ? '测试购买' : '登录后测试购买'}
+                  {payOn
+                    ? !user
+                      ? '登录后购买'
+                      : state(plan) === 'renew'
+                        ? '续费'
+                        : '立即购买'
+                    : user
+                      ? '测试购买'
+                      : '登录后测试购买'}
                 </Button>
+                {payOn && user && state(plan) === 'blocked' ? (
+                  <Text size="xs" c="dimmed" ta="center" mt={8}>
+                    当前套餐有效期内不能更换套餐，到期后可购买。
+                  </Text>
+                ) : null}
               </Paper>
             ))}
       </SimpleGrid>
@@ -217,8 +287,17 @@ export function PlansView() {
           </div>
         </SimpleGrid>
       </Paper>
+      <PurchaseModal
+        plan={payOn ? (selected ?? preset ?? null) : null}
+        initialPayType={presetType}
+        allowed={meta?.payment_methods ?? []}
+        onClose={() => {
+          setDismissed(true);
+          setSelected(null);
+        }}
+      />
       <Modal
-        opened={selected !== null}
+        opened={!payOn && selected !== null}
         onClose={() => {
           if (!busy) setSelected(null);
         }}
