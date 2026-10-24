@@ -35,6 +35,7 @@ export function AnnouncementGate() {
   const { data } = useFetched<{ announcements: Announcement[] }>(
     watching ? '/me/announcements' : null,
     `${path}#${tick}`,
+    true,
   );
   const queue = (data?.announcements ?? []).filter((a) => !done.includes(a.id));
   const current = watching ? queue[0] : undefined;
