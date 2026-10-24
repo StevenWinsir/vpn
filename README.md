@@ -14,6 +14,13 @@ macOS 客户端先登录自己的网站账户，再由后端检查有效期、�
 
 macOS 可选择在钥匙串记住密码，按 API 地址隔离、不使用明文偏好文件或 iCloud 同步。重开只预填密码，仍需重新登录；关闭应用撤销当前会话，显式退出登录清除保存项。钥匙串不可用时不降级为明文存储。其他平台尚未实现这一记忆功能。
 
+## 支付、账号设置与管理后台
+
+- **支付**：网站结算弹窗支持微信支付与支付宝（支付网关接入见 `支付接入技术文档.md`），可选优惠码；价格只在服务端计算，浏览器不能指定金额。回调没有签名，所以只有来自 `PAYMENT_NOTIFY_ALLOWED_IPS` 白名单且实付不少于应付的回调才会自动开通，其余进入“待人工核对”。测试价由 `.env` 的 `PAYMENT_TEST_PRICE_*` 控制，只对名单内账户生效。
+- **账号设置**：登录后的 `/account` 可改密码、删除账号（两阶段，物理清除全部关联数据，只保留不含用户标识的回调流水）、查看最近登录。
+- **管理后台**：`/admin/console/…` 独立于节点管理，覆盖用户、订单与支付、登录记录（含 IP 归属地）、优惠码、公告（逐条强制确认）与只读的模拟登录。
+- **上线与运维**：发布顺序、Nginx 回调路径、真实付款实测清单（U-01 … U-09）、排查指引、回滚和安全审查结论见 [docs/payment-operations.md](docs/payment-operations.md)；后端命令见 [backend/DEPLOYMENT.md](backend/DEPLOYMENT.md)。开发方的所有支付验证都针对按文档写成的本地模拟网关，**真实网关的结论只能由部署后的实测得出**。
+
 ## 本机开发
 
 需要项目所固定的 Go、Flutter/Dart、Rust/Xcode，以及 Node.js 22+ 和 PostgreSQL 工具。CI 版本见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。本机 SDK 入口使用 `scripts/flclash-env.sh`，Node/nvm 入口使用 `scripts/node.sh`。
@@ -114,7 +121,7 @@ bash scripts/node.sh npm --prefix frontend run test:api-proxy
 
 ## 正式商业上线前仍必须完成
 
-节点侧的独立计量、每用户认证与可撤销凭据、到期/超额即时限额执行；macOS TUN/特权服务及 DNS/IPv6/UDP 泄漏、休眠/网络切换/崩溃测试；真实支付与验签对账、退款与纠纷流程；邮箱验证、找回密码和管理员 MFA；数据库验证 TLS、密钥轮换、监控告警、备份恢复和高可用；签名、公证和其他平台逐一验收。
+节点侧的独立计量、每用户认证与可撤销凭据、到期/超额即时限额执行；macOS TUN/特权服务及 DNS/IPv6/UDP 泄漏、休眠/网络切换/崩溃测试；真实网关的付款实测（见 docs/payment-operations.md）、退款与纠纷流程；邮箱验证、找回密码和管理员 MFA；数据库验证 TLS、密钥轮换、监控告警、备份恢复和高可用；签名、公证和其他平台逐一验收。
 
 内嵌的 Mihomo（`native/third_party/Clash.Meta` 子模块，GPL-3.0，见其 LICENSE）及其依赖的许可证必须逐一审查；收费不等于可以忽略分发时的源码和许可证义务。不要承诺向付费用户提供无法兑现的带宽、专线质量或隐私保障。
 

@@ -29,8 +29,15 @@ func main() {
 	migrate := flag.Bool("migrate", false, "run additive database migration and exit")
 	adminEmail := flag.String("grant-admin", "", "explicitly grant admin to one existing active account and exit")
 	createAdmin := flag.String("create-admin", "", "create a separate administrator; password JSON is read from stdin, never arguments")
+	revokeImpersonation := flag.Bool("revoke-impersonation", false, "end every administrator impersonation session and exit (run before rolling back to a release without the read-only rule)")
 	flag.Parse()
-	if (*migrate && (*adminEmail != "" || *createAdmin != "")) || (*adminEmail != "" && *createAdmin != "") {
+	operationsChosen := 0
+	for _, chosen := range []bool{*migrate, *adminEmail != "", *createAdmin != "", *revokeImpersonation} {
+		if chosen {
+			operationsChosen++
+		}
+	}
+	if operationsChosen > 1 {
 		log.Fatal("choose exactly one console operation")
 	}
 	c, err := config.Load()
@@ -50,6 +57,16 @@ func main() {
 	}
 	if *migrate {
 		log.Print("database migration completed")
+		return
+	}
+	if *revokeImpersonation {
+		ctx, cancel := context.WithTimeout(context.Background(), c.RequestTimeout)
+		defer cancel()
+		count, revokeErr := operations.RevokeImpersonationSessions(ctx, db)
+		if revokeErr != nil {
+			log.Fatal(revokeErr)
+		}
+		log.Printf("impersonation sessions revoked: %d (each audited)", count)
 		return
 	}
 	if *adminEmail != "" || *createAdmin != "" {

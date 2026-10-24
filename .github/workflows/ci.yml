@@ -135,6 +135,55 @@ jobs:
             artifacts/ci-catalog/browser-artifacts/nodes-desktop.png
             artifacts/ci-catalog/browser-artifacts/nodes-mobile.png
 
+  release-rehearsal:
+    name: Release rehearsal / migration / rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # The drill builds the legacy release, the node-group rollback target and the
+      # pre-payment rollback target from history, so the whole history is needed.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install PostgreSQL tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
+      - name: Download locked dependencies (current tree and the three older releases; the drill builds offline)
+        run: |
+          (cd backend && go mod download)
+          npm ci --prefix frontend
+          for ref in 67e7b37f935e654e4378c14a32bc888ccff2065f a63a882 9ee9066; do
+            tree="$(mktemp -d)"
+            git archive "$ref" backend | tar -x -C "$tree"
+            (cd "$tree/backend" && go mod download)
+          done
+      - name: Install isolated browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Upgrade, payments, impersonation revoke, backup/restore and both rollbacks
+        run: python3 scripts/test-release-rehearsal.py --output artifacts/ci-rehearsal
+      - name: Retain rehearsal summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-rehearsal-evidence
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/ci-rehearsal/summary.json
+            artifacts/ci-rehearsal/*.log
+
   native-core:
     name: Native Core / IPC contract / shared policy
     runs-on: ubuntu-24.04
