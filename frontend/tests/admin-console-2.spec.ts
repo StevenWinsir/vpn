@@ -233,7 +233,7 @@ test('announcements reach users one by one and cannot be skipped; impersonation 
   // A failing acknowledgement keeps the dialog and says so.
   await ivan.page.route('**/api/v1/me/announcements/*/ack', (route) => route.abort());
   await ivan.page.getByRole('button', { name: '知道了' }).click();
-  await expect(ivan.page.getByRole('alert')).toBeVisible();
+  await expect(ivan.page.getByTestId('announcement').getByRole('alert')).toBeVisible();
   await expect(ivan.page.getByRole('dialog', { name: first })).toBeVisible();
   await ivan.page.unroute('**/api/v1/me/announcements/*/ack');
   await ivan.page.getByRole('button', { name: '知道了' }).click();
