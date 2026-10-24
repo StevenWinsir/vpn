@@ -44,8 +44,11 @@ def main():
         except subprocess.CalledProcessError:
             # CI keeps only screenshots; the step's own report is what explains a failure.
             lines = (output / (name + '.log')).read_text(errors='replace').splitlines()
-            print(f'--- {name}.log (last 120 lines) ---')
-            print('\n'.join(lines[-120:]))
+            # Playwright prints each failure as "  1) ..."; the first one is the cause, the rest
+            # are often its fallout.
+            first = next((i for i, line in enumerate(lines) if line.startswith('  1) ')), max(0, len(lines) - 150))
+            print(f'--- {name}.log (from the first failure; {len(lines)} lines in all) ---')
+            print('\n'.join(lines[:12] + ['...'] + lines[first:first + 160]))
             raise
 
     def spawn(name, command, cwd, environment):

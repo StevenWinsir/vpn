@@ -66,6 +66,10 @@ async function acknowledgeAll(page: Page) {
 }
 
 test.describe.configure({ mode: 'serial' });
+// Whatever happened above, nothing may stay published for the specs that follow.
+test.afterAll(async () => {
+  await control('archive-announcements', 'POST');
+});
 
 test('coupons: create, generate, edit, disable, delete; a used one is only hidden and frozen', async ({
   page,

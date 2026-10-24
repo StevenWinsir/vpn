@@ -220,6 +220,14 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			reply(map[string]any{"id": order.ID, "trade_no": trade})
+		case "/fixture/archive-announcements":
+			// Cleanup for the announcement spec: a failed run must not leave notices that
+			// block every later spec's pages.
+			if e := db.Model(&model.Announcement{}).Where("status = ?", model.AnnouncementPublished).Update("status", model.AnnouncementArchived).Error; e != nil {
+				w.WriteHeader(500)
+				return
+			}
+			w.WriteHeader(204)
 		case "/fixture/coupon-used":
 			// A coupon an order has used: lena holds a paid order that references it.
 			var coupon model.Coupon
