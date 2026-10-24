@@ -37,9 +37,16 @@ def main():
     processes, streams = [], []
 
     def run(name, command, cwd, environment=env, timeout=600):
-        with (output / (name + '.log')).open('w') as log:
-            subprocess.run(command, cwd=cwd, env=environment, stdout=log,
-                stderr=subprocess.STDOUT, check=True, timeout=timeout)
+        try:
+            with (output / (name + '.log')).open('w') as log:
+                subprocess.run(command, cwd=cwd, env=environment, stdout=log,
+                    stderr=subprocess.STDOUT, check=True, timeout=timeout)
+        except subprocess.CalledProcessError:
+            # CI keeps only screenshots; the step's own report is what explains a failure.
+            lines = (output / (name + '.log')).read_text(errors='replace').splitlines()
+            print(f'--- {name}.log (last 120 lines) ---')
+            print('\n'.join(lines[-120:]))
+            raise
 
     def spawn(name, command, cwd, environment):
         log = (output / (name + '.log')).open('w')

@@ -160,6 +160,8 @@ test('announcements reach users one by one and cannot be skipped; impersonation 
   page,
   browser,
 }) => {
+  // Many fresh browser contexts and sign-ins: slow CI runners need more than the default.
+  test.setTimeout(300_000);
   await signIn(page, fixture.emails.boss);
   await page.goto('/admin/console/announcements');
   const row = (title: string) => page.getByTestId('announcement-row').filter({ hasText: title });
