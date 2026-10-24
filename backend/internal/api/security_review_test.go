@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -166,9 +167,14 @@ func TestSecurityPaymentBypassAttempts(t *testing.T) {
 		}
 		seen[n] = true
 	}
-	var base int64
-	_, _ = fmt.Sscan((*outsider.TradeNo)[8:], &base)
+	base, err := strconv.ParseInt((*outsider.TradeNo)[8:], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, delta := range []int64{-2, -1, 1, 2} {
+		if base+delta < 0 || base+delta >= 1_000_000_000_000 {
+			continue
+		}
 		guess := (*outsider.TradeNo)[:8] + fmt.Sprintf("%012d", base+delta)
 		body := fmt.Sprintf(`{"trade_no":%q,"name":"x","money":%s,"trade_status":%q}`, guess, exact, payment.TradeSuccess)
 		e.want(e.notify(gatewayIP, body), 200)
