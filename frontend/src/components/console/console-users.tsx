@@ -375,7 +375,7 @@ type Detail = {
   logins: ConsoleLogin[];
   devices: { online: ConsoleDevice[]; signed_in: ConsoleDevice[] };
 };
-type Action = 'password' | 'subscription' | 'end' | 'delete' | null;
+type Action = 'password' | 'subscription' | 'end' | 'delete' | 'impersonate' | null;
 
 function UserDrawer({
   id,
@@ -474,6 +474,15 @@ function UserDrawer({
                 title={protectedReason}
               >
                 修改密码
+              </Button>
+              <Button
+                variant="light"
+                color="violet"
+                onClick={() => setAction('impersonate')}
+                disabled={!!protectedReason || u.status !== 'active'}
+                title={protectedReason}
+              >
+                模拟登录
               </Button>
               <Button
                 color="red"
@@ -595,6 +604,9 @@ function UserDrawer({
                 onClose={() => setAction(null)}
                 onDone={refresh}
               />
+            ) : null}
+            {action === 'impersonate' ? (
+              <ImpersonateModal user={u} onClose={() => setAction(null)} onDone={() => undefined} />
             ) : null}
             {action === 'end' ? (
               <EndModal user={u} onClose={() => setAction(null)} onDone={refresh} />
@@ -912,6 +924,47 @@ function EndModal({ user, onClose, onDone }: ModalProps) {
           </Button>
           <Button color="orange" onClick={() => void submit()} loading={busy}>
             确认结束
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+// Opens a read-only session as the user. The browser then carries the user's session (and the
+// return cookie), so the page is replaced instead of patched.
+function ImpersonateModal({ user, onClose }: ModalProps) {
+  const [adminPassword, setAdminPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/admin/console/users/${user.id}/impersonate`, {
+        method: 'POST',
+        body: JSON.stringify({ admin_password: adminPassword }),
+      });
+      window.location.replace('/dashboard');
+    } catch (e) {
+      setError(describeError(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal opened onClose={onClose} title={`模拟登录 · ${user.email}`} closeOnClickOutside={false}>
+      <Stack>
+        <Alert color="violet">
+          你将以该用户的身份查看网站，期间只读：不能修改任何数据，不会显示公告，也不会改变该用户的最近登录时间。到时间会自动结束，随时可点“返回管理员”。
+        </Alert>
+        <ReauthField value={adminPassword} onChange={setAdminPassword} />
+        <ErrorBox text={error} />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={() => void submit()} loading={busy} disabled={adminPassword === ''}>
+            开始模拟
           </Button>
         </Group>
       </Stack>

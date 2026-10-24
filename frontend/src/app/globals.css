@@ -583,3 +583,14 @@ a:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+/* Always-visible notice while an administrator is looking at the site as a user. */
+.impersonation-banner {
+  position: sticky;
+  top: 80px;
+  z-index: 120;
+  padding: 10px 20px;
+  background: #ffe066;
+  color: #3b2f00;
+  border-bottom: 1px solid #e0b800;
+}

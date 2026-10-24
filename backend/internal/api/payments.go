@@ -340,7 +340,7 @@ func (s *Server) paymentOrder(c *gin.Context) {
 	}
 	view := orderView{Order: order}
 	// Display hint only: a gateway "paid" never fulfils an order (D5).
-	if order.Status == model.OrderPending && order.TradeNo != nil && s.cfg.Payment.Enabled {
+	if order.Status == model.OrderPending && order.TradeNo != nil && s.cfg.Payment.Enabled && impersonationOf(c) == nil {
 		now := s.now()
 		claim := s.database(c).Model(&model.Order{}).Where("id = ? AND status = ? AND (gateway_checked_at IS NULL OR gateway_checked_at <= ?)", order.ID, model.OrderPending, now.Add(-statusRecheck)).Update("gateway_checked_at", now)
 		if claim.Error == nil && claim.RowsAffected == 1 {

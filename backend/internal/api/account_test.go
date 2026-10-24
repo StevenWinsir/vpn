@@ -296,6 +296,7 @@ func (a *acctEnv) richAccount(t *testing.T) deletionFixture {
 			&model.NodeAssignment{UserID: f.user.ID, GroupID: group.ID, NodeID: node.ID, AssignedAt: now, LastUsedAt: now},
 			&model.UsageBucket{UserID: f.user.ID, BucketStart: model.UsageBaseline(now), UpdatedAt: now},
 			&model.NodeHealthEvent{ID: uuid.NewString(), NodeID: node.ID, UserID: f.user.ID, Reason: "unreachable", OccurredAt: now},
+			&model.AnnouncementRead{AnnouncementID: uuid.NewString(), UserID: f.user.ID, AcknowledgedAt: now},
 			&model.PaymentNotification{ID: uuid.NewString(), TradeNo: trade, OrderID: &order.ID, MoneyText: "39.90", TradeStatus: "TRADE_SUCCESS", Name: "x", SourceIP: "203.0.113.10", Result: model.NotifyAccepted, ReceivedAt: now},
 		} {
 			if e := tx.Omit("User", "Session", "Plan", "Group", "Node", "Grant").Create(row).Error; e != nil {
@@ -320,7 +321,7 @@ var accountTables = []struct {
 	{"connection_grants", &model.ConnectionGrant{}, "user_id = ?"}, {"connection_leases", &model.ConnectionLease{}, "user_id = ?"},
 	{"orders", &model.Order{}, "user_id = ?"}, {"client_traffic_reports", &model.ClientTrafficReport{}, "user_id = ?"},
 	{"node_assignments", &model.NodeAssignment{}, "user_id = ?"}, {"usage_buckets", &model.UsageBucket{}, "user_id = ?"},
-	{"node_health_events", &model.NodeHealthEvent{}, "user_id = ?"}, {"login_events", &model.LoginEvent{}, "user_id = ?"},
+	{"node_health_events", &model.NodeHealthEvent{}, "user_id = ?"}, {"login_events", &model.LoginEvent{}, "user_id = ?"}, {"announcement_reads", &model.AnnouncementRead{}, "user_id = ?"},
 }
 
 func (a *acctEnv) rows(t *testing.T, userID string) map[string]int64 {

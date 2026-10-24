@@ -174,6 +174,8 @@ func (s *Server) clearCookies(c *gin.Context) {
 	for _, name := range []string{"vpn_access", "vpn_refresh"} {
 		http.SetCookie(c.Writer, &http.Cookie{Name: name, Value: "", Path: "/api/v1", MaxAge: -1, Expires: time.Unix(1, 0), HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode})
 	}
+	// The way back to the administrator never outlives the session it belongs to.
+	s.clearReturnCookie(c)
 }
 func (s *Server) refresh(c *gin.Context) {
 	raw, e := c.Cookie("vpn_refresh")
@@ -223,7 +225,7 @@ func (s *Server) refresh(c *gin.Context) {
 func (s *Server) logout(c *gin.Context) {
 	raw, err := c.Cookie("vpn_refresh")
 	if err == nil && len(raw) <= 128 {
-		if e := s.database(c).Model(&model.Session{}).Where("refresh_hash = ? AND revoked_at IS NULL", refreshHash(raw)).Update("revoked_at", time.Now().UTC()).Error; e != nil {
+		if e := s.endSession(c, refreshHash(raw), time.Now().UTC()); e != nil {
 			fail(c, 503, "logout_failed", "退出暂时失败，请重试")
 			return
 		}
@@ -256,10 +258,24 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 			fail(c, 401, "unauthorized", "请先登录")
 			return
 		}
-		var user model.User
-		err = s.database(c).Table(s.cfg.Schema+".users AS u").Select("u.*").
+		var row struct {
+			model.User
+			ImpID, ImpSessionID *string
+			HardExpiresAt       *time.Time
+		}
+		now := time.Now().UTC()
+		// An impersonation session also needs its administrator: still an active
+		// administrator holding the session that opened it, so changing or ending the
+		// administrator's login ends the impersonation at once.
+		err = s.database(c).Table(s.cfg.Schema+".users AS u").
+			Select("u.*, s.impersonator_id AS imp_id, s.impersonator_session_id AS imp_session_id, s.hard_expires_at").
 			Joins("JOIN "+s.cfg.Schema+".sessions AS s ON s.user_id = u.id").
-			Where("s.id = ? AND s.user_id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.status = ?", cl.SessionID, cl.Subject, time.Now().UTC(), "active").Take(&user).Error
+			Where("s.id = ? AND s.user_id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.status = ?", cl.SessionID, cl.Subject, now, "active").
+			Where("s.hard_expires_at IS NULL OR s.hard_expires_at > ?", now).
+			Where(`s.impersonator_session_id IS NULL OR EXISTS (SELECT 1 FROM `+s.cfg.Schema+`.sessions AS a JOIN `+s.cfg.Schema+`.users AS au ON au.id = a.user_id
+				WHERE a.id = s.impersonator_session_id AND a.user_id = s.impersonator_id AND a.revoked_at IS NULL AND a.expires_at > ? AND au.status = 'active' AND au.role = 'admin')`, now).
+			Take(&row).Error
+		user := row.User
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			fail(c, 401, "unauthorized", "登录会话已失效")
 			return
@@ -270,8 +286,10 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 		}
 		c.Set("user", user)
 		c.Set("session_id", cl.SessionID)
+		if row.ImpID != nil && row.ImpSessionID != nil && row.HardExpiresAt != nil {
+			c.Set(impersonationKey, impersonation{AdminID: *row.ImpID, AdminSessionID: *row.ImpSessionID, ExpiresAt: *row.HardExpiresAt})
+		}
 		c.Next()
 	}
 }
 func currentUser(c *gin.Context) model.User { return c.MustGet("user").(model.User) }
-func (s *Server) me(c *gin.Context)         { c.JSON(200, gin.H{"user": currentUser(c)}) }

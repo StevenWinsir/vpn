@@ -37,9 +37,19 @@ def main():
     processes, streams = [], []
 
     def run(name, command, cwd, environment=env, timeout=600):
-        with (output / (name + '.log')).open('w') as log:
-            subprocess.run(command, cwd=cwd, env=environment, stdout=log,
-                stderr=subprocess.STDOUT, check=True, timeout=timeout)
+        try:
+            with (output / (name + '.log')).open('w') as log:
+                subprocess.run(command, cwd=cwd, env=environment, stdout=log,
+                    stderr=subprocess.STDOUT, check=True, timeout=timeout)
+        except subprocess.CalledProcessError:
+            # CI keeps only screenshots; the step's own report is what explains a failure.
+            lines = (output / (name + '.log')).read_text(errors='replace').splitlines()
+            # Playwright prints each failure as "  1) ..."; the first one is the cause, the rest
+            # are often its fallout.
+            first = next((i for i, line in enumerate(lines) if line.startswith('  1) ')), max(0, len(lines) - 150))
+            print(f'--- {name}.log (from the first failure; {len(lines)} lines in all) ---')
+            print('\n'.join(lines[:12] + ['...'] + lines[first:first + 160]))
+            raise
 
     def spawn(name, command, cwd, environment):
         log = (output / (name + '.log')).open('w')

@@ -100,6 +100,10 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/admin/nodes") {
 			bodyLimit = 128 << 10
 		}
+		// 5000 characters of announcement text are up to 20 KB of UTF-8.
+		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/admin/console/announcements") {
+			bodyLimit = announcementBodyLimit
+		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, bodyLimit)
 		c.Next()
 	})
@@ -146,8 +150,11 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	auth.POST("/refresh", s.refresh)
 	auth.POST("/logout", s.logout)
 	secured := v.Group("")
-	secured.Use(s.requireAuth())
+	secured.Use(s.requireAuth(), s.readOnlyWhenImpersonating())
 	secured.GET("/auth/me", s.me)
+	secured.POST("/auth/impersonation/return", s.impersonationReturn)
+	secured.GET("/me/announcements", s.myAnnouncements)
+	secured.POST("/me/announcements/:id/ack", s.ackAnnouncement)
 	secured.GET("/me/dashboard", s.dashboard)
 	secured.GET("/me/devices", s.meDevices)
 	secured.GET("/me/usage-history", s.meUsageHistory)
@@ -176,6 +183,14 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	console.POST("/orders/:id/confirm", s.consoleOrderConfirm)
 	console.POST("/orders/:id/close", s.consoleOrderClose)
 	console.GET("/logins", s.consoleLoginList)
+	console.POST("/users/:id/impersonate", s.consoleImpersonate)
+	console.GET("/announcements", s.consoleAnnouncementList)
+	console.POST("/announcements", s.consoleAnnouncementSave)
+	console.POST("/announcements/:id", s.consoleAnnouncementSave)
+	console.POST("/announcements/:id/publish", s.consoleAnnouncementPublish)
+	console.POST("/announcements/:id/archive", s.consoleAnnouncementArchive)
+	console.DELETE("/announcements/:id", s.consoleAnnouncementDelete)
+	console.GET("/announcements/:id/reads", s.consoleAnnouncementReads)
 	console.GET("/coupons", s.adminCouponList)
 	console.POST("/coupons", s.adminCouponSave)
 	console.POST("/coupons/:id", s.adminCouponSave)

@@ -10,7 +10,9 @@ export type Values = Record<string, string>;
 
 // One GET whose result is keyed by what was asked for, so a stale answer is never shown for a
 // newer question and no state is set synchronously inside the effect.
-export function useFetched<T>(url: string | null, nonce = 0) {
+// quiet: a 401 is just an answer. The request neither refreshes the session nor ends it, for
+// background checks (announcements) that must never be what signs a user out.
+export function useFetched<T>(url: string | null, nonce: number | string = 0, quiet = false) {
   const key = url === null ? null : `${url}#${nonce}`;
   const [state, setState] = useState<{ key: string | null; data: T | null; error: string }>({
     key: null,
@@ -20,14 +22,14 @@ export function useFetched<T>(url: string | null, nonce = 0) {
   useEffect(() => {
     if (key === null || url === null) return;
     const controller = new AbortController();
-    api<T>(url, { signal: controller.signal })
+    api<T>(url, { signal: controller.signal }, !quiet)
       .then((data) => setState({ key, data, error: '' }))
       .catch((e) => {
         if (!controller.signal.aborted)
           setState((s) => ({ key, data: s.data, error: describeError(e) }));
       });
     return () => controller.abort();
-  }, [key, url]);
+  }, [key, url, quiet]);
   const current = state.key === key;
   return { data: state.data, error: current ? state.error : '', loading: key !== null && !current };
 }

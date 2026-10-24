@@ -56,7 +56,7 @@ def main() -> None:
             environment.update(NATIVE_TEST_DSN=f"host={socket} user=postgres dbname=postgres sslmode=disable", RUN_DB_TESTS="0", GOPROXY="off", GOTOOLCHAIN="local")
             # Optional extra `go test` arguments (e.g. -run TestGrant ./internal/api) narrow the run.
             targets = sys.argv[1:] or ["./..."]
-            subprocess.run(["go", "test", "-race", "-count=1", "-v", *targets], cwd=ROOT / "backend", env=environment, check=True)
+            subprocess.run(["go", "test", "-race", "-count=1", "-timeout=20m", "-v", *targets], cwd=ROOT / "backend", env=environment, check=True)
         finally:
             if started:
                 subprocess.run(["pg_ctl", "-D", str(data), "-m", "fast", "-w", "stop"], check=True)

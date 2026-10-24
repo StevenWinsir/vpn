@@ -11,10 +11,12 @@ import {
 import { MantineProvider, createTheme } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { api, APIError, message, onSessionEnded } from '@/lib/api';
-import type { User } from '@/lib/types';
+import type { Impersonation, User } from '@/lib/types';
 
 type Auth = {
   user: User | null;
+  // Non-null while an administrator is impersonating this user (read-only session).
+  impersonation: Impersonation | null;
   loading: boolean;
   error: string | null;
   setUser: (user: User | null) => void;
@@ -46,27 +48,31 @@ const theme = createTheme({
 });
 export function Providers({ children }: { children: React.ReactNode }) {
   const [user, setStoredUser] = useState<User | null>(null);
+  const [impersonation, setImpersonation] = useState<Impersonation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const setUser = useCallback((next: User | null) => {
     generation.current++;
     setStoredUser(next);
+    setImpersonation(null);
     setError(null);
     setLoading(false);
   }, []);
   const reload = useCallback(async () => {
     const revision = ++generation.current;
     try {
-      const data = await api<{ user: User }>('/auth/me');
+      const data = await api<{ user: User; impersonation?: Impersonation }>('/auth/me');
       if (revision === generation.current) {
         setStoredUser(data.user);
+        setImpersonation(data.impersonation ?? null);
         setError(null);
       }
     } catch (err) {
       if (revision === generation.current) {
         if (err instanceof APIError && err.status === 401) {
           setStoredUser(null);
+          setImpersonation(null);
           setError(null);
         } else {
           setError(message(err));
@@ -79,10 +85,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     const revision = ++generation.current;
-    void api<{ user: User }>('/auth/me')
+    void api<{ user: User; impersonation?: Impersonation }>('/auth/me')
       .then((data) => {
         if (active && revision === generation.current) {
           setStoredUser(data.user);
+          setImpersonation(data.impersonation ?? null);
           setError(null);
         }
       })
@@ -112,8 +119,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, [setUser]);
   const value = useMemo(
-    () => ({ user, loading, error, setUser, reload, logout }),
-    [user, loading, error, setUser, reload, logout],
+    () => ({ user, impersonation, loading, error, setUser, reload, logout }),
+    [user, impersonation, loading, error, setUser, reload, logout],
   );
   return (
     <MantineProvider theme={theme} defaultColorScheme="light">

@@ -17,10 +17,13 @@ import (
 )
 
 // requireConsoleAdmin guards the account console (handoff_payment_account.md 9.1). Unlike
-// requireAdmin it does not depend on the node catalog switch. Round 5 also refuses
-// impersonation sessions here.
+// requireAdmin it does not depend on the node catalog switch, and it refuses
+// impersonation sessions.
 func (s *Server) requireConsoleAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if refuseImpersonated(c) {
+			return
+		}
 		if currentUser(c).Role != "admin" {
 			fail(c, 403, "admin_required", "需要管理员权限")
 			return
