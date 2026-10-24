@@ -65,10 +65,12 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	emails := map[string]string{}
 	// carol, dave and erin are for the account-settings specs (password change, deletion,
 	// deletion blocked by a live order); root is an administrator, who cannot self-delete.
-	// frank, gina and hank belong to the console spec (plan edit, deletion, manual confirmation).
-	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "root"} {
+	// frank, gina and hank belong to the console spec (plan edit, deletion, manual confirmation);
+	// ivan, judy, kyle, lena and boss (a second administrator) to the announcement, impersonation
+	// and coupon specs, which publish announcements that must not reach the other specs' users.
+	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root"} {
 		role := "user"
-		if kind == "root" {
+		if kind == "root" || kind == "boss" {
 			role = "admin"
 		}
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}
@@ -218,6 +220,27 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			reply(map[string]any{"id": order.ID, "trade_no": trade})
+		case "/fixture/coupon-used":
+			// A coupon an order has used: lena holds a paid order that references it.
+			var coupon model.Coupon
+			var owner model.User
+			if e := db.First(&coupon, "code = ?", r.URL.Query().Get("code")).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			if e := db.First(&owner, "email = ?", r.URL.Query().Get("email")).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			paid, trade := clock.Now(), clock.Now().Format("20060102")+strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+			order := model.Order{ID: uuid.NewString(), UserID: owner.ID, IdempotencyKey: uuid.NewString(), PlanID: "pro", PlanName: "进阶计划", PriceCents: 3190, DurationDays: 30, TrafficBytes: gib,
+				Status: model.OrderPaid, Provider: "gateway", CreatedAt: paid, PaidAt: &paid, TradeNo: &trade, PayType: payment.TypeWeChat, AmountCents: 3190, ListPriceCents: 3990, DiscountCents: 800,
+				CouponID: &coupon.ID, CouponCode: coupon.Code, PriceSource: priceList}
+			if e := db.Omit("User").Create(&order).Error; e != nil || db.Model(&coupon).Update("used_count", 1).Error != nil {
+				w.WriteHeader(500)
+				return
+			}
+			w.WriteHeader(204)
 		case "/fixture/purge":
 			res, e := (&Server{db: db, cfg: cfg, clock: clock.Now}).purgeDeletedAccounts(t.Context())
 			if e != nil {

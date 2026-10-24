@@ -10,7 +10,7 @@ export type Values = Record<string, string>;
 
 // One GET whose result is keyed by what was asked for, so a stale answer is never shown for a
 // newer question and no state is set synchronously inside the effect.
-export function useFetched<T>(url: string | null, nonce = 0) {
+export function useFetched<T>(url: string | null, nonce: number | string = 0) {
   const key = url === null ? null : `${url}#${nonce}`;
   const [state, setState] = useState<{ key: string | null; data: T | null; error: string }>({
     key: null,

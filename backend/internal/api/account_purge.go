@@ -113,7 +113,7 @@ func (s *Server) purgeAccount(ctx context.Context, id string) (bool, error) {
 			{`DELETE FROM ` + t("usage_buckets") + ` WHERE user_id = ?`, []any{id}},
 			{`DELETE FROM ` + t("node_assignments") + ` WHERE user_id = ?`, []any{id}},
 			{`DELETE FROM ` + t("node_health_events") + ` WHERE user_id = ?`, []any{id}},
-			// announcement_reads joins this list when announcements exist (round 5).
+			{`DELETE FROM ` + t("announcement_reads") + ` WHERE user_id = ?`, []any{id}},
 			{`DELETE FROM ` + t("login_events") + ` WHERE user_id = ?`, []any{id}},
 			{`DELETE FROM ` + t("auth_mail_jobs") + ` WHERE challenge_id IN (SELECT id FROM ` + t("email_auth_challenges") + ` WHERE user_id = ? OR email = ?)`, []any{id, user.Email}},
 			{`DELETE FROM ` + t("email_auth_challenges") + ` WHERE user_id = ? OR email = ?`, []any{id, user.Email}},

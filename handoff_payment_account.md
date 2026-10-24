@@ -621,3 +621,36 @@ node_usage_reports（属于该用户的 grant）→ connection_grants → subscr
 - NOT RUN：模拟会话相关项（第 5 轮）；真实 Core 客户端联机验证；`test-node-catalog.py` 的 Mihomo 浏览器用例（本机未运行，由 CI 执行）；真实邮件投递（用捕获 Mailer 验证）；窄屏下后台表格的自动化截图（表格在 `ScrollArea` 内横向滚动，未做截图用例）。
 - 证据：本机 `artifacts/payment-round4-admin1c/`（`browser-artifacts/screens/` 下后台用户列表、用户详情、订单详情、登录记录截图），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
 - 对后续轮次的影响：第 5 轮要做的事有三件已记录在案——让 `requireConsoleAdmin` 拒绝模拟会话；`changePassword`、`requestAccountDeletion` 拒绝模拟会话；`announcement_reads` 加入 `account_purge.go`。用户详情抽屉的“模拟登录”按钮和后台导航中的“优惠码”“公告”入口由第 5 轮加入。
+
+### 第 5 轮记录（2026-10-23）：管理后台 II（优惠码界面、公告、模拟登录）
+
+- 分支 `worktree-payment-round5-admin2`，基线 721cf9d（第 4 轮及 #70 合并后）。PR 与 CI 结果见 PR 页面，本记录只写本机已执行的内容。
+- **先补的三件前两轮遗留**：`requireConsoleAdmin` 拒绝模拟会话；`changePassword`、`requestAccountDeletion` 在入口处拒绝模拟会话（除只读中间件外再加一层，各有测试）；`announcement_reads` 加入 `account_purge.go` 的清除步骤（`richAccount` 夹具和 `accountTables` 同步加入该表，逐表计数为 0）。
+- 后端：
+  - 模型：`sessions` 增加 `impersonator_id`、`impersonator_session_id`、`hard_expires_at`（均可空）；新表 `announcements`、`announcement_reads`（接入 `store.Migrate`、doctor 表清单、`test-release-rehearsal.py` 表清单）；新配置 `IMPERSONATION_MINUTES`（默认 30，5–120，`.env.example`、DEPLOYMENT.md 已更新）。
+  - 模拟登录（`impersonation.go`）：`POST /admin/console/users/:id/impersonate`（管理员密码二次验证；目标须是 active 的普通用户，对管理员、自己拒绝）。事务内锁管理员与目标，轮换管理员会话的刷新令牌，创建模拟会话（不记住登录，`expires_at = hard_expires_at = 现在 + IMPERSONATION_MINUTES`，刷新不能延长）；管理员的新刷新令牌只写入 `vpn_return` Cookie（HttpOnly、SameSite=Strict、Path 限定为 `/api/v1/auth/impersonation/return`、Secure 跟随 `COOKIE_SECURE`、过期时间与模拟会话相同），浏览器同时换上用户的 `vpn_access`/`vpn_refresh`。`requireAuth` 识别模拟会话，并要求其管理员仍是 active 的管理员且开启它的那条管理员会话未撤销、未过期：因此管理员改密、被停用、被降权、会话被撤销，模拟会话立即失效；`readOnlyWhenImpersonating` 使模拟会话的所有非 GET 请求（唯一例外是返回接口）返回 403 `impersonation_read_only`；`/auth/me` 增加 `impersonation:{admin_email, expires_at}`；`GET /payments/orders/:id` 在模拟会话中不再触发网关查询（避免“看”订单就把它改成超时）。`POST /auth/impersonation/return`：校验返回 Cookie 与管理员会话的刷新令牌哈希一致、管理员仍是 active 的管理员 → 撤销模拟会话 → 再次轮换管理员刷新令牌并写回正常 Cookie → 清除返回 Cookie → 审计 `admin.impersonate_end`；任何一项失败：撤销模拟会话，清除全部 Cookie，返回 401 `impersonation_return_failed`。在模拟会话中退出登录，同时撤销开启它的管理员会话并清除返回 Cookie（不留下只有返回 Cookie 才能触达的会话）。模拟期间不写 `login_events`、不更新 `last_login_at`。审计 `admin.impersonate_start`。
+  - 公告（`announcements.go`）：管理端 `GET/POST /admin/console/announcements`、`POST /:id`（仅草稿，`version` 乐观锁）、`/:id/publish`、`/:id/archive`、`DELETE /:id`（仅草稿）、`GET /:id/reads`（确认名单，分页）。正文只接受纯文本（合法 UTF-8，除换行与制表符外不含控制字符），标题 ≤100 字、正文 ≤5000 字；本路由请求体上限放宽到 32 KB（Go 与 Next.js 代理两处，其余路由仍是 8 KB）。用户端 `GET /me/announcements`（已发布、本人未确认，按发布时间再按 ID 升序，最多 20 条；模拟会话返回空）、`POST /me/announcements/:id/ack`（`ON CONFLICT DO NOTHING`，重复确认幂等；草稿或不存在 404；已下线的公告点击不记录；模拟会话 403）。审计 `admin.announcement_{create,update,publish,archive,delete}`，Detail 只含标题长度和状态。
+  - 优惠码管理接口沿用第 1 轮，没有改动。
+- 前端：`/admin/console/coupons`（列表含折扣、适用套餐、有效期、已用/上限与待付占用、每人限用、状态；新建（手填或服务端随机 10 位）、编辑（已被订单使用的码折扣输入框禁用并说明）、启用/停用、删除（用过的只隐藏，界面说明；“显示已删除”开关））、`/admin/console/announcements`（草稿编辑含“用户看到的效果”预览、发布确认、下线、复制为新草稿、已确认人数/当前用户数、确认名单）；用户详情抽屉增加“模拟登录”（密码弹窗）；全站 `AnnouncementGate`（真实登录会话进入工作区时、每次路由变化、每 5 分钟检查；弹窗无关闭按钮，Esc 与点击遮罩无效，正文以纯文本渲染，确认失败时保留弹窗并显示错误）；模拟会话期间常驻黄色横幅（目标邮箱、剩余倒计时、“返回管理员”），账户菜单中“退出登录”换成“返回管理员”；返回接口加入禁止自动刷新的路径列表。
+- 偏离与决定：
+  1. **模拟会话的管理员有效性每次请求都查库**（`requireAuth` 多一个 EXISTS）：管理员改密或被停用，模拟立即结束，比交接书“返回失败”更严格，且更简单。
+  2. **公告对管理员同样弹出**（管理员也是用户）；新注册的用户会看到所有“已发布且未确认”的公告，不限于其注册之后发布的；要停止推送就下线。已下线公告不记录点击。
+  3. `/me/dashboard` 的用户块没有增加模拟信息（前端只读 `/auth/me`）。
+  4. 第 10 节接口表中的 `POST /admin/console/announcements/:id/copy` 不存在：“复制为新草稿”由前端用原标题和正文调用创建接口完成。
+  5. 回滚前必须先撤销模拟会话的说明写入 DEPLOYMENT.md（一条 SQL），第 6 轮再做成运维检查。
+- 本机验收（私有 PostgreSQL 16；`go vet ./...`、`go test -race -count=1 ./...`；前端 `lint`、`typecheck`、`next build --webpack`、api-proxy 单测 16 项（含公告 32 KB 上限与其他路由 8 KB 上限）；`scripts/test-payment-web.py` 共 20 项浏览器用例，其中本轮 2 项）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R5-01 | PASS | `TestAnnouncementLifecycle`（草稿不可见；两条按发布时间依次出现；确认后只在该用户的所有设备上消失，其他用户仍可见；重复确认幂等；确认人数与名单准确；下线后不再推送且不记录点击；已发布内容锁定；新用户一次最多 20 条）。浏览器 `admin-console-2.spec.ts` 第 2 条：Esc、点击遮罩、刷新页面都无法跳过；确认请求失败时弹窗保留并报错；点击“知道了”后下一条出现；刷新和换设备都不再出现；下线后其他用户不再看到 |
+| R5-02 | PASS | `TestAnnouncementText`：5000 个汉字经完整路由保存（默认 8 KB 上限放宽到 32 KB）、5001 字、空标题、过长标题、控制字符、未知字段、超限请求体均被拒；浏览器：`<script>`、`<b>`、Markdown 在弹窗里按原文显示，`window.__pwned` 未被设置，弹窗内没有 `<b>` 元素；api-proxy 单测验证代理上限 |
+| R5-03 | PASS | `TestImpersonationIsReadOnly`：目标用户的总览、订单、设备、登录记录可读；改密、删号、测试购买、下单、报价、公告确认、后台接口全部 403 `impersonation_read_only`；公告列表为空；目标用户的 `last_login_at` 与 `login_events` 不变；订单页不触发网关查询；审计有开始记录。浏览器：横幅、公告不弹出、写请求 403、不能进入后台 |
+| R5-04 | PASS | `TestImpersonationReturn`（返回成功后回到后台、旧模拟 Cookie 与旧返回值都 401、审计开始与结束各一条；刷新不改变硬性终点、访问令牌不晚于它）、`TestImpersonationReturnFailures`（缺少返回 Cookie、伪造的返回 Cookie 由接口处理并清理；管理员会话被撤销、被停用、被降权在鉴权处即失效）、`TestImpersonationEnds`（超过硬性有效期即失效；管理员在别处改密则模拟立即结束；目标用户被改密则结束；在模拟会话中退出登录会撤销两条会话并清除全部 Cookie） |
+| R5-05 | PASS | 单测断言返回 Cookie 的 HttpOnly、SameSite=Strict、Path，且只会随返回路径发送；名为 `vpn_return` 的 Cookie 在其他接口上不构成登录；非模拟会话持有返回值也不能使用返回接口。浏览器用 `context.cookies()` 观察到 HttpOnly、Strict 与 Path，`vpn_refresh` 的 Path 仍是 `/api/v1` |
+| R5-06 | PASS | 浏览器第 1 条：手填创建、重复被拒、随机生成、编辑、停用/启用、从未使用的彻底删除；用过的码（经夹具让订单引用它）编辑时折扣禁用，删除后只隐藏，“显示已删除”里可见；第 1 轮 `TestAdminCoupons` 覆盖服务端规则 |
+| R3-05（补） | PASS | 模拟会话不能改密、不能删号（`TestImpersonationIsReadOnly`，且处理函数入口另有显式检查） |
+| 其他 | PASS | `config` 的 `TestImpersonationConfiguration`；`announcement_reads` 的清除（`TestAccountPurge*` 逐表计数为 0） |
+
+- NOT RUN：真实邮件投递；多实例下的并发（均为数据库约束与行锁保证，单实例测试）；`test-node-catalog.py` 的 Mihomo 浏览器用例（由 CI 执行）；真实 Core 客户端联机（第 6 轮 R6-02）；窄屏下新增弹窗与表格的自动化截图。
+- 证据：本机 `artifacts/payment-round5-b/`（`browser-artifacts/screens/`：优惠码、公告管理、用户端公告弹窗、模拟登录横幅），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
+- 对后续轮次的影响：第 6 轮要把“撤销全部模拟会话”做成运维命令或 doctor 检查（回滚前使用）；审查清单增加：模拟会话不能写、返回 Cookie 的属性与路径、公告纯文本渲染；安全审查时留意 `requireAuth` 每次请求多一次 EXISTS 子查询的性能（索引 `sessions.id` 主键，无需额外索引）。

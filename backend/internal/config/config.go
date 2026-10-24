@@ -49,6 +49,9 @@ type Config struct {
 	Payment Payment
 	// Geo is the optional IP location lookup for login records.
 	Geo Geo
+	// ImpersonationTTL is the hard lifetime of an administrator's "sign in as user" session
+	// (IMPERSONATION_MINUTES, handoff_payment_account.md 4).
+	ImpersonationTTL time.Duration
 }
 
 func Load() (Config, error) {
@@ -165,6 +168,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if err := loadGeo(&c); err != nil {
+		return c, err
+	}
+	if err := loadImpersonation(&c); err != nil {
 		return c, err
 	}
 	if err := loadPayment(&c); err != nil {

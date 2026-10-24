@@ -1,4 +1,6 @@
 export type User = { id: string; email: string; name: string; role: string; created_at: string };
+// GET /auth/me while an administrator is looking at the site as this user.
+export type Impersonation = { admin_email: string; expires_at: string };
 export type Plan = {
   id: string;
   name: string;

@@ -947,6 +947,23 @@ test(
             413,
           );
           assert.equal(first.received.length, before);
+          // Announcement text (5000 characters, up to 20 KB) is the one body allowed past 8 KB.
+          const announcements = '/admin/console/announcements';
+          assert.notEqual(
+            (await api(announcements, { method: 'POST', body: 'x'.repeat(20000) })).status,
+            413,
+          );
+          assert.equal(first.received.length, before + 1);
+          assert.equal(
+            (await api(announcements, { method: 'POST', body: 'x'.repeat((32 << 10) + 1) })).status,
+            413,
+          );
+          assert.equal(
+            (await api('/admin/console/coupons', { method: 'POST', body: 'x'.repeat(8193) }))
+              .status,
+            413,
+          );
+          assert.equal(first.received.length, before + 1);
           const redirect = await api('/redirect');
           assert.equal(redirect.status, 502);
           assert.equal((await redirect.json()).error.code, 'upstream_redirect');

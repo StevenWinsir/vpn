@@ -35,6 +35,12 @@ type Session struct {
 	RevokedAt   *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	// Impersonation (handoff_payment_account.md 9.7): non-nil ImpersonatorID marks a session
+	// an administrator opened as this user. HardExpiresAt is its fixed end; refreshing never
+	// extends it. Ordinary sessions leave all three NULL.
+	ImpersonatorID        *string `gorm:"type:uuid"`
+	ImpersonatorSessionID *string `gorm:"type:uuid"`
+	HardExpiresAt         *time.Time
 }
 
 type Plan struct {

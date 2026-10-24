@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AppShell,
   Avatar,
@@ -17,7 +17,9 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
+  IconArrowBackUp,
   IconArrowUpRight,
+  IconEye,
   IconDownload,
   IconLayoutDashboard,
   IconLogout,
@@ -30,7 +32,8 @@ import {
 } from '@tabler/icons-react';
 import { useAuth } from './providers';
 import { appName } from '@/lib/types';
-import { message } from '@/lib/api';
+import { APIError, api, message } from '@/lib/api';
+import { AnnouncementGate } from './announcement-gate';
 import { useMeta } from '@/lib/use-meta';
 
 const links = [
@@ -67,10 +70,65 @@ function SidebarNote() {
     </Text>
   );
 }
+// While an administrator looks at the site as a user (handoff_payment_account.md 9.7): the
+// banner never goes away, counts down the hard limit, and holds the way back. The server
+// enforces the read-only rule; this is only the explanation.
+function useReturnToAdmin() {
+  const [busy, setBusy] = useState(false);
+  const back = () => {
+    setBusy(true);
+    api('/auth/impersonation/return', { method: 'POST', body: '{}' }, false)
+      .then(() => window.location.replace('/admin/console/users'))
+      .catch((e) => {
+        // Without a valid way back the server has already ended the session: sign in again.
+        if (e instanceof APIError && e.status === 401) window.location.replace('/login');
+        else {
+          setBusy(false);
+          notifications.show({ color: 'red', title: '返回失败', message: message(e) });
+        }
+      });
+  };
+  return { busy, back };
+}
+function ImpersonationBanner({ expiresAt, email }: { expiresAt: string; email: string }) {
+  const { reload } = useAuth();
+  const [now, setNow] = useState(() => Date.now());
+  const { busy, back } = useReturnToAdmin();
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const left = Math.max(0, Math.floor((new Date(expiresAt).getTime() - now) / 1000));
+  useEffect(() => {
+    // At the limit the session is gone on the server; asking again sends the page to sign-in.
+    if (left === 0) void reload();
+  }, [left, reload]);
+  return (
+    <div className="impersonation-banner" role="status" data-testid="impersonation-banner">
+      <Group gap="sm" justify="center" wrap="wrap">
+        <IconEye size={18} />
+        <Text size="sm" fw={600}>
+          你正在以 {email} 的身份只读查看，不会产生任何修改。剩余 {Math.floor(left / 60)}:
+          {String(left % 60).padStart(2, '0')}
+        </Text>
+        <Button
+          size="compact-sm"
+          color="dark"
+          loading={busy}
+          leftSection={<IconArrowBackUp size={16} />}
+          onClick={back}
+        >
+          返回管理员
+        </Button>
+      </Group>
+    </div>
+  );
+}
 export function SiteShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { user, logout, loading } = useAuth();
+  const { user, impersonation, logout, loading } = useAuth();
+  const returning = useReturnToAdmin();
   const [opened, { toggle, close }] = useDisclosure();
   const [leaving, setLeaving] = useState(false);
   const authPage = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
@@ -162,14 +220,24 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                     账号设置
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Item
-                    color="red"
-                    onClick={signout}
-                    disabled={leaving}
-                    leftSection={<IconLogout size={16} />}
-                  >
-                    退出登录
-                  </Menu.Item>
+                  {impersonation ? (
+                    <Menu.Item
+                      onClick={returning.back}
+                      disabled={returning.busy}
+                      leftSection={<IconArrowBackUp size={16} />}
+                    >
+                      返回管理员
+                    </Menu.Item>
+                  ) : (
+                    <Menu.Item
+                      color="red"
+                      onClick={signout}
+                      disabled={leaving}
+                      leftSection={<IconLogout size={16} />}
+                    >
+                      退出登录
+                    </Menu.Item>
+                  )}
                 </Menu.Dropdown>
               </Menu>
             ) : (
@@ -209,7 +277,13 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
           </div>
         </AppShell.Navbar>
       ) : null}
-      <AppShell.Main>{children}</AppShell.Main>
+      <AppShell.Main>
+        {user && impersonation ? (
+          <ImpersonationBanner expiresAt={impersonation.expires_at} email={user.email} />
+        ) : null}
+        {children}
+      </AppShell.Main>
+      {user && workspace ? <AnnouncementGate /> : null}
     </AppShell>
   );
 }

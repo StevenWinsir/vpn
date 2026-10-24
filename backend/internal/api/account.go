@@ -91,6 +91,9 @@ func (s *Server) changePassword(c *gin.Context) {
 	if !decode(c, &in) {
 		return
 	}
+	if refuseImpersonated(c) {
+		return
+	}
 	user := currentUser(c)
 	if !passwordFits(in.NewPassword, user) {
 		fail(c, 400, "invalid_password", passwordRule(user))
@@ -158,6 +161,9 @@ func (s *Server) changePassword(c *gin.Context) {
 func (s *Server) requestAccountDeletion(c *gin.Context) {
 	var in deleteAccountInput
 	if !decode(c, &in) {
+		return
+	}
+	if refuseImpersonated(c) {
 		return
 	}
 	user := currentUser(c)

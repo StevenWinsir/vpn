@@ -6,6 +6,8 @@ export const dynamic = 'force-dynamic';
 
 type Context = { params: Promise<{ path: string[] }> };
 const defaultMaxBodyBytes = 8192;
+// Announcement text is up to 5000 characters (20 KB of UTF-8); nothing else needs more than 8 KB.
+const announcementBodyBytes = 32 << 10;
 // Login records keep a short browser description (handoff_payment_account.md 8).
 const maxUserAgentLength = 200;
 const requestHeaders = [
@@ -110,7 +112,11 @@ async function proxy(request: Request, context: Context) {
       : await readBody(
           request,
           signal,
-          path[0] === 'admin' && path[1] === 'nodes' ? 128 << 10 : defaultMaxBodyBytes,
+          path[0] === 'admin' && path[1] === 'nodes'
+            ? 128 << 10
+            : path[0] === 'admin' && path[1] === 'console' && path[2] === 'announcements'
+              ? announcementBodyBytes
+              : defaultMaxBodyBytes,
         );
     const upstream = await fetch(internalURL, {
       method: request.method,

@@ -13,7 +13,12 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconBrandAndroid, IconBrandApple, IconDownload, IconInfoCircle } from '@tabler/icons-react';
+import {
+  IconBrandAndroid,
+  IconBrandApple,
+  IconDownload,
+  IconInfoCircle,
+} from '@tabler/icons-react';
 import {
   grouped,
   iosInstallLink,
@@ -126,7 +131,8 @@ export function DownloadView({
                 </Button>
               </Group>
               <Text size="sm" c="dimmed">
-                请用 iPhone 上的 Safari 打开本页并点击按钮；系统询问“是否安装”时选择“安装”。安装后首次打开，如提示“未受信任的开发者”，到“设置
+                请用 iPhone 上的 Safari
+                打开本页并点击按钮；系统询问“是否安装”时选择“安装”。安装后首次打开，如提示“未受信任的开发者”，到“设置
                 → 通用 → VPN 与设备管理”中信任该开发者。仅限已登记的设备安装。
               </Text>
               <div>
@@ -181,7 +187,8 @@ export function DownloadView({
               升级：回到本页再次安装新版本即可覆盖，记住的密码与 VPN 配置会保留。
             </List.Item>
             <List.Item>
-              卸载：长按图标删除应用，VPN 配置会一并移除；记住的密码随应用数据清除，设备标识可能保留在系统钥匙串中。
+              卸载：长按图标删除应用，VPN
+              配置会一并移除；记住的密码随应用数据清除，设备标识可能保留在系统钥匙串中。
             </List.Item>
             <List.Item>
               若 VPN 在后台因额度或套餐到期断开，会以通知提醒；请在“设置 → 通知”中保持 AsterLink
@@ -195,7 +202,8 @@ export function DownloadView({
             开源许可与源代码
           </Title>
           <Text size="sm" c="dimmed">
-            客户端内置 Mihomo 代理内核（GNU GPL v3），并使用 AndroidX、Kotlin、Go 等开源组件（Apache 2.0
+            客户端内置 Mihomo 代理内核（GNU GPL v3），并使用 AndroidX、Kotlin、Go 等开源组件（Apache
+            2.0
             等许可）。每个版本的完整许可文本（THIRD_PARTY_LICENSES.txt）、依赖清单与对应源代码随安装包一同发布
             {(android?.sourceUrl ?? ios?.sourceUrl) ? (
               <>

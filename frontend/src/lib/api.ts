@@ -26,6 +26,8 @@ const noRefreshPaths = [
   '/auth/reset-password',
   '/auth/logout',
   '/auth/refresh',
+  // A 401 here means the way back is gone; refreshing the user's session would only hide it.
+  '/auth/impersonation/return',
 ];
 // Final 401 notification (handoff_auth.md 9.1): a protected request that still fails after the
 // single refresh means the server ended this session, for example after a password reset on
