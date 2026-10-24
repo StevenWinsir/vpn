@@ -1,0 +1,126 @@
+# 支付、账号与管理后台：上线、实测、排查与回滚
+
+对应交接书 `handoff_payment_account.md` 第 14 节第 6 轮与第 15、16 节。本文只写操作，设计理由见交接书；各项功能的细节见 `backend/DEPLOYMENT.md` 的对应小节。
+
+## 结论边界（先读）
+
+- 本仓库的所有支付验证都针对**按《支付接入技术文档》写成的本地模拟网关**。模拟网关只复现文档里写明的行为，不是真实网关。**真实网关的行为只有按下文“真实付款实测清单”付一次款才知道**，第一笔真实付款之前不要对外开放收款。
+- 回调没有签名、签名不覆盖金额，因此自动开通完全依赖 `PAYMENT_NOTIFY_ALLOWED_IPS` 和金额下限。白名单为空时系统照常启动，但**所有回调都进入“待人工核对”，不会自动开通**，这是有意的安全默认。
+- 本机无法验证的内容（真实网关、真实公网 HTTPS、真实邮件、真实 IP 归属地服务、四个平台 APP 的真机界面）不在 CI 内，需要你在部署后按清单确认。
+
+## 一、发布顺序
+
+1. 备份数据库，在新版本目录执行迁移（可重复执行，旧版本忽略新列和新表）：
+   ```bash
+   cd backend && ./api -migrate
+   ```
+2. 先保持 `PAYMENT_ENABLED=false` 上线新版本：网站没有可见变化，节点管理、APP、旧的测试购买照常。
+3. 配置 Nginx 与 `TRUSTED_PROXIES`（下一节），再填写 `PAYMENT_CHANNEL`、`PAYMENT_SECRET`、`PAYMENT_NOTIFY_URL`（`https://<后端域名>/api/v1/payments/notify`）、`WEBSITE_BASE_URL`。开启 `PAYMENT_ENABLED=true`、`PAYMENT_TEST_PRICE_ENABLED=true`、`PAYMENT_TEST_PRICE=0.01`，`PAYMENT_TEST_PRICE_EMAILS` 只填你自己的测试账户，`PAYMENT_NOTIFY_ALLOWED_IPS` **先留空**，重启后端。
+4. 运行只读诊断，确认没有意外：
+   ```bash
+   cd backend && ./doctor
+   ```
+   `payment` 段应显示 `enabled: true`、`auto_fulfil: false`、`test_price: true`，`warnings` 中有 `payment_callbacks_manual_review_only` 与 `payment_test_price_enabled`（此时是预期的）。
+5. 按第三节完成 U-01 … U-09，在白名单里填入真实回调来源并重启。
+6. 关闭测试价（`PAYMENT_TEST_PRICE_ENABLED=false`）并重启，再运行一次 `./doctor`：两条上述警告应当消失。观察 `payment_orders_need_review` 和 `rejected_callbacks_24h`。
+7. 管理后台入口是 `/admin/console/…`（用户、订单、登录记录、优惠码、公告），与 `/admin/nodes` 是两套页面，不依赖节点目录开关。
+
+## 二、Nginx、真实来源地址与回调路径
+
+回调是网关服务器直接 `POST` 到 `PAYMENT_NOTIFY_URL`（`Content-Type: application/json`，不带 Cookie，不带 `Origin`）。后端用 TCP 对端或受信任代理传来的 `X-Forwarded-For` 判断来源，所以必须保证后端看到的是**网关的真实地址**：
+
+1. 后端域名的 `server` 块必须用 `proxy_set_header X-Forwarded-For $remote_addr;`（**覆盖**，不是追加）。不覆盖时，攻击者可以自填 `X-Forwarded-For` 冒充白名单地址。完整示例见 `docs/deployment.md`“真实来源地址”。
+2. `backend/.env` 设置 `TRUSTED_PROXIES=127.0.0.1`（Nginx 与 Go 同机时），只有这些对端提供的转发头会被采用。未设置时 Go 看到的永远是 Nginx 的 `127.0.0.1`，回调来源会显示为本机，**白名单无法匹配**。
+3. 回调地址使用后端域名，由 Nginx 直接转发给 Go，不要经过 Next.js 前端代理，也不要加登录、IP 限速或 WAF 验证码；回调路径对网关必须可达。后端自带每个来源地址每分钟 600 次的上限。
+4. 3000、8080 只监听回环或受防火墙保护的私网，外部不能绕过 Nginx 直接访问，否则任何人都能自填来源头。
+5. 配置后用 U-01 的结果验证：后台订单详情“回调流水”里的来源 IP 应该是网关公网地址，而不是 `127.0.0.1` 或你的 Nginx。若显示本机或内网地址，说明第 1、2 条没有生效。
+
+## 三、真实付款实测清单（由你执行，结果由你填写）
+
+前提：公网 HTTPS 部署完成；第一节第 3 步的配置完成；白名单为空。每一步在 `handoff_payment_account.md` 第 18 节记录日期、`trade_no` 后 6 位和结果。**“本地模拟”列只说明这一步在模拟网关上已经走通，不代表真实网关一定如此。**
+
+| 编号 | 步骤 | 预期 | 本地模拟网关 |
+| --- | --- | --- | --- |
+| U-01 | 测试账户用微信支付购买一个套餐 | 网关显示绿色页面和 0.01 元二维码；付款 5 秒后跳回结果页。白名单为空，订单为“待人工核对”，后台订单详情的回调流水能看到来源 IP | `TestUserPaymentChecklist` U-01 |
+| U-02 | 把 U-01 看到的来源 IP 填入 `PAYMENT_NOTIFY_ALLOWED_IPS`，重启后端；在后台对该订单“人工确认到账”（先在网关商户后台核对金额） | 订阅开通；之后的回调可以自动开通 | 同上 U-02 |
+| U-03 | 用支付宝重复一次 | 蓝色页面；付款后自动到账，结果页显示已到账（支付宝回调若来自另一个 IP，重复 U-01、U-02 补一次） | 同上 U-03 |
+| U-04 | 打开支付页后不付款，等待 2 分钟，点击超时页上的按钮 | 跳回结果页，显示已超时、未扣款 | 同上 U-04 |
+| U-05 | 打开支付页后直接关闭，立刻重新购买同一套餐 | 第二笔可正常下单，网关页面显示 0.02 元（0.01 加去重 0.01），付款后到账；第一笔 3 分钟后变为已超时 | 同上 U-05 |
+| U-06 | 带一个有效优惠码购买 | 报价显示折扣，最低 0.01 元；付款后优惠码已用次数加 1 | 同上 U-06 |
+| U-07 | 同一套餐再付一次 | 订阅延长天数并累加流量，APP 保持在线 | 同上 U-07，客户端兼容见 `TestClientCompatibilityWithPayments` |
+| U-08 | 关闭测试价，用不在名单中的账户查看报价 | 显示正式价格（不必真付） | 同上 U-08 |
+| U-09 | 检查后端日志 | 没有密钥、签名或完整网关 URL；回调行只带 `trade …` 后 6 位 | 同上 U-09，另见 `TestSecurityLogsStayClean` |
+
+任何一步与预期不符，**先看**后台订单详情里的回调流水（来源 IP、处理结果）和后端日志，再对照下一节判断是网关行为与文档不一致，还是本地配置问题；与文档不一致的记入第 18 节，再决定是否单开修复轮次。
+
+## 四、排查指引
+
+后台“订单与支付”→ 订单详情的**回调流水**是第一手资料。`处理结果`的含义：
+
+| 结果 | 含义 |
+| --- | --- |
+| `accepted` | 回调已被接受：订单已开通，或收到“失败”回调后订单标为失败 |
+| `duplicate` | 该订单已经付款，重复回调不再处理 |
+| `ip_rejected` | 白名单非空，来源地址不在其中；订单未动 |
+| `unknown_order` | `trade_no` 在本站没有对应订单 |
+| `invalid` | 请求格式、金额格式或 `trade_status` 不合法（文档规定 `TRADE_SUCCESS` / `TRADE_FAILED`） |
+| `review` | 进入待人工核对，原因见订单的核对原因 |
+| `ignored` | 订单状态不允许再被回调改变（例如已被管理员关闭） |
+
+核对原因：`unverified_source`（白名单为空）、`amount_mismatch`（实付少于应付，或高出超过 `PAYMENT_AMOUNT_TOLERANCE_CENTS`）、`state_conflict`（付款时套餐已不可开通，例如有效期内换了套餐）、`callback_missing`（网关说已付，但没有收到可信回调）、`gateway_unreachable`（长时间查不到网关状态）、`closed_by_admin`。
+
+| 现象 | 可能原因与处理 |
+| --- | --- |
+| 下单后网关返回“签名验证失败” | 先核对 `PAYMENT_SECRET` 与商户号。**文档“签名示例”给出的值与文档文字描述的算法不一致**（算法 `MD5(trade_no + secret)` 得到的是 `becd5f2a…`），本站按算法实现；若网关确实按示例值验签，需要回报并单开修复 |
+| 下单后网关返回“订单号已存在” | 同一 `trade_no` 重复提交；正常下单每次都是新号。若重复出现，检查是否有人手工复制了支付链接 |
+| 付款后订单一直“待人工核对”，原因 `unverified_source` | 白名单为空或还没填。按 U-02 填入真实来源并重启；已付的订单用“人工确认到账” |
+| 回调流水里来源是 `127.0.0.1` / 内网地址 | `TRUSTED_PROXIES` 或 Nginx 覆盖转发头没有配置，见第二节 |
+| 回调流水里全是 `ip_rejected`，但来源看起来是网关 | 网关有多个出口地址；把该地址也加入白名单（逗号分隔，可写 CIDR），重启 |
+| 回调流水为空 | 回调没到后端：核对 `PAYMENT_NOTIFY_URL`、Nginx、防火墙和证书；网关能否访问该地址 |
+| 订单 `amount_mismatch` | 对照网关页面金额。同金额同支付方式有未超时订单时，网关会逐笔加 0.01，容差默认 0.50 元；确认实收后“人工确认到账”并填写实收金额 |
+| 结果页一直显示“确认中” | 回调还没到或被拒；结果页只是提示，不会开通。看回调流水；本地窗口（默认 180 秒）过后对账循环会把订单变成已超时或待核对 |
+| 付款成功但订单显示“已超时” | 晚到的成功回调仍会开通（已付款优先）。若没有，查看回调流水；已被管理员关闭的订单不会再被回调改变 |
+| 用户说“优惠码无效” | 不存在、已停用、未到期或已过期、已删除，界面统一提示“无效或已失效”；不适用于所选套餐、已用完、本人已用过会有各自提示。每个账号每小时最多 20 次无效尝试 |
+| 用户删除账号被拒绝，提示还有未完成订单 | 订单需要等到失效（最多 `PAYMENT_PENDING_LIMIT_SECONDS`）再删 |
+| `./doctor` 报 `account_purge_stuck` | 有账号处于 `deleting` 超过 1 小时：看后端日志 `account purge has failed`（只含用户 UUID），通常是节点还没确认释放；超过 `NODE_AGENT_SETTLE_GRACE_SECONDS` 后会自动清除 |
+| 管理员模拟登录后看不到公告、无法操作 | 这是设计：模拟会话只读、不显示公告、不写登录记录，到点（`IMPERSONATION_MINUTES`）自动结束 |
+
+后端日志不输出密钥、签名、完整 `trade_no`、网关 URL、密码或令牌；回调相关行形如 `payment notify <id>: review (trade …a1b2c3)`。
+
+## 五、回滚
+
+1. `PAYMENT_ENABLED=false` 并重启，停止新下单。确认没有活动中的待付订单（`./doctor` 的 `payment.pending_orders` 为 0；待付订单最多存活 `PAYMENT_PENDING_LIMIT_SECONDS`）。
+2. **撤销全部模拟登录会话**（旧版本不认识“只读”规则，会把它们当成可写的普通登录）：
+   ```bash
+   cd backend && ./api -revoke-impersonation
+   ./doctor    # impersonation.active_sessions 应为 0
+   ```
+   每个被撤销的会话在审计里留一条 `admin.impersonate_revoked`。命令可重复执行。
+3. 换回上一版本的二进制并重启。**不需要也没有反向迁移**：新列可空或有默认值，新表被旧版本忽略。处于 `deleting` 的账号在旧版本同样无法登录，数据等回到新版本后由清除循环删除。
+4. 回滚期间到达的网关回调没有处理程序（404）。回到新版本后，对账循环或人工核对会处理这些订单；晚到的成功回调仍然开通。
+5. 已有演练证据见 `scripts/test-release-rehearsal.py`（备份 → 迁移 → 全流程 → 两次回滚 → 再升级），它在私有数据库上运行，不触碰任何线上环境。
+
+## 六、安全审查结论（R6-03）
+
+逐项检查及证据（均为可重复执行的测试）：
+
+| 检查项 | 结论 | 证据 |
+| --- | --- | --- |
+| 回调只认白名单来源；伪造转发头无效 | 通过 | `TestSecurityPaymentBypassAttempts`（`X-Forwarded-For` / `X-Real-IP` / `Forwarded` 等头；白名单外地址 → `ip_rejected`） |
+| 金额下限 | 通过 | 同上：少付、超过容差、畸形金额均不开通 |
+| `trade_no` 不可预测 | 通过 | 8 位日期加 12 位 `crypto/rand`；2000 个样本无重复，相邻号码为未知订单 |
+| 浏览器不能指定金额 | 通过 | 订单和报价请求中的任何金额、状态、用户、回调地址字段都被拒绝（`invalid_json`）；价格只在服务端由套餐、测试价名单和优惠码算出 |
+| 模拟会话只读 | 通过 | `TestSecurityRouteAccessMatrix` 遍历整张路由表：所有写路由返回 `impersonation_read_only`；`TestImpersonation*` |
+| 二次验证 | 通过 | 高风险管理操作要求管理员再次输入密码，错误次数按管理员计数（5 次 / 15 分钟）；见 `TestConsole*` |
+| 日志脱敏 | 通过 | `TestSecurityLogsStayClean`、`TestUserPaymentChecklist` U-09：无密钥、签名、网关 URL、完整订单号、密码 |
+| XSS | 通过 | 公告与名称按纯文本渲染；接口一律 JSON，带 `nosniff`、`X-Frame-Options: DENY`、`Cache-Control: no-store`；全仓库无 `dangerouslySetInnerHTML`；浏览器用例验证 `<script>` 不执行 |
+| 越权访问（IDOR） | 通过 | `TestSecurityObjectAccess`：他人订单 404、列表只含本人、登录记录按用户隔离、公告确认不能指向不存在的公告；路由表测试：所有 `/admin/*` 对普通用户拒绝，所有非公开路由对匿名用户 401（新增路由若漏写鉴权会使测试失败） |
+| 优惠码枚举限流 | 通过 | 每账号每小时 20 次无效尝试后返回 429（`TestPaymentCoupons`）；不存在、已停用、已过期、已删除的返回完全相同 |
+| 生产配置拒绝模拟购买 | 通过 | 配置加载拒绝 `TEST_PURCHASE_ENABLED=true`（`TestPaymentProductionRules`）；即使该标志被带入生产，处理函数也返回 403（`TestProductionConfigurationDefenses`） |
+
+已知且接受的剩余风险：
+
+- 回调没有签名：在白名单之外的伪造请求不能开通订单，但白名单为空时（只在首次学习来源阶段）任何知道订单号的人都能把订单推进到“待人工核对”，不会自动开通；订单号只有订单所有者和网关知道。
+- 优惠码的“不适用 / 已用完 / 已用过”提示会说明该码存在，受每账号每小时 20 次限制，注册需要邮箱验证。
+- 回调接口按来源地址限速，且每次回调都会写一行 `payment_notifications`（保留 180 天）。如果后端直接暴露在公网，可在 Nginx 对该路径另加限速；同机部署 + 第二节配置下，外部流量无法绕过 Nginx。
+- `requireAuth` 对每个请求多一次会话关联子查询（主键索引，开销可忽略）。

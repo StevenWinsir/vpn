@@ -9,7 +9,12 @@ On the current binary an administrator builds a node group of same-named servers
 capacities, and native devices are admitted through both the v3 and the older /config path
 under the device cap and server capacity; after the rollback the old binary serves the
 dual-written columns (one line per server, the pre-group behaviour) and the next upgrade
-restores the groups. The browser
+restores the groups. A fourth binary, the release just before payments (handoff_payment_account.md
+16), is the payment-era rollback target: it must keep serving accounts, orders and the node
+groups over data that now holds gateway orders, coupons and announcements, answer the callback
+route it does not have with a plain 404, and leave a live pending order for the re-upgraded
+binary to settle. Before any rollback the operator command revokes impersonation sessions
+(`api -revoke-impersonation`, checked with the doctor). The browser
 stage needs a mail inbox, which a normal binary cannot have without trusting a test SMTP server
 in the machine's trust store; it runs the current API as a Go test assembly instead, with the
 real worker delivering into a capture inbox (TestReleaseRehearsalFixture).
@@ -51,7 +56,11 @@ LEGACY_REF = '67e7b37f935e654e4378c14a32bc888ccff2065f'
 ROLLBACK_REF = 'a63a882'
 LEASES_QUERY = "SELECT count(*) || ':' || md5(COALESCE(string_agg(id::text || state, ',' ORDER BY id), '')) FROM rehearsal.connection_leases"
 ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key',
-    'node_assignments': "user_id::text || group_id", 'usage_buckets': "user_id::text || bucket_start"}
+    'node_assignments': "user_id::text || group_id", 'usage_buckets': "user_id::text || bucket_start",
+    'ip_geo_caches': 'ip', 'announcement_reads': "announcement_id::text || user_id"}
+# PR #58 merge: the release immediately before the payment, account and console work.
+PAYMENT_ROLLBACK_REF = '9ee9066'
+PAYMENT_TABLES = ['orders', 'payment_notifications', 'coupons', 'announcements', 'announcement_reads', 'login_events', 'ip_geo_caches']
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -96,6 +105,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--legacy-ref', default=LEGACY_REF, help='release that produced the existing data')
     parser.add_argument('--rollback-ref', default=ROLLBACK_REF, help='accepted release to roll back to (must enforce verification and predate node groups)')
+    parser.add_argument('--payment-rollback-ref', default=PAYMENT_ROLLBACK_REF, help='release just before the payment work (must not have the payment routes)')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -105,7 +115,7 @@ def main():
     env = {key: value for key, value in os.environ.items() if not key.startswith(
         ('DATABASE_', 'PG', 'JWT_', 'APP_', 'API_', 'NEXT_PUBLIC_', 'HTTP_', 'CLIENT_', 'AUTO_MIGRATE', 'COOKIE_', 'TEST_PURCHASE', 'ALLOWED_ORIGINS',
          'SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES', 'CATALOG_', 'REHEARSAL_', 'NATIVE_TEST_',
-         'NODE_', 'GRANT_'))}
+         'NODE_', 'GRANT_', 'PAYMENT_', 'IMPERSONATION_', 'GEOIP_'))}
     env.update(PATH='/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:' + env.get('PATH', ''),
         LC_ALL='C', LANG='C', GOPROXY='off', GOTOOLCHAIN='local', CGO_ENABLED='0',
         NEXT_TELEMETRY_DISABLED='1')
@@ -155,6 +165,12 @@ def main():
                 raise RuntimeError('Private database assertion failed (details suppressed)')
             return result.stdout.strip()
 
+        def doctor(environment):
+            result = subprocess.run([str(doctor_binary)], cwd=root, env=environment, capture_output=True, text=True, timeout=60)
+            if result.returncode:
+                raise RuntimeError('doctor failed (details suppressed)')
+            return json.loads(result.stdout)
+
         def columns(database, table):
             return sql(database, f"SELECT string_agg(quote_ident(column_name), ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='rehearsal' AND table_name='{table}'")
 
@@ -165,8 +181,8 @@ def main():
                 f"FROM (SELECT {only[table] if only else '*'} FROM rehearsal.{table}) t")
                 for table in tables}
 
-        def api_env(database, port, mail=False, catalog=False):
-            return dict(env, **(mail_env if mail else {}), **(catalog_env if catalog else {}), APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
+        def api_env(database, port, mail=False, catalog=False, payment=False):
+            return dict(env, **(mail_env if mail else {}), **(catalog_env if catalog else {}), **(payment_env if payment else {}), APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
                 DATABASE_HOST='127.0.0.1', DATABASE_PORT=str(pg_port), DATABASE_NAME=database,
                 DATABASE_USER='postgres', DATABASE_PASSWORD=secret, DATABASE_SCHEMA='rehearsal',
                 DATABASE_SSLMODE='disable', JWT_SECRET=jwt, ALLOWED_ORIGINS=web_url,
@@ -174,9 +190,9 @@ def main():
                 CLIENT_ALLOW_TEST_ENTITLEMENTS='true', CLIENT_PROFILE_DIR=str(profiles),
                 BCRYPT_COST='10', AUTH_REQUESTS_PER_MINUTE='10000', API_REQUESTS_PER_MINUTE='100000')
 
-        def start_api(binary, database, name, mail=False, catalog=False):
+        def start_api(binary, database, name, mail=False, catalog=False, payment=False):
             port = free_port()
-            process = spawn(name, [str(binary)], api_env(database, port, mail, catalog))
+            process = spawn(name, [str(binary)], api_env(database, port, mail, catalog, payment))
             client = Client(f'http://127.0.0.1:{port}')
             for _ in range(150):
                 if process.poll() is not None:
@@ -210,15 +226,18 @@ def main():
 
             summary['legacy_commit'], legacy_binary = build_ref('legacy', args.legacy_ref)
             summary['rollback_commit'], rollback_binary = build_ref('rollback', args.rollback_ref)
+            summary['payment_rollback_commit'], payment_rollback_binary = build_ref('payment-rollback', args.payment_rollback_ref)
+            doctor_binary = root / 'doctor-current'
+            run('build-doctor-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(doctor_binary), './cmd/doctor'], cwd=ROOT / 'backend')
             current_binary = root / 'api-current'
             run('build-api-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(current_binary), './cmd/api'], cwd=ROOT / 'backend')
             summary['binary_sha256'] = {name: hashlib.sha256(binary.read_bytes()).hexdigest()
-                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary)]}
+                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary)]}
             # Identical binaries are reported, not hidden: a tree whose production backend equals the
             # rollback target makes the rollback step a same-binary restart over the newer data.
             digests = summary['binary_sha256']
-            summary['distinct_backend_versions'] = len(set(digests.values())) == 3
-            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback')]
+            summary['distinct_backend_versions'] = len(set(digests.values())) == 4
+            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback')]
                 if digests[a] == digests[b])
             secret, jwt = secrets.token_urlsafe(36), secrets.token_urlsafe(48)
             password_file = root / 'pg-password'
@@ -236,6 +255,12 @@ def main():
             # The database node catalog (servers sealed with a drill-only key); the earlier
             # stages use the static per-plan profile, as the legacy release did.
             catalog_env = {'CLIENT_NODE_CATALOG_ENABLED': 'true', 'NODE_ENCRYPTION_KEY': base64.b64encode(secrets.token_bytes(32)).decode()}
+            # Payments on the current binary: a gateway address nothing listens on (the drill never
+            # contacts a real gateway; result-page status queries just fail), a secret made here,
+            # and this machine's loopback as the one allowed callback source.
+            payment_env = {'PAYMENT_ENABLED': 'true', 'PAYMENT_GATEWAY_URL': f'http://127.0.0.1:{free_port()}', 'PAYMENT_CHANNEL': '1001',
+                'PAYMENT_SECRET': secrets.token_urlsafe(24), 'PAYMENT_NOTIFY_URL': f'{web_url}/api/v1/payments/notify',
+                'PAYMENT_NOTIFY_ALLOWED_IPS': '127.0.0.1', 'WEBSITE_BASE_URL': web_url}
             profiles = root / 'profiles'
             profiles.mkdir(mode=0o700)
             (profiles / 'pro.yaml').write_text('proxies:\n  - {name: Drill-Only, type: http, server: 127.0.0.1, port: 9}\nproxy-groups:\n  - {name: VIP, type: select, proxies: [Drill-Only]}\nrules: ["MATCH,VIP"]\n')
@@ -413,7 +438,7 @@ def main():
             for account, value in [(admin_email, admin_password), (second_email, second_password)]:
                 run('create-account', [str(current_binary), '-create-admin', account], environment=api_env('upgrade', free_port()), stdin=json.dumps({'password': value}))
             sql('upgrade', f"UPDATE rehearsal.users SET role = 'user' WHERE email = '{second_email}'")
-            process, current = start_api(current_binary, 'upgrade', 'api-groups', catalog=True)
+            process, current = start_api(current_binary, 'upgrade', 'api-groups', catalog=True, payment=True)
             admin = Client(current.url)
             admin.call('/auth/login', {'email': admin_email, 'password': admin_password}, origin=web_url)
             group = admin.call('/admin/node-groups', {'name': 'JP1', 'region': 'JP', 'line_type': 'direct', 'rate_permille': 1500,
@@ -461,6 +486,75 @@ def main():
             assert sql('upgrade', f"""SELECT count(*) FROM rehearsal.nodes n JOIN rehearsal.node_groups g ON g.id = n.group_id JOIN rehearsal.node_configs c ON c.node_id = n.id
                 WHERE g.id = '{group['id']}' AND n.name = g.name AND n.region = g.region AND n.line_type = g.line_type AND n.rate_permille = g.rate_permille AND c.plan_ids = g.plan_ids""") == '3'
             assert sql('upgrade', "SELECT count(*) FROM rehearsal.connection_leases WHERE state = 'active'") == '3'
+            # Payments, coupons, announcements and an impersonation session on the current binary
+            # (handoff_payment_account.md 6, 9). The drill's loopback address is the only allowed
+            # callback source, so the callbacks below are the trusted kind.
+            def notify(order, cents, status='TRADE_SUCCESS'):
+                money = f'{cents // 100}.{cents % 100:02d}'
+                return Client(current.url).call('/payments/notify', {'trade_no': order['trade_no'], 'name': order['plan_name'], 'money': money, 'trade_status': status})
+
+            gateway_url = payment_env['PAYMENT_GATEWAY_URL']
+            owner_id = owner.call('/auth/me')['user']['id']
+            quote = owner.call('/payments/quote', {'plan_id': 'pro', 'coupon_code': ''}, origin=web_url)['quote']
+            assert quote['purchasable'] and quote['amount_cents'] == quote['list_price_cents'] and quote['test_price'] is False, quote
+            paid_before = sql('upgrade', f"SELECT count(*) FROM rehearsal.orders WHERE user_id = '{owner_id}'")
+            placed = owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)
+            order = placed['order']
+            assert order['status'] == 'pending' and order['amount_cents'] == quote['amount_cents'] and placed['pay_url'].startswith(gateway_url + '/submit?'), order
+            notify(order, order['amount_cents'] - 1)  # too little: never paid, left for a person
+            assert owner.call('/payments/orders/' + order['id'])['order']['status'] == 'review'
+            assert sql('upgrade', f"SELECT status || ':' || review_reason FROM rehearsal.orders WHERE id = '{order['id']}'") == 'review:amount_mismatch'
+            placed = owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'alipay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)
+            order = placed['order']
+            notify(order, order['amount_cents'])
+            notify(order, order['amount_cents'])  # the gateway may repeat itself
+            assert owner.call('/payments/orders/' + order['id'])['order']['status'] == 'paid'
+            assert sql('upgrade', f"SELECT count(*) FROM rehearsal.orders WHERE user_id = '{owner_id}' AND status = 'paid'") == '1'
+            assert sql('upgrade', f"SELECT count(*) FROM rehearsal.payment_notifications WHERE order_id = '{order['id']}'") == '2'
+            assert sql('upgrade', f"SELECT (is_test = false) || ':' || plan_id FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'") == 'true:pro'
+            assert owner.call('/orders')['total'] == int(paid_before) + 2
+            # An administrator creates a coupon; another customer pays with it.
+            coupon = admin.call('/admin/console/coupons', {'code': 'DRILL10', 'discount_type': 'percent', 'percent_off': 10, 'plan_ids': ['pro'],
+                'max_uses': 5, 'per_user_limit': 1, 'enabled': True, 'version': 0}, origin=web_url, expected=201)['coupon']
+            discounted = second.call('/payments/quote', {'plan_id': 'pro', 'coupon_code': ' drill10 '}, origin=web_url)['quote']
+            assert discounted['coupon']['applied'] and discounted['discount_cents'] == quote['list_price_cents'] // 10, discounted
+            bought = second.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': 'drill10'}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+            assert bought['amount_cents'] == discounted['amount_cents'] and bought['coupon_code'] == coupon['code']
+            notify(bought, bought['amount_cents'])
+            assert sql('upgrade', f"SELECT used_count FROM rehearsal.coupons WHERE id = '{coupon['id']}'") == '1'
+            # Announcements: one published and acknowledged by the owner, one left unread.
+            for title in ['Drill notice one', 'Drill notice two']:
+                note = admin.call('/admin/console/announcements', {'title': title, 'body': title + ' body', 'version': 0}, origin=web_url, expected=201)['announcement']
+                admin.call(f"/admin/console/announcements/{note['id']}/publish", {'version': note['version']}, origin=web_url)
+                time.sleep(1.1)  # publication order is by time
+                if title.endswith('one'):
+                    first_note = note
+            assert [item['title'] for item in owner.call('/me/announcements')['announcements']] == ['Drill notice one', 'Drill notice two']
+            owner.call(f"/me/announcements/{first_note['id']}/ack", {}, origin=web_url)
+            assert [item['title'] for item in owner.call('/me/announcements')['announcements']] == ['Drill notice two']
+            # A read-only impersonation session is left open on purpose.
+            impersonator = Client(current.url)
+            impersonator.call('/auth/login', {'email': admin_email, 'password': admin_password}, origin=web_url)
+            impersonator.call(f'/admin/console/users/{owner_id}/impersonate', {'admin_password': admin_password}, origin=web_url)
+            assert impersonator.call('/auth/me')['impersonation']['admin_email'] == admin_email
+            impersonator.call('/orders/test-purchase', {'plan_id': 'pro'}, origin=web_url, key=str(uuid.uuid4()), expected=403, code='impersonation_read_only')
+            assert impersonator.call('/me/announcements')['announcements'] == []
+            current_api_env = api_env('upgrade', free_port(), catalog=True, payment=True)
+            report = doctor(current_api_env)
+            assert report['payment']['enabled'] and report['payment']['auto_fulfil'] and report['payment']['review_orders'] == 1, report['payment']
+            assert report['impersonation']['active_sessions'] == 1 and 'impersonation_sessions_active_revoke_before_rollback' in report['warnings'], report
+            assert report['missing_tables'] == [], report['missing_tables']
+            serialized = json.dumps(report)
+            assert payment_env['PAYMENT_SECRET'] not in serialized and payment_env['PAYMENT_GATEWAY_URL'] not in serialized and payment_env['PAYMENT_NOTIFY_URL'] not in serialized
+            # The operator command ends it before any rollback (plan 16).
+            run('revoke-impersonation', [str(current_binary), '-revoke-impersonation'], environment=current_api_env)
+            assert 'impersonation sessions revoked: 1' in (output / 'revoke-impersonation.log').read_text()
+            assert sql('upgrade', 'SELECT count(*) FROM rehearsal.sessions WHERE impersonator_id IS NOT NULL AND revoked_at IS NULL') == '0'
+            assert sql('upgrade', "SELECT count(*) FROM rehearsal.admin_audits WHERE action = 'admin.impersonate_revoked'") == '1'
+            impersonator.call('/auth/me', expected=401, code='unauthorized')
+            report = doctor(current_api_env)
+            assert report['impersonation']['active_sessions'] == 0 and 'impersonation_sessions_active_revoke_before_rollback' not in report['warnings'], report
+            stale_impersonation = list(impersonator.jar)
             assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
             stop(process)
             summary['checks'].append('current binary with the database catalog: an administrator creates group JP1 (pro, 1.5x) and imports 3 same-named servers of capacity 1; the client catalog lists the group once; one device admitted through /connections and one through the older /config (echoing the group id), the third refused (403 device_limit); a second account takes the last slot and its next device is refused (409 group_full); every server 1/1 online; /me/devices shows 2 online on JP1, /me/usage-history 8 intervals holding the 12000 new bytes at 1.5x (plus the earlier 1000 at 1x); legacy server columns and plan lists dual-written from the group')
@@ -483,7 +577,7 @@ def main():
             assert sql('upgrade', 'SELECT count(*) FROM rehearsal.users') == users_before
             Client(old.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
             old.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
-            assert old.call('/orders')['total'] == 1
+            assert old.call('/orders')['total'] == 3
             for index, token_value in enumerate(tokens):
                 Client(old.url).call('/client/traffic', payloads[index], token=token_value, expected=401, code='native_session_expired')
             assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
@@ -502,6 +596,11 @@ def main():
             Client(old.url).call('/client/traffic', {'sequence': 1, 'upload_bytes': 400, 'download_bytes': 600}, token=token)
             ledger_units += 1000 * 1500
             assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
+            # The revoked impersonation session stays dead on the older release as well.
+            stale_older = Client(old.url)
+            for cookie in stale_impersonation:
+                stale_older.jar.set_cookie(cookie)
+            stale_older.call('/auth/me', expected=401, code='unauthorized')
             # The old binary neither reads nor writes the new tables.
             assert sql('upgrade', LEASES_QUERY) == leases_before_rollback
             stop(process)
@@ -514,10 +613,74 @@ def main():
             assert sql('upgrade', 'SELECT count(*) FROM rehearsal.nodes WHERE group_id IS NULL') == '0'
             stop(process)
             summary['checks'].append('re-upgrade after the rollback: migration repeatable, no ungrouped server, the catalog lists group JP1 once again for the session created on the old binary')
+            # Rollback to the release just before payments (plan 16, R6-01). A live pending order is
+            # open, an account is waiting to be purged, and the earlier impersonation was revoked.
+            run('migration-before-payment-rollback', [str(current_binary), '-migrate'], environment=api_env('upgrade', free_port()))
+            process, ready = start_api(current_binary, 'upgrade', 'api-payment-ready', catalog=True, payment=True)
+            doomed_email, doomed_password = 'doomed-' + str(uuid.uuid4()) + '@example.invalid', secrets.token_urlsafe(24)
+            run('create-doomed', [str(current_binary), '-create-admin', doomed_email], environment=api_env('upgrade', free_port()), stdin=json.dumps({'password': doomed_password}))
+            sql('upgrade', f"UPDATE rehearsal.users SET role = 'user' WHERE email = '{doomed_email}'")
+            ready_owner = Client(ready.url)
+            ready_owner.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            pending = ready_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+            assert pending['status'] == 'pending'
+            before_new_tables = {table: value for table, value in fingerprint('upgrade', ['coupons', 'payment_notifications', 'announcements', 'announcement_reads', 'ip_geo_caches']).items()}
+            orders_before = fingerprint('upgrade', ['orders'])
+            stop(process)
+            # The account's first deletion phase has run; the purge has not (the state a rollback in
+            # that window finds). Set directly, since the drill's own purge loop would finish it.
+            sql('upgrade', f"UPDATE rehearsal.users SET status = 'deleting', deletion_requested_at = now() WHERE email = '{doomed_email}'")
+            process, earlier = start_api(payment_rollback_binary, 'upgrade', 'api-payment-rollback', mail=True, catalog=True)
+            rolled = Client(earlier.url)
+            rolled.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            old_orders = rolled.call('/orders')
+            assert old_orders['total'] == 4, old_orders
+            assert sorted(item['status'] for item in old_orders['orders']) == sql('upgrade', f"SELECT string_agg(status, ',' ORDER BY status) FROM rehearsal.orders WHERE user_id = '{owner_id}'").split(','), old_orders
+            assert {item['status'] for item in old_orders['orders']} >= {'pending', 'review', 'paid'}, old_orders
+            Client(earlier.url).call('/auth/login', {'email': doomed_email, 'password': doomed_password}, origin=web_url, expected=401, code='invalid_credentials')
+            old_admin = Client(earlier.url)
+            old_admin.call('/auth/login', {'email': admin_email, 'password': admin_password}, origin=web_url)
+            assert sorted(node['id'] for node in old_admin.call('/admin/nodes')['nodes']) == server_ids
+            assert [item['id'] for item in old_admin.call('/admin/node-groups')['groups']] == [group['id']]
+            earlier_token = native_login(earlier.url, email, new_password)
+            assert [(node['id'], node['name']) for node in Client(earlier.url).call('/client/nodes', token=earlier_token)['nodes']] == [(group['id'], 'JP1')]
+            # The group is full of leases that have not run out yet (the earlier release enforces capacity),
+            # so admission itself is refused the way the current binary refuses it.
+            Client(earlier.url).call('/client/config?' + urllib.parse.urlencode({'node_id': group['id']}), token=earlier_token, expected=409, code='group_full')
+            assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
+            # The earlier release has no payment routes: a callback is a plain 404 and nothing is touched.
+            try:
+                urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(urllib.request.Request(earlier.url + '/api/v1/payments/notify',
+                    data=json.dumps({'trade_no': pending['trade_no'], 'name': 'x', 'money': '1.00', 'trade_status': 'TRADE_SUCCESS'}).encode(), headers={'Content-Type': 'application/json'}), timeout=10)
+                raise AssertionError('the earlier release answered a payment callback')
+            except urllib.error.HTTPError as error:
+                assert error.code == 404, error.code
+            # The revoked impersonation cookies stay dead; the earlier release did not write the new data.
+            stale = Client(earlier.url)
+            for cookie in stale_impersonation:
+                stale.jar.set_cookie(cookie)
+            stale.call('/auth/me', expected=401, code='unauthorized')
+            assert {table: value for table, value in fingerprint('upgrade', ['coupons', 'payment_notifications', 'announcements', 'announcement_reads', 'ip_geo_caches']).items()} == before_new_tables
+            assert fingerprint('upgrade', ['orders']) == orders_before
+            stop(process)
+            summary['checks'].append('payments, coupon, announcements and an impersonation session on the current binary (underpaid callback goes to review, exact callback pays once and a repeat changes nothing, discounted coupon order raises used_count, announcement acknowledged once, impersonation write refused); doctor reports the open impersonation without secrets; the operator command revokes it with an audit row and the cookie is dead on the current and both older binaries')
+            summary['checks'].append('rollback to the release just before payments (no down migration) with a live pending order and an account waiting to be purged: the owner signs in and lists all 4 orders (pending, paid, review), the waiting account cannot sign in, the administrator lists servers and groups, a client lists group JP1 once and is refused a full group (409 group_full), the ledger is unchanged, the payment callback route is a plain 404, coupon/notification/announcement/geo tables and every order row are byte-identical afterwards')
+            # Upgrading again: the callback that could not be delivered meanwhile arrives and settles the order.
+            run('migration-after-payment-rollback', [str(current_binary), '-migrate'], environment=api_env('upgrade', free_port()))
+            process, back = start_api(current_binary, 'upgrade', 'api-payment-reupgraded', catalog=True, payment=True)
+            Client(back.url).call('/payments/notify', {'trade_no': pending['trade_no'], 'name': pending['plan_name'], 'money': f"{pending['amount_cents'] // 100}.{pending['amount_cents'] % 100:02d}", 'trade_status': 'TRADE_SUCCESS'})
+            back_owner = Client(back.url)
+            back_owner.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            assert back_owner.call('/payments/orders/' + pending['id'])['order']['status'] == 'paid'
+            assert back_owner.call('/me/announcements')['announcements'][0]['title'] == 'Drill notice two' and len(back_owner.call('/me/announcements')['announcements']) == 1
+            assert sql('upgrade', f"SELECT count(*) FROM rehearsal.payment_notifications WHERE order_id = '{pending['id']}'") == '1'
+            assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
+            stop(process)
+            summary['checks'].append('re-upgrade after the payment rollback: migration repeatable, the late callback for the pending order is honoured (order paid, one notification row), earlier announcement acknowledgement and the coupon survive')
             process, restored = start_api(current_binary, 'restored', 'api-restored')
             Client(restored.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
             restored.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
-            assert restored.call('/orders')['total'] == 1
+            assert restored.call('/orders')['total'] == 3
             stop(process)
             summary['checks'].append('rollback to the accepted verification release (no down migration, registration on): code-less registration refused (400 verification_required), old password stays dead, revoked native tokens stay revoked, new password, orders and confirmed traffic preserved; restored current binary behaves the same')
             summary['table_fingerprints_before_restore'] = before_restore

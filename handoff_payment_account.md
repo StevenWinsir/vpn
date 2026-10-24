@@ -654,3 +654,27 @@ node_usage_reports（属于该用户的 grant）→ connection_grants → subscr
 - NOT RUN：真实邮件投递；多实例下的并发（均为数据库约束与行锁保证，单实例测试）；`test-node-catalog.py` 的 Mihomo 浏览器用例（由 CI 执行）；真实 Core 客户端联机（第 6 轮 R6-02）；窄屏下新增弹窗与表格的自动化截图。
 - 证据：本机 `artifacts/payment-round5-b/`（`browser-artifacts/screens/`：优惠码、公告管理、用户端公告弹窗、模拟登录横幅），已被 .gitignore 忽略；CI 上传 `payment-web-evidence`。
 - 对后续轮次的影响：第 6 轮要把“撤销全部模拟会话”做成运维命令或 doctor 检查（回滚前使用）；审查清单增加：模拟会话不能写、返回 Cookie 的属性与路径、公告纯文本渲染；安全审查时留意 `requireAuth` 每次请求多一次 EXISTS 子查询的性能（索引 `sessions.id` 主键，无需额外索引）。
+
+### 第 6 轮记录（2026-10-24）：全链路回归、安全审查与发布
+
+- 分支 `payment-round6-release`，基线 4fee023（第 5 轮合并后）。PR 与 CI 结果见 PR 页面，本记录只写本机已执行的内容。
+- 代码改动很小，主要是验证资产和文档：
+  - **模拟会话撤销命令**（第 5 轮遗留）：`api -revoke-impersonation`（`internal/operations/impersonation.go`），一个事务内结束全部仍可用的模拟会话，每个会话写一条审计 `admin.impersonate_revoked`（执行者是开启它的管理员），可重复执行，不能与 `-migrate` 等一次性命令同时选择。`bin/doctor` 新增 `impersonation.active_sessions`，仍有未撤销的模拟会话时给出 `impersonation_sessions_active_revoke_before_rollback` 警告。
+  - **回滚演练扩展**（`scripts/test-release-rehearsal.py`）：新增第四个二进制（PR #58 之前的发布 `9ee9066`）作为支付回滚目标；在当前版本上走支付（少付回调 → 待核对、足额回调 → 开通且重复回调不变）、管理员建优惠码并由另一用户使用、两条公告（一条已确认）、一个模拟会话，再用 doctor 看到它、用运维命令撤销；然后备份恢复、回滚到节点分组之前的版本（该版本上旧模拟 Cookie 为 401）；再带着一笔待付订单和一个待清除账号回滚到支付之前的版本，再升级后晚到的回调仍然开通订单。演练里 `ORDER_COLUMN` 补了 `ip_geo_caches`、`announcement_reads`（这两张表没有 `id` 列，脚本自第 1 轮加入新表清单后从未跑通，是本轮首次发现并修复）。
+  - **CI**：新增 job `Release rehearsal / migration / rollback`（`ci.yml` 的 `release-rehearsal`，完整历史、三个旧发布离线构建、Chromium），上传 `release-rehearsal-evidence`。
+  - **文档**：新增 `docs/payment-operations.md`（发布顺序、Nginx 与来源地址、U-01…U-09、排查指引、回滚、安全审查结论）；`backend/DEPLOYMENT.md`、`docs/deployment.md`、`README.md` 同步。
+  - 新增测试：`security_review_test.go`（`TestSecurityPaymentBypassAttempts`、`TestSecurityRouteAccessMatrix`、`TestSecurityObjectAccess`、`TestSecurityResponseHeadersAndText`、`TestSecurityLogsStayClean`、`TestProductionConfigurationDefenses`、`TestRevokeImpersonationSessions`）和 `release_checklist_test.go`（`TestUserPaymentChecklist`、`TestClientCompatibilityWithPayments`）。
+- 审查发现：**没有发现可利用的缺陷，后端业务代码零改动**。几处值得记住的行为：(1) 金额文本 `"1e3"` 按文档允许的浮点写法被解析为 1000.00 元，超过容差进入待核对，不会开通；(2) 优惠码的“不适用 / 已用完 / 已用过”会说明该码存在（不存在、停用、过期、已删除则完全相同），受每账号每小时 20 次无效尝试限制；(3) 白名单为空时，知道订单号的人能把订单推进到“待人工核对”，但不能开通；(4) 路由表测试使以后新增路由漏写鉴权或漏写只读规则会直接失败。
+- 本机验收（私有 PostgreSQL 16；`go vet ./...`、`go test -race -count=1 ./...` 全部通过；`test-release-rehearsal.py` 一次完整通过，证据 `artifacts/payment-round6-rehearsal-2/summary.json`，14 条检查，四个二进制互不相同）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R6-01 | PASS（本机演练） | 备份 → 迁移 → 全流程 → 回滚到 `9ee9066`：旧版本能登录、列出全部 4 笔订单（待付、已付、待核对）、列出服务器与分组、客户端目录只显示一次 JP1、拒绝满员分组（`group_full`）、回调路由是 404；新表和每一行订单在旧版本运行前后字节相同；待清除账号在旧版本无法登录；再升级后晚到的回调开通订单且只有一行回调流水。备份恢复后 28 张表指纹一致 |
+| R6-02 | 部分 PASS | `TestClientCompatibilityWithPayments`、`TestUserPaymentChecklist` U-07：续期时同一客户端会话保持可连接并看到新到期时间；到期后购买新套餐得到新周期，旧会话得到 `subscription_changed`（`/client/config` 返回 409），重新登录后恢复；改密码和删号后客户端会话得到 401 `native_session_expired`、网站会话失效、不能再登录。**NOT RUN：真实 Core 客户端联机、四个平台 APP 的真机或模拟器界面（APP 代码本轮没有改动）；它们依赖各平台自己的 CI 与你的设备** |
+| R6-03 | PASS | 见 `docs/payment-operations.md` 第六节逐项表，每项有对应测试 |
+| R6-04 | PASS（本机） | `TestProductionConfigurationDefenses`：生产配置带着模拟购买标志仍然 403，meta 不提供；配置加载拒绝生产环境的模拟购买（`TestPaymentProductionRules`）；干净的生产式配置下 doctor 只剩永久警告（`real_payments_and_release_signing_not_verified`、`enforcement_must_be_accepted_per_protocol_on_the_real_node`、未配邮件时的 `auth_mail_not_configured`），不含商户号、密钥、回调与网关地址。**NOT RUN：你真实生产环境上的 doctor** |
+| R6-05 | PASS（本地模拟网关） | `TestUserPaymentChecklist` 按 U-01 … U-09 顺序走通；`docs/payment-operations.md` 交付了实测清单、Nginx 与排查指引。真实结果由你部署后填写，本机不记 PASS |
+| R6-06 | 见 PR 页面 | 以 `gh pr checks` 为准 |
+
+- NOT RUN：真实支付网关（任何一项）；真实邮件投递与 IP 归属地服务；真实公网 HTTPS；多实例并发；四平台 APP 真机界面；你的线上 doctor。
+- 对用户的提醒：真实网关上线前，务必按 `docs/payment-operations.md` 第三节做 U-01 … U-09；如果网关返回“签名验证失败”，先看第 18 节第 1 轮记录里的签名示例问题。

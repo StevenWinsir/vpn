@@ -50,6 +50,15 @@ type ReadinessReport struct {
 	Payment PaymentReadiness `json:"payment"`
 	// Account deletion and login records (handoff_payment_account.md 7.3, 8). Counts only.
 	Account AccountReadiness `json:"account"`
+	// Impersonation sessions (handoff_payment_account.md 9.7, 16). Counts only.
+	Impersonation ImpersonationReadiness `json:"impersonation"`
+}
+
+// ImpersonationReadiness counts the administrator-opened sessions that are still
+// usable. They end by themselves (IMPERSONATION_MINUTES), but must be revoked with
+// `api -revoke-impersonation` before rolling back to a release that predates them.
+type ImpersonationReadiness struct {
+	ActiveSessions int64 `json:"active_sessions"`
 }
 
 type AccountReadiness struct {
@@ -204,6 +213,12 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		}
 		if err := tx.Model(&model.LoginEvent{}).Where("geo_status = ?", model.GeoPending).Count(&report.Account.PendingGeoRecords).Error; err != nil {
 			return err
+		}
+		if err := tx.Model(&model.Session{}).Where("impersonator_id IS NOT NULL AND revoked_at IS NULL AND expires_at > ?", report.CheckedAt).Count(&report.Impersonation.ActiveSessions).Error; err != nil {
+			return err
+		}
+		if report.Impersonation.ActiveSessions > 0 {
+			report.Warnings = append(report.Warnings, "impersonation_sessions_active_revoke_before_rollback")
 		}
 		if report.Payment.ReviewOrders > 0 {
 			report.Warnings = append(report.Warnings, "payment_orders_need_review")

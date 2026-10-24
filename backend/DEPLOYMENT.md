@@ -197,7 +197,15 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 3. **登录记录**：网站登录、APP 登录和注册成功都会写一条 `login_events`（成功与失败；失败只在邮箱对应的账号存在时记录，不保存任意输入的邮箱；刷新令牌和模拟登录不算登录）。`users.last_login_at/last_login_ip` 在登录事务内顺带更新。来源 IP 取 Gin 的 `ClientIP`，因此依赖 `TRUSTED_PROXIES` 与 Nginx 覆盖转发头；前端代理会把浏览器的 `User-Agent`（截断到 200 字节）转发给后端。记录保留 180 天，`payment_notifications` 同样保留 180 天，由清除循环旁的每小时任务删除。
 4. **IP 归属地**：`.env` 的 `GEOIP_*` 三项。登录只写 IP，进程内 worker 每 5 秒领取最多 20 条待解析记录（`FOR UPDATE SKIP LOCKED`，多实例安全），先查 `ip_geo_caches`（成功缓存 30 天，失败缓存 1 小时），再按 `GEOIP_REQUESTS_PER_MINUTE` 限速外呼，超时 3 秒、不跟随重定向、响应上限 4 KB；单个地址最多尝试 3 次，之后标记为失败。内网、本机、链路本地和运营商级 NAT 地址直接标为“内网/本机”，不会外发。未配置接口时记录为 `skipped`（界面显示“未解析”），之后补配接口不会回头补解析旧记录。
 5. **模拟登录与公告（第 5 轮）**：`IMPERSONATION_MINUTES`（默认 30，范围 5–120）是模拟会话的硬性有效期，刷新不能延长。模拟会话只读（所有写请求由服务端返回 403 `impersonation_read_only`）、不进入管理后台、不写登录记录、不显示公告；返回管理员用 Path 限定为 `/api/v1/auth/impersonation/return` 的 `vpn_return` Cookie（HttpOnly、SameSite=Strict、Secure 跟随 `COOKIE_SECURE`）。Nginx 不要改写该路径的 Cookie。公告正文最多 5000 字，后端与 Next.js 代理对 `/admin/console/announcements` 都放宽到 32 KB，其他接口仍是 8 KB。
-6. **回滚**：旧版本的登录与鉴权只认 `active`，状态为 `deleting` 的账号在旧版本中同样无法登录；但没有清除循环，它们的数据要等回到新版本后才会被删除。**模拟会话在旧版本中会被当成普通会话（可写）**，所以回滚前必须先撤销：`UPDATE <schema>.sessions SET revoked_at = now() WHERE impersonator_id IS NOT NULL AND revoked_at IS NULL;`（第 6 轮会把它做成运维检查）。
+6. **回滚**：旧版本的登录与鉴权只认 `active`，状态为 `deleting` 的账号在旧版本中同样无法登录；但没有清除循环，它们的数据要等回到新版本后才会被删除。**模拟会话在旧版本中会被当成普通会话（可写）**，所以回滚前必须先撤销：运行 `api -revoke-impersonation`（见下一节），`bin/doctor` 的 `impersonation.active_sessions` 在仍有未撤销的模拟会话时给出 `impersonation_sessions_active_revoke_before_rollback` 警告。
+
+## 发布、回滚与运维命令（handoff_payment_account.md 第 6 轮）
+
+完整的上线顺序、Nginx 回调路径、真实付款实测清单、排查指引和安全审查结论见 [docs/payment-operations.md](../docs/payment-operations.md)。本节只记录后端命令。
+
+- **撤销全部模拟登录会话**：`api -revoke-impersonation`（与 `-migrate`、`-grant-admin`、`-create-admin` 一样是独立的一次性命令，不能同时选择两个）。它在一个事务内结束所有仍可用的模拟会话，每个会话写一条审计 `admin.impersonate_revoked`（执行者是当初开启它的管理员，对象是被查看的用户），打印撤销数量，可重复执行。回滚到不认识“只读”规则的旧版本之前必须执行。
+- **诊断**：`bin/doctor` 的 `impersonation.active_sessions` 是仍可用的模拟会话数；`payment`、`account` 段沿用前几轮。诊断只读，不输出商户号、密钥、回调地址、网关地址。
+- **回滚演练**：`python3 scripts/test-release-rehearsal.py --output artifacts/<新目录>` 在私有 PostgreSQL 上用四个二进制演练：旧数据版本 → 当前版本迁移 → 支付、优惠码、公告、模拟登录全流程 → 撤销模拟会话 → 备份恢复 → 回滚到节点分组之前的版本 → 回滚到支付之前的版本（带一笔待付订单和一个待清除账号）→ 再升级后晚到的回调仍然开通订单。演练不使用任何线上环境、DSN 或真实网关。
 
 ## 开发者维护：校验逻辑不能分叉
 
