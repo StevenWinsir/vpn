@@ -552,3 +552,59 @@ test('S3-09 the test-purchase dialog offers yearly and sends the cycle only for 
   await expect(dialog(page).getByText('测试桩：未开通')).toBeVisible();
   expect(bodies.at(-1)).toEqual({ plan_id: month });
 });
+
+test('S4-02 the new storefront against a backend that predates the yearly tier', async ({
+  page,
+}) => {
+  await login(page, fixture.emails.shopd);
+  // Present the answers of the release before the shop work: /plans without any of the new
+  // fields, and strict request bodies (that backend refuses unknown JSON fields).
+  await page.route('**/api/v1/plans', async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    delete json.yearly_discount_percent;
+    delete json.max_yearly_saving_percent;
+    for (const p of json.plans) {
+      delete p.monthly;
+      delete p.yearly;
+      delete p.featured;
+    }
+    await route.fulfill({ response, json });
+  });
+  const allowed: Record<string, string[]> = {
+    quote: ['coupon_code', 'plan_id'],
+    orders: ['coupon_code', 'pay_type', 'plan_id'],
+  };
+  const bodies: { kind: string; keys: string[] }[] = [];
+  await page.route(/\/api\/v1\/payments\/(quote|orders)$/, async (route) => {
+    const request = route.request();
+    if (request.method() !== 'POST') return route.continue();
+    const kind = request.url().endsWith('/quote') ? 'quote' : 'orders';
+    const keys = Object.keys(JSON.parse(request.postData() ?? '{}')).sort();
+    bodies.push({ kind, keys });
+    if (keys.some((k) => !allowed[kind].includes(k)))
+      return route.fulfill({
+        status: 400,
+        json: { error: { code: 'invalid_request', message: '请求格式不正确' } },
+      });
+    if (kind === 'orders')
+      return route.fulfill({
+        status: 400,
+        json: { error: { code: 'stub', message: '测试桩：未下单' } },
+      });
+    return route.continue();
+  });
+  await page.goto('/plans?cycle=yearly');
+  await expect(card(page, 'pro')).toContainText('¥39.90');
+  await expect(page.getByTestId('cycle-switch')).toHaveCount(0);
+  await expect(page.getByTestId('yearly-banner')).toHaveCount(0);
+  await expect(page.getByTestId('no-yearly')).toHaveCount(0);
+
+  await page.getByRole('button', { name: `购买 ${monthName}`, exact: true }).click();
+  await expect(dialog(page).getByLabel('应付金额')).toHaveText('¥25.00');
+  await choose(page, '微信支付');
+  await goPay(page).click();
+  await expect(dialog(page).getByText('测试桩：未下单')).toBeVisible();
+  expect(bodies.map((b) => b.kind)).toEqual(expect.arrayContaining(['quote', 'orders']));
+  for (const body of bodies) expect(body.keys, body.kind).toEqual(allowed[body.kind]);
+});

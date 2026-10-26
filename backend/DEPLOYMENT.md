@@ -207,6 +207,14 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 - **诊断**：`bin/doctor` 的 `impersonation.active_sessions` 是仍可用的模拟会话数；`payment`、`account` 段沿用前几轮。诊断只读，不输出商户号、密钥、回调地址、网关地址。
 - **回滚演练**：`python3 scripts/test-release-rehearsal.py --output artifacts/<新目录>` 在私有 PostgreSQL 上用四个二进制演练：旧数据版本 → 当前版本迁移 → 支付、优惠码、公告、模拟登录全流程 → 撤销模拟会话 → 备份恢复 → 回滚到节点分组之前的版本 → 回滚到支付之前的版本（带一笔待付订单和一个待清除账号）→ 再升级后晚到的回调仍然开通订单。演练不使用任何线上环境、DSN 或真实网关。
 
+## 套餐商店、年付与设备额度（handoff_shop.md）
+
+- **迁移**：只增不删，可重复执行。`plans` 增加年付、推荐、备注、版本和软删除列；新表 `shop_settings`（单行，全局年付折扣，默认 90）；`orders` 增加付费周期、折扣、原价和权益快照；`coupons` 增加 `billing_cycles`。套餐只做软删除，`store.Migrate` 和旧版本的种子插入都不会使其复活。
+- **设备额度与 `CLIENT_MAX_ONLINE_DEVICES`**：用户同时在线的设备数 = min(套餐 `max_devices`, `CLIENT_MAX_ONLINE_DEVICES`)，默认上限为 2。管理员在“套餐管理”里设定的设备数超过该变量时，页面显示警告并同时列出设定值与生效值，`/plans` 对用户展示的也是生效值。要让 5 / 10 台生效，调高该变量并重启后端。`bin/doctor` 的 `shop.plans_over_device_cap` 只报告超过上限的上架套餐数量，不作为警告。
+- **诊断**：`bin/doctor` 的 `shop` 段给出设置行是否存在、全局折扣、上架套餐数、开启年付的上架套餐数；警告 `shop_settings_row_missing`、`shop_no_active_plans`。只输出数量，不输出套餐内容。
+- **回滚**：回滚代码前先在后台停用有周期范围的优惠码，然后先回滚前端、再回滚后端；不需要反向迁移。详见 [docs/payment-operations.md](../docs/payment-operations.md) 第七节。
+- **演练**：`scripts/test-release-rehearsal.py` 增加第五个二进制（PR #72，套餐商店之前的版本），演练年付订单、管理员新建套餐、软删除、折扣修改后的回滚与再升级。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：
