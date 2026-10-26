@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 import { mkdir, readFile } from 'node:fs/promises';
 
 // Browser acceptance for the plan console (handoff_shop.md round 2; S2-01 … S2-07). It runs
@@ -101,6 +101,15 @@ const terms = (id: string, name: string, extra: Record<string, unknown> = {}) =>
   active: false,
   ...extra,
 });
+
+// Opens a Mantine select and waits for one of its options; a click that lands before the
+// component is interactive is retried by clicking again.
+async function openPicker(page: Page, picker: Locator, option: Locator) {
+  await expect(async () => {
+    await picker.click({ force: true });
+    await expect(option).toBeVisible({ timeout: 5000 });
+  }).toPass({ timeout: 50000 });
+}
 
 const row = (page: Page, id: string) =>
   page.locator(`[data-testid="plan-row"][data-plan-id="${id}"]`);
@@ -536,8 +545,11 @@ test('S2-07 other pages read the administrator plan list; coupons get a billing 
   await admin.goto('/admin/nodes');
   await admin.getByRole('button', { name: '新建节点组', exact: true }).click();
   const group = admin.getByRole('dialog', { name: '新建节点组' });
-  await group.getByLabel('限定套餐').click({ force: true });
-  await expect(admin.getByRole('option', { name: 'E2E 订阅套餐（已下架）' })).toBeVisible();
+  await openPicker(
+    admin,
+    group.getByLabel('限定套餐'),
+    admin.getByRole('option', { name: 'E2E 订阅套餐（已下架）' }),
+  );
   await expect(admin.getByRole('option', { name: /E2E 设备套餐/ })).toHaveCount(0);
   await admin.keyboard.press('Escape');
   await group.getByRole('button', { name: '取消' }).click();
@@ -552,8 +564,11 @@ test('S2-07 other pages read the administrator plan list; coupons get a billing 
     .getByRole('button', { name: '修改套餐' })
     .click();
   const change = admin.getByRole('dialog', { name: /^修改套餐/ });
-  await change.getByLabel('套餐', { exact: true }).click({ force: true });
-  await expect(admin.getByRole('option', { name: /E2E 订阅套餐（已下架）/ })).toBeVisible();
+  await openPicker(
+    admin,
+    change.getByLabel('套餐', { exact: true }),
+    admin.getByRole('option', { name: /E2E 订阅套餐（已下架）/ }),
+  );
   await expect(admin.getByRole('option', { name: /E2E 设备套餐/ })).toHaveCount(0);
   await expect(admin.getByRole('option', { name: /E2E 跟随全局/ })).toBeVisible();
   await admin.keyboard.press('Escape');
@@ -565,7 +580,11 @@ test('S2-07 other pages read the administrator plan list; coupons get a billing 
   let modal = admin.getByRole('dialog', { name: '新建优惠码' });
   await modal.getByLabel('优惠码', { exact: true }).fill('E2E-YEARLY');
   await modal.getByLabel('减价比例（%）').fill('10');
-  await modal.getByLabel('适用周期').click({ force: true });
+  await openPicker(
+    admin,
+    modal.getByLabel('适用周期'),
+    admin.getByRole('option', { name: '仅年付' }),
+  );
   await admin.getByRole('option', { name: '仅年付' }).click();
   await modal.getByRole('button', { name: '保存' }).click();
   const yearly = admin.getByTestId('coupon-row').filter({ hasText: 'E2E-YEARLY' });
@@ -581,7 +600,11 @@ test('S2-07 other pages read the administrator plan list; coupons get a billing 
   modal = admin.getByRole('dialog', { name: '新建优惠码' });
   await modal.getByLabel('优惠码', { exact: true }).fill('E2E-REF');
   await modal.getByLabel('减价比例（%）').fill('10');
-  await modal.getByLabel('适用套餐').click({ force: true });
+  await openPicker(
+    admin,
+    modal.getByLabel('适用套餐'),
+    admin.getByRole('option', { name: 'E2E 将删除套餐（已下架）' }),
+  );
   await admin.getByRole('option', { name: 'E2E 将删除套餐（已下架）' }).click();
   await admin.keyboard.press('Escape');
   await modal.getByRole('button', { name: '保存' }).click();
