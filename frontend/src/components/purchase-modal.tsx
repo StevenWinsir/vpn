@@ -2,9 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Group, Modal, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { api, APIError, message } from '@/lib/api';
-import { tierOf, zhe } from '@/lib/shop';
+import { refreshes, tierOf, trafficLabel, zhe } from '@/lib/shop';
 import {
-  gib,
   money,
   payTypeLabel,
   type BillingCycle,
@@ -212,13 +211,15 @@ function Checkout({
   return (
     <Stack gap="md">
       <Text size="sm" c="dimmed">
-        {gib(quote?.traffic_bytes ?? tier?.traffic_bytes ?? plan.traffic_bytes)} GiB ·{' '}
+        {trafficLabel(quote ?? tier ?? plan)} ·{' '}
         {quote?.duration_days ?? tier?.duration_days ?? plan.duration_days} 天
         {quote?.kind === 'renew'
           ? yearly
-            ? ` · 续费：在当前到期时间基础上顺延 ${quote.duration_days} 天，并累加流量`
-            : ' · 续费：延长有效期并累加流量'
-          : ''}
+            ? ` · 续费：在当前到期时间基础上顺延 ${quote.duration_days} 天；月付续成年付时剩余流量并入第一个周期，已是年付则流量仍按原日期刷新`
+            : ' · 续费：延长有效期并累加流量（年付订阅只顺延有效期，流量仍每 30 天刷新）'
+          : refreshes(quote ?? tier)
+            ? ' · 流量每 30 天重置为整月额度，未用完不累计'
+            : ''}
       </Text>
       <div>
         <Text size="sm" fw={600} mb={8} id="pay-method-label">

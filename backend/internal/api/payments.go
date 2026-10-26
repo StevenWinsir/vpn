@@ -50,23 +50,27 @@ type quoteView struct {
 	TrafficBytes int64  `json:"traffic_bytes"`
 	// ListPriceCents is the price of the chosen billing cycle; for yearly, OriginalCents
 	// is twelve months at the monthly price and CycleSavingCents the difference.
-	BillingCycle      string      `json:"billing_cycle"`
-	OriginalCents     int64       `json:"original_cents"`
-	CycleDiscountPct  int         `json:"cycle_discount_percent"`
-	CycleSavingCents  int64       `json:"cycle_saving_cents"`
-	MonthlyEquivCents int64       `json:"monthly_equivalent_cents"`
-	DeviceLimit       int         `json:"device_limit"`
-	AllowDedicated    bool        `json:"allow_dedicated"`
-	ListPriceCents    int64       `json:"list_price_cents"`
-	TestPrice         bool        `json:"test_price"`
-	BaseCents         int64       `json:"base_cents"`
-	DiscountCents     int64       `json:"discount_cents"`
-	AmountCents       int64       `json:"amount_cents"`
-	Coupon            *couponView `json:"coupon"`
-	Purchasable       bool        `json:"purchasable"`
-	Kind              string      `json:"kind,omitempty"`
-	Reason            string      `json:"reason,omitempty"`
-	Message           string      `json:"message,omitempty"`
+	BillingCycle      string `json:"billing_cycle"`
+	OriginalCents     int64  `json:"original_cents"`
+	CycleDiscountPct  int    `json:"cycle_discount_percent"`
+	CycleSavingCents  int64  `json:"cycle_saving_cents"`
+	MonthlyEquivCents int64  `json:"monthly_equivalent_cents"`
+	// Yearly: QuotaCycleBytes is granted again every QuotaCycleDays (D2 revised);
+	// TrafficBytes is then the nominal twelve months.
+	QuotaCycleDays  int         `json:"quota_cycle_days"`
+	QuotaCycleBytes int64       `json:"quota_cycle_bytes"`
+	DeviceLimit     int         `json:"device_limit"`
+	AllowDedicated  bool        `json:"allow_dedicated"`
+	ListPriceCents  int64       `json:"list_price_cents"`
+	TestPrice       bool        `json:"test_price"`
+	BaseCents       int64       `json:"base_cents"`
+	DiscountCents   int64       `json:"discount_cents"`
+	AmountCents     int64       `json:"amount_cents"`
+	Coupon          *couponView `json:"coupon"`
+	Purchasable     bool        `json:"purchasable"`
+	Kind            string      `json:"kind,omitempty"`
+	Reason          string      `json:"reason,omitempty"`
+	Message         string      `json:"message,omitempty"`
 }
 
 func validPlanID(id string) bool { return id != "" && len(id) <= 32 }
@@ -154,7 +158,7 @@ func (s *Server) paymentQuote(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		sub, err := readSubscription(tx, user.ID)
+		sub, err := readSubscription(tx, user.ID, now)
 		if err != nil {
 			return err
 		}
@@ -164,7 +168,7 @@ func (s *Server) paymentQuote(c *gin.Context) {
 		}
 		problem = prob
 		view = quoteView{PlanID: plan.ID, PlanName: plan.Name, DurationDays: terms.DurationDays, TrafficBytes: terms.TrafficBytes, BillingCycle: terms.Cycle, OriginalCents: terms.OriginalCents, CycleDiscountPct: terms.DiscountPercent,
-			CycleSavingCents: terms.SavingCents, MonthlyEquivCents: terms.MonthlyEquivCents, DeviceLimit: s.deviceCap(plan.MaxDevices), AllowDedicated: plan.AllowDedicated, ListPriceCents: p.ListCents, TestPrice: p.Source == priceTest, BaseCents: p.BaseCents, DiscountCents: p.DiscountCents, AmountCents: p.AmountCents, Purchasable: true}
+			CycleSavingCents: terms.SavingCents, MonthlyEquivCents: terms.MonthlyEquivCents, QuotaCycleDays: terms.QuotaCycleDays, QuotaCycleBytes: terms.QuotaCycleBytes, DeviceLimit: s.deviceCap(plan.MaxDevices), AllowDedicated: plan.AllowDedicated, ListPriceCents: p.ListCents, TestPrice: p.Source == priceTest, BaseCents: p.BaseCents, DiscountCents: p.DiscountCents, AmountCents: p.AmountCents, Purchasable: true}
 		if code != "" {
 			view.Coupon = &couponView{Code: code, Applied: prob == nil}
 			if prob != nil {
@@ -302,7 +306,7 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		sub, err := readSubscription(tx, user.ID)
+		sub, err := readSubscription(tx, user.ID, now)
 		if err != nil {
 			return err
 		}

@@ -167,6 +167,11 @@ func (s *Server) fulfilOrder(tx *gorm.DB, order *model.Order, paidCents int64, n
 	// Orders from before the entitlement snapshots (or written by an older binary) keep
 	// the plan row's devices and line type. A soft-deleted plan still fulfils.
 	plan.Name, plan.DurationDays, plan.TrafficBytes = order.PlanName, order.DurationDays, order.TrafficBytes
+	// A yearly order sold a refreshing allowance (D2 revised); a yearly order written
+	// before it (QuotaCycleDays 0) keeps the one-shot year it was sold with.
+	if order.QuotaCycleDays > 0 {
+		plan.TrafficBytes = order.QuotaCycleBytes
+	}
 	if order.EntMaxDevices != nil && order.EntAllowDedicated != nil {
 		plan.MaxDevices, plan.AllowDedicated = *order.EntMaxDevices, *order.EntAllowDedicated
 	}
@@ -183,7 +188,7 @@ func (s *Server) fulfilOrder(tx *gorm.DB, order *model.Order, paidCents int64, n
 	if err := tx.SavePoint("fulfil").Error; err != nil {
 		return false, err
 	}
-	if _, err := applyPlan(tx, order.UserID, plan, now, false); err != nil {
+	if _, err := applyPlan(tx, order.UserID, plan, order.QuotaCycleDays, now, false); err != nil {
 		var business *apiError
 		if errors.As(err, &business) {
 			return false, tx.RollbackTo("fulfil").Error

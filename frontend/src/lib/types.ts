@@ -12,6 +12,10 @@ export type PlanTier = {
   duration_days: number;
   traffic_bytes: number;
   monthly_equivalent_cents: number;
+  // Yearly (handoff_shop.md D2 revised): quota_cycle_bytes is granted again every
+  // quota_cycle_days, used up or not; traffic_bytes is then the nominal twelve months.
+  quota_cycle_days?: number;
+  quota_cycle_bytes?: number;
 };
 export type Plan = {
   id: string;
@@ -29,7 +33,11 @@ export type Plan = {
   // Null when the plan has no yearly tier.
   yearly?: PlanTier | null;
 };
-export type PlansResponse = { plans: Plan[]; yearly_discount_percent: number; max_yearly_saving_percent: number };
+export type PlansResponse = {
+  plans: Plan[];
+  yearly_discount_percent: number;
+  max_yearly_saving_percent: number;
+};
 export type Subscription = {
   id: string;
   plan_id: string;
@@ -43,6 +51,11 @@ export type Subscription = {
   max_devices: number;
   allow_dedicated: boolean;
   is_test: boolean;
+  // A refreshing (yearly) allowance: the traffic figures above are the current 30-day
+  // cycle's, reset to quota_cycle_bytes when it ends. 0 = one-shot allowance.
+  quota_cycle_days?: number;
+  quota_cycle_bytes?: number;
+  quota_cycle_starts_at?: string | null;
 };
 export type Dashboard = {
   user: User;
@@ -54,6 +67,8 @@ export type Dashboard = {
   proxy_service_ready: boolean;
   online_devices: number;
   device_limit: number;
+  // When the current traffic cycle is refreshed; null for a one-shot allowance.
+  quota_resets_at?: string | null;
 };
 // Explicit presence contract (GET /me/devices): never a server, session, lease or grant id,
 // address or token. `device` is the last 6 characters of the client's device UUID.
@@ -126,6 +141,10 @@ export type Order = {
   billing_cycle?: BillingCycle;
   cycle_discount_percent?: number;
   original_cents?: number;
+  // Yearly (handoff_shop.md D2 revised): quota_cycle_bytes is granted again every
+  // quota_cycle_days, used up or not; traffic_bytes is then the nominal twelve months.
+  quota_cycle_days?: number;
+  quota_cycle_bytes?: number;
 };
 export type PayType = 'wxpay' | 'alipay';
 export type CouponResult = { code: string; applied: boolean; reason?: string; message?: string };
@@ -147,6 +166,10 @@ export type Quote = {
   cycle_discount_percent?: number;
   cycle_saving_cents?: number;
   monthly_equivalent_cents?: number;
+  // Yearly (handoff_shop.md D2 revised): quota_cycle_bytes is granted again every
+  // quota_cycle_days, used up or not; traffic_bytes is then the nominal twelve months.
+  quota_cycle_days?: number;
+  quota_cycle_bytes?: number;
   device_limit?: number;
   allow_dedicated?: boolean;
   purchasable: boolean;

@@ -24,6 +24,8 @@ type Tier = {
   duration_days: number;
   traffic_bytes: number;
   monthly_equivalent_cents: number;
+  quota_cycle_days: number;
+  quota_cycle_bytes: number;
 };
 type PublicPlan = {
   id: string;
@@ -72,6 +74,8 @@ const subscriptionOf = async (email: string) =>
     plan_id: string;
     expires_at: string;
     traffic_limit_bytes: number;
+    quota_cycle_days: number;
+    quota_cycle_bytes: number;
   };
 const pay = (tradeNo: string) => control(`pay?trade_no=${tradeNo}`, 'POST');
 const advance = (seconds: number) => control('advance?seconds=' + seconds);
@@ -121,7 +125,6 @@ const planBody = (over: Record<string, unknown>) => ({
   allow_dedicated: false,
   yearly_enabled: true,
   yearly_duration_days: 365,
-  yearly_traffic_bytes: null,
   yearly_discount_percent: null,
   featured: false,
   sort: 100,
@@ -227,7 +230,11 @@ test('S3-02 yearly cards show the server figures and the state lives in the addr
     await expect(c.getByLabel('立省金额')).toHaveText(`立省 ${cents(t.saving_cents)}`);
     await expect(c).toContainText(`折合 ${cents(t.monthly_equivalent_cents)} / 月`);
     await expect(c).toContainText('/ 年');
-    await expect(c).toContainText(`${gibOf(t.traffic_bytes)} 计费流量`);
+    // D2 revised: the monthly allowance again every 30 days, never a one-shot year.
+    expect(t.quota_cycle_days).toBe(30);
+    expect(t.quota_cycle_bytes).toBe(p.monthly.traffic_bytes);
+    await expect(c).toContainText(`每 30 天 ${gibOf(t.quota_cycle_bytes)} 计费流量`);
+    await expect(c).toContainText('周期结束自动重置，余量不累计');
     await expect(c).toContainText(`有效期 ${t.duration_days} 天`);
     await expect(c.getByTestId('plan-ribbon')).toHaveText(
       `年付 ${t.discount_percent === 90 ? '9' : t.discount_percent / 10} 折`,
@@ -344,7 +351,7 @@ test('S3-04 yearly payment through the gateway, then the result page, orders and
   await page.getByRole('button', { name: `购买 ${monthName}（年付）`, exact: true }).click();
   await expect(dialog(page)).toBeVisible();
   await expect(dialog(page).getByText(`购买 ${monthName}（年付）`)).toBeVisible();
-  await expect(dialog(page).getByText('120 GiB · 365 天')).toBeVisible();
+  await expect(dialog(page).getByText('每 30 天 10 GiB · 365 天')).toBeVisible();
   await expect(dialog(page).getByText('原价（12 个月）')).toBeVisible();
   await expect(dialog(page).getByLabel('原价')).toHaveText('¥300.00');
   await expect(dialog(page).getByLabel('年付优惠')).toHaveText('-¥30.00');
@@ -380,7 +387,10 @@ test('S3-04 yearly payment through the gateway, then the result page, orders and
     return d.subscription;
   });
   expect((Date.parse(summary.expires_at) - Date.parse(summary.starts_at)) / 86400000).toBe(365);
-  expect(summary.traffic_limit_bytes).toBe(120 * GiB);
+  // The first 30-day cycle holds one month's allowance; it is reset, not added to, later.
+  expect(summary.traffic_limit_bytes).toBe(10 * GiB);
+  expect(summary.quota_cycle_days).toBe(30);
+  expect(summary.quota_cycle_bytes).toBe(10 * GiB);
   expect(summary.plan_id).toBe(month);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: monthName, exact: true })).toBeVisible();
@@ -421,7 +431,9 @@ test('S3-05 a monthly subscriber renews as yearly and the expiry moves 365 days'
   await expect(page.getByRole('heading', { name: '已到账', exact: true })).toBeVisible();
   const after = await subscriptionOf(fixture.emails.shopb);
   expect((Date.parse(after.expires_at) - Date.parse(before.expires_at)) / 86400000).toBe(365);
-  expect(after.traffic_limit_bytes).toBe(130 * GiB);
+  // What was left of the month carries into the first yearly cycle only.
+  expect(after.traffic_limit_bytes).toBe(20 * GiB);
+  expect(after.quota_cycle_days).toBe(30);
   // Both cycles are in the order list.
   await page.goto('/orders');
   await expect(page.getByRole('cell', { name: '月付', exact: true })).toHaveCount(1);
@@ -538,7 +550,7 @@ test('S3-09 the test-purchase dialog offers yearly and sends the cycle only for 
   await page.getByRole('button', { name: `测试购买 ${monthName}（年付）`, exact: true }).click();
   await expect(dialog(page).getByText('确认测试购买（年付）')).toBeVisible();
   await expect(dialog(page).getByText(`${monthName}（年付）`)).toBeVisible();
-  await expect(dialog(page).getByText('120 GiB · 365 天')).toBeVisible();
+  await expect(dialog(page).getByText('每 30 天 10 GiB · 365 天')).toBeVisible();
   await expect(dialog(page).getByLabel('演示金额')).toHaveText('¥270.00');
   await dialog(page).getByRole('button', { name: '确认模拟开通' }).click();
   await expect(dialog(page).getByText('测试桩：未开通')).toBeVisible();

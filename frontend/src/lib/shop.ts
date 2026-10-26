@@ -1,9 +1,22 @@
 // Display helpers for the plan shop (handoff_shop.md 8). Every price and discount comes from the
 // server; these only format it.
-import type { BillingCycle, Plan, PlanTier } from './types';
+import { gib, type BillingCycle, type Plan, type PlanTier } from './types';
 
 export const cycleName = (cycle: BillingCycle | undefined) =>
   cycle === 'yearly' ? '年付' : '月付';
+
+type Traffic = { traffic_bytes: number; quota_cycle_days?: number; quota_cycle_bytes?: number };
+
+// What a cycle grants in traffic: "100 GiB", or for yearly "每 30 天 100 GiB" (the monthly
+// allowance, refreshed every 30 days; handoff_shop.md D2 revised).
+export function trafficLabel(t: Traffic): string {
+  return t.quota_cycle_days && t.quota_cycle_bytes
+    ? `每 ${t.quota_cycle_days} 天 ${gib(t.quota_cycle_bytes)} GiB`
+    : `${gib(t.traffic_bytes)} GiB`;
+}
+
+export const refreshes = (t: Traffic | null | undefined) =>
+  Boolean(t?.quota_cycle_days && t.quota_cycle_bytes);
 
 // 90 -> "9 折", 85 -> "8.5 折".
 export function zhe(percent: number): string {

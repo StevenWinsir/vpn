@@ -17,15 +17,8 @@ import {
 } from '@mantine/core';
 import { IconReceipt } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
-import {
-  date,
-  gib,
-  livePending,
-  money,
-  orderStatusLabel,
-  payTypeLabel,
-  type Order,
-} from '@/lib/types';
+import { trafficLabel } from '@/lib/shop';
+import { date, livePending, money, orderStatusLabel, payTypeLabel, type Order } from '@/lib/types';
 export function OrdersView() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
@@ -162,7 +155,7 @@ export function OrdersView() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      {gib(order.traffic_bytes)} GiB / {order.duration_days} 天
+                      {trafficLabel(order)} / {order.duration_days} 天
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" fw={600}>

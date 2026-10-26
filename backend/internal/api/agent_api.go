@@ -273,7 +273,7 @@ func (s *Server) syncGrant(tx *gorm.DB, grantID string, agent model.NodeAgent, e
 	}
 	var sub *model.Subscription
 	if user != nil {
-		if sub, err = readNativeSubscription(tx, user.ID); err != nil {
+		if sub, err = readNativeSubscription(tx, user.ID, now); err != nil {
 			return nil, err
 		}
 	}
@@ -392,7 +392,8 @@ func (s *Server) agentUsage(c *gin.Context) {
 		if user == nil {
 			return &apiError{404, "grant_not_found", "授权不存在"}
 		}
-		sub, e := readNativeSubscription(tx, user.ID)
+		now := s.now()
+		sub, e := readNativeSubscription(tx, user.ID, now)
 		if e != nil {
 			return e
 		}
@@ -475,7 +476,7 @@ func (s *Server) agentUsage(c *gin.Context) {
 			return e
 		}
 		// Node-reported traffic enters the same 24-hour history as client reports.
-		if e = addUsage(tx, g.UserID, s.now(), up, down, units); e != nil {
+		if e = addUsage(tx, g.UserID, now, up, down, units); e != nil {
 			return e
 		}
 		if e = tx.Save(period).Error; e != nil {

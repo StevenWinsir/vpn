@@ -124,7 +124,7 @@ func (s *Server) nativeLogin(c *gin.Context) {
 		if e := tx.Omit("User").Create(&sess).Error; e != nil {
 			return e
 		}
-		sub, e := readNativeSubscription(tx, user.ID)
+		sub, e := readNativeSubscription(tx, user.ID, now)
 		if e != nil {
 			return e
 		}
@@ -181,7 +181,7 @@ func (s *Server) nativeTransaction(c *gin.Context, action func(*gorm.DB, *model.
 		if sess.RevokedAt != nil || !now.Before(sess.ExpiresAt) || !sess.LastSeenAt.After(now.Add(-s.cfg.IdleTTL())) {
 			return &apiError{401, "native_session_expired", "客户端会话已失效，请重新登录"}
 		}
-		sub, e := readNativeSubscription(tx, user.ID)
+		sub, e := readNativeSubscription(tx, user.ID, now)
 		if e != nil {
 			return e
 		}
@@ -195,13 +195,25 @@ func (s *Server) nativeTransaction(c *gin.Context, action func(*gorm.DB, *model.
 	})
 }
 
-func readNativeSubscription(tx *gorm.DB, userID string) (*model.Subscription, error) {
+// readNativeSubscription locks the user's subscription (the caller holds the user lock)
+// and, when its traffic cycle has ended, writes the refresh before anything reads or
+// charges the balance: client and node usage after the reset counts against the new
+// cycle (handoff_shop.md D2 revised). The current period's ledger row follows, so the
+// shared budget pool sees the fresh allowance at once; reservations already handed
+// to nodes stay held.
+func readNativeSubscription(tx *gorm.DB, userID string, now time.Time) (*model.Subscription, error) {
 	var sub model.Subscription
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userID).First(&sub).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &sub, err
+	if err != nil {
+		return nil, err
+	}
+	if billing.RollQuotaCycle(&sub, now) {
+		return saveSubscription(tx, &sub)
+	}
+	return &sub, nil
 }
 
 func (s *Server) nativeEntitlement(sub *model.Subscription, now time.Time) string {

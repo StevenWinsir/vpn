@@ -665,8 +665,25 @@ function SubscriptionBlock({ sub }: { sub: ConsoleSub | null }) {
           <Info label="到期" value={<When value={sub.expires_at} />} />
           <Info
             label="流量"
-            value={`已用 ${fmtGib(unitsToGib(sub.used_units))} GiB / 总量 ${gib(sub.traffic_limit_bytes)} GiB`}
+            value={`已用 ${fmtGib(unitsToGib(sub.used_units))} GiB / ${sub.quota_cycle_days ? '本周期' : '总量'} ${gib(sub.traffic_limit_bytes)} GiB`}
           />
+          {sub.quota_cycle_days ? (
+            <Info
+              label="流量刷新"
+              value={
+                <>
+                  每 {sub.quota_cycle_days} 天重置为 {gib(sub.quota_cycle_bytes ?? 0)} GiB
+                  {sub.quota_resets_at ? (
+                    <>
+                      ，下次 <When value={sub.quota_resets_at} />
+                    </>
+                  ) : (
+                    '，到期前不再刷新'
+                  )}
+                </>
+              }
+            />
+          ) : null}
           <Info
             label="设备上限"
             value={`${sub.max_devices}${sub.allow_dedicated ? '，含专线' : ''}`}

@@ -44,7 +44,6 @@ type Fields = {
   traffic: string;
   yearlyEnabled: boolean;
   yearlyDays: string;
-  yearlyTraffic: string;
   yearlyDiscount: string;
   featured: boolean;
   sort: string;
@@ -68,7 +67,6 @@ function initial(plan: AdminPlan | null): Fields {
       traffic: '100',
       yearlyEnabled: true,
       yearlyDays: '365',
-      yearlyTraffic: '',
       yearlyDiscount: '',
       featured: false,
       sort: '0',
@@ -86,8 +84,6 @@ function initial(plan: AdminPlan | null): Fields {
     traffic: bytesToGibText(plan.traffic_bytes),
     yearlyEnabled: plan.yearly_enabled,
     yearlyDays: String(plan.yearly_duration_days),
-    yearlyTraffic:
-      plan.yearly_traffic_bytes == null ? '' : bytesToGibText(plan.yearly_traffic_bytes),
     yearlyDiscount:
       plan.yearly_discount_percent == null ? '' : String(plan.yearly_discount_percent),
     featured: plan.featured,
@@ -141,23 +137,11 @@ function validate(f: Fields, creating: boolean) {
   if (sort === null) errors.sort = '排序须为 0–10000';
   const yearlyDays = intIn(f.yearlyDays, 1, 365);
   if (yearlyDays === null) errors.yearly_duration_days = '年付有效天数须为 1–365';
-  let yearlyTraffic: number | null = null;
-  if (f.yearlyTraffic.trim() !== '') {
-    yearlyTraffic = intIn(f.yearlyTraffic, 1, MAX_GIB);
-    if (yearlyTraffic === null) errors.yearly_traffic_bytes = '年付流量须为 1–1048576 GiB 的整数';
-  }
   let discount: number | null = null;
   if (f.yearlyDiscount.trim() !== '') {
     discount = intIn(f.yearlyDiscount, 50, 100);
     if (discount === null) errors.yearly_discount_percent = discountMessage;
   }
-  if (
-    f.yearlyEnabled &&
-    f.yearlyTraffic.trim() === '' &&
-    traffic !== null &&
-    traffic * 12 > MAX_GIB
-  )
-    errors.yearly_traffic_bytes = '月流量的 12 倍超出上限，请填写年付流量或关闭年付';
   if (Object.keys(errors).length > 0) return { errors };
   const input: AdminPlanInput & { id?: string } = {
     name,
@@ -170,7 +154,6 @@ function validate(f: Fields, creating: boolean) {
     allow_dedicated: f.line === 'dedicated',
     yearly_enabled: f.yearlyEnabled,
     yearly_duration_days: yearlyDays as number,
-    yearly_traffic_bytes: yearlyTraffic === null ? null : gibToBytesInt(yearlyTraffic),
     yearly_discount_percent: discount,
     featured: f.featured,
     sort: sort as number,
@@ -212,13 +195,9 @@ export function PlanForm({
     monthly !== null && monthly >= 1 && monthly <= MAX_MONTHLY_CENTS && percent !== null
       ? previewYearly(monthly, percent)
       : null;
+  // Yearly traffic is the monthly allowance, refreshed every 30 days (handoff_shop.md D2
+  // revised); there is no separate yearly figure.
   const monthlyTraffic = intIn(f.traffic, 1, MAX_GIB);
-  const yearlyTrafficGib =
-    f.yearlyTraffic.trim() !== ''
-      ? intIn(f.yearlyTraffic, 1, MAX_GIB)
-      : monthlyTraffic === null
-        ? null
-        : monthlyTraffic * 12;
   const devices = intIn(f.devices, 1, 100);
   const dayCount = intIn(f.days, 1, 365);
 
@@ -278,7 +257,6 @@ export function PlanForm({
       input.yearly_enabled !== plan.yearly_enabled ||
       input.yearly_discount_percent !== plan.yearly_discount_percent ||
       input.yearly_duration_days !== plan.yearly_duration_days ||
-      input.yearly_traffic_bytes !== plan.yearly_traffic_bytes ||
       input.price_cents !== plan.price_cents;
     if (yearlyChanged && (input.yearly_enabled || plan.yearly_enabled)) {
       const after = input.yearly_enabled
@@ -423,15 +401,6 @@ export function PlanForm({
             onChange={(e) => set('yearlyDays', e.currentTarget.value)}
           />
           <TextInput
-            label="年付流量（GiB）"
-            description={`留空表示月流量 × 12，当前生效 ${yearlyTrafficGib === null ? '—' : yearlyTrafficGib > MAX_GIB ? '超出上限' : `${yearlyTrafficGib} GiB`}`}
-            inputMode="numeric"
-            disabled={disabledYearly}
-            value={f.yearlyTraffic}
-            error={errors.yearly_traffic_bytes}
-            onChange={(e) => set('yearlyTraffic', e.currentTarget.value)}
-          />
-          <TextInput
             label="年付折扣（%）"
             description={`留空表示跟随全局（当前 ${globalPercent}），50–100`}
             inputMode="numeric"
@@ -441,6 +410,13 @@ export function PlanForm({
             onChange={(e) => set('yearlyDiscount', e.currentTarget.value)}
           />
         </Group>
+        {f.yearlyEnabled ? (
+          <Text size="xs" c="dimmed" data-testid="yearly-traffic-rule">
+            年付流量：从开通起每 30 天重置为月付流量
+            {monthlyTraffic === null ? '' : `（${monthlyTraffic} GiB）`}
+            ，不论上个周期是否用完；周期内用完需等下次刷新。
+          </Text>
+        ) : null}
         {f.yearlyEnabled ? (
           <Paper withBorder radius="md" p="sm" data-testid="yearly-preview">
             <Text size="xs" c="dimmed" mb={4}>

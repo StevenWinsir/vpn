@@ -19,9 +19,8 @@ import {
 import { notifications } from '@mantine/notifications';
 import { IconArrowRight, IconCheck } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
-import { tierOf, yearlyPromo, zhe } from '@/lib/shop';
+import { refreshes, tierOf, trafficLabel, yearlyPromo, zhe } from '@/lib/shop';
 import {
-  gib,
   money,
   type BillingCycle,
   type Dashboard,
@@ -336,7 +335,8 @@ export function PlansView() {
                   <Divider my={24} />
                   {tier ? (
                     <Stack gap={15} mb={30}>
-                      <Feature text={`${gib(tier.traffic_bytes)} GiB 计费流量`} />
+                      <Feature text={`${trafficLabel(tier)} 计费流量`} />
+                      {refreshes(tier) ? <Feature text="周期结束自动重置，余量不累计" /> : null}
                       <Feature text={`最多 ${plan.max_devices} 台设备同时在线`} />
                       <Feature
                         text={plan.allow_dedicated ? '普通直连 + 专线权限' : '普通直连线路权限'}
@@ -411,7 +411,8 @@ export function PlansView() {
             </Text>
             <Text c="dimmed" size="xs" lh={1.9}>
               普通线路按 0.5 倍、专线按 1 倍计费。例如实际使用 10 GiB，分别计费 5 GiB 和 10
-              GiB。具体倍率以节点配置为准。年付套餐的全年流量在开通时一次性发放。
+              GiB。具体倍率以节点配置为准。年付套餐从开通起每 30
+              天把流量重置为一个月的额度，不论上个周期是否用完；周期内用完需等到下次刷新。
             </Text>
           </div>
           <div>
@@ -419,7 +420,9 @@ export function PlansView() {
               续费与更换套餐
             </Text>
             <Text c="dimmed" size="xs" lh={1.9}>
-              同一套餐的月付与年付可以互相续费：有效期在当前到期时间上顺延，流量累加，已用流量不会清零。有效期内不能更换为其他套餐，到期后可重新选择。
+              同一套餐的月付与年付可以互相续费，有效期在当前到期时间上顺延。月付续月付时流量累加；月付续成年付时，剩余流量并入第一个
+              30 天周期，之后每 30 天刷新；已是年付时再续费只顺延有效期，流量仍按原日期每 30
+              天刷新。有效期内不能更换为其他套餐，到期后可重新选择。
             </Text>
           </div>
         </SimpleGrid>
@@ -457,7 +460,7 @@ export function PlansView() {
                 {selectedCycle === 'yearly' ? '（年付）' : ''}
               </Text>
               <Text size="sm" c="dimmed" mt={5}>
-                {gib(selectedTier.traffic_bytes)} GiB · {selectedTier.duration_days} 天
+                {trafficLabel(selectedTier)} · {selectedTier.duration_days} 天
               </Text>
             </div>
             <Group justify="space-between">

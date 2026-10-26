@@ -366,7 +366,7 @@ func (e *payEnv) order(id string) model.Order {
 
 func (e *payEnv) subscription(userID string) *model.Subscription {
 	e.t.Helper()
-	sub, err := readSubscription(e.db, userID)
+	sub, err := readSubscription(e.db, userID, e.clock.Now())
 	if err != nil {
 		e.t.Fatal(err)
 	}

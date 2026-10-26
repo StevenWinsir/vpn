@@ -283,6 +283,8 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err != nil {
 			return err
 		}
+		// A finished traffic cycle reads as already refreshed (nothing is written).
+		billing.RollQuotaCycle(&sub, report.CheckedAt)
 		switch {
 		case sub.IsTest && !report.TestAccessEnabled:
 			report.AccountReason = "paid_vip_required"

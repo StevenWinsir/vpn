@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"vpn/backend/internal/billing"
 	"vpn/backend/internal/model"
 )
 
@@ -59,8 +60,10 @@ func planDecision(sub *model.Subscription, plan model.Plan, now time.Time, test 
 	return renew, nil
 }
 
-// readSubscription returns the user's subscription or nil. The caller holds the user lock.
-func readSubscription(tx *gorm.DB, userID string) (*model.Subscription, error) {
+// readSubscription returns the user's subscription as it stands at now (a refreshing
+// allowance moved to its current cycle, in memory only), or nil. A caller that writes
+// the row back (holding the user lock) persists the refresh with it.
+func readSubscription(tx *gorm.DB, userID string, now time.Time) (*model.Subscription, error) {
 	var sub model.Subscription
 	err := tx.Where("user_id = ?", userID).First(&sub).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -69,6 +72,7 @@ func readSubscription(tx *gorm.DB, userID string) (*model.Subscription, error) {
 	if err != nil {
 		return nil, err
 	}
+	billing.RollQuotaCycle(&sub, now)
 	return &sub, nil
 }
 
@@ -76,8 +80,19 @@ func readSubscription(tx *gorm.DB, userID string) (*model.Subscription, error) {
 // the user's row lock (lock order User -> Order -> Coupon -> Subscription -> Period).
 // When the current period already has a grant ledger row it is kept in step, so a
 // node's budget sees the new expiry and allowance at once.
-func applyPlan(tx *gorm.DB, userID string, plan model.Plan, now time.Time, test bool) (*model.Subscription, error) {
-	current, err := readSubscription(tx, userID)
+//
+// cycleDays > 0 is a yearly purchase: plan.TrafficBytes is then the allowance of one
+// cycle, refreshed every cycleDays (handoff_shop.md D2 revised):
+//   - a new period, or a renewal of a one-shot (monthly) subscription, starts the
+//     cycles now; what is left of the one-shot allowance carries into the first cycle;
+//   - a renewal of a subscription that already refreshes extends it and keeps its reset
+//     dates and the current cycle's balance; the new allowance applies from the next
+//     reset on.
+//
+// A monthly purchase onto a refreshing subscription extends it the same way: the days
+// it adds are covered by the refreshes, so the current cycle gains nothing.
+func applyPlan(tx *gorm.DB, userID string, plan model.Plan, cycleDays int, now time.Time, test bool) (*model.Subscription, error) {
+	current, err := readSubscription(tx, userID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +111,18 @@ func applyPlan(tx *gorm.DB, userID string, plan model.Plan, now time.Time, test 
 			sub.ID = uuid.NewString()
 		}
 	}
-	sub.TrafficLimitBytes += plan.TrafficBytes
+	refreshing := billing.QuotaCycleActive(&sub)
+	switch {
+	case cycleDays > 0 && refreshing:
+		sub.QuotaCycleBytes = plan.TrafficBytes
+	case cycleDays > 0:
+		start := now
+		sub.QuotaCycleDays, sub.QuotaCycleBytes, sub.QuotaCycleStartsAt = cycleDays, plan.TrafficBytes, &start
+		sub.TrafficLimitBytes += plan.TrafficBytes
+	case refreshing:
+	default:
+		sub.TrafficLimitBytes += plan.TrafficBytes
+	}
 	sub.ExpiresAt = sub.ExpiresAt.AddDate(0, 0, plan.DurationDays)
 	sub.Version++
 	return saveSubscription(tx, &sub)

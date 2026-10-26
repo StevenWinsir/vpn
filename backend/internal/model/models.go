@@ -91,6 +91,15 @@ type Subscription struct {
 	Version   int64     `gorm:"not null;default:1" json:"-"`
 	CreatedAt time.Time `json:"-"`
 	UpdatedAt time.Time `json:"-"`
+	// Refreshing traffic (yearly purchases, handoff_shop.md D2 revised). With
+	// QuotaCycleDays > 0 the allowance is a per-cycle one: every QuotaCycleDays from
+	// QuotaCycleStartsAt the balance (TrafficLimitBytes, UsedUnits and the byte counters)
+	// is reset to QuotaCycleBytes, used up or not. 0 is the one-shot allowance of a
+	// monthly purchase. An anchor before StartsAt belongs to an earlier period and is
+	// ignored (an older binary may have started a new period without clearing it).
+	QuotaCycleDays     int        `gorm:"not null;default:0;check:quota_cycle_days >= 0 AND quota_cycle_days <= 365" json:"quota_cycle_days"`
+	QuotaCycleBytes    int64      `gorm:"not null;default:0;check:quota_cycle_bytes >= 0" json:"quota_cycle_bytes"`
+	QuotaCycleStartsAt *time.Time `json:"quota_cycle_starts_at"`
 }
 
 type Order struct {
@@ -134,6 +143,11 @@ type Order struct {
 	OriginalCents        int64  `gorm:"not null;default:0" json:"original_cents"`
 	EntMaxDevices        *int   `json:"-"`
 	EntAllowDedicated    *bool  `json:"-"`
+	// QuotaCycleDays > 0 (yearly orders): the purchase grants QuotaCycleBytes again every
+	// QuotaCycleDays instead of TrafficBytes at once. TrafficBytes keeps the nominal
+	// twelve months so an older binary that fulfils the order still grants the year.
+	QuotaCycleDays  int   `gorm:"not null;default:0" json:"quota_cycle_days"`
+	QuotaCycleBytes int64 `gorm:"not null;default:0" json:"quota_cycle_bytes"`
 }
 
 // Order statuses. paid means paid and fulfilled, in one transaction.
