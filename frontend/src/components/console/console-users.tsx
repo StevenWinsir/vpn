@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
   Badge,
@@ -30,7 +30,6 @@ import {
   passwordMinBytes,
   payTypeLabel,
   utf8Bytes,
-  type Plan,
 } from '@/lib/types';
 import {
   dayEnd,
@@ -43,6 +42,8 @@ import {
   toLocalInput,
   unitsToGib,
   validDay,
+  type AdminPlan,
+  type AdminPlansResponse,
   type ConsoleDevice,
   type ConsoleLogin,
   type ConsoleOrder,
@@ -60,6 +61,7 @@ import {
   When,
   type Values,
 } from './console-common';
+import { planOptions } from '@/lib/plan-math';
 import { useAuth } from '../providers';
 
 const keys = [
@@ -119,12 +121,8 @@ export function ConsoleUsers() {
     setEdits({});
     apply(patch);
   };
-  const [plans, setPlans] = useState<Plan[]>([]);
-  useEffect(() => {
-    void api<{ plans: Plan[] }>('/plans')
-      .then((r) => setPlans(r.plans))
-      .catch(() => undefined);
-  }, []);
+  const plans =
+    useFetched<AdminPlansResponse>('/admin/console/plans?include_deleted=true').data?.plans ?? [];
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     go({ ...draft, user: '', page: '' });
@@ -168,7 +166,7 @@ export function ConsoleUsers() {
               label="套餐"
               clearable
               w={150}
-              data={plans.map((p) => ({ value: p.id, label: p.name }))}
+              data={planOptions(plans, [draft.plan])}
               value={draft.plan || null}
               onChange={(v) => set('plan', v)}
             />
@@ -384,7 +382,7 @@ function UserDrawer({
   onChanged,
 }: {
   id: string;
-  plans: Plan[];
+  plans: AdminPlan[];
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -752,7 +750,7 @@ function PasswordModal({ user, onClose, onDone }: ModalProps) {
   );
 }
 
-function SubscriptionModal({ user, plans, onClose, onDone }: ModalProps & { plans: Plan[] }) {
+function SubscriptionModal({ user, plans, onClose, onDone }: ModalProps & { plans: AdminPlan[] }) {
   const sub = user.subscription;
   const [planId, setPlanId] = useState<string | null>(sub?.plan_id ?? null);
   const [expires, setExpires] = useState(sub ? toLocalInput(sub.expires_at) : '');
@@ -806,7 +804,10 @@ function SubscriptionModal({ user, plans, onClose, onDone }: ModalProps & { plan
         <Select
           label="套餐"
           placeholder="选择套餐"
-          data={plans.map((p) => ({ value: p.id, label: `${p.name}（${p.id}）` }))}
+          data={planOptions(plans, sub ? [sub.plan_id] : []).map((o) => ({
+            value: o.value,
+            label: `${o.label}（${o.value}）`,
+          }))}
           value={planId}
           onChange={setPlanId}
           allowDeselect={false}

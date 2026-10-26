@@ -25,7 +25,8 @@ import {
 } from '@mantine/core';
 import { api, message } from '@/lib/api';
 import { nodeRate } from '@/lib/node-list';
-import type { Plan } from '@/lib/types';
+import type { AdminPlan, AdminPlansResponse } from '@/lib/console';
+import { planNameOf, planOptions } from '@/lib/plan-math';
 import { usePolling } from '@/lib/use-polling';
 import { AdminAgentsPanel } from './admin-agents-panel';
 import { useAuth } from './providers';
@@ -173,7 +174,7 @@ function AdminGate() {
 
 function GroupManager() {
   const [list, setList] = useState<GroupList | null>(null);
-  const [plans, setPlans] = useState<Plan[]>([]);
+  const [plans, setPlans] = useState<AdminPlan[]>([]);
   const [protocols, setProtocols] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -199,7 +200,7 @@ function GroupManager() {
     try {
       const [groups, available, legacy] = await Promise.all([
         api<GroupList>('/admin/node-groups', { signal }),
-        api<{ plans: Plan[] }>('/plans', { signal }),
+        api<AdminPlansResponse>('/admin/console/plans?include_deleted=true', { signal }),
         protocolsLoaded.current
           ? Promise.resolve(null)
           : api<{ supported_protocols?: string[] }>('/admin/nodes', { signal }),
@@ -256,7 +257,7 @@ function GroupManager() {
         ? group.plan_ids.length === 0
         : group.plan_ids.length === 0 || group.plan_ids.includes(filter),
   );
-  const planName = (id: string) => plans.find((plan) => plan.id === id)?.name || id;
+  const planName = (id: string) => planNameOf(plans, id);
   const migrated = groups.some((group) =>
     group.servers.some((server) => server.max_connections === migratedCapacity),
   );
@@ -528,7 +529,7 @@ function GroupManager() {
             data={[
               { value: ALL, label: '全部节点组' },
               { value: UNSCOPED, label: '不限套餐' },
-              ...plans.map((plan) => ({ value: plan.id, label: plan.name })),
+              ...planOptions(plans, filter === ALL || filter === UNSCOPED ? [] : [filter]),
             ]}
             style={{ flex: '0 1 240px', minWidth: 0 }}
           />
@@ -664,7 +665,7 @@ function GroupManager() {
               <MultiSelect
                 label="限定套餐"
                 description="不选择表示所有符合线路权益的套餐；专线仍会校验专线权益。"
-                data={plans.map((plan) => ({ value: plan.id, label: plan.name }))}
+                data={planOptions(plans, groupForm.plan_ids)}
                 value={groupForm.plan_ids}
                 disabled={busy}
                 onChange={(plan_ids) => setGroupForm({ ...groupForm, plan_ids })}

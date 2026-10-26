@@ -48,6 +48,7 @@ const keys = [
   'status',
   'pay_type',
   'source',
+  'billing_cycle',
   'email',
   'trade_no',
   'order_id',
@@ -65,6 +66,7 @@ function toApi(v: Values): Values {
     status: v.status,
     pay_type: v.pay_type,
     source: v.source,
+    billing_cycle: v.billing_cycle,
     email: v.email,
     trade_no: v.trade_no,
     order_id: v.order_id,
@@ -169,6 +171,17 @@ export function ConsoleOrders() {
               value={draft.source || null}
               onChange={(v) => set('source', v)}
             />
+            <Select
+              label="付费周期"
+              clearable
+              w={120}
+              data={[
+                { value: 'monthly', label: '月付' },
+                { value: 'yearly', label: '年付' },
+              ]}
+              value={draft.billing_cycle || null}
+              onChange={(v) => set('billing_cycle', v)}
+            />
             <TextInput
               label="用户邮箱"
               value={draft.email}
@@ -234,6 +247,7 @@ export function ConsoleOrders() {
                   <Table.Tr>
                     <Table.Th>订单 / 网关订单号</Table.Th>
                     <Table.Th>用户</Table.Th>
+                    <Table.Th>周期</Table.Th>
                     <Table.Th>标价</Table.Th>
                     <Table.Th>优惠</Table.Th>
                     <Table.Th>应付</Table.Th>
@@ -288,6 +302,8 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const cycleLabel = (o: ConsoleOrder) => (o.billing_cycle === 'yearly' ? '年付' : '月付');
+
 function OrderRow({ order: o, onOpen }: { order: ConsoleOrder; onOpen: () => void }) {
   return (
     <Table.Tr data-testid="order-row">
@@ -300,6 +316,7 @@ function OrderRow({ order: o, onOpen }: { order: ConsoleOrder; onOpen: () => voi
         </Text>
       </Table.Td>
       <Table.Td>{o.email}</Table.Td>
+      <Table.Td data-testid="order-cycle">{cycleLabel(o)}</Table.Td>
       <Table.Td>{money(o.list_price_cents || o.price_cents)}</Table.Td>
       <Table.Td>
         {o.discount_cents ? `-${money(o.discount_cents)}` : '—'}
@@ -412,6 +429,7 @@ function OrderDrawer({
             <Paper withBorder radius="md" p="md">
               <Stack gap={4}>
                 <Row label="套餐" value={o.plan_name} />
+                <Row label="付费周期" value={cycleLabel(o)} />
                 <Row label="用户" value={o.email} />
                 <Row label="订单 ID" value={o.id} mono />
                 <Row label="网关订单号" value={o.trade_no ?? '—'} mono />
@@ -429,6 +447,24 @@ function OrderDrawer({
                 <Row
                   label="金额"
                   value={`标价 ${money(o.list_price_cents || o.price_cents)}，优惠 ${money(o.discount_cents)}${o.coupon_code ? `（${o.coupon_code}）` : ''}，应付 ${money(o.amount_cents || o.price_cents)}，实付 ${o.paid_cents != null ? money(o.paid_cents) : '—'}`}
+                />
+                {o.original_cents > 0 ? (
+                  <Row
+                    label="原价与年付优惠"
+                    value={
+                      o.billing_cycle === 'yearly'
+                        ? `原价 ${money(o.original_cents)}，年付折扣 ${o.cycle_discount_percent}%（立省 ${money(o.original_cents - (o.list_price_cents || o.price_cents))}）`
+                        : `原价 ${money(o.original_cents)}`
+                    }
+                  />
+                ) : null}
+                <Row
+                  label="权益快照"
+                  value={
+                    o.ent_max_devices != null || o.ent_allow_dedicated != null
+                      ? `设备额度 ${o.ent_max_devices ?? '—'}，${o.ent_allow_dedicated ? '含专线' : '仅普通线路'}`
+                      : '无（旧订单，开通时读取套餐当前权益）'
+                  }
                 />
                 <Row label="支付方式" value={payTypeLabel[o.pay_type] ?? '—'} />
                 <Row label="创建" value={<When value={o.created_at} />} />
