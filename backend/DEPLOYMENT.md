@@ -211,6 +211,7 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 
 - **迁移**：只增不删，可重复执行。`plans` 增加年付、推荐、备注、版本和软删除列；新表 `shop_settings`（单行，全局年付折扣，默认 90）；`orders` 增加付费周期、折扣、原价和权益快照；`coupons` 增加 `billing_cycles`。套餐只做软删除，`store.Migrate` 和旧版本的种子插入都不会使其复活。
 - **设备额度与 `CLIENT_MAX_ONLINE_DEVICES`**：用户同时在线的设备数 = min(套餐 `max_devices`, `CLIENT_MAX_ONLINE_DEVICES`)，默认上限为 2。管理员在“套餐管理”里设定的设备数超过该变量时，页面显示警告并同时列出设定值与生效值，`/plans` 对用户展示的也是生效值。要让 5 / 10 台生效，调高该变量并重启后端。`bin/doctor` 的 `shop.plans_over_device_cap` 只报告超过上限的上架套餐数量，不作为警告。
+- **年付流量按 30 天刷新**：`subscriptions` 增加 `quota_cycle_days`、`quota_cycle_bytes`、`quota_cycle_starts_at`，`orders` 增加 `quota_cycle_days`、`quota_cycle_bytes` 快照。年付订阅从付款起每 30 天把本周期额度重置为月流量（已用清零、余量不累计）；刷新在持有用户锁的读取路径上写入（客户端会话、节点代理同步与用量上报、购买与管理员修改），只读页面按同样规则计算显示，不写库。刷新不改变订阅的开始时间和节点账本行，所以客户端会话与节点授权不会因此失效。年付订单的 `traffic_bytes` 仍记名义上的 12 个月流量，供旧版本回滚时开通；`plans.yearly_traffic_bytes` 不再使用。
 - **诊断**：`bin/doctor` 的 `shop` 段给出设置行是否存在、全局折扣、上架套餐数、开启年付的上架套餐数；警告 `shop_settings_row_missing`、`shop_no_active_plans`。只输出数量，不输出套餐内容。
 - **回滚**：回滚代码前先在后台停用有周期范围的优惠码，然后先回滚前端、再回滚后端；不需要反向迁移。详见 [docs/payment-operations.md](../docs/payment-operations.md) 第七节。
 - **演练**：`scripts/test-release-rehearsal.py` 增加第五个二进制（PR #72，套餐商店之前的版本），演练年付订单、管理员新建套餐、软删除、折扣修改后的回滚与再升级。

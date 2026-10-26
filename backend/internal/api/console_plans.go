@@ -121,14 +121,13 @@ func validatePlanInput(in *planInput) error {
 	if in.YearlyDurationDays < 1 || in.YearlyDurationDays > 365 {
 		return fieldError("yearly_duration_days", "年付有效天数须为 1–365")
 	}
-	if in.YearlyTrafficBytes != nil && (*in.YearlyTrafficBytes < 1 || *in.YearlyTrafficBytes > maxPlanBytes) {
-		return fieldError("yearly_traffic_bytes", "年付流量须为 1–1048576 GiB")
+	// Yearly traffic is the monthly allowance refreshed every 30 days (D2 revised); the
+	// field is still accepted as null so an older console form can save.
+	if in.YearlyTrafficBytes != nil {
+		return fieldError("yearly_traffic_bytes", "年付流量固定为每 30 天刷新一次月付流量，不能单独设置")
 	}
 	if in.YearlyDiscountPercent != nil && (*in.YearlyDiscountPercent < minDiscount || *in.YearlyDiscountPercent > maxDiscount) {
 		return fieldError("yearly_discount_percent", "年付折扣须为 50–100 的整数百分比（90 表示 9 折）")
-	}
-	if in.YearlyEnabled && in.YearlyTrafficBytes == nil && in.TrafficBytes*12 > maxPlanBytes {
-		return fieldError("yearly_traffic_bytes", "月流量的 12 倍超出上限，请填写年付流量或关闭年付")
 	}
 	return nil
 }
@@ -202,7 +201,6 @@ type adminPlanView struct {
 	Sort                  int         `json:"sort"`
 	YearlyEnabled         bool        `json:"yearly_enabled"`
 	YearlyDurationDays    int         `json:"yearly_duration_days"`
-	YearlyTrafficBytes    *int64      `json:"yearly_traffic_bytes"`
 	YearlyDiscountPercent *int        `json:"yearly_discount_percent"`
 	DiscountSource        string      `json:"yearly_discount_source"`
 	Yearly                *publicTier `json:"yearly"`
@@ -221,7 +219,7 @@ func (s *Server) adminPlanOf(plan model.Plan, global int, st planStats) adminPla
 	effective := s.deviceCap(plan.MaxDevices)
 	v := adminPlanView{ID: plan.ID, Name: plan.Name, Description: plan.Description, Note: plan.Note, PriceCents: plan.PriceCents, DurationDays: plan.DurationDays, TrafficBytes: plan.TrafficBytes,
 		MaxDevices: plan.MaxDevices, EffectiveDevices: effective, DevicesOverCap: plan.MaxDevices > effective, AllowDedicated: plan.AllowDedicated, Active: plan.Active, Featured: plan.Featured, Sort: plan.Sort,
-		YearlyEnabled: plan.YearlyEnabled, YearlyDurationDays: plan.YearlyDurationDays, YearlyTrafficBytes: plan.YearlyTrafficBytes, YearlyDiscountPercent: plan.YearlyDiscountPercent,
+		YearlyEnabled: plan.YearlyEnabled, YearlyDurationDays: plan.YearlyDurationDays, YearlyDiscountPercent: plan.YearlyDiscountPercent,
 		DiscountSource: "global", Version: plan.Version, ActiveSubscriptions: st.subs[plan.ID], PendingOrders: st.pending[plan.ID], CouponCount: st.coupons[plan.ID],
 		Groups: []string{}, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt, DeletedAt: plan.DeletedAt}
 	if plan.YearlyDiscountPercent != nil {
@@ -401,7 +399,7 @@ func (s *Server) consolePlanCreate(c *gin.Context) {
 		}
 		saved = model.Plan{ID: id, Name: in.Name, Description: in.Description, Note: in.Note, PriceCents: in.PriceCents, DurationDays: in.DurationDays, TrafficBytes: in.TrafficBytes,
 			MaxDevices: in.MaxDevices, AllowDedicated: in.AllowDedicated, Active: in.Active, Sort: in.Sort, Featured: in.Featured, YearlyEnabled: in.YearlyEnabled,
-			YearlyDurationDays: in.YearlyDurationDays, YearlyTrafficBytes: in.YearlyTrafficBytes, YearlyDiscountPercent: in.YearlyDiscountPercent, Version: 1, CreatedAt: now, UpdatedAt: now}
+			YearlyDurationDays: in.YearlyDurationDays, YearlyDiscountPercent: in.YearlyDiscountPercent, Version: 1, CreatedAt: now, UpdatedAt: now}
 		if err := tx.Select("*").Create(&saved).Error; err != nil {
 			return err
 		}

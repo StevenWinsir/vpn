@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"vpn/backend/internal/authmail"
+	"vpn/backend/internal/billing"
 	"vpn/backend/internal/model"
 )
 
@@ -29,21 +30,34 @@ type consoleSub struct {
 	MaxDevices        int       `json:"max_devices"`
 	AllowDedicated    bool      `json:"allow_dedicated"`
 	IsTest            bool      `json:"is_test"`
+	// A refreshing (yearly) allowance: the traffic figures above are the current
+	// cycle's, reset to QuotaCycleBytes at QuotaResetsAt. QuotaCycleDays 0 = one-shot.
+	QuotaCycleDays  int        `json:"quota_cycle_days"`
+	QuotaCycleBytes int64      `json:"quota_cycle_bytes"`
+	QuotaResetsAt   *time.Time `json:"quota_resets_at"`
 	// State is active or expired.
 	State   string `json:"state"`
 	Version int64  `json:"version"`
 }
 
+// subView shows sub as it stands at now (a finished traffic cycle reads as reset).
 func subView(sub *model.Subscription, now time.Time) *consoleSub {
 	if sub == nil {
 		return nil
 	}
+	view := *sub
+	billing.RollQuotaCycle(&view, now)
+	sub = &view
 	state := "expired"
 	if now.Before(sub.ExpiresAt) {
 		state = "active"
 	}
-	return &consoleSub{PlanID: sub.PlanID, PlanName: sub.PlanName, StartsAt: sub.StartsAt, ExpiresAt: sub.ExpiresAt, TrafficLimitBytes: sub.TrafficLimitBytes, UsedUnits: sub.UsedUnits,
+	out := &consoleSub{PlanID: sub.PlanID, PlanName: sub.PlanName, StartsAt: sub.StartsAt, ExpiresAt: sub.ExpiresAt, TrafficLimitBytes: sub.TrafficLimitBytes, UsedUnits: sub.UsedUnits,
 		UploadBytes: sub.UploadBytes, DownloadBytes: sub.DownloadBytes, MaxDevices: sub.MaxDevices, AllowDedicated: sub.AllowDedicated, IsTest: sub.IsTest, State: state, Version: sub.Version}
+	if billing.QuotaCycleActive(sub) {
+		out.QuotaCycleDays, out.QuotaCycleBytes, out.QuotaResetsAt = sub.QuotaCycleDays, sub.QuotaCycleBytes, billing.NextQuotaReset(sub)
+	}
+	return out
 }
 
 type consoleUser struct {
@@ -83,6 +97,10 @@ type userListRow struct {
 	SubDedicated *bool
 	SubIsTest    *bool
 	SubVersion   *int64
+	// NULL only without a subscription.
+	SubCycleDays     *int
+	SubCycleBytes    *int64
+	SubCycleStartsAt *time.Time
 }
 
 func (r userListRow) subscription(now time.Time) *consoleSub {
@@ -90,7 +108,11 @@ func (r userListRow) subscription(now time.Time) *consoleSub {
 		return nil
 	}
 	sub := model.Subscription{ID: *r.SubID, PlanID: *r.SubPlanID, PlanName: *r.SubPlanName, StartsAt: *r.SubStartsAt, ExpiresAt: *r.SubExpiresAt, TrafficLimitBytes: *r.SubLimit,
-		UsedUnits: *r.SubUsed, UploadBytes: *r.SubUpload, DownloadBytes: *r.SubDownload, MaxDevices: *r.SubDevices, AllowDedicated: *r.SubDedicated, IsTest: *r.SubIsTest, Version: *r.SubVersion}
+		UsedUnits: *r.SubUsed, UploadBytes: *r.SubUpload, DownloadBytes: *r.SubDownload, MaxDevices: *r.SubDevices, AllowDedicated: *r.SubDedicated, IsTest: *r.SubIsTest, Version: *r.SubVersion,
+		QuotaCycleStartsAt: r.SubCycleStartsAt}
+	if r.SubCycleDays != nil && r.SubCycleBytes != nil {
+		sub.QuotaCycleDays, sub.QuotaCycleBytes = *r.SubCycleDays, *r.SubCycleBytes
+	}
 	return subView(&sub, now)
 }
 
@@ -202,7 +224,8 @@ func (s *Server) consoleUserList(c *gin.Context) {
 	var rows []userListRow
 	err := base().Select(`u.*, s.id AS sub_id, s.plan_id AS sub_plan_id, s.plan_name AS sub_plan_name, s.starts_at AS sub_starts_at, s.expires_at AS sub_expires_at,
 		s.traffic_limit_bytes AS sub_limit, s.used_units AS sub_used, s.upload_bytes AS sub_upload, s.download_bytes AS sub_download, s.max_devices AS sub_devices,
-		s.allow_dedicated AS sub_dedicated, s.is_test AS sub_is_test, s.version AS sub_version`).
+		s.allow_dedicated AS sub_dedicated, s.is_test AS sub_is_test, s.version AS sub_version, s.quota_cycle_days AS sub_cycle_days, s.quota_cycle_bytes AS sub_cycle_bytes,
+		s.quota_cycle_starts_at AS sub_cycle_starts_at`).
 		Order(column + " " + dir + " NULLS LAST, u.id").Limit(size).Offset((page - 1) * size).Scan(&rows).Error
 	if err != nil {
 		fail(c, 503, "console_unavailable", "用户列表暂时不可用")
@@ -251,7 +274,7 @@ func (s *Server) consoleUserDetail(c *gin.Context) {
 		fail(c, 503, "console_unavailable", "用户详情暂时不可用")
 		return
 	}
-	sub, err := readSubscription(db, id)
+	sub, err := readSubscription(db, id, now)
 	var orders []consoleOrder
 	var logins []model.LoginEvent
 	var online []onlineDevice
@@ -471,7 +494,7 @@ func (s *Server) consoleUserSubscription(c *gin.Context) {
 		if target.Status != "active" {
 			return &apiError{409, "user_deleting", "该账号已被删除，无法修改"}
 		}
-		current, e := readSubscription(tx, target.ID)
+		current, e := readSubscription(tx, target.ID, now)
 		if e != nil {
 			return e
 		}
@@ -501,6 +524,9 @@ func (s *Server) consoleUserSubscription(c *gin.Context) {
 				return e
 			}
 			next.PlanID, next.PlanName, next.MaxDevices, next.AllowDedicated, next.IsTest = plan.ID, plan.Name, plan.MaxDevices, plan.AllowDedicated, false
+			// A hand-made change of plan is a one-shot allowance: the refreshing one was
+			// bought for the old plan (handoff_shop.md D2 revised).
+			next.QuotaCycleDays, next.QuotaCycleBytes, next.QuotaCycleStartsAt = 0, 0, nil
 			if current == nil {
 				next.TrafficLimitBytes = plan.TrafficBytes
 			}
@@ -574,7 +600,7 @@ func (s *Server) consoleUserSubscriptionEnd(c *gin.Context) {
 		if target == nil {
 			return errUserNotFound
 		}
-		current, e := readSubscription(tx, target.ID)
+		current, e := readSubscription(tx, target.ID, now)
 		if e != nil {
 			return e
 		}

@@ -14,6 +14,11 @@ export type ConsoleSub = {
   max_devices: number;
   allow_dedicated: boolean;
   is_test: boolean;
+  // A refreshing (yearly) allowance: the traffic figures are the current cycle's, reset to
+  // quota_cycle_bytes at quota_resets_at. 0 = one-shot.
+  quota_cycle_days?: number;
+  quota_cycle_bytes?: number;
+  quota_resets_at?: string | null;
   state: 'active' | 'expired';
   // The token a save must send back; 0 means "no subscription".
   version: number;
@@ -176,7 +181,6 @@ export type AdminPlan = {
   sort: number;
   yearly_enabled: boolean;
   yearly_duration_days: number;
-  yearly_traffic_bytes: number | null;
   yearly_discount_percent: number | null;
   yearly_discount_source: 'global' | 'plan';
   yearly: PlanTier | null;

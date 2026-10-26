@@ -41,7 +41,21 @@ type cycleTerms struct {
 	PriceCents, OriginalCents, SavingCents, MonthlyEquivCents int64
 	DiscountPercent                                           int
 	DurationDays                                              int
-	TrafficBytes                                              int64
+	// TrafficBytes is what the cycle is worth in traffic: the monthly allowance, or for
+	// yearly the nominal twelve months (what an older binary grants at once). A yearly
+	// purchase actually grants QuotaCycleBytes again every QuotaCycleDays (D2 revised).
+	TrafficBytes    int64
+	QuotaCycleDays  int
+	QuotaCycleBytes int64
+}
+
+// grantBytes is the allowance one purchase adds now: the whole monthly allowance, or
+// the first cycle of a yearly one.
+func (t cycleTerms) grantBytes() int64 {
+	if t.QuotaCycleDays > 0 {
+		return t.QuotaCycleBytes
+	}
+	return t.TrafficBytes
 }
 
 // yearlyPrice is decision D3: original = monthly x 12, price = original x pct / 100
@@ -59,15 +73,6 @@ func effectiveDiscount(plan model.Plan, global int) int {
 	return global
 }
 
-// effectiveYearlyTraffic is the stored yearly allowance, or twelve months of the monthly
-// one. The caller bounds it.
-func effectiveYearlyTraffic(plan model.Plan) int64 {
-	if plan.YearlyTrafficBytes != nil {
-		return *plan.YearlyTrafficBytes
-	}
-	return plan.TrafficBytes * 12
-}
-
 // termsFor returns the plan's terms for a cycle, or errCycleUnavailable.
 func termsFor(plan model.Plan, cycle string, global int) (cycleTerms, error) {
 	if cycle != model.CycleYearly {
@@ -79,22 +84,23 @@ func termsFor(plan model.Plan, cycle string, global int) (cycleTerms, error) {
 		plan.PriceCents < 1 || plan.PriceCents > maxMonthlyCents || plan.TrafficBytes < 1 || plan.TrafficBytes > maxPlanBytes {
 		return cycleTerms{}, errCycleUnavailable
 	}
-	traffic := effectiveYearlyTraffic(plan)
-	if traffic < 1 || traffic > maxPlanBytes {
-		return cycleTerms{}, errCycleUnavailable
-	}
+	// Every 30 days the monthly allowance again; the nominal year is bounded like any
+	// allowance so an older binary can still fulfil the order. plans.yearly_traffic_bytes
+	// is no longer read.
+	nominal := min(plan.TrafficBytes*12, maxPlanBytes)
 	original, price, equiv := yearlyPrice(plan.PriceCents, pct)
 	if price < 1 {
 		return cycleTerms{}, errCycleUnavailable
 	}
 	return cycleTerms{Cycle: model.CycleYearly, PriceCents: price, OriginalCents: original, SavingCents: original - price, MonthlyEquivCents: equiv,
-		DiscountPercent: pct, DurationDays: plan.YearlyDurationDays, TrafficBytes: traffic}, nil
+		DiscountPercent: pct, DurationDays: plan.YearlyDurationDays, TrafficBytes: nominal, QuotaCycleDays: model.QuotaCycleDays, QuotaCycleBytes: plan.TrafficBytes}, nil
 }
 
 // forCycle is the plan as one purchase of that cycle: the planDecision/applyPlan code
-// reads price, days and traffic from the plan, so they are swapped in on a copy.
+// reads price, days and traffic from the plan, so they are swapped in on a copy (the
+// traffic is what the purchase adds now, see grantBytes).
 func (t cycleTerms) forCycle(plan model.Plan) model.Plan {
-	plan.PriceCents, plan.DurationDays, plan.TrafficBytes = t.PriceCents, t.DurationDays, t.TrafficBytes
+	plan.PriceCents, plan.DurationDays, plan.TrafficBytes = t.PriceCents, t.DurationDays, t.grantBytes()
 	return plan
 }
 
@@ -104,6 +110,7 @@ func snapshotCycle(order *model.Order, terms cycleTerms, plan model.Plan) {
 	devices, dedicated := plan.MaxDevices, plan.AllowDedicated
 	order.BillingCycle, order.CycleDiscountPercent, order.OriginalCents = terms.Cycle, terms.DiscountPercent, terms.OriginalCents
 	order.EntMaxDevices, order.EntAllowDedicated = &devices, &dedicated
+	order.QuotaCycleDays, order.QuotaCycleBytes = terms.QuotaCycleDays, terms.QuotaCycleBytes
 }
 
 // globalDiscount reads the shop-wide yearly percentage. A missing row (someone deleted
@@ -132,11 +139,14 @@ type publicTier struct {
 	DurationDays      int   `json:"duration_days"`
 	TrafficBytes      int64 `json:"traffic_bytes"`
 	MonthlyEquivCents int64 `json:"monthly_equivalent_cents"`
+	// QuotaCycleDays > 0: QuotaCycleBytes is refreshed every QuotaCycleDays (yearly).
+	QuotaCycleDays  int   `json:"quota_cycle_days"`
+	QuotaCycleBytes int64 `json:"quota_cycle_bytes"`
 }
 
 func tierOf(t cycleTerms) *publicTier {
 	return &publicTier{PriceCents: t.PriceCents, OriginalCents: t.OriginalCents, SavingCents: t.SavingCents, DiscountPercent: t.DiscountPercent,
-		DurationDays: t.DurationDays, TrafficBytes: t.TrafficBytes, MonthlyEquivCents: t.MonthlyEquivCents}
+		DurationDays: t.DurationDays, TrafficBytes: t.TrafficBytes, MonthlyEquivCents: t.MonthlyEquivCents, QuotaCycleDays: t.QuotaCycleDays, QuotaCycleBytes: t.QuotaCycleBytes}
 }
 
 // publicPlan is the whole public view of a plan: a fixed list of fields, never the model

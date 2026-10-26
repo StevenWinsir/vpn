@@ -9,6 +9,11 @@ const (
 	CycleYearly  = "yearly"
 )
 
+// QuotaCycleDays is the traffic refresh period of a yearly purchase: every 30 days from
+// the purchase the subscription's allowance is reset to one month's traffic, whatever
+// was left (handoff_shop.md D2, revised).
+const QuotaCycleDays = 30
+
 // DefaultYearlyDiscountPercent is the yearly price as a percentage of twelve months
 // (90 = 9折) when no setting row can be read.
 const DefaultYearlyDiscountPercent = 90

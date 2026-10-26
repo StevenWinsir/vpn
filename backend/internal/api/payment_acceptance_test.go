@@ -175,7 +175,8 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				w.WriteHeader(404)
 				return
 			}
-			reply(map[string]any{"plan_id": sub.PlanID, "expires_at": sub.ExpiresAt, "traffic_limit_bytes": sub.TrafficLimitBytes, "is_test": sub.IsTest})
+			reply(map[string]any{"plan_id": sub.PlanID, "expires_at": sub.ExpiresAt, "traffic_limit_bytes": sub.TrafficLimitBytes, "is_test": sub.IsTest,
+				"quota_cycle_days": sub.QuotaCycleDays, "quota_cycle_bytes": sub.QuotaCycleBytes, "quota_cycle_starts_at": sub.QuotaCycleStartsAt})
 		case "/fixture/user":
 			// Account state for the account specs: whether the row exists, its status and
 			// how many rows of every account-owned table remain.

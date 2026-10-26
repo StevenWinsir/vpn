@@ -742,7 +742,8 @@ def main():
             shop_admin.call('/admin/console/coupons/' + yearly_coupon['id'], {'code': 'DRILLYEAR', 'discount_type': 'percent', 'percent_off': 10, 'plan_ids': ['pro'], 'max_uses': 5, 'per_user_limit': 1,
                 'enabled': False, 'billing_cycles': 'yearly', 'version': yearly_coupon['version']}, origin=web_url)
             assert sql('upgrade', "SELECT enabled || ':' || billing_cycles FROM rehearsal.coupons WHERE code = 'DRILLYEAR'") == 'false:yearly'
-            # Owner: a yearly order paid (365 days and the yearly traffic are added to the live subscription), another left pending.
+            # Owner: a yearly order paid onto the live monthly subscription (365 days added; the monthly allowance joins the
+            # first 30-day cycle and is refreshed every 30 days from the payment, handoff_shop.md D2 revised), another left pending.
             owner_expires, owner_limit = utc_seconds('upgrade', owner_id), int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'"))
             paid_year = shop_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': '', 'billing_cycle': 'yearly',
                 'expected_amount_cents': pro_yearly['price_cents']}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
@@ -754,7 +755,12 @@ def main():
             assert shop_owner.call('/payments/orders/' + paid_year['id'])['order']['status'] == 'paid'
             assert utc_seconds('upgrade', owner_id) - owner_expires == 365 * 86400
             yearly_traffic = int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'")) - owner_limit
-            assert yearly_traffic > 0 and yearly_traffic == pro_yearly['traffic_bytes'], (yearly_traffic, pro_yearly)
+            assert pro_yearly['quota_cycle_days'] == 30 and pro_yearly['traffic_bytes'] == 12 * pro_yearly['quota_cycle_bytes'], pro_yearly
+            assert yearly_traffic > 0 and yearly_traffic == pro_yearly['quota_cycle_bytes'], (yearly_traffic, pro_yearly)
+            cycle = sql('upgrade', f"SELECT quota_cycle_days || ':' || quota_cycle_bytes || ':' || (quota_cycle_starts_at IS NOT NULL) FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'")
+            assert cycle == f"30:{pro_yearly['quota_cycle_bytes']}:true", cycle
+            assert sql('upgrade', f"SELECT quota_cycle_days || ':' || quota_cycle_bytes || ':' || traffic_bytes FROM rehearsal.orders WHERE id = '{paid_year['id']}'") == \
+                f"30:{pro_yearly['quota_cycle_bytes']}:{pro_yearly['traffic_bytes']}"
             snapshot = sql('upgrade', f"SELECT billing_cycle || ':' || cycle_discount_percent || ':' || original_cents || ':' || (ent_max_devices IS NOT NULL) FROM rehearsal.orders WHERE id = '{paid_year['id']}'")
             assert snapshot == f"yearly:85:{pro_yearly['original_cents']}:true", snapshot
             pending_year = shop_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'alipay', 'coupon_code': '', 'billing_cycle': 'yearly',
@@ -765,7 +771,7 @@ def main():
             assert sql('upgrade', f"SELECT plan_id || ':' || max_devices || ':' || is_test FROM rehearsal.subscriptions WHERE user_id = '{shopper_id}'") == 'drill-plan:1:false'
             shop_fingerprints = fingerprint('upgrade', ['plans', 'shop_settings', 'coupons'])
             stop(process)
-            summary['checks'].append('shop on the current binary: upgrade leaves every seed plan with yearly terms at 90 (price = monthly x 12 x 90 / 100, 365 days, pro featured); an administrator defines plan drill-plan (HTML in its name, an internal note) and soft-deletes drill-gone, the public list shows the former as plain text without note or version and never the latter; global discount 85 reprices the yearly tiers; a yearly-only coupon is refused for monthly and applied to yearly; a yearly order with a wrong expected_amount_cents is refused (409 price_changed) and creates nothing; a paid yearly order adds exactly 365 days and the yearly traffic to the live subscription and stores cycle, discount, original price and entitlement snapshot; a monthly order on the new plan activates it with its own device quota')
+            summary['checks'].append('shop on the current binary: upgrade leaves every seed plan with yearly terms at 90 (price = monthly x 12 x 90 / 100, 365 days, pro featured); an administrator defines plan drill-plan (HTML in its name, an internal note) and soft-deletes drill-gone, the public list shows the former as plain text without note or version and never the latter; global discount 85 reprices the yearly tiers; a yearly-only coupon is refused for monthly and applied to yearly; a yearly order with a wrong expected_amount_cents is refused (409 price_changed) and creates nothing; a paid yearly order adds exactly 365 days, carries one monthly allowance into the first 30-day cycle and switches the subscription to a 30-day refresh, and stores cycle, discount, original price, refresh and entitlement snapshot; a monthly order on the new plan activates it with its own device quota')
             # Rollback to the release just before the shop work: the pending yearly order is settled by the old fulfilOrder.
             process, shop_old = start_api(shop_rollback_binary, 'upgrade', 'api-shop-rollback', catalog=True, payment=True)
             old_owner = Client(shop_old.url)
@@ -779,12 +785,13 @@ def main():
             old_shopper.call('/auth/login', {'email': shopper_email, 'password': shopper_password}, origin=web_url)
             old_shopper_order = old_shopper.call('/payments/orders', {'plan_id': 'drill-plan', 'pay_type': 'alipay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
             assert old_shopper_order['amount_cents'] == 1234, old_shopper_order
-            # A pending yearly order is fulfilled with its snapshot (365 days, yearly traffic).
+            # A pending yearly order is fulfilled with its snapshot (365 days and the nominal twelve months of traffic at once:
+            # the old binary knows no refresh, so it grants what the shop sold before the refresh existed).
             before_expires, before_limit = utc_seconds('upgrade', owner_id), int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'"))
             Client(shop_old.url).call('/payments/notify', {'trade_no': pending_year['trade_no'], 'name': pending_year['plan_name'], 'money': money(pending_year['amount_cents']), 'trade_status': 'TRADE_SUCCESS'})
             assert old_owner.call('/payments/orders/' + pending_year['id'])['order']['status'] == 'paid'
             assert utc_seconds('upgrade', owner_id) - before_expires == 365 * 86400
-            assert int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'")) - before_limit == yearly_traffic
+            assert int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'")) - before_limit == pro_yearly['traffic_bytes']
             assert sql('upgrade', f"SELECT billing_cycle FROM rehearsal.orders WHERE id = '{pending_year['id']}'") == 'yearly'
             # The old binary sells monthly terms (also on the administrator-defined plan) and writes orders without the new columns.
             old_pending = old_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
@@ -793,7 +800,7 @@ def main():
             assert sql('upgrade', f"SELECT status FROM rehearsal.orders WHERE id = '{old_shopper_order['id']}'") == 'paid'
             assert fingerprint('upgrade', ['plans', 'shop_settings', 'coupons']) == shop_fingerprints
             stop(process)
-            summary['checks'].append('rollback to the release just before the shop work (no down migration, yearly-only coupon disabled first): it starts over the new columns and tables, lists the seed plans and the administrator-defined plan at monthly terms and never the soft-deleted one, settles the pending yearly order with 365 days and the yearly traffic from the order snapshot, sells monthly terms (including the new plan) and leaves plans, shop_settings and coupons byte-identical')
+            summary['checks'].append('rollback to the release just before the shop work (no down migration, yearly-only coupon disabled first): it starts over the new columns and tables, lists the seed plans and the administrator-defined plan at monthly terms and never the soft-deleted one, settles the pending yearly order with 365 days and the nominal yearly traffic from the order snapshot (no refresh on that binary), sells monthly terms (including the new plan) and leaves plans, shop_settings and coupons byte-identical')
             run('migration-after-shop-rollback', [str(current_binary), '-migrate'], environment=api_env('upgrade', free_port()))
             process, shop_back = start_api(current_binary, 'upgrade', 'api-shop-reupgraded', catalog=True, payment=True)
             for order_id in (old_pending['id'], old_shopper_order['id']):

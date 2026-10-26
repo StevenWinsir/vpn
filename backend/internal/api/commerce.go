@@ -14,13 +14,11 @@ import (
 )
 
 func (s *Server) allowTest() bool { return s.cfg.TestPurchase && s.cfg.Env != "production" }
+
+// subscription is the signed-in user's subscription as it stands now: a refreshing
+// allowance whose cycle has ended reads as already reset (nothing is written here).
 func (s *Server) subscription(c *gin.Context) (*model.Subscription, error) {
-	var sub model.Subscription
-	err := s.database(c).Where("user_id = ?", currentUser(c).ID).First(&sub).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &sub, err
+	return readSubscription(s.database(c), currentUser(c).ID, s.now())
 }
 func (s *Server) dashboard(c *gin.Context) {
 	sub, err := s.subscription(c)
@@ -43,7 +41,7 @@ func (s *Server) dashboard(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"user": currentUser(c), "subscription": sub, "entitlement_active": billing.Eligible(sub, now, s.allowTest()), "order_count": count,
-		"metering_connected": metered > 0, "proxy_service_ready": false, "online_devices": online, "device_limit": s.deviceLimit(sub)})
+		"metering_connected": metered > 0, "proxy_service_ready": false, "online_devices": online, "device_limit": s.deviceLimit(sub), "quota_resets_at": billing.NextQuotaReset(sub)})
 }
 func (s *Server) orders(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -128,7 +126,7 @@ func (s *Server) testPurchase(c *gin.Context) {
 			return err
 		}
 		now := time.Now().UTC()
-		if _, err := applyPlan(tx, user.ID, terms.forCycle(plan), now, true); err != nil {
+		if _, err := applyPlan(tx, user.ID, terms.forCycle(plan), terms.QuotaCycleDays, now, true); err != nil {
 			return err
 		}
 		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: terms.PriceCents, DurationDays: terms.DurationDays, TrafficBytes: terms.TrafficBytes, Status: model.OrderPaidTest, Provider: "test", PaidAt: &now,

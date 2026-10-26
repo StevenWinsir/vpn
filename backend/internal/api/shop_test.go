@@ -45,18 +45,24 @@ func TestShopYearlyPriceMatrix(t *testing.T) {
 		}
 	}
 	base := model.Plan{ID: "p", PriceCents: 3990, DurationDays: 30, TrafficBytes: 300 * gib, YearlyEnabled: true, YearlyDurationDays: 365}
-	if terms, err := termsFor(base, model.CycleYearly, 90); err != nil || terms.PriceCents != 43092 || terms.SavingCents != 4788 || terms.TrafficBytes != 3600*gib || terms.DiscountPercent != 90 || terms.DurationDays != 365 {
+	if terms, err := termsFor(base, model.CycleYearly, 90); err != nil || terms.PriceCents != 43092 || terms.SavingCents != 4788 || terms.TrafficBytes != 3600*gib || terms.DiscountPercent != 90 || terms.DurationDays != 365 ||
+		terms.QuotaCycleDays != 30 || terms.QuotaCycleBytes != 300*gib || terms.grantBytes() != 300*gib {
 		t.Fatalf("follow global %+v %v", terms, err)
+	}
+	if terms, _ := termsFor(base, model.CycleMonthly, 90); terms.QuotaCycleDays != 0 || terms.grantBytes() != 300*gib {
+		t.Fatalf("monthly refreshes %+v", terms)
 	}
 	override := base
 	override.YearlyDiscountPercent = intPtr(80)
 	if terms, err := termsFor(override, model.CycleYearly, 90); err != nil || terms.PriceCents != 38304 || terms.DiscountPercent != 80 {
 		t.Fatalf("override %+v %v", terms, err)
 	}
+	// D2 revised: a stored yearly allowance is no longer read; every 30 days the monthly
+	// allowance is granted again.
 	own := base
 	own.YearlyTrafficBytes = new(int64)
 	*own.YearlyTrafficBytes = 1000 * gib
-	if terms, _ := termsFor(own, model.CycleYearly, 90); terms.TrafficBytes != 1000*gib {
+	if terms, _ := termsFor(own, model.CycleYearly, 90); terms.TrafficBytes != 3600*gib || terms.QuotaCycleBytes != 300*gib {
 		t.Fatalf("own yearly traffic %+v", terms)
 	}
 	for _, global := range []int{49, 101, 0, -5} {
@@ -66,12 +72,15 @@ func TestShopYearlyPriceMatrix(t *testing.T) {
 	}
 	off := base
 	off.YearlyEnabled = false
+	if _, err := termsFor(off, model.CycleYearly, 90); err != errCycleUnavailable {
+		t.Errorf("off: %v", err)
+	}
+	// Twelve months over the cap: the nominal year (what an older binary would grant) is
+	// clamped; each cycle still refreshes the whole monthly allowance.
 	big := base
 	big.TrafficBytes = maxPlanBytes/12 + 1
-	for name, plan := range map[string]model.Plan{"off": off, "oversize": big} {
-		if _, err := termsFor(plan, model.CycleYearly, 90); err != errCycleUnavailable {
-			t.Errorf("%s: %v", name, err)
-		}
+	if terms, err := termsFor(big, model.CycleYearly, 90); err != nil || terms.TrafficBytes != maxPlanBytes || terms.QuotaCycleBytes != big.TrafficBytes {
+		t.Errorf("oversize: %+v %v", terms, err)
 	}
 	if terms, err := termsFor(off, model.CycleMonthly, 90); err != nil || terms.PriceCents != 3990 || terms.DiscountPercent != 100 || terms.OriginalCents != 3990 {
 		t.Fatalf("monthly %+v %v", terms, err)
@@ -138,8 +147,9 @@ func TestShopAdminPlanLifecycle(t *testing.T) {
 		{map[string]any{"max_devices": 101}, "max_devices"}, {map[string]any{"sort": 10001}, "sort"}, {map[string]any{"yearly_duration_days": 400}, "yearly_duration_days"},
 		{map[string]any{"yearly_discount_percent": 9}, "yearly_discount_percent"}, {map[string]any{"yearly_discount_percent": 101}, "yearly_discount_percent"},
 		{map[string]any{"yearly_traffic_bytes": 0}, "yearly_traffic_bytes"},
-		// 12 x the monthly allowance is over the cap and no yearly allowance was given.
-		{map[string]any{"traffic_bytes": maxPlanBytes/12 + 1}, "yearly_traffic_bytes"},
+		// D2 revised: the yearly allowance is the monthly one, refreshed every 30 days; a
+		// separate figure is refused (null is still accepted from older forms).
+		{map[string]any{"yearly_traffic_bytes": 1000 * gib}, "yearly_traffic_bytes"},
 		{map[string]any{"id": "Upper"}, "id"}, {map[string]any{"id": "x"}, "id"}, {map[string]any{"id": "-bad"}, "id"}, {map[string]any{"id": "has space"}, "id"},
 	} {
 		w := e.post("/plans", planBody(c.over))
@@ -151,10 +161,18 @@ func TestShopAdminPlanLifecycle(t *testing.T) {
 	}
 	e.code(e.post("/plans", map[string]any{"name": "x", "bogus": 1}), 400, "invalid_json")
 
-	// The same oversize monthly allowance is fine once yearly is off or has its own value.
-	huge := e.createPlan(map[string]any{"id": "huge-ok", "traffic_bytes": maxPlanBytes/12 + 1, "yearly_enabled": false})
-	if huge["yearly"] != nil {
-		t.Fatalf("yearly shown for a plan with yearly off: %v", huge["yearly"])
+	// A monthly allowance whose twelve months exceed the cap still sells yearly: each
+	// cycle refreshes the monthly allowance and the nominal year is clamped.
+	huge := e.createPlan(map[string]any{"id": "huge-ok", "traffic_bytes": maxPlanBytes/12 + 1, "yearly_traffic_bytes": nil})
+	if tier := huge["yearly"].(map[string]any); jsonNum(tier["quota_cycle_bytes"]) != maxPlanBytes/12+1 || jsonNum(tier["traffic_bytes"]) != maxPlanBytes || jsonNum(tier["quota_cycle_days"]) != 30 {
+		t.Fatalf("yearly of an oversize plan: %v", tier)
+	}
+	if _, kept := huge["yearly_traffic_bytes"]; kept {
+		t.Fatal("the retired yearly_traffic_bytes is still in the admin view")
+	}
+	yearlyOff := e.createPlan(map[string]any{"id": "yearly-off", "yearly_enabled": false})
+	if yearlyOff["yearly"] != nil {
+		t.Fatalf("yearly shown for a plan with yearly off: %v", yearlyOff["yearly"])
 	}
 
 	created := e.createPlan(map[string]any{"id": "e2e-one"})
@@ -162,7 +180,8 @@ func TestShopAdminPlanLifecycle(t *testing.T) {
 		t.Fatalf("created %v", created)
 	}
 	yearly := created["yearly"].(map[string]any)
-	if jsonNum(yearly["price_cents"]) != 10800 || jsonNum(yearly["original_cents"]) != 12000 || jsonNum(yearly["saving_cents"]) != 1200 || jsonNum(yearly["monthly_equivalent_cents"]) != 900 || jsonNum(yearly["traffic_bytes"]) != 120*gib {
+	if jsonNum(yearly["price_cents"]) != 10800 || jsonNum(yearly["original_cents"]) != 12000 || jsonNum(yearly["saving_cents"]) != 1200 || jsonNum(yearly["monthly_equivalent_cents"]) != 900 || jsonNum(yearly["traffic_bytes"]) != 120*gib ||
+		jsonNum(yearly["quota_cycle_bytes"]) != 10*gib || jsonNum(yearly["quota_cycle_days"]) != 30 {
 		t.Fatalf("derived yearly %v", yearly)
 	}
 	e.code(e.post("/plans", planBody(map[string]any{"id": "e2e-one"})), 409, "plan_exists")
@@ -388,7 +407,7 @@ func TestShopAccessControl(t *testing.T) {
 
 // publicPlanFields is the whole public vocabulary (S1-10).
 var publicPlanFields = []string{"allow_dedicated", "description", "duration_days", "featured", "id", "max_devices", "monthly", "name", "price_cents", "traffic_bytes", "yearly"}
-var publicTierFields = []string{"discount_percent", "duration_days", "monthly_equivalent_cents", "original_cents", "price_cents", "saving_cents", "traffic_bytes"}
+var publicTierFields = []string{"discount_percent", "duration_days", "monthly_equivalent_cents", "original_cents", "price_cents", "quota_cycle_bytes", "quota_cycle_days", "saving_cents", "traffic_bytes"}
 
 func sortedKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
@@ -502,7 +521,7 @@ func TestShopYearlyQuoteOrderAndRenewal(t *testing.T) {
 	}
 	q := e.yearlyQuote(u, "pro", "yearly", "")
 	if q["billing_cycle"] != "yearly" || jsonNum(q["amount_cents"]) != 43092 || jsonNum(q["list_price_cents"]) != 43092 || jsonNum(q["original_cents"]) != 47880 || jsonNum(q["cycle_saving_cents"]) != 4788 ||
-		jsonNum(q["monthly_equivalent_cents"]) != 3591 || jsonNum(q["duration_days"]) != 365 || jsonNum(q["traffic_bytes"]) != 3600*gib || jsonNum(q["cycle_discount_percent"]) != 90 ||
+		jsonNum(q["monthly_equivalent_cents"]) != 3591 || jsonNum(q["duration_days"]) != 365 || jsonNum(q["traffic_bytes"]) != 3600*gib || jsonNum(q["quota_cycle_bytes"]) != 300*gib || jsonNum(q["quota_cycle_days"]) != 30 || jsonNum(q["cycle_discount_percent"]) != 90 ||
 		jsonNum(q["device_limit"]) != 3 || q["allow_dedicated"] != true || q["kind"] != "new" {
 		t.Fatalf("yearly quote %v", q)
 	}
@@ -514,7 +533,7 @@ func TestShopYearlyQuoteOrderAndRenewal(t *testing.T) {
 	var first placed
 	_ = json.Unmarshal(e.want2(w, 201), &first)
 	o := e.order(first.Order.ID)
-	if o.BillingCycle != "yearly" || o.CycleDiscountPercent != 90 || o.OriginalCents != 47880 || o.ListPriceCents != 43092 || o.AmountCents != 43092 || o.DurationDays != 365 || o.TrafficBytes != 3600*gib ||
+	if o.BillingCycle != "yearly" || o.CycleDiscountPercent != 90 || o.OriginalCents != 47880 || o.ListPriceCents != 43092 || o.AmountCents != 43092 || o.DurationDays != 365 || o.TrafficBytes != 3600*gib || o.QuotaCycleDays != 30 || o.QuotaCycleBytes != 300*gib ||
 		o.EntMaxDevices == nil || *o.EntMaxDevices != 5 || o.EntAllowDedicated == nil || !*o.EntAllowDedicated {
 		t.Fatalf("order %+v", o)
 	}
@@ -551,7 +570,7 @@ func TestShopYearlyQuoteOrderAndRenewal(t *testing.T) {
 	}
 	e.want(e.pay(gw), 200)
 	sub := e.subscription(u.ID)
-	if sub == nil || sub.PlanID != "pro" || sub.TrafficLimitBytes != 3600*gib || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) || sub.MaxDevices != 5 || !sub.AllowDedicated {
+	if sub == nil || sub.PlanID != "pro" || sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || sub.QuotaCycleBytes != 300*gib || sub.QuotaCycleStartsAt == nil || !sub.QuotaCycleStartsAt.Equal(sub.StartsAt) || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) || sub.MaxDevices != 5 || !sub.AllowDedicated {
 		t.Fatalf("subscription %+v", sub)
 	}
 	before := nativeEntitlementFingerprint(sub)
@@ -570,16 +589,19 @@ func TestShopYearlyQuoteOrderAndRenewal(t *testing.T) {
 	y, _ := e.gw.open(t, renewal.PayURL)
 	e.want(e.pay(y), 200)
 	renewed := e.subscription(v.ID)
-	if !renewed.StartsAt.Equal(monthlySub.StartsAt) || !renewed.ExpiresAt.Equal(monthlySub.ExpiresAt.AddDate(0, 0, 365)) || renewed.TrafficLimitBytes != monthlySub.TrafficLimitBytes+3600*gib || renewed.UsedUnits != monthlySub.UsedUnits {
+	if !renewed.StartsAt.Equal(monthlySub.StartsAt) || !renewed.ExpiresAt.Equal(monthlySub.ExpiresAt.AddDate(0, 0, 365)) || renewed.TrafficLimitBytes != monthlySub.TrafficLimitBytes+300*gib || renewed.UsedUnits != monthlySub.UsedUnits ||
+		renewed.QuotaCycleStartsAt == nil || renewed.QuotaCycleStartsAt.Before(monthlySub.StartsAt) || renewed.QuotaCycleStartsAt.After(e.clock.Now()) || renewed.QuotaCycleBytes != 300*gib {
 		t.Fatalf("renewed %+v from %+v", renewed, monthlySub)
 	}
 	if nativeEntitlementFingerprint(renewed) != fp || before == "" {
 		t.Fatal("the client entitlement fingerprint changed on a monthly -> yearly renewal")
 	}
-	// ...and back: a yearly subscription renews monthly.
+	// ...and back: a yearly subscription renews monthly. The extra days are covered by
+	// the refreshes, so the current cycle gains nothing.
 	back, _ := e.gw.open(t, e.place(v, "pro", payment.TypeAlipay, "").PayURL)
 	e.want(e.pay(back), 200)
-	if again := e.subscription(v.ID); !again.ExpiresAt.Equal(renewed.ExpiresAt.AddDate(0, 0, 30)) {
+	if again := e.subscription(v.ID); !again.ExpiresAt.Equal(renewed.ExpiresAt.AddDate(0, 0, 30)) || again.TrafficLimitBytes != renewed.TrafficLimitBytes ||
+		!again.QuotaCycleStartsAt.Equal(*renewed.QuotaCycleStartsAt) || again.QuotaCycleDays != 30 {
 		t.Fatalf("monthly renewal of a yearly subscription %+v", again)
 	}
 
@@ -694,7 +716,7 @@ func TestShopCouponCycleScopeAndTestPrice(t *testing.T) {
 	}
 	gw, _ := e.gw.open(t, o.PayURL)
 	e.want(e.pay(gw), 200)
-	if sub := e.subscription(tester.ID); sub.TrafficLimitBytes != 3600*gib || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
+	if sub := e.subscription(tester.ID); sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
 		t.Fatalf("test-price yearly fulfilment %+v", sub)
 	}
 }
@@ -754,7 +776,7 @@ func TestShopOrderSnapshotFulfilment(t *testing.T) {
 	gw, _ := e.gw.open(t, o.PayURL)
 	e.want(e.pay(gw), 200)
 	sub := e.subscription(u.ID)
-	if sub.MaxDevices != 5 || !sub.AllowDedicated || sub.TrafficLimitBytes != 3600*gib || sub.PlanName != "进阶计划" || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
+	if sub.MaxDevices != 5 || !sub.AllowDedicated || sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || sub.PlanName != "进阶计划" || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
 		t.Fatalf("the plan's later terms leaked into the purchase: %+v", sub)
 	}
 
@@ -783,7 +805,7 @@ func TestShopOrderSnapshotFulfilment(t *testing.T) {
 	e.want(e.post("/plans/short-lived/delete", map[string]any{"version": off["version"]}), 200)
 	e.want(e.post("/orders/"+mo.Order.ID+"/confirm", map[string]any{"admin_password": payPassword, "paid_cents": mo.Order.AmountCents, "note": "ok"}), 200)
 	ms := e.subscription(w.ID)
-	if ms.MaxDevices != 4 || !ms.AllowDedicated || ms.TrafficLimitBytes != 60*gib || !ms.ExpiresAt.Equal(ms.StartsAt.AddDate(0, 0, 365)) {
+	if ms.MaxDevices != 4 || !ms.AllowDedicated || ms.TrafficLimitBytes != 5*gib || ms.QuotaCycleBytes != 5*gib || ms.QuotaCycleDays != 30 || !ms.ExpiresAt.Equal(ms.StartsAt.AddDate(0, 0, 365)) {
 		t.Fatalf("manual confirmation %+v", ms)
 	}
 }
@@ -806,7 +828,7 @@ func TestShopTestPurchaseCycle(t *testing.T) {
 		t.Fatalf("test order %+v", o)
 	}
 	sub := e.subscription(u.ID)
-	if !sub.IsTest || sub.TrafficLimitBytes != 1200*gib || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
+	if !sub.IsTest || sub.TrafficLimitBytes != 100*gib || sub.QuotaCycleBytes != 100*gib || sub.QuotaCycleDays != 30 || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
 		t.Fatalf("test subscription %+v", sub)
 	}
 	e.code(post(key, map[string]any{"plan_id": "starter"}), 409, "idempotency_conflict")

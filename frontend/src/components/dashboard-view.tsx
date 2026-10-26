@@ -70,6 +70,9 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
   const usedBytes = (sub?.used_units || 0) / 1000;
   const limit = sub?.traffic_limit_bytes || 0;
   const usedPercent = limit ? Math.min(100, (usedBytes / limit) * 100) : 0;
+  // A yearly subscription refreshes its allowance every 30 days (handoff_shop.md D2 revised).
+  const resetsAt = data?.quota_resets_at ?? null;
+  const cycleBytes = sub?.quota_cycle_days ? sub.quota_cycle_bytes || 0 : 0;
   return (
     <div className="page-wrap">
       <Group justify="space-between" align="flex-start" mb={30}>
@@ -149,7 +152,11 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
               label="剩余计费额度"
               value={`${gib(Math.max(0, limit - usedBytes))} GiB`}
               detail={
-                data.metering_connected ? '按所连线路倍率折算后扣减' : '近 24 小时暂无计量数据'
+                resetsAt
+                  ? `本周期剩余 · ${date(resetsAt)} 重置为 ${gib(cycleBytes)} GiB`
+                  : data.metering_connected
+                    ? '按所连线路倍率折算后扣减'
+                    : '近 24 小时暂无计量数据'
               }
             />
             <Metric
@@ -194,7 +201,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
                   </div>
                   <div>
                     <Text size="xs" c="dimmed">
-                      套餐总额度
+                      {cycleBytes ? '本周期额度' : '套餐总额度'}
                     </Text>
                     <Text size="lg" fw={600}>
                       {gib(limit)} GiB
