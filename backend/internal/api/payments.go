@@ -31,8 +31,9 @@ func (s *Server) requirePayment(c *gin.Context) bool {
 }
 
 type quoteInput struct {
-	PlanID     string `json:"plan_id"`
-	CouponCode string `json:"coupon_code"`
+	PlanID       string `json:"plan_id"`
+	CouponCode   string `json:"coupon_code"`
+	BillingCycle string `json:"billing_cycle"`
 }
 
 type couponView struct {
@@ -43,28 +44,43 @@ type couponView struct {
 }
 
 type quoteView struct {
-	PlanID         string      `json:"plan_id"`
-	PlanName       string      `json:"plan_name"`
-	DurationDays   int         `json:"duration_days"`
-	TrafficBytes   int64       `json:"traffic_bytes"`
-	ListPriceCents int64       `json:"list_price_cents"`
-	TestPrice      bool        `json:"test_price"`
-	BaseCents      int64       `json:"base_cents"`
-	DiscountCents  int64       `json:"discount_cents"`
-	AmountCents    int64       `json:"amount_cents"`
-	Coupon         *couponView `json:"coupon"`
-	Purchasable    bool        `json:"purchasable"`
-	Kind           string      `json:"kind,omitempty"`
-	Reason         string      `json:"reason,omitempty"`
-	Message        string      `json:"message,omitempty"`
+	PlanID       string `json:"plan_id"`
+	PlanName     string `json:"plan_name"`
+	DurationDays int    `json:"duration_days"`
+	TrafficBytes int64  `json:"traffic_bytes"`
+	// ListPriceCents is the price of the chosen billing cycle; for yearly, OriginalCents
+	// is twelve months at the monthly price and CycleSavingCents the difference.
+	BillingCycle      string      `json:"billing_cycle"`
+	OriginalCents     int64       `json:"original_cents"`
+	CycleDiscountPct  int         `json:"cycle_discount_percent"`
+	CycleSavingCents  int64       `json:"cycle_saving_cents"`
+	MonthlyEquivCents int64       `json:"monthly_equivalent_cents"`
+	DeviceLimit       int         `json:"device_limit"`
+	AllowDedicated    bool        `json:"allow_dedicated"`
+	ListPriceCents    int64       `json:"list_price_cents"`
+	TestPrice         bool        `json:"test_price"`
+	BaseCents         int64       `json:"base_cents"`
+	DiscountCents     int64       `json:"discount_cents"`
+	AmountCents       int64       `json:"amount_cents"`
+	Coupon            *couponView `json:"coupon"`
+	Purchasable       bool        `json:"purchasable"`
+	Kind              string      `json:"kind,omitempty"`
+	Reason            string      `json:"reason,omitempty"`
+	Message           string      `json:"message,omitempty"`
 }
 
 func validPlanID(id string) bool { return id != "" && len(id) <= 32 }
 
-// loadPurchasablePlan returns an active plan with a positive price (no 0-yuan orders, D13).
-func loadPurchasablePlan(tx *gorm.DB, id string) (model.Plan, error) {
+// loadPurchasablePlan returns an active, not deleted plan with a positive price (no
+// 0-yuan orders, D13). With share it holds the row against a concurrent delete, which
+// takes the update lock (handoff_shop.md 10).
+func loadPurchasablePlan(tx *gorm.DB, id string, share bool) (model.Plan, error) {
 	var plan model.Plan
-	err := tx.Where("id = ? AND active = ?", id, true).First(&plan).Error
+	query := tx
+	if share {
+		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+	}
+	err := query.Where("id = ? AND active = ? AND deleted_at IS NULL", id, true).First(&plan).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return plan, &apiError{404, "plan_not_found", "套餐不存在或已下架"}
 	}
@@ -113,6 +129,11 @@ func (s *Server) paymentQuote(c *gin.Context) {
 		fail(c, 400, "invalid_plan", "请选择有效套餐")
 		return
 	}
+	cycle, validCycle := parseCycle(in.BillingCycle)
+	if !validCycle {
+		fail(c, 400, "invalid_billing_cycle", "付费周期不正确")
+		return
+	}
 	user, now := currentUser(c), s.now()
 	if !s.couponGate(c, user, code, now) {
 		return
@@ -121,7 +142,15 @@ func (s *Server) paymentQuote(c *gin.Context) {
 	var problem *couponProblem
 	var pending int64
 	err := s.database(c).Transaction(func(tx *gorm.DB) error {
-		plan, err := loadPurchasablePlan(tx, in.PlanID)
+		plan, err := loadPurchasablePlan(tx, in.PlanID, false)
+		if err != nil {
+			return err
+		}
+		global, err := globalDiscount(tx)
+		if err != nil {
+			return err
+		}
+		terms, err := termsFor(plan, cycle, global)
 		if err != nil {
 			return err
 		}
@@ -129,19 +158,20 @@ func (s *Server) paymentQuote(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		p, prob, err := s.price(tx, user, plan, code, false, now)
+		p, prob, err := s.price(tx, user, plan, terms, code, false, now)
 		if err != nil {
 			return err
 		}
 		problem = prob
-		view = quoteView{PlanID: plan.ID, PlanName: plan.Name, DurationDays: plan.DurationDays, TrafficBytes: plan.TrafficBytes, ListPriceCents: p.ListCents, TestPrice: p.Source == priceTest, BaseCents: p.BaseCents, DiscountCents: p.DiscountCents, AmountCents: p.AmountCents, Purchasable: true}
+		view = quoteView{PlanID: plan.ID, PlanName: plan.Name, DurationDays: terms.DurationDays, TrafficBytes: terms.TrafficBytes, BillingCycle: terms.Cycle, OriginalCents: terms.OriginalCents, CycleDiscountPct: terms.DiscountPercent,
+			CycleSavingCents: terms.SavingCents, MonthlyEquivCents: terms.MonthlyEquivCents, DeviceLimit: s.deviceCap(plan.MaxDevices), AllowDedicated: plan.AllowDedicated, ListPriceCents: p.ListCents, TestPrice: p.Source == priceTest, BaseCents: p.BaseCents, DiscountCents: p.DiscountCents, AmountCents: p.AmountCents, Purchasable: true}
 		if code != "" {
 			view.Coupon = &couponView{Code: code, Applied: prob == nil}
 			if prob != nil {
 				view.Coupon.Reason, view.Coupon.Message = prob.Reason, prob.Message
 			}
 		}
-		renew, decision := planDecision(sub, plan, now, false)
+		renew, decision := planDecision(sub, terms.forCycle(plan), now, false)
 		var business *apiError
 		switch {
 		case errors.As(decision, &business):
@@ -165,9 +195,13 @@ func (s *Server) paymentQuote(c *gin.Context) {
 }
 
 type orderInput struct {
-	PlanID     string `json:"plan_id"`
-	PayType    string `json:"pay_type"`
-	CouponCode string `json:"coupon_code"`
+	PlanID       string `json:"plan_id"`
+	PayType      string `json:"pay_type"`
+	CouponCode   string `json:"coupon_code"`
+	BillingCycle string `json:"billing_cycle"`
+	// ExpectedAmountCents can only refuse an order whose computed amount differs
+	// (price_changed); it never takes part in pricing.
+	ExpectedAmountCents *int64 `json:"expected_amount_cents"`
 }
 
 // orderView is the user's view of a gateway order. The review reason stays internal.
@@ -196,6 +230,15 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 	}
 	if !payment.ValidType(in.PayType) {
 		fail(c, 400, "invalid_pay_type", "请选择微信支付或支付宝支付")
+		return
+	}
+	cycle, validCycle := parseCycle(in.BillingCycle)
+	if !validCycle {
+		fail(c, 400, "invalid_billing_cycle", "付费周期不正确")
+		return
+	}
+	if in.ExpectedAmountCents != nil && *in.ExpectedAmountCents <= 0 {
+		fail(c, 400, "invalid_expected_amount", "预期金额不正确")
 		return
 	}
 	user, now := currentUser(c), s.now()
@@ -227,7 +270,7 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 		}
 		err = tx.Where("user_id = ? AND idempotency_key = ?", user.ID, key).First(&order).Error
 		if err == nil {
-			if order.TradeNo == nil || order.PlanID != in.PlanID || order.PayType != in.PayType || order.CouponCode != code {
+			if order.TradeNo == nil || order.PlanID != in.PlanID || order.PayType != in.PayType || order.CouponCode != code || order.BillingCycle != cycle {
 				return &apiError{409, "idempotency_conflict", "此请求标识已用于其他订单"}
 			}
 			replayed = true
@@ -245,7 +288,17 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 			return &apiError{429, "too_many_pending_orders", "未完成的订单过多，请先完成支付或等待订单超时"}
 		}
 		others = int64(len(live))
-		plan, err := loadPurchasablePlan(tx, in.PlanID)
+		// Lock order: User -> Plan (shared) -> Coupon. One read of the plan and one of
+		// the setting price the whole order.
+		plan, err := loadPurchasablePlan(tx, in.PlanID, true)
+		if err != nil {
+			return err
+		}
+		global, err := globalDiscount(tx)
+		if err != nil {
+			return err
+		}
+		terms, err := termsFor(plan, cycle, global)
 		if err != nil {
 			return err
 		}
@@ -253,10 +306,10 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		if _, err = planDecision(sub, plan, now, false); err != nil {
+		if _, err = planDecision(sub, terms.forCycle(plan), now, false); err != nil {
 			return err
 		}
-		p, prob, err := s.price(tx, *locked, plan, code, true, now)
+		p, prob, err := s.price(tx, *locked, plan, terms, code, true, now)
 		if err != nil {
 			return err
 		}
@@ -264,14 +317,18 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 			problem = prob
 			return &apiError{409, prob.Reason, prob.Message}
 		}
+		if in.ExpectedAmountCents != nil && *in.ExpectedAmountCents != p.AmountCents {
+			return &apiError{409, "price_changed", "价格已更新，请确认后再支付"}
+		}
 		tradeNo, err := s.newTradeNo(tx, now)
 		if err != nil {
 			return err
 		}
 		expires := now.Add(s.cfg.Payment.Window())
-		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: p.AmountCents, DurationDays: plan.DurationDays, TrafficBytes: plan.TrafficBytes,
+		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: p.AmountCents, DurationDays: terms.DurationDays, TrafficBytes: terms.TrafficBytes,
 			Status: model.OrderPending, Provider: "gateway", CreatedAt: now, TradeNo: &tradeNo, PayType: in.PayType, ListPriceCents: p.ListCents, DiscountCents: p.DiscountCents, AmountCents: p.AmountCents,
 			PriceSource: p.Source, ExpiresAt: &expires, UpdatedAt: &now}
+		snapshotCycle(&order, terms, plan)
 		if p.Coupon != nil {
 			order.CouponID, order.CouponCode = &p.Coupon.ID, p.Coupon.Code
 		}
@@ -311,7 +368,15 @@ func (s *Server) newTradeNo(tx *gorm.DB, now time.Time) (string, error) {
 
 // payURL is the gateway submit URL for an order. It carries the signature: never log it.
 func (s *Server) payURL(o model.Order) string {
-	return s.gateway().SubmitURL(payment.SubmitRequest{Type: o.PayType, TradeNo: *o.TradeNo, NotifyURL: s.cfg.Payment.NotifyURL, ReturnURL: s.returnURL(o.ID), Name: o.PlanName, AmountCents: o.AmountCents})
+	return s.gateway().SubmitURL(payment.SubmitRequest{Type: o.PayType, TradeNo: *o.TradeNo, NotifyURL: s.cfg.Payment.NotifyURL, ReturnURL: s.returnURL(o.ID), Name: gatewayProductName(o), AmountCents: o.AmountCents})
+}
+
+// gatewayProductName is the product name on the gateway page, from the order snapshot only.
+func gatewayProductName(o model.Order) string {
+	if o.BillingCycle == model.CycleYearly {
+		return o.PlanName + "·年付"
+	}
+	return o.PlanName
 }
 
 // returnURL is the fixed result page; it carries the local order id only.

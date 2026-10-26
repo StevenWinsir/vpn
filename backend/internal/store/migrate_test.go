@@ -325,3 +325,101 @@ func mapsEqual(a, b map[string]string) bool {
 	}
 	return true
 }
+
+// handoff_shop.md S1-01: the shop columns and table arrive additively, the one-off
+// "recommended" back-fill runs once, and nothing an administrator set is undone by a
+// repeated migration.
+func TestShopMigrationOverLegacyData(t *testing.T) {
+	db, cfg := newIsolatedSchema(t)
+	s := cfg.Schema
+	q := `"` + s + `".`
+	mustExec(t, db, `ALTER TABLE `+q+`plans DROP COLUMN yearly_enabled, DROP COLUMN yearly_duration_days, DROP COLUMN yearly_traffic_bytes, DROP COLUMN yearly_discount_percent, DROP COLUMN featured, DROP COLUMN note, DROP COLUMN version, DROP COLUMN deleted_at`)
+	mustExec(t, db, `ALTER TABLE `+q+`orders DROP COLUMN billing_cycle, DROP COLUMN cycle_discount_percent, DROP COLUMN original_cents, DROP COLUMN ent_max_devices, DROP COLUMN ent_allow_dedicated`)
+	mustExec(t, db, `ALTER TABLE `+q+`coupons DROP COLUMN billing_cycles`)
+	mustExec(t, db, `DROP TABLE `+q+`shop_settings`)
+
+	userID, orderID, couponID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	created := time.Date(2026, 9, 1, 2, 3, 4, 0, time.UTC)
+	mustExec(t, db, `INSERT INTO `+q+`users (id, email, name, password_hash, role, status, created_at, updated_at, auth_version) VALUES (?, 'old@example.invalid', '旧用户', 'hash', 'user', 'active', ?, ?, 1)`, userID, created, created)
+	mustExec(t, db, `INSERT INTO `+q+`orders (id, user_id, idempotency_key, plan_id, plan_name, price_cents, duration_days, traffic_bytes, status, provider, created_at, list_price_cents, amount_cents) VALUES (?, ?, 'k1', 'starter', '轻量计划', 1990, 30, 107374182400, 'paid', 'gateway', ?, 1990, 1990)`, orderID, userID, created)
+	mustExec(t, db, `INSERT INTO `+q+`coupons (id, code, discount_type, percent_off, enabled, created_by, created_at, updated_at) VALUES (?, 'OLD-CODE', 'percent', 10, true, ?, ?, ?)`, couponID, userID, created, created)
+
+	columns := legacyColumns(t, db, s)
+	watched := map[string]string{"users": columns["users"], "orders": columns["orders"], "coupons": columns["coupons"], "plans": columns["plans"], "subscriptions": columns["subscriptions"]}
+	before := fingerprints(t, db, s, watched)
+	for range 2 {
+		if err := Migrate(db, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after := fingerprints(t, db, s, watched)
+	for table, want := range before {
+		if after[table] != want {
+			t.Errorf("%s changed by the migration: %s -> %s", table, want, after[table])
+		}
+	}
+	var order model.Order
+	if err := db.First(&order, "id = ?", orderID).Error; err != nil || order.BillingCycle != "monthly" || order.CycleDiscountPercent != 100 || order.OriginalCents != 0 || order.EntMaxDevices != nil || order.EntAllowDedicated != nil {
+		t.Fatalf("legacy order %+v %v", order, err)
+	}
+	var coupon model.Coupon
+	if err := db.First(&coupon, "id = ?", couponID).Error; err != nil || coupon.BillingCycles != "all" {
+		t.Fatalf("legacy coupon %+v %v", coupon, err)
+	}
+	var settings model.ShopSettings
+	if err := db.First(&settings, "id = 1").Error; err != nil || settings.YearlyDiscountPercent != 90 || settings.Version != 1 {
+		t.Fatalf("settings %+v %v", settings, err)
+	}
+	featured := func() map[string]bool {
+		var rows []model.Plan
+		if err := db.Order("id").Find(&rows).Error; err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, p := range rows {
+			out[p.ID] = p.Featured
+			if !p.YearlyEnabled || p.YearlyDurationDays != 365 || p.Version != 1 && p.ID != "max" || p.Note != "" || p.YearlyDiscountPercent != nil || p.YearlyTrafficBytes != nil {
+				t.Errorf("plan %s defaults %+v", p.ID, p)
+			}
+		}
+		return out
+	}
+	if got := featured(); !got["pro"] || got["starter"] || got["max"] || len(got) != 3 {
+		t.Fatalf("recommended after the first migration %v", got)
+	}
+
+	// The administrator unfeatures pro, sets 8.5折 and soft-deletes max.
+	mustExec(t, db, `UPDATE `+q+`plans SET featured = false WHERE id = 'pro'`)
+	mustExec(t, db, `UPDATE `+q+`plans SET active = false, deleted_at = now(), version = 2 WHERE id = 'max'`)
+	mustExec(t, db, `UPDATE `+q+`shop_settings SET yearly_discount_percent = 85, version = 4`)
+	for range 2 {
+		if err := Migrate(db, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := featured(); got["pro"] {
+		t.Fatalf("a repeated migration re-featured pro: %v", got)
+	}
+	var gone model.Plan
+	if err := db.First(&gone, "id = 'max'").Error; err != nil || gone.DeletedAt == nil || gone.Active || gone.Version != 2 {
+		t.Fatalf("a soft-deleted seed plan came back: %+v %v", gone, err)
+	}
+	var total int64
+	db.Model(&model.Plan{}).Count(&total)
+	if err := db.First(&settings, "id = 1").Error; err != nil || settings.YearlyDiscountPercent != 85 || settings.Version != 4 || total != 3 {
+		t.Fatalf("settings or plan count reset: %+v %d", settings, total)
+	}
+	// Fresh installs carry the recommended flag from the seed.
+	fresh, _ := newIsolatedSchema(t)
+	var pro model.Plan
+	if err := fresh.First(&pro, "id = 'pro'").Error; err != nil || !pro.Featured || pro.CreatedAt.IsZero() {
+		t.Fatalf("fresh seed %+v %v", pro, err)
+	}
+	// The single-row table refuses a second row, and the database refuses a bad discount.
+	if err := db.Exec(`INSERT INTO ` + q + `shop_settings (id, yearly_discount_percent, version, updated_at) VALUES (2, 90, 1, now())`).Error; err == nil {
+		t.Fatal("a second settings row was accepted")
+	}
+	if err := db.Exec(`UPDATE ` + q + `shop_settings SET yearly_discount_percent = 49`).Error; err == nil {
+		t.Fatal("a discount below 50 was accepted by the database")
+	}
+}

@@ -14,14 +14,6 @@ import (
 )
 
 func (s *Server) allowTest() bool { return s.cfg.TestPurchase && s.cfg.Env != "production" }
-func (s *Server) plans(c *gin.Context) {
-	rows := []model.Plan{}
-	if s.database(c).Where("active = ?", true).Order("sort asc").Find(&rows).Error != nil {
-		fail(c, 503, "database_unavailable", "套餐暂时不可用")
-		return
-	}
-	c.JSON(200, gin.H{"plans": rows})
-}
 func (s *Server) subscription(c *gin.Context) (*model.Subscription, error) {
 	var sub model.Subscription
 	err := s.database(c).Where("user_id = ?", currentUser(c).ID).First(&sub).Error
@@ -77,9 +69,15 @@ func (s *Server) testPurchase(c *gin.Context) {
 		return
 	}
 	var in struct {
-		PlanID string `json:"plan_id"`
+		PlanID       string `json:"plan_id"`
+		BillingCycle string `json:"billing_cycle"`
 	}
 	if !decode(c, &in) {
+		return
+	}
+	cycle, validCycle := parseCycle(in.BillingCycle)
+	if !validCycle {
+		fail(c, 400, "invalid_billing_cycle", "付费周期不正确")
 		return
 	}
 	key := c.GetHeader("Idempotency-Key")
@@ -105,7 +103,7 @@ func (s *Server) testPurchase(c *gin.Context) {
 		}
 		err := tx.Where("user_id = ? AND idempotency_key = ?", user.ID, key).First(&order).Error
 		if err == nil {
-			if order.PlanID != in.PlanID {
+			if order.PlanID != in.PlanID || order.BillingCycle != cycle {
 				return &apiError{409, "idempotency_conflict", "此请求标识已用于其他套餐"}
 			}
 			replayed = true
@@ -115,18 +113,27 @@ func (s *Server) testPurchase(c *gin.Context) {
 			return err
 		}
 		var plan model.Plan
-		if err := tx.Where("id = ? AND active = ?", in.PlanID, true).First(&plan).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("id = ? AND active = ? AND deleted_at IS NULL", in.PlanID, true).First(&plan).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return &apiError{404, "plan_not_found", "套餐不存在或已下架"}
 			}
 			return err
 		}
-		now := time.Now().UTC()
-		if _, err := applyPlan(tx, user.ID, plan, now, true); err != nil {
+		global, err := globalDiscount(tx)
+		if err != nil {
 			return err
 		}
-		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: plan.PriceCents, DurationDays: plan.DurationDays, TrafficBytes: plan.TrafficBytes, Status: model.OrderPaidTest, Provider: "test", PaidAt: &now,
-			ListPriceCents: plan.PriceCents, AmountCents: plan.PriceCents, PriceSource: "test_purchase"}
+		terms, err := termsFor(plan, cycle, global)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if _, err := applyPlan(tx, user.ID, terms.forCycle(plan), now, true); err != nil {
+			return err
+		}
+		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: terms.PriceCents, DurationDays: terms.DurationDays, TrafficBytes: terms.TrafficBytes, Status: model.OrderPaidTest, Provider: "test", PaidAt: &now,
+			ListPriceCents: terms.PriceCents, AmountCents: terms.PriceCents, PriceSource: "test_purchase"}
+		snapshotCycle(&order, terms, plan)
 		return tx.Omit("User").Create(&order).Error
 	})
 	if err != nil {

@@ -103,6 +103,8 @@ type couponInput struct {
 	MaxUses        int        `json:"max_uses"`
 	PerUserLimit   int        `json:"per_user_limit"`
 	Enabled        bool       `json:"enabled"`
+	// BillingCycles is all, monthly or yearly; absent means all (older frontends).
+	BillingCycles string `json:"billing_cycles"`
 	// Version is required when editing (optimistic concurrency between administrators).
 	Version int64 `json:"version"`
 }
@@ -150,6 +152,13 @@ func validateCoupon(tx *gorm.DB, in *couponInput) error {
 	if in.PerUserLimit < 1 || in.PerUserLimit > 100 {
 		return bad("每人限用次数须为 1–100")
 	}
+	switch in.BillingCycles {
+	case "":
+		in.BillingCycles = "all"
+	case "all", model.CycleMonthly, model.CycleYearly:
+	default:
+		return bad("适用周期须为全部、仅月付或仅年付")
+	}
 	if in.PlanIDs == nil {
 		in.PlanIDs = []string{}
 	}
@@ -160,11 +169,11 @@ func validateCoupon(tx *gorm.DB, in *couponInput) error {
 	in.PlanIDs = slices.Compact(in.PlanIDs)
 	if len(in.PlanIDs) > 0 {
 		var found int64
-		if err := tx.Model(&model.Plan{}).Where("id IN ?", in.PlanIDs).Count(&found).Error; err != nil {
+		if err := tx.Model(&model.Plan{}).Where("id IN ? AND deleted_at IS NULL", in.PlanIDs).Count(&found).Error; err != nil {
 			return err
 		}
 		if found != int64(len(in.PlanIDs)) {
-			return bad("适用套餐不存在")
+			return bad("适用套餐不存在或已删除")
 		}
 	}
 	return nil
@@ -215,7 +224,7 @@ func (s *Server) adminCouponSave(c *gin.Context) {
 			if taken > 0 {
 				return &apiError{409, "coupon_exists", "该优惠码已存在"}
 			}
-			saved = model.Coupon{ID: uuid.NewString(), Code: code, Note: in.Note, DiscountType: in.DiscountType, PercentOff: in.PercentOff, AmountOffCents: in.AmountOffCents, PlanIDs: string(plans),
+			saved = model.Coupon{ID: uuid.NewString(), Code: code, Note: in.Note, DiscountType: in.DiscountType, PercentOff: in.PercentOff, AmountOffCents: in.AmountOffCents, PlanIDs: string(plans), BillingCycles: in.BillingCycles,
 				StartsAt: in.StartsAt, EndsAt: in.EndsAt, MaxUses: in.MaxUses, PerUserLimit: in.PerUserLimit, Enabled: in.Enabled, CreatedBy: actor, Version: 1, CreatedAt: now, UpdatedAt: now}
 			if err := tx.Create(&saved).Error; err != nil {
 				return err
@@ -242,7 +251,7 @@ func (s *Server) adminCouponSave(c *gin.Context) {
 		if refs > 0 && (in.DiscountType != saved.DiscountType || in.PercentOff != saved.PercentOff || in.AmountOffCents != saved.AmountOffCents) {
 			return &apiError{409, "coupon_in_use", "已被订单使用的优惠码不能修改折扣，请停用后新建"}
 		}
-		saved.Note, saved.DiscountType, saved.PercentOff, saved.AmountOffCents, saved.PlanIDs = in.Note, in.DiscountType, in.PercentOff, in.AmountOffCents, string(plans)
+		saved.Note, saved.DiscountType, saved.PercentOff, saved.AmountOffCents, saved.PlanIDs, saved.BillingCycles = in.Note, in.DiscountType, in.PercentOff, in.AmountOffCents, string(plans), in.BillingCycles
 		saved.StartsAt, saved.EndsAt, saved.MaxUses, saved.PerUserLimit, saved.Enabled = in.StartsAt, in.EndsAt, in.MaxUses, in.PerUserLimit, in.Enabled
 		saved.Version++
 		saved.UpdatedAt = now

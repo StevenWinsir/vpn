@@ -57,11 +57,13 @@ type Coupon struct {
 	PerUserLimit   int        `gorm:"not null;default:1;check:per_user_limit >= 1" json:"per_user_limit"`
 	UsedCount      int        `gorm:"not null;default:0;check:used_count >= 0" json:"used_count"`
 	Enabled        bool       `gorm:"not null" json:"enabled"`
-	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
-	CreatedBy      string     `gorm:"type:uuid;not null" json:"-"`
-	Version        int64      `gorm:"not null;default:1" json:"version"`
-	CreatedAt      time.Time  `gorm:"autoCreateTime:false" json:"created_at"`
-	UpdatedAt      time.Time  `gorm:"autoUpdateTime:false" json:"updated_at"`
+	// BillingCycles scopes the code: all, monthly or yearly (handoff_shop.md 4.4).
+	BillingCycles string     `gorm:"size:8;not null;default:all;check:billing_cycles IN ('all','monthly','yearly')" json:"billing_cycles"`
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	CreatedBy     string     `gorm:"type:uuid;not null" json:"-"`
+	Version       int64      `gorm:"not null;default:1" json:"version"`
+	CreatedAt     time.Time  `gorm:"autoCreateTime:false" json:"created_at"`
+	UpdatedAt     time.Time  `gorm:"autoUpdateTime:false" json:"updated_at"`
 }
 
 const (

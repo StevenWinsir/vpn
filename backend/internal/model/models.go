@@ -54,8 +54,19 @@ type Plan struct {
 	AllowDedicated bool      `gorm:"not null" json:"allow_dedicated"`
 	Active         bool      `gorm:"not null" json:"-"`
 	Sort           int       `json:"-"`
-	CreatedAt      time.Time `json:"-"`
-	UpdatedAt      time.Time `json:"-"`
+	CreatedAt      time.Time `gorm:"autoCreateTime:false" json:"-"`
+	UpdatedAt      time.Time `gorm:"autoUpdateTime:false" json:"-"`
+	// Shop fields (handoff_shop.md 4.1). None of them is ever serialized: the public
+	// catalogue uses its own view struct. A plan is only ever soft-deleted (D7), because
+	// the seed step would bring a hard-deleted seed plan back.
+	YearlyEnabled         bool       `gorm:"not null;default:true" json:"-"`
+	YearlyDurationDays    int        `gorm:"not null;default:365;check:yearly_duration_days >= 1 AND yearly_duration_days <= 365" json:"-"`
+	YearlyTrafficBytes    *int64     `gorm:"check:yearly_traffic_bytes > 0" json:"-"`
+	YearlyDiscountPercent *int       `gorm:"check:yearly_discount_percent >= 50 AND yearly_discount_percent <= 100" json:"-"`
+	Featured              bool       `gorm:"not null;default:false" json:"-"`
+	Note                  string     `gorm:"size:200;not null;default:''" json:"-"`
+	Version               int64      `gorm:"not null;default:1" json:"-"`
+	DeletedAt             *time.Time `json:"-"`
 }
 
 type Subscription struct {
@@ -114,6 +125,15 @@ type Order struct {
 	GatewayCheckedAt *time.Time `json:"-"`
 	// Written from the injected clock, never by GORM's own time.Now.
 	UpdatedAt *time.Time `gorm:"autoUpdateTime:false" json:"-"`
+	// Shop snapshots (handoff_shop.md 4.3). Rows written before them (or by an older
+	// binary) read as monthly with NULL entitlement snapshots. ListPriceCents is the
+	// price of this billing cycle; OriginalCents is twelve months at the monthly price
+	// for a yearly order, 0 on legacy rows.
+	BillingCycle         string `gorm:"size:8;not null;default:monthly;check:billing_cycle IN ('monthly','yearly')" json:"billing_cycle"`
+	CycleDiscountPercent int    `gorm:"not null;default:100" json:"cycle_discount_percent"`
+	OriginalCents        int64  `gorm:"not null;default:0" json:"original_cents"`
+	EntMaxDevices        *int   `json:"-"`
+	EntAllowDedicated    *bool  `json:"-"`
 }
 
 // Order statuses. paid means paid and fulfilled, in one transaction.

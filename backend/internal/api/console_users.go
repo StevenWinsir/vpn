@@ -495,7 +495,7 @@ func (s *Server) consoleUserSubscription(c *gin.Context) {
 		}
 		if in.PlanID != "" && (current == nil || in.PlanID != current.PlanID) {
 			var plan model.Plan
-			if e = tx.Where("id = ?", in.PlanID).First(&plan).Error; errors.Is(e, gorm.ErrRecordNotFound) {
+			if e = tx.Where("id = ? AND deleted_at IS NULL", in.PlanID).First(&plan).Error; errors.Is(e, gorm.ErrRecordNotFound) {
 				return &apiError{400, "plan_not_found", "套餐不存在"}
 			} else if e != nil {
 				return e
