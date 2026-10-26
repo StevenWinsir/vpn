@@ -2,10 +2,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Group, Modal, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { api, APIError, message } from '@/lib/api';
+import { tierOf, zhe } from '@/lib/shop';
 import {
   gib,
   money,
   payTypeLabel,
+  type BillingCycle,
   type PayType,
   type PlacedOrder,
   type Plan,
@@ -24,11 +26,19 @@ const normalize = (value: string) => value.trim().toUpperCase();
 // the quote; the order request carries a plan, a method and a coupon code, never an amount.
 export function PurchaseModal({
   plan,
+  cycle,
+  renew,
+  guardAmount,
   initialPayType,
   allowed,
   onClose,
 }: {
   plan: Plan | null;
+  cycle: BillingCycle;
+  // The account already holds this plan: the yearly title says 续费.
+  renew: boolean;
+  // The backend understands expected_amount_cents (it serves the yearly plan fields).
+  guardAmount: boolean;
   initialPayType: PayType | null;
   allowed: string[];
   onClose: () => void;
@@ -40,7 +50,11 @@ export function PurchaseModal({
       onClose={() => {
         if (!busy) onClose();
       }}
-      title={plan ? `购买 ${plan.name}` : ''}
+      title={
+        plan
+          ? `${cycle === 'yearly' && renew ? '续费' : '购买'} ${plan.name}${cycle === 'yearly' ? '（年付）' : ''}`
+          : ''
+      }
       centered
       radius="lg"
       closeOnClickOutside={!busy}
@@ -49,8 +63,10 @@ export function PurchaseModal({
     >
       {plan ? (
         <Checkout
-          key={plan.id}
+          key={`${plan.id}|${cycle}`}
           plan={plan}
+          cycle={cycle}
+          guardAmount={guardAmount}
           initialPayType={initialPayType}
           allowed={allowed}
           busy={busy}
@@ -64,12 +80,16 @@ export function PurchaseModal({
 // Mounted fresh for every plan the dialog opens on, so no state leaks between purchases.
 function Checkout({
   plan,
+  cycle,
+  guardAmount,
   initialPayType,
   allowed,
   busy,
   setBusy,
 }: {
   plan: Plan;
+  cycle: BillingCycle;
+  guardAmount: boolean;
   initialPayType: PayType | null;
   allowed: string[];
   busy: boolean;
@@ -82,6 +102,9 @@ function Checkout({
   const [quoting, setQuoting] = useState(true);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const yearly = cycle === 'yearly';
+  const tier = tierOf(plan, cycle);
   const attempt = useRef<{ signature: string; key: string } | null>(null);
   const revision = useRef(0);
   const planId = plan.id;
@@ -96,7 +119,12 @@ function Checkout({
     const current = ++revision.current;
     return api<{ quote: Quote; pending_orders: number }>('/payments/quote', {
       method: 'POST',
-      body: JSON.stringify({ plan_id: planId, coupon_code: code }),
+      // Monthly requests keep the exact shape an older backend accepts.
+      body: JSON.stringify(
+        yearly
+          ? { plan_id: planId, coupon_code: code, billing_cycle: 'yearly' }
+          : { plan_id: planId, coupon_code: code },
+      ),
     })
       .then((data) => {
         if (current !== revision.current) return;
@@ -140,16 +168,25 @@ function Checkout({
     const code = quoted;
     // One Idempotency-Key per distinct (plan, method, coupon): a retry of the same request
     // replays the same order, a changed choice is a new order.
-    const signature = `${planId}|${payType}|${code}`;
+    const signature = `${planId}|${cycle}|${payType}|${code}`;
     if (attempt.current?.signature !== signature)
       attempt.current = { signature, key: crypto.randomUUID() };
     setBusy(true);
     setOrderError(null);
+    setNotice(null);
     try {
       const placed = await api<PlacedOrder>('/payments/orders', {
         method: 'POST',
         headers: { 'Idempotency-Key': attempt.current.key },
-        body: JSON.stringify({ plan_id: planId, pay_type: payType, coupon_code: code }),
+        // The amount can only make the server refuse the order when the price moved; the
+        // server prices the order itself.
+        body: JSON.stringify({
+          plan_id: planId,
+          pay_type: payType,
+          coupon_code: code,
+          ...(yearly ? { billing_cycle: 'yearly' } : {}),
+          ...(guardAmount ? { expected_amount_cents: quote.amount_cents } : {}),
+        }),
       });
       const target = new URL(placed.pay_url);
       if (target.protocol !== 'https:' && target.protocol !== 'http:')
@@ -158,6 +195,14 @@ function Checkout({
       window.location.assign(target.href);
     } catch (e) {
       setBusy(false);
+      if (e instanceof APIError && e.code === 'price_changed') {
+        // Nothing was ordered and the gateway is not opened: show the new price first.
+        attempt.current = null;
+        setNotice('价格已更新，请确认后再支付');
+        setQuoting(true);
+        void ask(code);
+        return;
+      }
       if (e instanceof APIError && e.code === 'idempotency_conflict') attempt.current = null;
       setOrderError(message(e));
     }
@@ -167,8 +212,13 @@ function Checkout({
   return (
     <Stack gap="md">
       <Text size="sm" c="dimmed">
-        {gib(plan.traffic_bytes)} GiB · {plan.duration_days} 天
-        {quote?.kind === 'renew' ? ' · 续费：延长有效期并累加流量' : ''}
+        {gib(quote?.traffic_bytes ?? tier?.traffic_bytes ?? plan.traffic_bytes)} GiB ·{' '}
+        {quote?.duration_days ?? tier?.duration_days ?? plan.duration_days} 天
+        {quote?.kind === 'renew'
+          ? yearly
+            ? ` · 续费：在当前到期时间基础上顺延 ${quote.duration_days} 天，并累加流量`
+            : ' · 续费：延长有效期并累加流量'
+          : ''}
       </Text>
       <div>
         <Text size="sm" fw={600} mb={8} id="pay-method-label">
@@ -249,10 +299,30 @@ function Checkout({
               测试价：当前账户按测试价结算，会产生真实扣款。
             </Alert>
           ) : null}
-          <Group justify="space-between">
-            <Text size="sm">标价</Text>
-            <Text size="sm">{money(quote.list_price_cents)}</Text>
-          </Group>
+          {yearly ? (
+            <>
+              <Group justify="space-between">
+                <Text size="sm">原价（12 个月）</Text>
+                <Text size="sm" aria-label="原价">
+                  {money(quote.original_cents ?? quote.list_price_cents)}
+                </Text>
+              </Group>
+              <Group justify="space-between">
+                <Text size="sm" className="quote-saving">
+                  年付优惠
+                  {quote.cycle_discount_percent ? `（${zhe(quote.cycle_discount_percent)}）` : ''}
+                </Text>
+                <Text size="sm" className="quote-saving" aria-label="年付优惠">
+                  -{money(quote.cycle_saving_cents ?? 0)}
+                </Text>
+              </Group>
+            </>
+          ) : (
+            <Group justify="space-between">
+              <Text size="sm">标价</Text>
+              <Text size="sm">{money(quote.list_price_cents)}</Text>
+            </Group>
+          )}
           {quote.test_price ? (
             <Group justify="space-between">
               <Text size="sm">测试价</Text>
@@ -281,6 +351,11 @@ function Checkout({
             </Alert>
           ) : null}
         </Stack>
+      ) : null}
+      {notice ? (
+        <Alert color="orange" role="status" data-testid="price-updated">
+          {notice}
+        </Alert>
       ) : null}
       {pending > 0 ? (
         <Alert color="yellow">

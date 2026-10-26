@@ -79,6 +79,14 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 		}
 		emails[kind] = u.Email
 	}
+	// The shop spec (yearly checkout, renewal, price change, rebuy) uses accounts of its own.
+	for _, kind := range []string{"shopa", "shopb", "shopc", "shopd"} {
+		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: "user", Status: "active", AuthVersion: 1}
+		if err = db.Create(&u).Error; err != nil {
+			t.Fatal(err)
+		}
+		emails[kind] = u.Email
+	}
 	gw := newFakeGateway(t, gatewayName, "test-only-gateway-secret", clock.Now)
 	cfg.Origins = []string{origin.String()}
 	cfg.WebsiteBaseURL = origin.String()

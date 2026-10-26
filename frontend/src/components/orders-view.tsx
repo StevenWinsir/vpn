@@ -132,6 +132,7 @@ export function OrdersView() {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>套餐 / 订单号</Table.Th>
+                  <Table.Th>周期</Table.Th>
                   <Table.Th>额度与期限</Table.Th>
                   <Table.Th>金额</Table.Th>
                   <Table.Th>支付方式</Table.Th>
@@ -150,6 +151,15 @@ export function OrdersView() {
                       <div className="order-id">
                         {order.id.slice(0, 8)}…{order.id.slice(-4)}
                       </div>
+                    </Table.Td>
+                    <Table.Td>
+                      {/* Orders from before the yearly tier carry no cycle and are monthly. */}
+                      <Badge
+                        variant="light"
+                        color={order.billing_cycle === 'yearly' ? 'orange' : 'gray'}
+                      >
+                        {order.billing_cycle === 'yearly' ? '年付' : '月付'}
+                      </Badge>
                     </Table.Td>
                     <Table.Td>
                       {gib(order.traffic_bytes)} GiB / {order.duration_days} 天

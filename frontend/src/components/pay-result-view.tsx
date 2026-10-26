@@ -156,6 +156,11 @@ export function PayResultView() {
                 <Badge variant="light" color={view.tone}>
                   {data.plan_name}
                 </Badge>
+                {data.billing_cycle === 'yearly' ? (
+                  <Badge variant="light" color="orange">
+                    年付
+                  </Badge>
+                ) : null}
                 {data.pay_type ? (
                   <Badge variant="light" color="gray">
                     {payTypeLabel[data.pay_type] ?? data.pay_type}
@@ -184,8 +189,8 @@ export function PayResultView() {
               <Button
                 component={Link}
                 href={`/plans?plan=${encodeURIComponent(data?.plan_id ?? '')}${
-                  data?.pay_type ? `&pay=${encodeURIComponent(data.pay_type)}` : ''
-                }`}
+                  data?.billing_cycle === 'yearly' ? '&cycle=yearly' : ''
+                }${data?.pay_type ? `&pay=${encodeURIComponent(data.pay_type)}` : ''}`}
               >
                 重新购买
               </Button>
