@@ -1,5 +1,6 @@
 // Shapes of the administrator console API (handoff_payment_account.md 9, 10). Administrator-only;
 // none of these ever reaches an ordinary user's pages.
+import type { PlanTier } from './types';
 
 export type ConsoleSub = {
   plan_id: string;
@@ -44,6 +45,11 @@ export type ConsoleOrder = {
   status: string;
   review_reason: string;
   price_source: string;
+  billing_cycle: 'monthly' | 'yearly';
+  cycle_discount_percent: number;
+  original_cents: number;
+  ent_max_devices: number | null;
+  ent_allow_dedicated: boolean | null;
   list_price_cents: number;
   discount_cents: number;
   amount_cents: number;
@@ -150,3 +156,68 @@ export const validDay = (day: string) =>
 export const unitsToGib = (units: number) => units / 1000 / 1024 ** 3;
 export const gibToUnits = (value: number) => Math.round(value * 1024 ** 3 * 1000);
 export const gibToBytes = (value: number) => Math.round(value * 1024 ** 3);
+
+// GET /admin/console/plans (handoff_shop.md 6.2, 9). The derived yearly tier comes from the
+// server; a form preview is only a hint until the saved value comes back.
+export type AdminPlan = {
+  id: string;
+  name: string;
+  description: string;
+  note: string;
+  price_cents: number;
+  duration_days: number;
+  traffic_bytes: number;
+  max_devices: number;
+  effective_devices: number;
+  devices_over_cap: boolean;
+  allow_dedicated: boolean;
+  active: boolean;
+  featured: boolean;
+  sort: number;
+  yearly_enabled: boolean;
+  yearly_duration_days: number;
+  yearly_traffic_bytes: number | null;
+  yearly_discount_percent: number | null;
+  yearly_discount_source: 'global' | 'plan';
+  yearly: PlanTier | null;
+  version: number;
+  active_subscriptions: number;
+  pending_orders: number;
+  coupon_count: number;
+  groups: string[];
+  group_count: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+export type ShopSettings = {
+  yearly_discount_percent: number;
+  version: number;
+  updated_by: string | null;
+  updated_at: string | null;
+  row_missing: boolean;
+};
+export type AdminPlansResponse = {
+  plans: AdminPlan[];
+  settings: ShopSettings;
+  client_max_online_devices: number;
+  following_global_plans: number;
+};
+// Body of POST /admin/console/plans[/:id]; version is required when editing.
+export type AdminPlanInput = Omit<
+  AdminPlan,
+  | 'effective_devices'
+  | 'devices_over_cap'
+  | 'yearly_discount_source'
+  | 'yearly'
+  | 'active_subscriptions'
+  | 'pending_orders'
+  | 'coupon_count'
+  | 'groups'
+  | 'group_count'
+  | 'created_at'
+  | 'updated_at'
+  | 'deleted_at'
+  | 'id'
+  | 'version'
+> & { id?: string; version?: number };

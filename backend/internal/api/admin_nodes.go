@@ -438,11 +438,11 @@ func requireActivePlans(tx *gorm.DB, plans []string) error {
 		return nil
 	}
 	var count int64
-	if e := tx.Model(&model.Plan{}).Where("id IN ? AND active = ?", plans, true).Count(&count).Error; e != nil {
+	if e := tx.Model(&model.Plan{}).Where("id IN ? AND deleted_at IS NULL", plans).Count(&count).Error; e != nil {
 		return e
 	}
 	if count != int64(len(plans)) {
-		return &apiError{400, "invalid_plan", "所选套餐不存在或未上架"}
+		return &apiError{400, "invalid_plan", "所选套餐不存在或已删除"}
 	}
 	return nil
 }

@@ -164,7 +164,12 @@ func (s *Server) fulfilOrder(tx *gorm.DB, order *model.Order, paidCents int64, n
 		return false, err
 	}
 	// Deliver exactly what was sold: the order's own snapshot, not today's plan terms.
+	// Orders from before the entitlement snapshots (or written by an older binary) keep
+	// the plan row's devices and line type. A soft-deleted plan still fulfils.
 	plan.Name, plan.DurationDays, plan.TrafficBytes = order.PlanName, order.DurationDays, order.TrafficBytes
+	if order.EntMaxDevices != nil && order.EntAllowDedicated != nil {
+		plan.MaxDevices, plan.AllowDedicated = *order.EntMaxDevices, *order.EntAllowDedicated
+	}
 	var coupon *model.Coupon
 	if order.CouponID != nil {
 		coupon = &model.Coupon{}

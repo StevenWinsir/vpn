@@ -1,16 +1,35 @@
 export type User = { id: string; email: string; name: string; role: string; created_at: string };
 // GET /auth/me while an administrator is looking at the site as this user.
 export type Impersonation = { admin_email: string; expires_at: string };
+export type BillingCycle = 'monthly' | 'yearly';
+// One billing cycle of a plan (GET /plans, handoff_shop.md 7.5). Every figure is computed
+// by the server in whole cents; pages only display them.
+export type PlanTier = {
+  price_cents: number;
+  original_cents: number;
+  saving_cents: number;
+  discount_percent: number;
+  duration_days: number;
+  traffic_bytes: number;
+  monthly_equivalent_cents: number;
+};
 export type Plan = {
   id: string;
   name: string;
   description: string;
+  // The monthly terms stay at the top level for readers that predate the yearly tier.
   price_cents: number;
   duration_days: number;
   traffic_bytes: number;
+  // The device count users can really have online (the plan's value capped by the server).
   max_devices: number;
   allow_dedicated: boolean;
+  featured?: boolean;
+  monthly?: PlanTier;
+  // Null when the plan has no yearly tier.
+  yearly?: PlanTier | null;
 };
+export type PlansResponse = { plans: Plan[]; yearly_discount_percent: number; max_yearly_saving_percent: number };
 export type Subscription = {
   id: string;
   plan_id: string;
@@ -103,6 +122,10 @@ export type Order = {
   coupon_code?: string;
   price_source?: string;
   expires_at?: string;
+  // Shop snapshots; orders from before them read monthly with original_cents 0.
+  billing_cycle?: BillingCycle;
+  cycle_discount_percent?: number;
+  original_cents?: number;
 };
 export type PayType = 'wxpay' | 'alipay';
 export type CouponResult = { code: string; applied: boolean; reason?: string; message?: string };
@@ -117,6 +140,15 @@ export type Quote = {
   discount_cents: number;
   amount_cents: number;
   coupon: CouponResult | null;
+  // list_price_cents is the price of the chosen cycle; original_cents is twelve months at
+  // the monthly price for yearly.
+  billing_cycle?: BillingCycle;
+  original_cents?: number;
+  cycle_discount_percent?: number;
+  cycle_saving_cents?: number;
+  monthly_equivalent_cents?: number;
+  device_limit?: number;
+  allow_dedicated?: boolean;
   purchasable: boolean;
   kind?: 'new' | 'renew';
   reason?: string;

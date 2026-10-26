@@ -16,33 +16,39 @@ import (
 
 // consoleOrder is one order row with its buyer. The review reason is for administrators.
 type consoleOrder struct {
-	ID             string     `json:"id"`
-	TradeNo        *string    `json:"trade_no"`
-	UserID         string     `json:"user_id"`
-	Email          string     `json:"email"`
-	PlanID         string     `json:"plan_id"`
-	PlanName       string     `json:"plan_name"`
-	Provider       string     `json:"provider"`
-	PayType        string     `json:"pay_type"`
-	Status         string     `json:"status"`
-	ReviewReason   string     `json:"review_reason"`
-	PriceSource    string     `json:"price_source"`
-	ListPriceCents int64      `json:"list_price_cents"`
-	DiscountCents  int64      `json:"discount_cents"`
-	AmountCents    int64      `json:"amount_cents"`
-	PaidCents      *int64     `json:"paid_cents"`
-	PriceCents     int64      `json:"price_cents"`
-	CouponCode     string     `json:"coupon_code"`
-	CreatedAt      time.Time  `json:"created_at"`
-	PaidAt         *time.Time `json:"paid_at"`
-	ExpiresAt      *time.Time `json:"expires_at"`
+	ID           string  `json:"id"`
+	TradeNo      *string `json:"trade_no"`
+	UserID       string  `json:"user_id"`
+	Email        string  `json:"email"`
+	PlanID       string  `json:"plan_id"`
+	PlanName     string  `json:"plan_name"`
+	Provider     string  `json:"provider"`
+	PayType      string  `json:"pay_type"`
+	Status       string  `json:"status"`
+	ReviewReason string  `json:"review_reason"`
+	PriceSource  string  `json:"price_source"`
+	// Shop snapshots (handoff_shop.md 4.3). OriginalCents is 0 on orders that predate them.
+	BillingCycle         string     `json:"billing_cycle"`
+	CycleDiscountPercent int        `json:"cycle_discount_percent"`
+	OriginalCents        int64      `json:"original_cents"`
+	EntMaxDevices        *int       `json:"ent_max_devices"`
+	EntAllowDedicated    *bool      `json:"ent_allow_dedicated"`
+	ListPriceCents       int64      `json:"list_price_cents"`
+	DiscountCents        int64      `json:"discount_cents"`
+	AmountCents          int64      `json:"amount_cents"`
+	PaidCents            *int64     `json:"paid_cents"`
+	PriceCents           int64      `json:"price_cents"`
+	CouponCode           string     `json:"coupon_code"`
+	CreatedAt            time.Time  `json:"created_at"`
+	PaidAt               *time.Time `json:"paid_at"`
+	ExpiresAt            *time.Time `json:"expires_at"`
 }
 
 func (s *Server) consoleOrderQuery(db *gorm.DB) *gorm.DB {
 	schema := s.cfg.Schema
 	return db.Table(schema + ".orders AS o").Joins("JOIN " + schema + ".users AS u ON u.id = o.user_id").
 		Select(`o.id, o.trade_no, o.user_id, u.email, o.plan_id, o.plan_name, o.provider, o.pay_type, o.status, o.review_reason, o.price_source,
-			o.list_price_cents, o.discount_cents, o.amount_cents, o.paid_cents, o.price_cents, o.coupon_code, o.created_at, o.paid_at, o.expires_at`)
+			o.billing_cycle, o.cycle_discount_percent, o.original_cents, o.ent_max_devices, o.ent_allow_dedicated, o.list_price_cents, o.discount_cents, o.amount_cents, o.paid_cents, o.price_cents, o.coupon_code, o.created_at, o.paid_at, o.expires_at`)
 }
 
 var orderStatuses = []string{model.OrderPending, model.OrderPaid, model.OrderExpired, model.OrderFailed, model.OrderReview, model.OrderPaidTest}
@@ -55,6 +61,7 @@ func (s *Server) consoleOrderList(c *gin.Context) {
 	status, ok1 := enumParam(c, "status", orderStatuses...)
 	payType, ok2 := enumParam(c, "pay_type", "wxpay", "alipay")
 	source, ok3 := enumParam(c, "source", priceList, priceTest, priceTestPurchase)
+	cycle, okCycle := enumParam(c, "billing_cycle", model.CycleMonthly, model.CycleYearly)
 	email, ok4 := keywordParam(c, "email")
 	tradeNo, ok5 := keywordParam(c, "trade_no")
 	orderID, ok6 := keywordParam(c, "order_id")
@@ -62,7 +69,7 @@ func (s *Server) consoleOrderList(c *gin.Context) {
 	createdTo, ok8 := timeParam(c, "created_to", true)
 	paidFrom, ok9 := timeParam(c, "paid_from", false)
 	paidTo, ok10 := timeParam(c, "paid_to", true)
-	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10) {
+	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && okCycle) {
 		return
 	}
 	filtered := func() *gorm.DB {
@@ -75,6 +82,9 @@ func (s *Server) consoleOrderList(c *gin.Context) {
 		}
 		if source != "" {
 			q = q.Where("o.price_source = ?", source)
+		}
+		if cycle != "" {
+			q = q.Where("o.billing_cycle = ?", cycle)
 		}
 		if email != "" {
 			q = q.Where(`u.email ILIKE ? ESCAPE '\'`, likeContains(email))

@@ -52,6 +52,18 @@ type ReadinessReport struct {
 	Account AccountReadiness `json:"account"`
 	// Impersonation sessions (handoff_payment_account.md 9.7, 16). Counts only.
 	Impersonation ImpersonationReadiness `json:"impersonation"`
+	// Shop (handoff_shop.md 13). Counts and switches only.
+	Shop ShopReadiness `json:"shop"`
+}
+
+// ShopReadiness: the settings row must exist, something must be on sale, and a plan
+// whose device quota exceeds CLIENT_MAX_ONLINE_DEVICES sells more than users can use.
+type ShopReadiness struct {
+	SettingsRow        bool  `json:"settings_row_present"`
+	YearlyDiscount     int   `json:"yearly_discount_percent"`
+	ActivePlans        int64 `json:"active_plans"`
+	PlansOverDeviceCap int64 `json:"plans_over_device_cap"`
+	ActiveYearlyPlans  int64 `json:"active_yearly_plans"`
 }
 
 // ImpersonationReadiness counts the administrator-opened sessions that are still
@@ -138,7 +150,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons", "login_events", "ip_geo_caches", "announcements", "announcement_reads"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons", "login_events", "ip_geo_caches", "announcements", "announcement_reads", "shop_settings"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -219,6 +231,29 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		}
 		if report.Impersonation.ActiveSessions > 0 {
 			report.Warnings = append(report.Warnings, "impersonation_sessions_active_revoke_before_rollback")
+		}
+		var discounts []int
+		if err := tx.Model(&model.ShopSettings{}).Where("id = 1").Pluck("yearly_discount_percent", &discounts).Error; err != nil {
+			return err
+		}
+		report.Shop.SettingsRow, report.Shop.YearlyDiscount = len(discounts) == 1, model.DefaultYearlyDiscountPercent
+		if report.Shop.SettingsRow {
+			report.Shop.YearlyDiscount = discounts[0]
+		} else {
+			report.Warnings = append(report.Warnings, "shop_settings_row_missing")
+		}
+		live := tx.Model(&model.Plan{}).Where("active = ? AND deleted_at IS NULL", true)
+		if err := live.Count(&report.Shop.ActivePlans).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Plan{}).Where("active = ? AND deleted_at IS NULL AND yearly_enabled = ?", true, true).Count(&report.Shop.ActiveYearlyPlans).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Plan{}).Where("active = ? AND deleted_at IS NULL AND max_devices > ?", true, cfg.MaxOnlineDevices()).Count(&report.Shop.PlansOverDeviceCap).Error; err != nil {
+			return err
+		}
+		if report.Shop.ActivePlans == 0 {
+			report.Warnings = append(report.Warnings, "shop_no_active_plans")
 		}
 		if report.Payment.ReviewOrders > 0 {
 			report.Warnings = append(report.Warnings, "payment_orders_need_review")

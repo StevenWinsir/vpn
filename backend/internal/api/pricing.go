@@ -37,7 +37,7 @@ type couponProblem struct {
 
 var (
 	couponInvalid   = couponProblem{"coupon_invalid", "优惠码无效或已失效"}
-	couponPlan      = couponProblem{"coupon_not_applicable", "此优惠码不适用于所选套餐"}
+	couponPlan      = couponProblem{"coupon_not_applicable", "此优惠码不适用于所选套餐或付费周期"}
 	couponExhausted = couponProblem{"coupon_exhausted", "此优惠码已达使用上限"}
 	couponUsed      = couponProblem{"coupon_used", "你已使用过此优惠码"}
 )
@@ -48,6 +48,8 @@ type pricing struct {
 	ListCents, BaseCents, DiscountCents, AmountCents int64
 	Source                                           string
 	Coupon                                           *model.Coupon
+	// Terms is the billing cycle the price belongs to.
+	Terms cycleTerms
 }
 
 func couponPlans(c model.Coupon) []string {
@@ -76,11 +78,17 @@ func livePending(db *gorm.DB, now time.Time) *gorm.DB {
 	return db.Where("status = ? AND expires_at > ?", model.OrderPending, now)
 }
 
-// price computes the payable amount. With lock it holds the coupon row (after the user
+// couponCoversCycle: a code is scoped to all cycles, only monthly or only yearly.
+func couponCoversCycle(c model.Coupon, cycle string) bool {
+	return c.BillingCycles == "" || c.BillingCycles == "all" || c.BillingCycles == cycle
+}
+
+// price computes the payable amount for one billing cycle of a plan: the cycle price,
+// then the test price, then the coupon (handoff_shop.md 5.1). With lock it holds the coupon row (after the user
 // lock), so concurrent orders cannot both take the last use. A coupon problem is not an
 // error: the caller decides whether to refuse or just report it.
-func (s *Server) price(tx *gorm.DB, user model.User, plan model.Plan, code string, lock bool, now time.Time) (pricing, *couponProblem, error) {
-	p := pricing{ListCents: plan.PriceCents, BaseCents: plan.PriceCents, Source: priceList}
+func (s *Server) price(tx *gorm.DB, user model.User, plan model.Plan, terms cycleTerms, code string, lock bool, now time.Time) (pricing, *couponProblem, error) {
+	p := pricing{ListCents: terms.PriceCents, BaseCents: terms.PriceCents, Source: priceList, Terms: terms}
 	if s.cfg.Payment.TestPriceFor(user.Email) {
 		p.BaseCents, p.Source = s.cfg.Payment.TestPriceCents, priceTest
 	}
@@ -106,7 +114,7 @@ func (s *Server) price(tx *gorm.DB, user model.User, plan model.Plan, code strin
 	if !coupon.Enabled || coupon.DeletedAt != nil || coupon.StartsAt != nil && now.Before(*coupon.StartsAt) || coupon.EndsAt != nil && !now.Before(*coupon.EndsAt) {
 		return p, &couponInvalid, nil
 	}
-	if plans := couponPlans(coupon); len(plans) > 0 && !slices.Contains(plans, plan.ID) {
+	if plans := couponPlans(coupon); len(plans) > 0 && !slices.Contains(plans, plan.ID) || !couponCoversCycle(coupon, terms.Cycle) {
 		return p, &couponPlan, nil
 	}
 	if coupon.MaxUses > 0 {

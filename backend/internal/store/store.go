@@ -46,7 +46,13 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err := tx.Exec(`CREATE SCHEMA IF NOT EXISTS "` + c.Schema + `"`).Error; err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}, &model.PaymentNotification{}, &model.Coupon{}, &model.LoginEvent{}, &model.IPGeoCache{}, &model.Announcement{}, &model.AnnouncementRead{}); err != nil {
+		// The one-off "recommended" back-fill below must only run on the migration that
+		// adds the column, or it would undo the administrator's choice (handoff_shop.md 4.1).
+		firstShopMigration, err := plansLackColumn(tx, c.Schema, "featured")
+		if err != nil {
+			return err
+		}
+		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}, &model.PaymentNotification{}, &model.Coupon{}, &model.LoginEvent{}, &model.IPGeoCache{}, &model.Announcement{}, &model.AnnouncementRead{}, &model.ShopSettings{}); err != nil {
 			return err
 		}
 		s := `"` + c.Schema + `".`
@@ -75,14 +81,42 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err := backfillNodeGroups(tx, s); err != nil {
 			return err
 		}
+		if firstShopMigration {
+			if err := tx.Exec(`UPDATE ` + s + `plans SET featured = true WHERE id = 'pro'`).Error; err != nil {
+				return err
+			}
+		}
+		// The settings row is only inserted, never overwritten: a repeated migration keeps
+		// the administrator's discount.
+		if err := tx.Exec(`INSERT INTO `+s+`shop_settings (id, yearly_discount_percent, version, updated_at) VALUES (1, ?, 1, ?) ON CONFLICT (id) DO NOTHING`, model.DefaultYearlyDiscountPercent, time.Now().UTC()).Error; err != nil {
+			return err
+		}
 		const gib = int64(1024 * 1024 * 1024)
 		plans := []model.Plan{
-			{ID: "starter", Name: "轻量计划", Description: "适合轻量浏览与日常连接", PriceCents: 1990, DurationDays: 30, TrafficBytes: 100 * gib, MaxDevices: 2, AllowDedicated: false, Active: true, Sort: 1},
-			{ID: "pro", Name: "进阶计划", Description: "更充裕的流量，支持专线权益", PriceCents: 3990, DurationDays: 30, TrafficBytes: 300 * gib, MaxDevices: 5, AllowDedicated: true, Active: true, Sort: 2},
-			{ID: "max", Name: "旗舰计划", Description: "面向多设备和高流量需求", PriceCents: 7990, DurationDays: 30, TrafficBytes: 800 * gib, MaxDevices: 10, AllowDedicated: true, Active: true, Sort: 3},
+			{ID: "starter", Name: "轻量计划", Description: "适合轻量浏览与日常连接", PriceCents: 1990, DurationDays: 30, TrafficBytes: 100 * gib, MaxDevices: 2, AllowDedicated: false, Active: true, Sort: 1, YearlyEnabled: true, YearlyDurationDays: 365, Version: 1},
+			{ID: "pro", Name: "进阶计划", Description: "更充裕的流量，支持专线权益", PriceCents: 3990, DurationDays: 30, TrafficBytes: 300 * gib, MaxDevices: 5, AllowDedicated: true, Active: true, Sort: 2, YearlyEnabled: true, YearlyDurationDays: 365, Featured: true, Version: 1},
+			{ID: "max", Name: "旗舰计划", Description: "面向多设备和高流量需求", PriceCents: 7990, DurationDays: 30, TrafficBytes: 800 * gib, MaxDevices: 10, AllowDedicated: true, Active: true, Sort: 3, YearlyEnabled: true, YearlyDurationDays: 365, Version: 1},
 		}
-		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&plans).Error
+		seeded := time.Now().UTC()
+		for i := range plans {
+			plans[i].CreatedAt, plans[i].UpdatedAt = seeded, seeded
+		}
+		return tx.Select("*").Clauses(clause.OnConflict{DoNothing: true}).Create(&plans).Error
 	})
+}
+
+// plansLackColumn reports whether the plans table exists without the named column
+// (an upgrade that is about to add it). A fresh install has no table: its seeds already
+// carry the right values.
+func plansLackColumn(tx *gorm.DB, schemaName, column string) (bool, error) {
+	var tables, columns int64
+	if err := tx.Raw(`SELECT count(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = 'plans'`, schemaName).Scan(&tables).Error; err != nil {
+		return false, err
+	}
+	if err := tx.Raw(`SELECT count(*) FROM information_schema.columns WHERE table_schema = ? AND table_name = 'plans' AND column_name = ?`, schemaName, column).Scan(&columns).Error; err != nil {
+		return false, err
+	}
+	return tables > 0 && columns == 0, nil
 }
 
 // backfillNodeGroups gives every server without a group a one-server group with the
