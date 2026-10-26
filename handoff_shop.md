@@ -609,3 +609,30 @@ testPurchase 接受可选的 billing_cycle，使用 5.1 的周期价（不使用
 - 月付状态下续费弹窗标题保持“购买 X”（与旧版一致），只有年付才区分“续费”。
 
 遗留事项：flow.spec 的未开支付演示路径需要 CI 或发布演练确认；第 4 轮需要补旧后端兼容（S4-02）和发布演练。
+
+### 第 4 轮：全链路回归、演练与发布准备（2026-10-26，分支 worktree-worktree-shop-round4-release，PR 见合并记录）
+
+实际完成的工作项：
+- scripts/test-release-rehearsal.py 增加第五个二进制（`--shop-rollback-ref`，默认 a8bfebe，PR #72）和“套餐商店”阶段：升级后核对种子套餐的年付默认值（90、365 天、pro 推荐）→ 管理员新建 drill-plan（名称含 HTML、带内部备注）并软删除 drill-gone → 全局折扣改为 85 → 仅年付优惠码（月付不适用、年付适用，回滚前先停用，对应运维文档的回滚步骤）→ 一笔已付的年付订单（到期时间正好 +365 天、流量 +年付额度、快照为 yearly:85）、expected_amount_cents 少 1 分被 409 拒绝且不产生订单、一笔待付的年付订单 → 回滚到 a8bfebe：可启动，/plans 显示种子套餐与管理员新建套餐的月付条款且没有软删除的套餐，待付年付订单按 365 天和年付流量开通，旧版本卖出月付订单（含新套餐）→ 再升级：旧版本写的订单读作 monthly、快照为空，按套餐行开通；设置行、软删除套餐保留；折扣改回 90。同阶段断言备注不进审计、普通用户 403、不存在的 ID 删除 404。
+- frontend/tests/shop.spec.ts 增加 S4-02（新前端对接旧后端：/plans 去掉全部新字段，报价与下单改为严格字段校验）。
+- security_review_test.go 的生产配置用例增加 shop 段断言，且诊断 JSON 不含 note、description、price_cents。
+- 文档：README 套餐商店与年付段落；docs/payment-operations.md 新增第七节（发布顺序、回滚、U-10 … U-12）与第八节（安全审查）；backend/DEPLOYMENT.md 新增“套餐商店、年付与设备额度”。
+
+验收结果（本机）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| S4-01 | PASS | test-release-rehearsal.py 全部通过（17 项检查，5 个互不相同的二进制，`artifacts/shop-round4-release/rehearsal-summary.json`，本机忽略提交） |
+| S4-02 | PASS | shop.spec S4-02；test-payment-web.py 共 39 项通过。后端一侧由演练中的 a8bfebe 二进制证明其接受月付请求 |
+| S4-03 | 部分 | 服务端层面 PASS：月付续年付后订阅套餐 ID 不变、权益指纹不变（TestShopYearlyQuoteOrderAndRenewal），其他套餐沿用既有重新授权逻辑。四个平台 APP 的界面验收 NOT RUN（本轮不改 APP 代码，依赖 CI 的各平台任务） |
+| S4-04 | PASS | docs/payment-operations.md 第八节逐项列出证据 |
+| S4-05 | PASS | 演练的 doctor 在开发配置、TestProductionConfigurationDefenses 在生产风格配置下均报告 shop 段，无敏感内容；TestShopDoctor |
+| S4-06 | PASS（开发方部分） | 第七节 U-10 … U-12 已写入；对应的本地模拟网关用例 shop.spec S3-04、S3-05 与 admin-console-plans S2-06 通过。真实结果由用户部署后填写 |
+| S4-07 | 见 PR | CI 结果以 gh pr checks 为准 |
+
+其他本机回归：scripts/test-native.py（-race，全量）全部通过；npm run lint、tsc --noEmit、next build --webpack 通过；test:api-proxy 16 项通过（需设置 PLAYWRIGHT_CHROME_PATH）。
+
+与规划的偏差与遗留事项：
+- 演练的 shop 阶段在当前二进制上使用已有订阅的 owner 账户购买年付，另建一个普通账户购买管理员新建的套餐，因为有效订阅期内只能购买同一套餐。
+- 第 2 轮遗留的“节点组引用 / 待付订单阻止删除”浏览器用例仍使用 page.route 模拟；真实拒绝逻辑由 TestShopAdminPlanLifecycle 覆盖，未在启用节点目录的 Playwright 夹具上重验（NOT RUN）。
+- flow.spec 本机未单独运行，交给 CI。

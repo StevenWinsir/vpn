@@ -60,6 +60,8 @@ ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key',
     'ip_geo_caches': 'ip', 'announcement_reads': "announcement_id::text || user_id"}
 # PR #58 merge: the release immediately before the payment, account and console work.
 PAYMENT_ROLLBACK_REF = '9ee9066'
+# PR #72 merge: the release immediately before the shop work (yearly billing, admin-defined plans).
+SHOP_ROLLBACK_REF = 'a8bfebe'
 PAYMENT_TABLES = ['orders', 'payment_notifications', 'coupons', 'announcements', 'announcement_reads', 'login_events', 'ip_geo_caches']
 
 
@@ -106,6 +108,7 @@ def main():
     parser.add_argument('--legacy-ref', default=LEGACY_REF, help='release that produced the existing data')
     parser.add_argument('--rollback-ref', default=ROLLBACK_REF, help='accepted release to roll back to (must enforce verification and predate node groups)')
     parser.add_argument('--payment-rollback-ref', default=PAYMENT_ROLLBACK_REF, help='release just before the payment work (must not have the payment routes)')
+    parser.add_argument('--shop-rollback-ref', default=SHOP_ROLLBACK_REF, help='release just before the shop work (yearly billing, admin plans)')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -227,17 +230,18 @@ def main():
             summary['legacy_commit'], legacy_binary = build_ref('legacy', args.legacy_ref)
             summary['rollback_commit'], rollback_binary = build_ref('rollback', args.rollback_ref)
             summary['payment_rollback_commit'], payment_rollback_binary = build_ref('payment-rollback', args.payment_rollback_ref)
+            summary['shop_rollback_commit'], shop_rollback_binary = build_ref('shop-rollback', args.shop_rollback_ref)
             doctor_binary = root / 'doctor-current'
             run('build-doctor-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(doctor_binary), './cmd/doctor'], cwd=ROOT / 'backend')
             current_binary = root / 'api-current'
             run('build-api-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(current_binary), './cmd/api'], cwd=ROOT / 'backend')
             summary['binary_sha256'] = {name: hashlib.sha256(binary.read_bytes()).hexdigest()
-                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary)]}
+                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary), ('shop_rollback', shop_rollback_binary)]}
             # Identical binaries are reported, not hidden: a tree whose production backend equals the
             # rollback target makes the rollback step a same-binary restart over the newer data.
             digests = summary['binary_sha256']
-            summary['distinct_backend_versions'] = len(set(digests.values())) == 4
-            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback')]
+            summary['distinct_backend_versions'] = len(set(digests.values())) == 5
+            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback'), ('current', 'shop_rollback'), ('payment_rollback', 'shop_rollback')]
                 if digests[a] == digests[b])
             secret, jwt = secrets.token_urlsafe(36), secrets.token_urlsafe(48)
             password_file = root / 'pg-password'
@@ -677,6 +681,141 @@ def main():
             assert sql('upgrade', 'SELECT sum(charged_units) FROM rehearsal.client_traffic_reports') == str(ledger_units)
             stop(process)
             summary['checks'].append('re-upgrade after the payment rollback: migration repeatable, the late callback for the pending order is honoured (order paid, one notification row), earlier announcement acknowledgement and the coupon survive')
+            # Shop round (handoff_shop.md 12.1, 13 round 4): yearly billing, an administrator-defined plan, a
+            # soft-deleted plan, a changed global discount and a yearly-only coupon on the current binary;
+            # then a rollback to the release just before the shop work (no down migration) and back.
+            def utc_seconds(database, user_id, column='expires_at'):
+                return int(float(sql(database, f"SELECT extract(epoch FROM {column}) FROM rehearsal.subscriptions WHERE user_id = '{user_id}'")))
+
+            process, shop = start_api(current_binary, 'upgrade', 'api-shop', catalog=True, payment=True)
+            shop_admin = Client(shop.url)
+            shop_admin.call('/auth/login', {'email': admin_email, 'password': admin_password}, origin=web_url)
+            shop_owner = Client(shop.url)
+            shop_owner.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            shopper_email, shopper_password = 'shopper-' + str(uuid.uuid4()) + '@example.invalid', secrets.token_urlsafe(24)
+            run('create-shopper', [str(current_binary), '-create-admin', shopper_email], environment=api_env('upgrade', free_port()), stdin=json.dumps({'password': shopper_password}))
+            sql('upgrade', f"UPDATE rehearsal.users SET role = 'user' WHERE email = '{shopper_email}'")
+            shopper = Client(shop.url)
+            shopper.call('/auth/login', {'email': shopper_email, 'password': shopper_password}, origin=web_url)
+            shopper_id = shopper.call('/auth/me')['user']['id']
+            # The upgrade left every seed plan with the default yearly terms (9折, 365 days) and the settings row at 90.
+            listing = shop_owner.call('/plans')
+            assert listing['yearly_discount_percent'] == 90, listing
+            seeded = {item['id']: item for item in listing['plans']}
+            assert {'starter', 'pro', 'max'} <= set(seeded), sorted(seeded)
+            for item in seeded.values():
+                yearly = item['yearly']
+                assert yearly and yearly['discount_percent'] == 90 and yearly['duration_days'] == 365, item
+                assert yearly['original_cents'] == item['price_cents'] * 12 and yearly['price_cents'] == item['price_cents'] * 12 * 90 // 100, item
+            assert [item['id'] for item in listing['plans'] if item['featured']] == ['pro']
+            # An administrator defines a plan (with markup in its name) and a second one that is then soft-deleted.
+            plan_body = {'id': 'drill-plan', 'name': 'Drill <b>plan</b>', 'description': '', 'note': 'internal drill note', 'price_cents': 1234, 'duration_days': 30,
+                'traffic_bytes': 5 * 2 ** 30, 'max_devices': 1, 'allow_dedicated': False, 'yearly_enabled': True, 'yearly_duration_days': 365,
+                'yearly_traffic_bytes': None, 'yearly_discount_percent': None, 'featured': False, 'sort': 90, 'active': True, 'version': 0}
+            drill_plan = shop_admin.call('/admin/console/plans', plan_body, origin=web_url, expected=201)['plan']
+            gone_plan = shop_admin.call('/admin/console/plans', dict(plan_body, id='drill-gone', name='Drill gone', active=False), origin=web_url, expected=201)['plan']
+            shop_admin.call('/admin/console/plans/drill-gone/delete', {'version': gone_plan['version']}, origin=web_url)
+            assert sql('upgrade', "SELECT (deleted_at IS NOT NULL) || ':' || active FROM rehearsal.plans WHERE id = 'drill-gone'") == 'true:false'
+            settings = shop_admin.call('/admin/console/shop-settings')['settings']
+            shop_admin.call('/admin/console/shop-settings', {'yearly_discount_percent': 85, 'version': settings['version']}, origin=web_url)
+            listing = shop_owner.call('/plans')
+            assert listing['yearly_discount_percent'] == 85 and 'drill-gone' not in {item['id'] for item in listing['plans']}
+            drilled = {item['id']: item for item in listing['plans']}['drill-plan']
+            assert drilled['name'] == 'Drill <b>plan</b>' and 'note' not in drilled and 'version' not in drilled, drilled
+            assert drilled['yearly']['price_cents'] == 1234 * 12 * 85 // 100 and drilled['yearly']['original_cents'] == 1234 * 12, drilled
+            assert sql('upgrade', "SELECT count(*) FROM rehearsal.admin_audits WHERE action LIKE 'admin.plan%' AND detail LIKE '%internal drill note%'") == '0'
+            assert int(sql('upgrade', "SELECT count(*) FROM rehearsal.admin_audits WHERE action LIKE 'admin.plan%'")) >= 3
+            shop_admin.call('/admin/console/plans/no-such-plan/delete', {'version': 1}, origin=web_url, expected=404)
+            shop_owner.call('/admin/console/plans', origin=web_url, expected=403)
+            pro_yearly = {item['id']: item for item in listing['plans']}['pro']['yearly']
+            assert pro_yearly['discount_percent'] == 85, pro_yearly
+            # A yearly-only coupon: refused for monthly, applied to yearly.
+            yearly_coupon = shop_admin.call('/admin/console/coupons', {'code': 'DRILLYEAR', 'discount_type': 'percent', 'percent_off': 10, 'plan_ids': ['pro'],
+                'max_uses': 5, 'per_user_limit': 1, 'enabled': True, 'billing_cycles': 'yearly', 'version': 0}, origin=web_url, expected=201)['coupon']
+            monthly_quote = shopper.call('/payments/quote', {'plan_id': 'drill-plan', 'coupon_code': ''}, origin=web_url)['quote']
+            assert monthly_quote['billing_cycle'] == 'monthly' and monthly_quote['amount_cents'] == 1234, monthly_quote
+            cycle_refused = shop_owner.call('/payments/quote', {'plan_id': 'pro', 'coupon_code': 'DRILLYEAR'}, origin=web_url)['quote']['coupon']
+            assert cycle_refused and not cycle_refused['applied'], cycle_refused
+            yearly_quote = shop_owner.call('/payments/quote', {'plan_id': 'pro', 'coupon_code': 'DRILLYEAR', 'billing_cycle': 'yearly'}, origin=web_url)['quote']
+            assert yearly_quote['coupon']['applied'] and yearly_quote['billing_cycle'] == 'yearly' and yearly_quote['original_cents'] == pro_yearly['original_cents'], yearly_quote
+            # Runbook step before a rollback (docs/payment-operations.md): disable coupons with a cycle scope.
+            shop_admin.call('/admin/console/coupons/' + yearly_coupon['id'], {'code': 'DRILLYEAR', 'discount_type': 'percent', 'percent_off': 10, 'plan_ids': ['pro'], 'max_uses': 5, 'per_user_limit': 1,
+                'enabled': False, 'billing_cycles': 'yearly', 'version': yearly_coupon['version']}, origin=web_url)
+            assert sql('upgrade', "SELECT enabled || ':' || billing_cycles FROM rehearsal.coupons WHERE code = 'DRILLYEAR'") == 'false:yearly'
+            # Owner: a yearly order paid (365 days and the yearly traffic are added to the live subscription), another left pending.
+            owner_expires, owner_limit = utc_seconds('upgrade', owner_id), int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'"))
+            paid_year = shop_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': '', 'billing_cycle': 'yearly',
+                'expected_amount_cents': pro_yearly['price_cents']}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+            assert paid_year['billing_cycle'] == 'yearly' and paid_year['amount_cents'] == pro_yearly['price_cents'] and paid_year['original_cents'] == pro_yearly['original_cents'], paid_year
+            shop_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': '', 'billing_cycle': 'yearly',
+                'expected_amount_cents': pro_yearly['price_cents'] - 1}, origin=web_url, key=str(uuid.uuid4()), expected=409, code='price_changed')
+            money = lambda cents: f'{cents // 100}.{cents % 100:02d}'
+            Client(shop.url).call('/payments/notify', {'trade_no': paid_year['trade_no'], 'name': paid_year['plan_name'], 'money': money(paid_year['amount_cents']), 'trade_status': 'TRADE_SUCCESS'})
+            assert shop_owner.call('/payments/orders/' + paid_year['id'])['order']['status'] == 'paid'
+            assert utc_seconds('upgrade', owner_id) - owner_expires == 365 * 86400
+            yearly_traffic = int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'")) - owner_limit
+            assert yearly_traffic > 0 and yearly_traffic == pro_yearly['traffic_bytes'], (yearly_traffic, pro_yearly)
+            snapshot = sql('upgrade', f"SELECT billing_cycle || ':' || cycle_discount_percent || ':' || original_cents || ':' || (ent_max_devices IS NOT NULL) FROM rehearsal.orders WHERE id = '{paid_year['id']}'")
+            assert snapshot == f"yearly:85:{pro_yearly['original_cents']}:true", snapshot
+            pending_year = shop_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'alipay', 'coupon_code': '', 'billing_cycle': 'yearly',
+                'expected_amount_cents': pro_yearly['price_cents']}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+            # The shopper pays for the administrator-defined plan monthly on the current binary.
+            drill_order = shopper.call('/payments/orders', {'plan_id': 'drill-plan', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+            Client(shop.url).call('/payments/notify', {'trade_no': drill_order['trade_no'], 'name': drill_order['plan_name'], 'money': money(drill_order['amount_cents']), 'trade_status': 'TRADE_SUCCESS'})
+            assert sql('upgrade', f"SELECT plan_id || ':' || max_devices || ':' || is_test FROM rehearsal.subscriptions WHERE user_id = '{shopper_id}'") == 'drill-plan:1:false'
+            shop_fingerprints = fingerprint('upgrade', ['plans', 'shop_settings', 'coupons'])
+            stop(process)
+            summary['checks'].append('shop on the current binary: upgrade leaves every seed plan with yearly terms at 90 (price = monthly x 12 x 90 / 100, 365 days, pro featured); an administrator defines plan drill-plan (HTML in its name, an internal note) and soft-deletes drill-gone, the public list shows the former as plain text without note or version and never the latter; global discount 85 reprices the yearly tiers; a yearly-only coupon is refused for monthly and applied to yearly; a yearly order with a wrong expected_amount_cents is refused (409 price_changed) and creates nothing; a paid yearly order adds exactly 365 days and the yearly traffic to the live subscription and stores cycle, discount, original price and entitlement snapshot; a monthly order on the new plan activates it with its own device quota')
+            # Rollback to the release just before the shop work: the pending yearly order is settled by the old fulfilOrder.
+            process, shop_old = start_api(shop_rollback_binary, 'upgrade', 'api-shop-rollback', catalog=True, payment=True)
+            old_owner = Client(shop_old.url)
+            old_owner.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            old_plans = {item['id']: item for item in old_owner.call('/plans')['plans']}
+            assert {'starter', 'pro', 'max', 'drill-plan'} <= set(old_plans) and 'drill-gone' not in old_plans, sorted(old_plans)
+            assert old_plans['drill-plan']['price_cents'] == 1234 and old_plans['pro']['price_cents'] == seeded['pro']['price_cents'], old_plans
+            orders_old = {item['id']: item for item in old_owner.call('/orders')['orders']}
+            assert orders_old[paid_year['id']]['status'] == 'paid' and orders_old[pending_year['id']]['status'] == 'pending'
+            old_shopper = Client(shop_old.url)
+            old_shopper.call('/auth/login', {'email': shopper_email, 'password': shopper_password}, origin=web_url)
+            old_shopper_order = old_shopper.call('/payments/orders', {'plan_id': 'drill-plan', 'pay_type': 'alipay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+            assert old_shopper_order['amount_cents'] == 1234, old_shopper_order
+            # A pending yearly order is fulfilled with its snapshot (365 days, yearly traffic).
+            before_expires, before_limit = utc_seconds('upgrade', owner_id), int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'"))
+            Client(shop_old.url).call('/payments/notify', {'trade_no': pending_year['trade_no'], 'name': pending_year['plan_name'], 'money': money(pending_year['amount_cents']), 'trade_status': 'TRADE_SUCCESS'})
+            assert old_owner.call('/payments/orders/' + pending_year['id'])['order']['status'] == 'paid'
+            assert utc_seconds('upgrade', owner_id) - before_expires == 365 * 86400
+            assert int(sql('upgrade', f"SELECT traffic_limit_bytes FROM rehearsal.subscriptions WHERE user_id = '{owner_id}'")) - before_limit == yearly_traffic
+            assert sql('upgrade', f"SELECT billing_cycle FROM rehearsal.orders WHERE id = '{pending_year['id']}'") == 'yearly'
+            # The old binary sells monthly terms (also on the administrator-defined plan) and writes orders without the new columns.
+            old_pending = old_owner.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+            assert old_pending['amount_cents'] == seeded['pro']['price_cents'], old_pending
+            Client(shop_old.url).call('/payments/notify', {'trade_no': old_shopper_order['trade_no'], 'name': old_shopper_order['plan_name'], 'money': money(old_shopper_order['amount_cents']), 'trade_status': 'TRADE_SUCCESS'})
+            assert sql('upgrade', f"SELECT status FROM rehearsal.orders WHERE id = '{old_shopper_order['id']}'") == 'paid'
+            assert fingerprint('upgrade', ['plans', 'shop_settings', 'coupons']) == shop_fingerprints
+            stop(process)
+            summary['checks'].append('rollback to the release just before the shop work (no down migration, yearly-only coupon disabled first): it starts over the new columns and tables, lists the seed plans and the administrator-defined plan at monthly terms and never the soft-deleted one, settles the pending yearly order with 365 days and the yearly traffic from the order snapshot, sells monthly terms (including the new plan) and leaves plans, shop_settings and coupons byte-identical')
+            run('migration-after-shop-rollback', [str(current_binary), '-migrate'], environment=api_env('upgrade', free_port()))
+            process, shop_back = start_api(current_binary, 'upgrade', 'api-shop-reupgraded', catalog=True, payment=True)
+            for order_id in (old_pending['id'], old_shopper_order['id']):
+                assert sql('upgrade', f"SELECT billing_cycle || ':' || (ent_max_devices IS NULL) || ':' || (ent_allow_dedicated IS NULL) FROM rehearsal.orders WHERE id = '{order_id}'") == 'monthly:true:true'
+            before_expires = utc_seconds('upgrade', owner_id)
+            Client(shop_back.url).call('/payments/notify', {'trade_no': old_pending['trade_no'], 'name': old_pending['plan_name'], 'money': money(old_pending['amount_cents']), 'trade_status': 'TRADE_SUCCESS'})
+            back_shop_owner = Client(shop_back.url)
+            back_shop_owner.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)
+            assert back_shop_owner.call('/payments/orders/' + old_pending['id'])['order']['status'] == 'paid'
+            assert utc_seconds('upgrade', owner_id) - before_expires == int(sql('upgrade', "SELECT duration_days FROM rehearsal.plans WHERE id = 'pro'")) * 86400
+            back_listing = back_shop_owner.call('/plans')
+            assert back_listing['yearly_discount_percent'] == 85 and 'drill-gone' not in {item['id'] for item in back_listing['plans']}
+            assert sql('upgrade', "SELECT count(*) FROM rehearsal.plans WHERE id = 'drill-gone' AND deleted_at IS NOT NULL") == '1'
+            assert sql('upgrade', f"SELECT plan_id FROM rehearsal.subscriptions WHERE user_id = '{shopper_id}'") == 'drill-plan'
+            # Put the global discount back to its default, as the user's own check list does (U-12).
+            back_admin = Client(shop_back.url)
+            back_admin.call('/auth/login', {'email': admin_email, 'password': admin_password}, origin=web_url)
+            settings = back_admin.call('/admin/console/shop-settings')['settings']
+            back_admin.call('/admin/console/shop-settings', {'yearly_discount_percent': 90, 'version': settings['version']}, origin=web_url)
+            assert back_shop_owner.call('/plans')['yearly_discount_percent'] == 90
+            stop(process)
+            summary['checks'].append('re-upgrade after the shop rollback: migration repeatable; orders the old binary wrote read as monthly with empty entitlement snapshots and are fulfilled from the plan row (30 days); the settings row (85), the soft-deleted plan and the administrator-defined plan survive; the discount goes back to 90')
             process, restored = start_api(current_binary, 'restored', 'api-restored')
             Client(restored.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
             restored.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)

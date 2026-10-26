@@ -433,6 +433,15 @@ func TestProductionConfigurationDefenses(t *testing.T) {
 	if !report.Payment.Enabled || !report.Payment.AutoFulfil || report.Payment.TestPrice || report.Payment.PendingOrders != 0 || report.Payment.ReviewOrders != 0 || report.Impersonation.ActiveSessions != 0 {
 		t.Fatalf("payment readiness: %+v", report.Payment)
 	}
+	// The shop checks are part of the production report too (counts and the discount only).
+	if !report.Shop.SettingsRow || report.Shop.YearlyDiscount != 90 || report.Shop.ActivePlans != 3 || report.Shop.ActiveYearlyPlans != 3 {
+		t.Fatalf("shop readiness in production: %+v", report.Shop)
+	}
+	for _, leak := range []string{"note", "description", "price_cents"} {
+		if bytes.Contains(raw, []byte(`"`+leak+`"`)) {
+			t.Fatalf("readiness exposes plan field %q", leak)
+		}
+	}
 	// With the allow-list empty and a test price on, the report says so.
 	e.cfg.Payment.NotifyAllowed = nil
 	e.cfg.Payment.TestPrice, e.cfg.Payment.TestEmails = true, []string{u.Email}
