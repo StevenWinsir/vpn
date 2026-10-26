@@ -576,3 +576,36 @@ testPurchase 接受可选的 billing_cycle，使用 5.1 的周期价（不使用
 - 节点组引用 / 待付订单阻止删除，以及节点管理套餐多选，需要在启用节点目录的夹具上用真实数据再验一次（第 4 轮全链路回归时补）。
 - 订单详情“原价与年付优惠”行等第 3 轮产生年付订单后复查。
 - 第 3 轮同时修改 playwright.payment.config.ts 的 testMatch，合并时可能有一行冲突，取两边并集即可。
+
+### 第 3 轮：网站商店（2026-10-26，分支 worktree-shop-round3-store，PR 见合并记录）
+
+实际完成的工作项：
+- /plans：月付|年付分段单选控件（role=radiogroup，方向键可切换，默认月付），年付选项旁常驻橙红渐变徽标（白字，#c2410c→#b91c1c，对比度约 5.2:1 以上；折扣相同显示“9 折”，不同显示“最高省 X%”，无折扣不显示），月付状态下的横幅（点击切到年付），状态存放于 ?cycle=yearly（useSearchParams，router.replace，保留 plan/pay）；没有任何年付档位时隐藏控件和横幅；入场动画只在 prefers-reduced-motion: no-preference 下生效。
+- 年付卡片：角标“年付 9 折”、年付价 / 年、划线原价、立省、折合月价、年付流量与 365 天、按钮“购买年付”“续费为年付”，aria-label 为“购买 X（年付）”“续费 X（年付）”“测试购买 X（年付）”；无年付的套餐显示“该套餐暂不提供年付”和“查看月付”。推荐样式取自接口 featured；设备文案改为“最多 N 台设备同时在线”；底部说明改为正式文案。月付状态的标签和价格不变。
+- 购买弹窗：接收周期、标题、摘要、明细（原价（12 个月）→ 年付优惠 → 测试价 → 优惠 → 应付，均取自报价），Idempotency-Key 签名含周期；只有年付才发送 billing_cycle；/plans 出现年付字段时下单携带 expected_amount_cents，收到 409 price_changed 时自动重新报价并显示“价格已更新，请确认后再支付”，不跳转网关。测试购买弹窗显示周期与周期价，年付才发送 billing_cycle。
+- 结果页“重新购买”带 cycle（并显示“年付”标记），订单页新增“周期”列（无周期的旧订单显示月付）。
+- 公共 /plans 的其他读取方（后台节点、用户、优惠码页面）只依赖原有字段，响应为增量变化，未改动。
+- 新增 frontend/tests/shop.spec.ts（加入 playwright.payment.config.ts）；夹具 payment_acceptance_test.go 增加 shopa–shopd 四个普通账户。spec 通过管理员 API 自建 e2e-shop-* 套餐，结束时全部下架；不改动 starter/pro/max 价格，也不改全局折扣（仍为 90）。
+
+验收结果（本机）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| S3-01 | PASS | shop.spec S3-01；payment/account/admin-console 等既有 spec 未修改，在同一次 test-payment-web.py 中全部通过（29 passed） |
+| S3-02 | PASS | shop.spec S3-02：逐卡比对 /plans 接口的年付价、原价、立省、折合月价、流量、有效期、角标、按钮标签；刷新保持；切回月付参数消失；方向键切换 |
+| S3-03 | PASS | shop.spec S3-03：徽标“9 折”/“最高省 20%”、横幅文案与点击切换、375 宽几何断言（无换行、无溢出）、减少动态效果下 animation-name 为 none。截图（未提交，本机 /tmp/shop3-out/browser-artifacts/screens）：shop-1440-monthly/yearly、shop-375-monthly/yearly、shop-checkout-yearly、shop-price-updated；已目视检查 1440 月付与 375 年付 |
+| S3-04 | PASS | shop.spec S3-04：年付弹窗明细（原价 ¥300.00、年付优惠 -¥30.00、应付 ¥270.00）→ 本地模拟网关（商品名带“·年付”）→ 回调 → 结果页 → 订单页“年付” → 订阅 365 天、120 GiB；并断言月付请求体不含新字段、年付订单请求含 billing_cycle 与 expected_amount_cents |
+| S3-05 | PASS | shop.spec S3-05：月付购买后年付状态显示“续费为年付”，到期时间顺延恰好 365 天，流量 10→130 GiB；有效期内其他套餐按钮禁用 |
+| S3-06 | PASS | shop.spec S3-06：弹窗打开后管理员改价，点击去支付不跳转、无订单、显示“价格已更新”、应付刷新，再次点击按新价（37800）下单 |
+| S3-07 | PASS | shop.spec S3-07：真实无年付套餐显示提示并可“查看月付”；通过路由改写让全部套餐无年付时控件与横幅消失 |
+| S3-08 | PASS | shop.spec S3-08：超时后“重新购买”回到 ?plan=&cycle=yearly&pay=wxpay，自动选中年付、套餐和支付方式 |
+| S3-09 | PASS（前端层面） | shop.spec S3-09：夹具开着支付，所以用路由把 /meta 改成未开支付并桩住 test-purchase，断言弹窗的周期与周期价，年付请求体为 {plan_id, billing_cycle}，月付为 {plan_id}。真实后端的年付测试购买由第 1 轮 Go 测试覆盖。flow.spec 本机 NOT RUN（需要发布演练夹具），交给 CI |
+| S3-10 | PASS（本机项）| npm run lint、npx tsc --noEmit、next build --webpack、npm run test:api-proxy（16 项）、scripts/test-payment-web.py --skip-build（29 passed）；go vet ./internal/api 通过 |
+
+与规划的偏差：
+- test-payment-web.py 的前端构建默认是 Turbopack；本机 worktree 里 node_modules 是符号链接，Turbopack 拒绝，所以先手动 webpack 构建，再用 --skip-build 运行脚本（CI 不受影响）。
+- 为让 spec 有独立账户，修改了 payment_acceptance_test.go（只增加一个创建四个用户的循环，不动原用户列表）。
+- “全部套餐享 9 折”只在所有上架套餐都有年付时出现；部分套餐无年付时改为“年付套餐享 9 折”。
+- 月付状态下续费弹窗标题保持“购买 X”（与旧版一致），只有年付才区分“续费”。
+
+遗留事项：flow.spec 的未开支付演示路径需要 CI 或发布演练确认；第 4 轮需要补旧后端兼容（S4-02）和发布演练。
