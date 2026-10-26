@@ -7,6 +7,8 @@ export class APIError extends Error {
     message: string,
     // Seconds from the server's Retry-After header (429), when present.
     public retryAfter: number | null = null,
+    // The rest of the error object (for example `field`, or the reasons a plan is in use).
+    public details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = 'APIError';
@@ -98,6 +100,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       data?.error?.code || 'request_failed',
       data?.error?.message || '请求失败，请稍后重试。',
       retryAfterSeconds(response),
+      data?.error && typeof data.error === 'object' ? data.error : {},
     );
   return data as T;
 }

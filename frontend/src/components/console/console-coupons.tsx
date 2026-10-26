@@ -11,6 +11,7 @@ import {
   Paper,
   ScrollArea,
   SegmentedControl,
+  Select,
   Skeleton,
   Stack,
   Switch,
@@ -20,8 +21,14 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { api, APIError } from '@/lib/api';
-import { money, type Plan } from '@/lib/types';
-import { fromLocalInput, toLocalInput } from '@/lib/console';
+import { money } from '@/lib/types';
+import {
+  fromLocalInput,
+  toLocalInput,
+  type AdminPlan,
+  type AdminPlansResponse,
+} from '@/lib/console';
+import { planNameOf, planOptions } from '@/lib/plan-math';
 import { describeError, ErrorBox, useFetched, When } from './console-common';
 
 // One row of GET /admin/console/coupons.
@@ -33,6 +40,7 @@ type Coupon = {
   percent_off: number;
   amount_off_cents: number;
   plan_ids: string[];
+  billing_cycles: 'all' | 'monthly' | 'yearly';
   starts_at: string | null;
   ends_at: string | null;
   max_uses: number;
@@ -44,6 +52,18 @@ type Coupon = {
   reserved: number;
   // Some order used it: its discount is frozen and deleting it only hides it.
   referenced: boolean;
+};
+
+const cycleScopeLabel: Record<string, string> = {
+  all: '全部周期',
+  monthly: '仅月付',
+  yearly: '仅年付',
+};
+
+// The coupon API refuses a coupon that still lists a deleted plan; say what to do about it.
+const couponError = (e: unknown) => {
+  const text = describeError(e);
+  return text.includes('已删除') ? `${text}。请先从“适用套餐”中移除已删除的套餐，再保存。` : text;
 };
 
 const discountText = (c: Coupon) =>
@@ -68,6 +88,7 @@ function inputOf(c: Coupon, patch: Partial<Record<string, unknown>> = {}) {
     percent_off: c.percent_off,
     amount_off_cents: c.amount_off_cents,
     plan_ids: c.plan_ids,
+    billing_cycles: c.billing_cycles,
     starts_at: c.starts_at,
     ends_at: c.ends_at,
     max_uses: c.max_uses,
@@ -88,8 +109,9 @@ export function ConsoleCoupons() {
     `/admin/console/coupons?include_deleted=${showDeleted}`,
     nonce,
   );
-  const plans = useFetched<{ plans: Plan[] }>('/plans').data?.plans ?? [];
-  const planName = (id: string) => plans.find((p) => p.id === id)?.name ?? id;
+  const plans =
+    useFetched<AdminPlansResponse>('/admin/console/plans?include_deleted=true').data?.plans ?? [];
+  const planName = (id: string) => planNameOf(plans, id);
   const [now] = useState(() => Date.now());
   const refresh = () => setNonce((n) => n + 1);
   const toggle = async (c: Coupon) => {
@@ -101,7 +123,7 @@ export function ConsoleCoupons() {
       });
       refresh();
     } catch (e) {
-      setToggleError(describeError(e));
+      setToggleError(couponError(e));
     }
   };
   return (
@@ -126,6 +148,7 @@ export function ConsoleCoupons() {
                   <Table.Th>优惠码</Table.Th>
                   <Table.Th>折扣</Table.Th>
                   <Table.Th>适用套餐</Table.Th>
+                  <Table.Th>适用周期</Table.Th>
                   <Table.Th>有效期</Table.Th>
                   <Table.Th>已用 / 上限</Table.Th>
                   <Table.Th>每人限用</Table.Th>
@@ -149,6 +172,9 @@ export function ConsoleCoupons() {
                       <Table.Td>{discountText(c)}</Table.Td>
                       <Table.Td>
                         {c.plan_ids.length ? c.plan_ids.map(planName).join('、') : '全部套餐'}
+                      </Table.Td>
+                      <Table.Td data-testid="coupon-cycles">
+                        {cycleScopeLabel[c.billing_cycles] ?? cycleScopeLabel.all}
                       </Table.Td>
                       <Table.Td>
                         <Text size="xs">
@@ -237,7 +263,7 @@ function CouponForm({
   onSaved,
 }: {
   coupon: Coupon | null;
-  plans: Plan[];
+  plans: AdminPlan[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -250,6 +276,7 @@ function CouponForm({
     coupon?.amount_off_cents ? coupon.amount_off_cents / 100 : 5,
   );
   const [planIds, setPlanIds] = useState<string[]>(coupon?.plan_ids ?? []);
+  const [cycles, setCycles] = useState<string>(coupon?.billing_cycles ?? 'all');
   const [starts, setStarts] = useState(coupon?.starts_at ? toLocalInput(coupon.starts_at) : '');
   const [ends, setEnds] = useState(coupon?.ends_at ? toLocalInput(coupon.ends_at) : '');
   const [maxUses, setMaxUses] = useState<number | string>(coupon?.max_uses ?? 0);
@@ -268,6 +295,7 @@ function CouponForm({
       percent_off: type === 'percent' ? Number(percent) : 0,
       amount_off_cents: type === 'amount' ? Math.round(Number(yuan) * 100) : 0,
       plan_ids: planIds,
+      billing_cycles: cycles,
       starts_at: starts ? fromLocalInput(starts) : null,
       ends_at: ends ? fromLocalInput(ends) : null,
       max_uses: Number(maxUses) || 0,
@@ -290,7 +318,7 @@ function CouponForm({
       onSaved();
       onClose();
     } catch (e) {
-      setError(describeError(e));
+      setError(couponError(e));
       setConflict(e instanceof APIError && e.code === 'version_conflict');
     } finally {
       setBusy(false);
@@ -366,10 +394,22 @@ function CouponForm({
         <MultiSelect
           label="适用套餐"
           description="不选表示全部套餐"
-          data={plans.map((p) => ({ value: p.id, label: p.name }))}
+          data={planOptions(plans, planIds)}
           value={planIds}
           onChange={setPlanIds}
           clearable
+        />
+        <Select
+          label="适用周期"
+          description="年付价已含年付折扣，优惠码在其基础上再减"
+          allowDeselect={false}
+          data={[
+            { value: 'all', label: '全部' },
+            { value: 'monthly', label: '仅月付' },
+            { value: 'yearly', label: '仅年付' },
+          ]}
+          value={cycles}
+          onChange={(v) => setCycles(v ?? 'all')}
         />
         <Group grow align="flex-start">
           <TextInput
