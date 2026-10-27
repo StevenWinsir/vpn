@@ -14,7 +14,13 @@ restores the groups. A fourth binary, the release just before payments (handoff_
 groups over data that now holds gateway orders, coupons and announcements, answer the callback
 route it does not have with a plain 404, and leave a live pending order for the re-upgraded
 binary to settle. Before any rollback the operator command revokes impersonation sessions
-(`api -revoke-impersonation`, checked with the doctor). The browser
+(`api -revoke-impersonation`, checked with the doctor). The referral programme (handoff_coupon.md round 3) adds a fifth binary, the release
+just before it (8c311ee): referral rows in every state exist on the current binary (registered through
+the real code flow in the browser stage's test assembly, then qualified, rewarded and forfeited by real
+payments and the real reward worker), a yearly referrer carries a reward, the old binary starts over
+the new tables and columns, settles a first purchase without the check, purges accounts and opens a new
+period under a reward; the next upgrade sweeps, rewards and drops the stale reward. The website of the
+release before the referral work (e1fa661) is built and driven against the current backend. The browser
 stage needs a mail inbox, which a normal binary cannot have without trusting a test SMTP server
 in the machine's trust store; it runs the current API as a Go test assembly instead, with the
 real worker delivering into a capture inbox (TestReleaseRehearsalFixture).
@@ -62,6 +68,11 @@ ORDER_COLUMN = {'node_configs': 'node_id', 'auth_rate_buckets': 'key',
 PAYMENT_ROLLBACK_REF = '9ee9066'
 # PR #72 merge: the release immediately before the shop work (yearly billing, admin-defined plans).
 SHOP_ROLLBACK_REF = 'a8bfebe'
+# PR #77 merge: the release immediately before the referral programme (handoff_coupon.md 15.1).
+REFERRAL_ROLLBACK_REF = '8c311ee'
+# PR #78 merge: the last tree before the referral website; its frontend is the "old website" of the
+# mixed-deployment check (handoff_coupon.md 15.1, R3-02).
+OLD_WEBSITE_REF = 'e1fa661'
 PAYMENT_TABLES = ['orders', 'payment_notifications', 'coupons', 'announcements', 'announcement_reads', 'login_events', 'ip_geo_caches']
 
 
@@ -109,6 +120,8 @@ def main():
     parser.add_argument('--rollback-ref', default=ROLLBACK_REF, help='accepted release to roll back to (must enforce verification and predate node groups)')
     parser.add_argument('--payment-rollback-ref', default=PAYMENT_ROLLBACK_REF, help='release just before the payment work (must not have the payment routes)')
     parser.add_argument('--shop-rollback-ref', default=SHOP_ROLLBACK_REF, help='release just before the shop work (yearly billing, admin plans)')
+    parser.add_argument('--referral-rollback-ref', default=REFERRAL_ROLLBACK_REF, help='release just before the referral programme')
+    parser.add_argument('--old-website-ref', default=OLD_WEBSITE_REF, help='tree whose frontend is the website from before the referral programme')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -184,18 +197,19 @@ def main():
                 f"FROM (SELECT {only[table] if only else '*'} FROM rehearsal.{table}) t")
                 for table in tables}
 
-        def api_env(database, port, mail=False, catalog=False, payment=False):
-            return dict(env, **(mail_env if mail else {}), **(catalog_env if catalog else {}), **(payment_env if payment else {}), APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
+        def api_env(database, port, mail=False, catalog=False, payment=False, extra=None):
+            # Mail and payment settings share WEBSITE_BASE_URL (the same value); later keys win.
+            return dict(env, **{**(mail_env if mail else {}), **(catalog_env if catalog else {}), **(payment_env if payment else {})}, APP_ENV='test', HTTP_ADDR=f'127.0.0.1:{port}',
                 DATABASE_HOST='127.0.0.1', DATABASE_PORT=str(pg_port), DATABASE_NAME=database,
                 DATABASE_USER='postgres', DATABASE_PASSWORD=secret, DATABASE_SCHEMA='rehearsal',
                 DATABASE_SSLMODE='disable', JWT_SECRET=jwt, ALLOWED_ORIGINS=web_url,
                 COOKIE_SECURE='false', AUTO_MIGRATE='false', TEST_PURCHASE_ENABLED='true',
                 CLIENT_ALLOW_TEST_ENTITLEMENTS='true', CLIENT_PROFILE_DIR=str(profiles),
-                BCRYPT_COST='10', AUTH_REQUESTS_PER_MINUTE='10000', API_REQUESTS_PER_MINUTE='100000')
+                BCRYPT_COST='10', AUTH_REQUESTS_PER_MINUTE='10000', API_REQUESTS_PER_MINUTE='100000', **(extra or {}))
 
-        def start_api(binary, database, name, mail=False, catalog=False, payment=False):
+        def start_api(binary, database, name, mail=False, catalog=False, payment=False, extra=None):
             port = free_port()
-            process = spawn(name, [str(binary)], api_env(database, port, mail, catalog, payment))
+            process = spawn(name, [str(binary)], api_env(database, port, mail, catalog, payment, extra))
             client = Client(f'http://127.0.0.1:{port}')
             for _ in range(150):
                 if process.poll() is not None:
@@ -231,17 +245,18 @@ def main():
             summary['rollback_commit'], rollback_binary = build_ref('rollback', args.rollback_ref)
             summary['payment_rollback_commit'], payment_rollback_binary = build_ref('payment-rollback', args.payment_rollback_ref)
             summary['shop_rollback_commit'], shop_rollback_binary = build_ref('shop-rollback', args.shop_rollback_ref)
+            summary['referral_rollback_commit'], referral_rollback_binary = build_ref('referral-rollback', args.referral_rollback_ref)
             doctor_binary = root / 'doctor-current'
             run('build-doctor-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(doctor_binary), './cmd/doctor'], cwd=ROOT / 'backend')
             current_binary = root / 'api-current'
             run('build-api-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(current_binary), './cmd/api'], cwd=ROOT / 'backend')
             summary['binary_sha256'] = {name: hashlib.sha256(binary.read_bytes()).hexdigest()
-                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary), ('shop_rollback', shop_rollback_binary)]}
+                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary), ('shop_rollback', shop_rollback_binary), ('referral_rollback', referral_rollback_binary)]}
             # Identical binaries are reported, not hidden: a tree whose production backend equals the
             # rollback target makes the rollback step a same-binary restart over the newer data.
             digests = summary['binary_sha256']
-            summary['distinct_backend_versions'] = len(set(digests.values())) == 5
-            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback'), ('current', 'shop_rollback'), ('payment_rollback', 'shop_rollback')]
+            summary['distinct_backend_versions'] = len(set(digests.values())) == 6
+            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback'), ('current', 'shop_rollback'), ('payment_rollback', 'shop_rollback'), ('current', 'referral_rollback'), ('shop_rollback', 'referral_rollback')]
                 if digests[a] == digests[b])
             secret, jwt = secrets.token_urlsafe(36), secrets.token_urlsafe(48)
             password_file = root / 'pg-password'
@@ -405,7 +420,83 @@ def main():
                 raise TimeoutError('Next.js readiness timed out')
             run('browser-current', ['node', str(stage / 'node_modules/@playwright/test/cli.js'), 'test'], cwd=stage, environment=web_env, timeout=600)
             summary['checks'].append('real production Next.js / Chromium / PostgreSQL: email-code registration (code from the capture inbox), purchase, cookie rotation, login/logout and responsive public pages incl. /forgot-password')
+
+            # Referral bindings through the real registration flow (handoff_coupon.md 6): this assembly is the
+            # only place that can read a mailbox code. Referrers first (the legacy account opens its page: the
+            # code is created lazily, so a user from before the programme has none until then), then the
+            # referees, each registering with a code; the payments come later on normal binaries.
+            def web_register(prefix, referral_code=None):
+                address, secret_value = f'{prefix}-{uuid.uuid4().hex[:10]}@gmail.com', secrets.token_urlsafe(24)
+                receipt = Client(client.url).call('/auth/register-code', {'email': address}, origin=web_url, expected=202)
+                body = {'name': 'Referral ' + prefix, 'email': address, 'password': secret_value, 'remember': False,
+                    'verification_id': receipt['verification_id'], 'code': inbox('/fixture/mail', address)['code']}
+                if referral_code is not None:
+                    body['referral_code'] = referral_code
+                Client(client.url).call('/auth/register', body, origin=web_url, expected=201)
+                return address, secret_value
+
+            def web_code(address, secret_value):
+                page = Client(client.url)
+                page.call('/auth/login', {'email': address, 'password': secret_value}, origin=web_url)
+                summary_page = page.call('/me/referral')
+                assert summary_page['enabled'] is True and summary_page['share_path'] == '/register?ref=' + summary_page['code'] and len(summary_page['code']) == 8, summary_page
+                return summary_page['code']
+
+            assert sql('upgrade', f"SELECT referral_code IS NULL FROM rehearsal.users WHERE email = '{email}'") == 't'
+            ref_owner_code = web_code(email, password)
+            assert sql('upgrade', f"SELECT referral_code FROM rehearsal.users WHERE email = '{email}'") == ref_owner_code
+            assert web_code(email, password) == ref_owner_code
+            ref_idle = web_register('refd')   # a referrer who never holds a plan
+            ref_monthly = web_register('reff')  # a referrer with a monthly plan, for the stale-reward drill
+            ref_codes = {'owner': ref_owner_code, 'idle': web_code(*ref_idle), 'monthly': web_code(*ref_monthly)}
+            assert len(set(ref_codes.values())) == 3
+            ref_people = {name: web_register(prefix, ref_codes[owner]) for name, prefix, owner in [
+                ('b', 'refb', 'owner'), ('c', 'refc', 'idle'), ('e', 'refe', 'owner'), ('g', 'refg', 'monthly'),
+                ('j', 'refj', 'owner'), ('h', 'refh', 'owner')]}
+            assert sql('upgrade', "SELECT count(*) FROM rehearsal.referrals WHERE status = 'registered'") == '6'
+            assert sql('upgrade', "SELECT count(*) FROM rehearsal.referrals WHERE referee_email_masked ~ '^[a-z0-9]{2}[*]{3}@gmail[.]com$'") == '6'
+            # An unknown code, a malformed one and no code at all answer exactly alike and bind nothing.
+            for odd in ['ZZZZZZZZ', '!!bad!!', None]:
+                web_register('refx', odd)
+            assert sql('upgrade', "SELECT count(*) FROM rehearsal.referrals") == '6'
+            summary['checks'].append('referral bindings through the real registration flow on the current API assembly: a legacy account (no code before) gets one when it first opens its page and keeps it; two referrers and six referees register with codes and each binding is a registered row with a masked address; an unknown code, a malformed one and no code all register (201) and bind nothing')
+
+            # Mixed deployment (handoff_coupon.md 15.1, R3-02): the website from before the referral work,
+            # built from its own tree, against this backend.
             stop(web_process)
+            old_stage = root / 'frontend-old'
+            old_stage.mkdir()
+            summary['old_website_commit'] = subprocess.check_output(['git', 'rev-parse', '--verify', args.old_website_ref + '^{commit}'], cwd=ROOT, text=True).strip()
+            for name in subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', summary['old_website_commit'], 'frontend'], cwd=ROOT, text=True).splitlines():
+                if Path(name).name.startswith('.env') or name.endswith('.tsbuildinfo'):
+                    continue
+                destination = old_stage / Path(name).relative_to('frontend')
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(subprocess.check_output(['git', 'show', summary['old_website_commit'] + ':' + name], cwd=ROOT))
+            (old_stage / 'node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
+            assert not (old_stage / 'src/components/referral-view.tsx').exists()
+            old_env = dict(web_env, E2E_ARTIFACTS_DIR=str(output / 'browser-old-website'))
+            old_cli = str(old_stage / 'node_modules/next/dist/bin/next')
+            run('web-old-build', ['node', old_cli, 'build', '--webpack'], cwd=old_stage, environment=old_env, timeout=600)
+            old_stream = (output / 'web-old-server.log').open('a')
+            streams.append(old_stream)
+            old_web = subprocess.Popen(['node', old_cli, 'start', '--hostname', '127.0.0.1', '--port', str(web_port)],
+                cwd=old_stage, env=old_env, stdout=old_stream, stderr=subprocess.STDOUT)
+            processes.append(old_web)
+            for _ in range(150):
+                if old_web.poll() is not None:
+                    raise RuntimeError('The old website failed before readiness')
+                try:
+                    with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(web_url + '/api/runtime-config', timeout=1) as response:
+                        assert json.loads(response.read())['apiBaseUrl'] == '/api/v1'
+                        break
+                except (OSError, urllib.error.URLError):
+                    time.sleep(0.1)
+            else:
+                raise TimeoutError('The old website readiness timed out')
+            run('browser-old-website', ['node', str(old_stage / 'node_modules/@playwright/test/cli.js'), 'test'], cwd=old_stage, environment=old_env, timeout=600)
+            summary['checks'].append('the website from before the referral programme (built from its own tree) against the current backend: registration, purchase, cookie rotation, login/logout and the public pages all pass unchanged (the old registration request carries no referral field, the new /meta field and routes are never used)')
+            stop(old_web)
 
             # The legacy account (non-allow-listed domain, never verified) resets its password by mail link.
             web = Client(client.url)
@@ -823,6 +914,181 @@ def main():
             assert back_shop_owner.call('/plans')['yearly_discount_percent'] == 90
             stop(process)
             summary['checks'].append('re-upgrade after the shop rollback: migration repeatable; orders the old binary wrote read as monthly with empty entitlement snapshots and are fulfilled from the plan row (30 days); the settings row (85), the soft-deleted plan and the administrator-defined plan survive; the discount goes back to 90')
+            # Referral programme (handoff_coupon.md 15, 16 round 3, R3-01): rows in every state, a yearly referrer,
+            # a rollback to the release just before it and the upgrade back. REFERRAL_POLL_INTERVAL is 1 s so the
+            # real worker settles within seconds.
+            fast = {'REFERRAL_POLL_INTERVAL': '1s'}
+            ref_db = 'upgrade'
+
+            def ref_id(address):
+                return sql(ref_db, f"SELECT id FROM rehearsal.users WHERE email = '{address}'")
+
+            ref_ids = {name: ref_id(person[0]) for name, person in ref_people.items()}
+            ref_ids.update(owner=owner_id, idle=ref_id(ref_idle[0]), monthly=ref_id(ref_monthly[0]))
+
+            def wait_for(query, expected, what, seconds=40):
+                deadline = time.monotonic() + seconds
+                while time.monotonic() < deadline:
+                    if sql(ref_db, query) == expected:
+                        return
+                    time.sleep(0.3)
+                raise AssertionError(f'{what}: expected {expected!r}, got {sql(ref_db, query)!r}')
+
+            def row(name, columns):
+                return sql(ref_db, f"SELECT {columns} FROM rehearsal.referrals WHERE referee_id = '{ref_ids[name]}'")
+
+            def sub_of(name, columns):
+                return sql(ref_db, f"SELECT {columns} FROM rehearsal.subscriptions WHERE user_id = '{ref_ids[name]}'")
+
+            def settle_at(url, order, status='TRADE_SUCCESS'):
+                return Client(url).call('/payments/notify', {'trade_no': order['trade_no'], 'name': order['plan_name'], 'money': money(order['amount_cents']), 'trade_status': status})
+
+            def pay_for(url, person, plan='pro'):
+                account = Client(url)
+                account.call('/auth/login', {'email': person[0], 'password': person[1]}, origin=web_url)
+                order = account.call('/payments/orders', {'plan_id': plan, 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+                settle_at(url, order)
+                assert account.call('/payments/orders/' + order['id'])['order']['status'] == 'paid'
+                return order
+
+            reward_of = lambda order: order['amount_cents'] * 2 ** 30 // 100
+            owner_person = (email, new_password)
+            owner_limit_0 = int(sub_of('owner', 'traffic_limit_bytes'))
+            owner_cycle = sub_of('owner', "quota_cycle_days || ':' || quota_cycle_bytes")
+            owner_plan = sub_of('owner', 'plan_id')
+            assert owner_cycle.startswith('30:') and sub_of('owner', 'bonus_bytes') == '0', owner_cycle
+            pro_traffic = sql(ref_db, "SELECT traffic_bytes FROM rehearsal.plans WHERE id = 'pro'")
+
+            # A. The current binary with the programme on: real payments, the real reward worker.
+            process, ref = start_api(current_binary, ref_db, 'api-referral', catalog=True, payment=True, extra=fast)
+            assert ref.call('/meta')['referral_enabled'] is True
+            pay_for(ref.url, ref_monthly)  # the monthly referrer holds a plan
+            order_b = pay_for(ref.url, ref_people['b'])
+            wait_for(f"SELECT status FROM rehearsal.referrals WHERE referee_id = '{ref_ids['b']}'", 'rewarded', 'reward for B')
+            grant_b = reward_of(order_b)
+            assert row('b', "first_order_id || ':' || first_order_cents || ':' || reward_bytes || ':' || granted_bytes") == f"{order_b['id']}:{order_b['amount_cents']}:{grant_b}:{grant_b}"
+            # The yearly referrer: the reward is added to the cycle allowance and remembered as a bonus of this period.
+            assert int(sub_of('owner', 'traffic_limit_bytes')) - owner_limit_0 == grant_b
+            assert sub_of('owner', "bonus_bytes || ':' || (bonus_starts_at = starts_at) || ':' || plan_id") == f"{grant_b}:true:{owner_plan}"
+            assert sub_of('owner', "quota_cycle_days || ':' || quota_cycle_bytes") == owner_cycle
+            owner_api = Client(ref.url)
+            owner_api.call('/auth/login', {'email': owner_person[0], 'password': owner_person[1]}, origin=web_url)
+            mine = owner_api.call('/me/referral')
+            assert mine['has_active_plan'] is True and mine['current_bonus_bytes'] == grant_b and mine['stats'] == {'registered_count': 4, 'purchased_count': 1,
+                'pending_count': 0, 'rewarded_count': 1, 'rewarded_bytes': grant_b, 'forfeited_count': 0}, mine
+            assert owner_api.call('/me/dashboard')['bonus_bytes'] == grant_b
+            listed = owner_api.call('/me/referrals')
+            assert listed['total'] == 4 and all(set(item) == {'email_masked', 'registered_at', 'status', 'reward_bytes', 'granted_bytes', 'granted_at', 'forfeit_reason', 'referee_deleted'} for item in listed['items']), listed
+            # A referrer without a plan: the reward is forfeited for good.
+            pay_for(ref.url, ref_people['c'])
+            wait_for(f"SELECT status FROM rehearsal.referrals WHERE referee_id = '{ref_ids['c']}'", 'forfeited', 'forfeit for C')
+            assert row('c', "forfeit_reason || ':' || granted_bytes") == 'referrer_no_plan:0'
+            idle_api = Client(ref.url)
+            idle_api.call('/auth/login', {'email': ref_idle[0], 'password': ref_idle[1]}, origin=web_url)
+            idle = idle_api.call('/me/referral')
+            assert idle['has_active_plan'] is False and idle['stats']['forfeited_count'] == 1 and idle['stats']['rewarded_bytes'] == 0, idle
+            # A monthly referrer: a one-shot allowance plus the bonus.
+            order_g = pay_for(ref.url, ref_people['g'])
+            wait_for(f"SELECT status FROM rehearsal.referrals WHERE referee_id = '{ref_ids['g']}'", 'rewarded', 'reward for G')
+            grant_g = reward_of(order_g)
+            assert sub_of('monthly', "bonus_bytes || ':' || (bonus_starts_at = starts_at)") == f"{grant_g}:true"
+            assert row('e', 'status') == 'registered'
+            stop(process)
+            # Switched off: a first purchase is still recorded, nothing is paid out.
+            process, off = start_api(current_binary, ref_db, 'api-referral-off', catalog=True, payment=True, extra=dict(fast, REFERRAL_ENABLED='false'))
+            assert off.call('/meta')['referral_enabled'] is False
+            order_j = pay_for(off.url, ref_people['j'])
+            assert row('j', "status || ':' || first_order_id") == f"qualified:{order_j['id']}"
+            time.sleep(4)
+            assert row('j', 'status') == 'qualified' and int(sub_of('owner', 'traffic_limit_bytes')) - owner_limit_0 == grant_b
+            stop(process)
+            summary['checks'].append('referral programme on the current binary (real payments, real worker, REFERRAL_POLL_INTERVAL 1 s): the first paid order of a referee qualifies the row and the reward arrives within seconds (1 yuan = 1 GiB of the amount paid); a yearly referrer keeps its 30-day cycle and carries the reward as a bonus anchored to its period; a referrer without a plan forfeits (referrer_no_plan) and the page says so; a monthly referrer gets the bonus on its one-shot allowance; with REFERRAL_ENABLED=false the first purchase is recorded as qualified and nothing is paid out')
+
+            # B. Rollback to the release just before the programme (no down migration).
+            rid = {name: row(name, 'id') for name in ('e', 'c')}
+            core = lambda: sql(ref_db, f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY id::text),'')) FROM (SELECT * FROM rehearsal.referrals WHERE id NOT IN ('{rid['e']}', '{rid['c']}')) t")
+            codes_state = lambda: sql(ref_db, f"SELECT count(*) || ':' || md5(COALESCE(string_agg(id::text || COALESCE(referral_code, ''), ',' ORDER BY id), '')) FROM rehearsal.users WHERE id IN ({', '.join(repr(v) for k, v in ref_ids.items() if k not in ('e', 'idle'))})")
+            core_before, codes_before = core(), codes_state()
+            process, old_ref = start_api(referral_rollback_binary, ref_db, 'api-referral-rollback', mail=True, catalog=True, payment=True)
+            old_owner = Client(old_ref.url)
+            old_owner.call('/auth/login', {'email': owner_person[0], 'password': owner_person[1]}, origin=web_url)
+            old_dash = old_owner.call('/me/dashboard')
+            assert old_dash['subscription']['traffic_limit_bytes'] == int(sub_of('owner', 'traffic_limit_bytes')) and 'bonus_bytes' not in old_dash
+            # A first purchase on the old binary: fulfilled, but nobody checks the referral.
+            order_h = pay_for(old_ref.url, ref_people['h'])
+            assert row('h', 'status') == 'registered'
+            # A reward belongs to its period: the monthly referrer's period ends and the old binary opens a new one
+            # without knowing the bonus.
+            grant_before = sub_of('monthly', 'bonus_bytes')
+            sql(ref_db, f"UPDATE rehearsal.subscriptions SET starts_at = now() - interval '40 days', expires_at = now() - interval '10 days' WHERE user_id = '{ref_ids['monthly']}'")
+            pay_for(old_ref.url, ref_monthly)
+            assert sub_of('monthly', 'traffic_limit_bytes') == pro_traffic
+            assert sub_of('monthly', 'bonus_bytes') == grant_before and sub_of('monthly', 'bonus_starts_at <> starts_at') == 't'
+            # Account deletion on the old binary: a referee (its row stays, anonymised by the key) and a
+            # referrer (its rows go with it).
+            for person in (ref_people['e'], ref_idle):
+                leaving = Client(old_ref.url)
+                leaving.call('/auth/login', {'email': person[0], 'password': person[1]}, origin=web_url)
+                leaving.call('/me/account/delete', {'email': person[0], 'password': person[1]}, origin=web_url)
+            wait_for(f"SELECT count(*) FROM rehearsal.users WHERE id IN ('{ref_ids['e']}', '{ref_ids['idle']}')", '0', 'purge on the old binary', seconds=150)
+            assert sql(ref_db, f"SELECT status || ':' || (referee_id IS NULL) FROM rehearsal.referrals WHERE id = '{rid['e']}'") == 'registered:true'
+            assert sql(ref_db, f"SELECT count(*) FROM rehearsal.referrals WHERE id = '{rid['c']}'") == '0'
+            assert core() == core_before, 'a referral row changed on the old binary'
+            assert codes_state() == codes_before, 'a referral code changed on the old binary'
+            assert sql(ref_db, "SELECT count(*) FROM rehearsal.referrals") == '5'
+            stop(process)
+            summary['checks'].append('rollback to the release just before the referral programme (8c311ee, no down migration): it starts over the new columns and table, the yearly referrer signs in and its dashboard matches the database, a referee pays a first order that is fulfilled without any qualification (the row stays registered), the monthly referrer buys again after expiry and the new period leaves the old bonus behind its anchor, deleting a referee keeps its row with a null referee and deleting a referrer removes its rows, and every other referral row and every referral code is byte-identical afterwards')
+
+            # C. Upgrade again: the sweep, the rewards and the stale bonus.
+            run('migration-after-referral-rollback', [str(current_binary), '-migrate'], environment=api_env(ref_db, free_port()))
+            process, back = start_api(current_binary, ref_db, 'api-referral-reupgraded', catalog=True, payment=True, extra=fast)
+            wait_for(f"SELECT status FROM rehearsal.referrals WHERE referee_id = '{ref_ids['h']}'", 'rewarded', 'sweep and reward for H')
+            wait_for(f"SELECT status FROM rehearsal.referrals WHERE referee_id = '{ref_ids['j']}'", 'rewarded', 'reward for J after the switch is back on')
+            grant_h, grant_j = reward_of(order_h), reward_of(order_j)
+            assert row('h', "first_order_id || ':' || first_order_cents || ':' || granted_bytes") == f"{order_h['id']}:{order_h['amount_cents']}:{grant_h}"
+            assert row('j', 'granted_bytes') == str(grant_j)
+            owner_total = grant_b + grant_h + grant_j
+            assert int(sub_of('owner', 'traffic_limit_bytes')) - owner_limit_0 == owner_total and sub_of('owner', 'bonus_bytes') == str(owner_total)
+            owner_again = Client(back.url)
+            owner_again.call('/auth/login', {'email': owner_person[0], 'password': owner_person[1]}, origin=web_url)
+            mine = owner_again.call('/me/referral')
+            assert mine['current_bonus_bytes'] == owner_total and mine['stats'] == {'registered_count': 4, 'purchased_count': 3, 'pending_count': 0,
+                'rewarded_count': 3, 'rewarded_bytes': owner_total, 'forfeited_count': 0}, mine
+            assert owner_again.call('/me/dashboard')['bonus_bytes'] == owner_total
+            assert sorted(item['referee_deleted'] for item in owner_again.call('/me/referrals')['items']) == [False, False, False, True]
+            # The bonus of the old period is gone from the monthly referrer's view and allowance, its history is not.
+            monthly_api = Client(back.url)
+            monthly_api.call('/auth/login', {'email': ref_monthly[0], 'password': ref_monthly[1]}, origin=web_url)
+            dash = monthly_api.call('/me/dashboard')
+            assert dash['bonus_bytes'] == 0 and str(dash['subscription']['traffic_limit_bytes']) == pro_traffic, dash
+            seen = monthly_api.call('/me/referral')
+            assert seen['current_bonus_bytes'] == 0 and seen['stats']['rewarded_bytes'] == grant_g and row('g', "status || ':' || granted_bytes") == f"rewarded:{grant_g}", seen
+            # A yearly refresh keeps what is left of the bonus: 31 days into the period, one cycle has ended.
+            sql(ref_db, f"UPDATE rehearsal.subscriptions SET starts_at = now() - interval '31 days', quota_cycle_starts_at = now() - interval '31 days', bonus_starts_at = now() - interval '31 days' WHERE user_id = '{owner_id}'")
+            cycle_bytes = int(sub_of('owner', 'quota_cycle_bytes'))
+            refreshed = owner_again.call('/me/dashboard')
+            assert refreshed['subscription']['traffic_limit_bytes'] == cycle_bytes + owner_total and refreshed['bonus_bytes'] == owner_total and refreshed['quota_resets_at'], refreshed
+            # Doctor: counts and switches only, a warning for a reward that waits too long.
+            back_env = api_env(ref_db, free_port(), catalog=True, payment=True, extra=fast)
+            report = doctor(back_env)
+            assert report['referral'] == {'enabled': True, 'max_reward_gib': 0, 'registered': 1, 'qualified': 0, 'rewarded': 4, 'forfeited': 0, 'stale_qualified': 0}, report['referral']
+            assert 'referral_rewards_stale' not in report['warnings'] and report['missing_tables'] == []
+            sql(ref_db, f"UPDATE rehearsal.referrals SET status = 'qualified', qualified_at = now() - interval '11 minutes', next_attempt_at = now() + interval '1 hour', reward_bytes = 1 WHERE id = '{rid['e']}'")
+            report = doctor(back_env)
+            assert report['referral']['stale_qualified'] == 1 and 'referral_rewards_stale' in report['warnings'], report
+            serialized = json.dumps(report)
+            # (The allowed registration domains are configuration, so a domain alone proves nothing; addresses, ids and codes do.)
+            assert not any(value in serialized for value in list(ref_codes.values()) + [person[0] for person in [ref_idle, ref_monthly, *ref_people.values()]] + [email] + list(ref_ids.values())), 'doctor output carries a code, an address or an id'
+            sql(ref_db, f"UPDATE rehearsal.referrals SET status = 'registered', qualified_at = NULL, next_attempt_at = NULL, reward_bytes = 0 WHERE id = '{rid['e']}'")
+            assert 'referral_rewards_stale' not in doctor(back_env)['warnings']
+            stop(process)
+            reupgrade_log = (output / 'api-referral-reupgraded.log').read_text()
+            assert 'referral sweep qualified 1 referrals' in reupgrade_log and 'referral rewards settled' in reupgrade_log, 'the worker logs show no sweep or no reward'
+            people_text = list(ref_codes.values()) + [person[0] for person in [ref_idle, ref_monthly, *ref_people.values()]]
+            for log_name in ['api-referral', 'api-referral-off', 'api-referral-rollback', 'api-referral-reupgraded']:
+                text = (output / (log_name + '.log')).read_text()
+                assert not any(value in text for value in people_text), log_name + ' carries a referral code or an address'
+            summary['checks'].append('upgrade again after the rollback: migration repeatable; the sweep qualifies the first order the old binary fulfilled (the order id is the old binary\'s) and the worker pays it, the reward held back while the switch was off is paid when it is on again; the yearly referrer ends with the three rewards as a bonus on its cycle allowance; the monthly referrer\'s old bonus is invisible (dashboard 0, allowance = plan) while its paid history stays; deleted referee shown as deleted; 31 days into the period the yearly refresh keeps the whole bonus (cycle allowance + bonus); doctor reports the counts, warns about a qualified row older than ten minutes and carries no code, address or id; the real process logs hold the sweep and reward lines and no code or address')
             process, restored = start_api(current_binary, 'restored', 'api-restored')
             Client(restored.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
             restored.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)

@@ -1,13 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +18,48 @@ import (
 	"vpn/backend/internal/config"
 	"vpn/backend/internal/store"
 )
+
+// legacyBackend answers as the release before the referral programme does, for the mixed
+// deployment check (handoff_coupon.md 15.1, R3-02): /meta has no referral_enabled, the
+// referral routes do not exist, and a registration that carries referral_code is refused
+// as an unknown field. It is an emulation in front of the current API, switched on and off
+// by a control-token endpoint; the rehearsal's normal binaries cannot receive a mailbox code.
+func legacyBackend(w http.ResponseWriter, r *http.Request, router http.Handler) bool {
+	switch {
+	case strings.Contains(r.URL.Path, "/referral"):
+		http.NotFound(w, r)
+		return true
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/meta":
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, r)
+		var meta map[string]any
+		if json.Unmarshal(rec.Body.Bytes(), &meta) != nil {
+			return false
+		}
+		delete(meta, "referral_enabled")
+		for name, values := range rec.Header() {
+			if name != "Content-Length" {
+				w.Header()[name] = values
+			}
+		}
+		w.WriteHeader(rec.Code)
+		_ = json.NewEncoder(w).Encode(meta)
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/register":
+		body, _ := io.ReadAll(r.Body)
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(body, &fields) == nil {
+			if _, known := fields["referral_code"]; known {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(400)
+				_, _ = w.Write([]byte(`{"error":{"code":"invalid_json","message":"请求格式或字段不正确"}}`))
+				return true
+			}
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	return false
+}
 
 // TestReleaseRehearsalFixture serves the current API, loaded from the environment exactly like
 // cmd/api, over the release rehearsal's already-migrated private database. The one difference
@@ -48,13 +93,22 @@ func TestReleaseRehearsalFixture(t *testing.T) {
 	go func() { defer close(mailDone); mail.worker.Run(mailCtx) }()
 	defer func() { stopMail(); <-mailDone }()
 	router := newServer(db, cfg, mail.service)
+	var legacy atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/fixture/") {
+			if legacy.Load() && legacyBackend(w, r, router) {
+				return
+			}
 			router.ServeHTTP(w, r)
 			return
 		}
 		if r.Header.Get("X-Acceptance-Control") != control {
 			w.WriteHeader(403)
+			return
+		}
+		if r.URL.Path == "/fixture/legacy-backend" {
+			legacy.Store(r.URL.Query().Get("on") == "1")
+			w.WriteHeader(204)
 			return
 		}
 		msgs := mail.box.to(r.URL.Query().Get("to"))
