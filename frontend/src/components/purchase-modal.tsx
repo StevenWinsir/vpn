@@ -297,7 +297,7 @@ function Checkout({
         <Stack gap={6} className="quote-lines">
           {quote.test_price ? (
             <Alert color="yellow" py={6}>
-              测试价：当前账户按测试价结算，会产生真实扣款。
+              专属价：本账户按专属价格结算，付款将实际扣款。
             </Alert>
           ) : null}
           {yearly ? (
@@ -326,7 +326,7 @@ function Checkout({
           )}
           {quote.test_price ? (
             <Group justify="space-between">
-              <Text size="sm">测试价</Text>
+              <Text size="sm">专属价</Text>
               <Text size="sm">{money(quote.base_cents)}</Text>
             </Group>
           ) : null}
@@ -364,7 +364,7 @@ function Checkout({
         </Alert>
       ) : null}
       <Text size="xs" c="dimmed">
-        点击“去支付”后会跳转到支付网关，请在 2 分钟内完成付款。付款结果以订单状态为准。
+        点击“去支付”后将跳转到支付页面，请在 2 分钟内完成付款，付款结果以订单状态为准。
       </Text>
       {orderError ? (
         <Alert color="red" title="下单未完成" role="alert">

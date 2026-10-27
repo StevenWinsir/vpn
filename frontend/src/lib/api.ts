@@ -44,6 +44,37 @@ export function onSessionEnded(listener: () => void) {
 function sessionEnded() {
   for (const listener of [...sessionEndedListeners]) listener();
 }
+// Infrastructure failures (the Next.js proxy, its configuration, an unreachable or misconfigured
+// backend) carry operator wording. Ordinary pages show a plain sentence instead; the code and the
+// original message stay on the error (details) and in one console warning. Administrators keep
+// the original text, which tells them what to fix.
+const infrastructureCodes = new Set([
+  'api_config_invalid',
+  'invalid_api_path',
+  'upstream_redirect',
+  'upstream_response_too_large',
+  'upstream_unavailable',
+  'upstream_timeout',
+  'node_config_unavailable',
+  'node_catalog_disabled',
+]);
+const unavailable = '服务暂时不可用，请稍后重试。';
+function forUsers(error: APIError): APIError {
+  if (typeof window === 'undefined' || window.location.pathname.startsWith('/admin')) return error;
+  const infrastructure =
+    infrastructureCodes.has(error.code) ||
+    // copy-guard-next-line: matches the backend's wording, never displays it
+    (error.code === 'database_unavailable' && error.message.includes('数据库'));
+  if (!infrastructure) return error;
+  console.warn(`API ${error.status} ${error.code}: ${error.message}`);
+  return new APIError(
+    error.status,
+    error.code,
+    error.code === 'upstream_timeout' ? '服务响应超时，请稍后重试。' : unavailable,
+    error.retryAfter,
+    { ...error.details, message: error.message },
+  );
+}
 let timeoutInFlight: Promise<number> | null = null;
 function requestTimeout(): Promise<number> {
   if (!timeoutInFlight) {
@@ -55,10 +86,13 @@ function requestTimeout(): Promise<number> {
       .then(async (response) => {
         const config = await response.json();
         if (!response.ok)
-          throw new APIError(
-            response.status,
-            config?.error?.code || 'api_config_invalid',
-            config?.error?.message || '服务端 API 配置不可用。',
+          throw forUsers(
+            new APIError(
+              response.status,
+              config?.error?.code || 'api_config_invalid',
+              // copy-guard-next-line: original wording; forUsers() replaces it outside /admin
+              config?.error?.message || '服务端 API 配置不可用。',
+            ),
           );
         if (
           config.apiBaseUrl !== base ||
@@ -66,7 +100,8 @@ function requestTimeout(): Promise<number> {
           config.apiTimeoutMs < 1000 ||
           config.apiTimeoutMs > 185000
         )
-          throw new APIError(503, 'api_config_invalid', '服务端 API 配置不可用。');
+          // copy-guard-next-line: original wording; forUsers() replaces it outside /admin
+          throw forUsers(new APIError(503, 'api_config_invalid', '服务端 API 配置不可用。'));
         return config.apiTimeoutMs as number;
       })
       .catch((error) => {
@@ -91,16 +126,24 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
   } catch (error) {
     if (error instanceof APIError) throw error;
-    throw new APIError(0, 'network_error', '无法连接服务，请检查后端是否运行后重试。');
+    throw new APIError(
+      0,
+      'network_error',
+      error instanceof DOMException && error.name === 'TimeoutError'
+        ? '服务响应超时，请检查网络后重试。'
+        : '网络连接异常，请检查网络后重试。',
+    );
   }
   const data = await response.json().catch(() => null);
   if (!response.ok)
-    throw new APIError(
-      response.status,
-      data?.error?.code || 'request_failed',
-      data?.error?.message || '请求失败，请稍后重试。',
-      retryAfterSeconds(response),
-      data?.error && typeof data.error === 'object' ? data.error : {},
+    throw forUsers(
+      new APIError(
+        response.status,
+        data?.error?.code || 'request_failed',
+        data?.error?.message || '请求失败，请稍后重试。',
+        retryAfterSeconds(response),
+        data?.error && typeof data.error === 'object' ? data.error : {},
+      ),
     );
   return data as T;
 }

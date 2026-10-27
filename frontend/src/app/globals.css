@@ -157,11 +157,6 @@ a:focus-visible {
   gap: 12px;
   margin-top: 33px;
 }
-.hero-disclaimer {
-  color: #87938e;
-  font-size: 11px;
-  margin-top: 22px;
-}
 .hero-side {
   min-height: 382px;
   background: #edf5f0;
@@ -329,15 +324,9 @@ a:focus-visible {
   user-select: all;
   overflow-wrap: anywhere;
 }
-.referral-code-small {
-  font-size: 24px;
-}
 @media (max-width: 480px) {
   .referral-code {
     font-size: 30px;
-  }
-  .referral-code-small {
-    font-size: 22px;
   }
 }
 .plan-card {
@@ -475,9 +464,6 @@ a:focus-visible {
   }
   .brand {
     font-size: 19px;
-  }
-  .hero-disclaimer {
-    line-height: 1.8;
   }
 }
 @media (prefers-reduced-motion: reduce) {

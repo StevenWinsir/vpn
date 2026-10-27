@@ -8,7 +8,7 @@ import { SiteShell } from '@/components/site-shell';
 const name = process.env.NEXT_PUBLIC_APP_NAME || 'AsterLink';
 export const metadata: Metadata = {
   title: { default: `${name} · 连接，自有边界`, template: `%s · ${name}` },
-  description: '账户、套餐与订阅管理。VPN 服务开发联调版。',
+  description: '稳定、透明的全平台安全连接服务。多端客户端，线路倍率公开，按量计费清晰可查。',
   robots: { index: false, follow: false },
 };
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

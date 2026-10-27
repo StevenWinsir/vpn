@@ -93,7 +93,7 @@ function PasswordCard({ user }: { user: User }) {
   const nextBytes = utf8Bytes(next);
   const problem =
     next && (nextBytes < minBytes || nextBytes > passwordMaxBytes)
-      ? `新密码需要 ${minBytes}–${passwordMaxBytes} 字节（当前 ${nextBytes} 字节，中文字符占用多个字节）`
+      ? `新密码需要 ${minBytes}–${passwordMaxBytes} 位（当前 ${nextBytes} 位，中文等字符每个计 3 位）`
       : next && next === current
         ? '新密码不能与当前密码相同'
         : confirm && confirm !== next
@@ -154,7 +154,7 @@ function PasswordCard({ user }: { user: User }) {
           />
           <PasswordInput
             label="新密码"
-            description={`${minBytes}–${passwordMaxBytes} 字节`}
+            description={`${minBytes}–${passwordMaxBytes} 位`}
             autoComplete="new-password"
             value={next}
             onChange={(e) => setNext(e.currentTarget.value)}
@@ -195,11 +195,7 @@ function PasswordCard({ user }: { user: User }) {
 const channelLabel = (login: AccountLogin) =>
   login.channel === 'web' ? '网站' : `客户端${login.platform ? `（${login.platform}）` : ''}`;
 const locationLabel = (login: AccountLogin) =>
-  login.geo_status === 'done' && login.geo_text
-    ? login.geo_text
-    : login.geo_status === 'pending'
-      ? '解析中'
-      : '未解析';
+  login.geo_status === 'done' && login.geo_text ? login.geo_text : '—';
 
 function RecentLogins() {
   const [logins, setLogins] = useState<AccountLogin[] | null>(null);
@@ -280,7 +276,7 @@ function DangerZone({ user }: { user: User }) {
       data-testid="danger-zone"
     >
       <Title order={2} size={18} c="red.8" mb={6}>
-        危险区
+        删除账号
       </Title>
       {user.role === 'admin' ? (
         <Text size="sm" c="dimmed">

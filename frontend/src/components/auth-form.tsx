@@ -48,9 +48,13 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
             <br />
             你的掌控。
           </h2>
-          <p>从一个账户开始，管理套餐、流量与每一次订阅。</p>
+          <p>一个账户，手机与电脑随时安全连接；线路、流量与订阅一目了然。</p>
           <div className="auth-promises">
-            {['一个账户，统一管理', '套餐权益，清晰可见', '订单记录，随时可查'].map((text) => (
+            {[
+              '全平台客户端，一个账户通用',
+              '线路倍率公开，计费清晰透明',
+              '邮箱验证与登录记录，账户更安全',
+            ].map((text) => (
               <div key={text}>
                 <IconCheck size={19} />
                 {text}
@@ -59,7 +63,7 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <Text size="xs" c="gray.4">
-          {appName} · 账户服务开发联调版
+          © {new Date().getFullYear()} {appName}
         </Text>
       </section>
       <section className="auth-panel">
@@ -69,14 +73,6 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
         <div className="auth-form">{children}</div>
       </section>
     </div>
-  );
-}
-
-export function Footnote() {
-  return (
-    <Text size="xs" c="dimmed" lh={1.8} mt={40}>
-      当前为开发测试环境。请勿使用与其他网站相同的密码；测试购买不会产生真实扣款。
-    </Text>
   );
 }
 
@@ -93,7 +89,7 @@ function LoginForm() {
     event.preventDefault();
     setError(null);
     if (utf8Bytes(password) > passwordMaxBytes) {
-      setError(`密码最多 ${passwordMaxBytes} 字节；中文字符会占用多个字节。`);
+      setError(`密码最多 ${passwordMaxBytes} 位（中文等字符每个计 3 位）。`);
       return;
     }
     setBusy(true);
@@ -120,7 +116,7 @@ function LoginForm() {
         欢迎回来
       </Title>
       <Text c="dimmed" mt="sm" mb={32}>
-        登录后继续管理你的账户与订阅。
+        登录你的账户，继续享受安全连接。
       </Text>
       <form onSubmit={submit}>
         <Stack gap="lg">
@@ -160,7 +156,7 @@ function LoginForm() {
             checked={remember}
             onChange={(e) => setRemember(e.currentTarget.checked)}
             label="记住登录状态（30 天）"
-            description="不保存明文密码；退出登录后会话立即失效。"
+            description="在此设备上保持登录，退出登录后立即失效。"
           />
           <Button
             type="submit"
@@ -180,7 +176,6 @@ function LoginForm() {
           </Anchor>
         </Text>
       ) : null}
-      <Footnote />
     </>
   );
 }
@@ -329,7 +324,7 @@ function RegisterForm() {
     if (length < 2 || length > 40) problems.name = '姓名 / 昵称需要 2–40 个字符';
     const bytes = utf8Bytes(password);
     if (bytes < passwordMinBytes || bytes > passwordMaxBytes)
-      problems.password = `密码需要 ${passwordMinBytes}–${passwordMaxBytes} 字节（当前 ${bytes} 字节）`;
+      problems.password = `密码需要 ${passwordMinBytes}–${passwordMaxBytes} 位（当前 ${bytes} 位）`;
     if (!proof || proof.email !== email.trim().toLowerCase()) problems.code = '请先获取邮箱验证码';
     else if (code.length !== 6) problems.code = '请输入邮件中的 6 位数字验证码';
     setFields(problems);
@@ -393,7 +388,7 @@ function RegisterForm() {
         创建你的账户
       </Title>
       <Text c="dimmed" mt="sm" mb={32}>
-        使用常用邮箱注册，验证邮箱后即可进入工作台。
+        使用常用邮箱注册，验证后即可开始使用。
       </Text>
     </>
   );
@@ -524,8 +519,8 @@ function RegisterForm() {
           </div>
           <PasswordInput
             label="密码"
-            placeholder={`${passwordMinBytes}–${passwordMaxBytes} 字节`}
-            description="中文等字符每个占 3 字节；密码不会被裁剪或去除空格。"
+            placeholder={`${passwordMinBytes}–${passwordMaxBytes} 位`}
+            description="中文等字符每个计 3 位；空格同样计入密码。"
             value={password}
             onChange={(e) => {
               setPassword(e.currentTarget.value);
@@ -555,7 +550,7 @@ function RegisterForm() {
             checked={remember}
             onChange={(e) => setRemember(e.currentTarget.checked)}
             label="记住登录状态（30 天）"
-            description="不保存明文密码；退出登录后会话立即失效。"
+            description="在此设备上保持登录，退出登录后立即失效。"
           />
           <Button
             type="submit"
@@ -563,12 +558,11 @@ function RegisterForm() {
             loading={busy}
             rightSection={<IconArrowRight size={17} />}
           >
-            注册并进入工作台
+            创建账户
           </Button>
         </Stack>
       </form>
       {loginLink}
-      <Footnote />
     </>
   );
 }

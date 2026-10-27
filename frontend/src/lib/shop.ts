@@ -9,10 +9,11 @@ type Traffic = { traffic_bytes: number; quota_cycle_days?: number; quota_cycle_b
 
 // What a cycle grants in traffic: "100 GiB", or for yearly "每 30 天 100 GiB" (the monthly
 // allowance, refreshed every 30 days; handoff_shop.md D2 revised).
-export function trafficLabel(t: Traffic): string {
+// User pages say GB, the administration says GiB; both are 1024³ bytes (handoff_ui.md D6).
+export function trafficLabel(t: Traffic, unit: 'GB' | 'GiB' = 'GB'): string {
   return t.quota_cycle_days && t.quota_cycle_bytes
-    ? `每 ${t.quota_cycle_days} 天 ${gib(t.quota_cycle_bytes)} GiB`
-    : `${gib(t.traffic_bytes)} GiB`;
+    ? `每 ${t.quota_cycle_days} 天 ${gib(t.quota_cycle_bytes)} ${unit}`
+    : `${gib(t.traffic_bytes)} ${unit}`;
 }
 
 export const refreshes = (t: Traffic | null | undefined) =>

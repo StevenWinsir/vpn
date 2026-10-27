@@ -45,13 +45,13 @@ test('email code registration end to end through Next.js and the real API', asyn
   const wrong = String((Number(code) + 1) % 1000000).padStart(6, '0');
   await page.getByLabel('邮箱验证码').fill(wrong);
   await page.locator('input[type="password"]').fill(password);
-  await page.getByRole('button', { name: '注册并进入工作台' }).click();
+  await page.getByRole('button', { name: '创建账户' }).click();
   await expect(page.getByText('验证码不正确，请检查后重新输入')).toBeVisible();
   expect((await control('/fixture/account?email=' + encodeURIComponent(email))).body.count).toBe(0);
 
   await page.getByLabel('邮箱验证码').fill(code);
   await page.getByLabel('记住登录状态（30 天）').check();
-  await page.getByRole('button', { name: '注册并进入工作台' }).click();
+  await page.getByRole('button', { name: '创建账户' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole('heading', { name: '还没有开通套餐' })).toBeVisible();
   const cookies = (await page.context().cookies()).filter((c) => c.name.startsWith('vpn_'));

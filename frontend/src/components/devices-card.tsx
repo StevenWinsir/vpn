@@ -107,7 +107,7 @@ export function DevicesCard({
                   </Group>
                   <Text size="xs" c="dimmed" mt={4}>
                     已连接 {duration(elapsedSeconds(device.connected_at, devices.server_time))} ·
-                    最近心跳 {ago(elapsedSeconds(device.last_heartbeat_at, devices.server_time))}
+                    最近活跃 {ago(elapsedSeconds(device.last_heartbeat_at, devices.server_time))}
                   </Text>
                   <Text size="xs" c="dimmed" mt={2}>
                     本次连接 上传 {formatBytes(device.upload_bytes)} · 下载{' '}
@@ -159,8 +159,7 @@ export function DevicesCard({
         </Text>
       </Group>
       <Text size="xs" c="dimmed" mt={6} lh={1.7}>
-        超过上限的新设备连接时会被拒绝；异常离线的设备最长约 {devices?.lease_seconds ?? 90}{' '}
-        秒后自动让出名额。
+        超过上限时新设备无法连接；设备异常断开后约 {devices?.lease_seconds ?? 90} 秒自动释放名额。
       </Text>
       <Group justify="space-between" mt="sm">
         <Text size="sm" c="dimmed">

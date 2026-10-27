@@ -40,7 +40,7 @@ test('registration, test purchase, persistence, order history and logout', async
   await page.getByLabel('邮箱验证码').fill(await codeFor(email));
   await page.locator('input[type="password"]').fill(password);
   await page.getByLabel('记住登录状态（30 天）').check();
-  await page.getByRole('button', { name: '注册并进入工作台' }).click();
+  await page.getByRole('button', { name: '创建账户' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByText('还没有开通套餐')).toBeVisible();
   const cookies = await context.cookies(new URL('/api/v1', page.url()).href);

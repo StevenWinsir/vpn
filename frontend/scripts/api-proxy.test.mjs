@@ -606,16 +606,16 @@ test(
           await codeField.fill('９９ 99-99x99');
           assert.equal(await codeField.inputValue(), '999999');
           await page.locator('input[type="password"]').fill('短密码');
-          await page.getByRole('button', { name: '注册并进入工作台' }).click();
-          await page.getByText('密码需要 10–72 字节（当前 9 字节）').waitFor();
+          await page.getByRole('button', { name: '创建账户' }).click();
+          await page.getByText('密码需要 10–72 位（当前 9 位）').waitFor();
           await page.locator('input[type="password"]').fill('安全密码');
-          await page.getByRole('button', { name: '注册并进入工作台' }).click();
+          await page.getByRole('button', { name: '创建账户' }).click();
           await page.getByText('验证码不正确，请检查后重新输入').waitFor();
           assert.equal(await page.getByLabel('姓名 / 昵称').inputValue(), '注册测试');
           assert.equal(await page.getByLabel('邮箱地址').inputValue(), 'fresh@qq.com');
 
           await codeField.fill('012345');
-          await page.getByRole('button', { name: '注册并进入工作台' }).click();
+          await page.getByRole('button', { name: '创建账户' }).click();
           await page.waitForURL('**/dashboard');
           const submitted = first.received.filter((r) => r.url === '/api/v1/auth/register').at(-1);
           assert.deepEqual(Object.keys(JSON.parse(submitted.body)).sort(), [
@@ -651,7 +651,7 @@ test(
           // A slow upstream (beyond API_TIMEOUT_MS) surfaces as the proxy's controlled 504.
           await second.getByLabel('邮箱地址').fill('slow@qq.com');
           await second.getByRole('button', { name: '获取验证码' }).click();
-          await second.getByText('后端响应超时，请稍后重试。').waitFor();
+          await second.getByText('服务响应超时，请稍后重试。').waitFor();
           assert.equal(await second.getByLabel('邮箱地址').inputValue(), 'slow@qq.com');
           await second.setViewportSize({ width: 390, height: 844 });
           assert.ok(
@@ -773,7 +773,7 @@ test(
             await page.getByLabel(/^新密码/).fill('短密码');
             await page.getByLabel('确认新密码').fill('短密码');
             await page.getByRole('button', { name: '设置新密码' }).click();
-            await page.getByText('密码需要 10–72 字节（当前 9 字节）').waitFor();
+            await page.getByText('密码需要 10–72 位（当前 9 位）').waitFor();
             await page.getByLabel(/^新密码/).fill('新的安全密码');
             await page.getByLabel('确认新密码').fill('新的安全密码!');
             await page.getByRole('button', { name: '设置新密码' }).click();
