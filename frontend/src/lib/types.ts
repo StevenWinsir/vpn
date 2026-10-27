@@ -69,6 +69,45 @@ export type Dashboard = {
   device_limit: number;
   // When the current traffic cycle is refreshed; null for a one-shot allowance.
   quota_resets_at?: string | null;
+  // Referral reward left in the current subscription period (already part of the limit).
+  bonus_bytes?: number;
+};
+
+// Referral programme (GET /me/referral, /me/referrals; handoff_coupon.md 11). Never an id,
+// a full address or an order of the referred user.
+export type ReferralStatus = 'registered' | 'qualified' | 'rewarded' | 'forfeited';
+export type ReferralStats = {
+  registered_count: number;
+  purchased_count: number;
+  pending_count: number;
+  rewarded_count: number;
+  rewarded_bytes: number;
+  forfeited_count: number;
+};
+export type ReferralSummary = {
+  enabled: boolean;
+  code: string;
+  share_path: string;
+  reward_rule: { gib_per_yuan: number; max_gib: number };
+  has_active_plan: boolean;
+  stats: ReferralStats;
+  current_bonus_bytes: number;
+};
+export type ReferralItem = {
+  email_masked: string;
+  registered_at: string;
+  status: ReferralStatus;
+  reward_bytes: number | null;
+  granted_bytes: number;
+  granted_at: string | null;
+  forfeit_reason: string;
+  referee_deleted: boolean;
+};
+export type ReferralPage = {
+  items: ReferralItem[];
+  total: number;
+  page: number;
+  page_size: number;
 };
 // Explicit presence contract (GET /me/devices): never a server, session, lease or grant id,
 // address or token. `device` is the last 6 characters of the client's device UUID.
@@ -216,6 +255,9 @@ export type Meta = {
   password_reset_enabled?: boolean;
   verification_code_ttl_seconds?: number;
   verification_resend_after_seconds?: number;
+  // Absent on a backend from before the referral programme: the website then neither shows
+  // the code field nor sends referral_code (the backend rejects unknown request fields).
+  referral_enabled?: boolean;
 };
 export type RegisterCodeReceipt = {
   message: string;

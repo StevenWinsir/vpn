@@ -442,3 +442,33 @@ lib/types.ts 补充 ReferralSummary、ReferralItem、ReferralStatus 等类型和
 偏离与补充：
 - 文档第 7.1 节写的是“一条带条件的更新”。实现上是先用 SELECT … FOR UPDATE 按 referee_id 唯一索引查一次（没有推荐关系的用户只多这一次查询），再查最早一笔已付订单，最后执行更新，效果相同。
 - 推荐码生成连续冲突时，返回的错误码为 503 referral_unavailable，与第 11 节一致。
+
+### 第 2 轮：网站（2026-10-26，分支 worktree-referral-round2-web，PR 见合并记录）
+
+交付内容：
+- 注册页：RegisterForm 在密码之后、“记住登录状态”之前加入“推荐码（选填）”。输入时去掉空格和连字符并转大写，maxLength 16，没有任何错误状态，也不做格式校验；/register?ref=CODE 只在页面加载时预填一次，仍可修改或清空。只有 /meta 返回 referral_enabled=true 时才显示字段，也只有字段非空时才把 referral_code 放进请求体（lib/referral.ts 的 referralField）。
+- /referral（RequireAuth + SiteShell，ReferralView）：推荐码大号等宽显示，“复制推荐码”“复制邀请链接”（成功提示；剪贴板被拒绝时选中邀请链接并提示手动复制）、规则说明、无有效套餐的黄色提示（带“去订阅”）、四个指标、推荐记录。宽屏为表格，窄屏（小于 768 px）为卡片列表；无记录时显示空状态并引导复制邀请链接；分页沿用订单页样式；每 30 秒刷新，标签页隐藏时暂停（usePolling）。/meta 不含 referral_enabled（旧后端）时显示“功能暂不可用”，并且不请求 /me/referral。
+- 侧边栏：Sidebar 组件用同一次 /meta 读取同时渲染导航和说明，“推荐有礼”仅在 referral_enabled 为 true 时显示；/referral 加入工作台路径。
+- 总览：DashboardView 增加 ReferralCard（推荐码、已获得流量、“查看推荐详情”）。它自己读取 /meta 和 /me/referral，请求失败、格式异常或功能关闭时整张卡片消失，不显示错误；dashboard 的 bonus_bytes 大于 0 时，“剩余计费额度”的说明文字附上“含推荐奖励 X GB”。
+- 后台：用户详情抽屉新增“推荐”分区（推荐码、推荐人可点击跳转到推荐人的详情、统计、被推荐记录含完整邮箱、状态、首单金额、重试中的错误类别），只读。
+- 类型与工具：lib/types.ts 补充 Meta.referral_enabled、Dashboard.bonus_bytes、ReferralSummary / ReferralItem / ReferralPage；lib/console.ts 补充 ConsoleReferralDetail；lib/referral.ts 是纯函数（规范化、请求字段、状态文案、响应形状检查），带 5 个单元测试（npm run test:referral，已加入 ci.yml 的前端步骤）。奖励流量统一用 lib/dashboard.ts 的 formatBytes（GB / MB），与总览一致。
+- 测试：新增 tests/referral.spec.ts 并加入 playwright.payment.config.ts。为了让它能真实走完注册和发奖，TestPaymentAcceptanceFixture 增加了捕获邮件的 mail harness 和 /fixture/mail、每秒运行一次的 processReferrals（与 cmd/api 的 referralLoop 等价，用 fixture 的时钟）、两个预置账号 refa（有套餐的推荐人）和 refd（从不买套餐的推荐人）。scripts/test-payment-web.py 增加 --spec 参数，只用于本地迭代，CI 不传。
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R2-01 | PASS | referral.spec R2-01：spec 新建 29.00 元的 e2e-ref-29 → A 通过模拟网关购买 → A 在 /referral 复制推荐码和邀请链接（读回剪贴板核对）→ B 在干净的浏览器里打开链接，推荐码已预填（请求体 referral_code 正确，?ref 小写也被规范化）→ 注册 → A 的记录出现 bb***@gmail.com，状态“已注册·未消费”，邀请注册 1 → B 用模拟网关付 29.00 元 → A 的记录变为“已发放 +29 GB”，累计获得流量 29 GB → 数据库里 A 的 traffic_limit_bytes 从 10 GiB 变为 39 GiB，总览显示“含推荐奖励 29 GB”，摘要卡显示推荐码和 29 GB。fixture 的 worker 每秒运行一次，所以“待发放”这一中间状态没有被实时捕获；它的显示由 R2-06 里替换 /me/referrals 响应的用例验证 |
+| R2-02 | PASS | B 登录后用同一个套餐续费（第 2 笔），等待 4 秒后 A 的额度仍为 39 GiB，记录仍是 1 条，stats 为 registered 1 / purchased 1 / rewarded 1 / 29 GiB |
+| R2-03 | PASS | D（没有套餐）的页面显示黄色提示和“去订阅”链接；C 用 D 的码注册并付款后，D 的记录显示“未生效（发放时无有效套餐）”；D 之后买了套餐，额度仍为 10 GiB，提示消失，记录仍是未生效，累计流量为 0 MB |
+| R2-04 | PASS | 不存在的码、乱写的码、小写加空格的有效码，三次注册都没有任何 Alert 或对话框并进入工作台；请求体都带了 referral_code；A 的 /me/referrals 只有 bb 和 e3 两条，没有 e1、e2 |
+| R2-05 | PASS | 路由模拟让 /meta 不含 referral_enabled：注册页没有该字段（即使地址带 ?ref=），抓到的请求体只有 name、email、password、remember、verification_id、code，注册成功；侧边栏没有“推荐有礼”，总览没有摘要卡，/referral 显示“功能暂不可用”，全程没有任何 /me/referral 请求 |
+| R2-06 | PASS | 1440 和 375 宽的 /referral 与 /register 截图已保存（screens/referral-page-1440、referral-page-375、referral-register-1440、referral-register-375、referral-register-prefilled-1440、referral-dashboard-1440、referral-no-plan-1440、referral-console-user），/referral 的两个宽度和 375 宽的 /register 都没有横向溢出（tests/layout.ts）；375 宽下记录是卡片；待发放、已发放加已注销、未生效（账号不可用）三种状态的显示由替换 /me/referrals 响应的用例核对；复制按钮有成功提示，剪贴板被拒绝时选中链接并提示；空状态在 A 还没有记录时出现；/me/referral 返回 503 时总览其他部分正常，没有摘要卡也没有错误框；未登录访问 /referral 跳转到 /login |
+| R2-07 | PASS | 管理员在 A 的详情里看到推荐码、“无（未使用推荐码注册）”、统计“注册 2 · 已消费 1 · 待发放 0 · 已发放 1（29 GB） · 未生效 0”和 B 的完整邮箱、“已发放 +29 GB”、首单 ¥29.00；B 的详情里推荐人是 A，点击后打开 A 的详情；A（普通用户）请求该接口返回 403 |
+| R2-08 | PASS（本机）；CI 待确认 | 本机：npm run lint、typecheck、build --webpack、test:api-proxy（需要设置 PLAYWRIGHT_CHROME_PATH，本机没有 headless shell；16/16）、test:nodes、test:downloads、test:dashboard、test:referral 全部通过；scripts/test-payment-web.py 全量 46 个用例通过（原有 39 个：payment、account、admin-console 系列、shop，加上新的 7 个） |
+
+本地证据目录：artifacts/referral-round2-web/（已被 .gitignore 忽略，不提交）。
+
+偏离与补充：
+- 第 12.2 节没有写 /meta 为 true 以外的行为。实现为：缺少 referral_enabled（旧后端）时 /referral 显示“功能暂不可用”且不发请求；referral_enabled 为 false（功能被管理员关闭）时页面仍可打开，显示推荐码和记录，并附“推荐功能暂时关闭”的提示，侧边栏入口和摘要卡隐藏。
+- 总览的“含推荐奖励”放在“剩余计费额度”的说明文字里，只出现一处。
+- “待发放 → 已发放”的实时过渡没有在端到端用例里捕获（worker 每秒运行），这一状态的界面用替换响应的方式验证；用户部署后的 U-14 可以在真实网关上观察。
+- flow.spec 和 register.spec 没有改动：它们只用标签选择器，不受新字段影响，运行它们的 test-release-rehearsal.py 和 test-node-catalog.py 以 CI 结果为准（本机未运行）。

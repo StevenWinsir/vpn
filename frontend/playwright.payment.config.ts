@@ -13,7 +13,7 @@ if (
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['payment.spec.ts', 'account.spec.ts', 'admin-console.spec.ts', 'admin-console-2.spec.ts', 'admin-console-plans.spec.ts', 'shop.spec.ts'],
+  testMatch: ['payment.spec.ts', 'account.spec.ts', 'admin-console.spec.ts', 'admin-console-2.spec.ts', 'admin-console-plans.spec.ts', 'shop.spec.ts', 'referral.spec.ts'],
   outputDir: process.env.PAYMENT_OUTPUTS,
   workers: 1,
   retries: 0,

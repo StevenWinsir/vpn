@@ -27,6 +27,7 @@ import {
   type User,
 } from '@/lib/types';
 import { safeNext } from '@/lib/next-path';
+import { normalizeReferralInput, referralField, referralInputMax } from '@/lib/referral';
 import { useMeta } from '@/lib/use-meta';
 import { useAuth } from './providers';
 import { Logo } from './site-shell';
@@ -211,6 +212,9 @@ function RegisterForm() {
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [code, setCode] = useState('');
+  // Optional and never validated or reported on: the backend binds a good code and quietly
+  // ignores any other (handoff_coupon.md 12.1).
+  const [referral, setReferral] = useState('');
   const [proof, setProof] = useState<Proof | null>(null);
   const [resendAt, setResendAt] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -222,6 +226,12 @@ function RegisterForm() {
   // Bumped whenever the address changes or a newer request starts: late responses for an
   // older address or request are dropped instead of overwriting the current state.
   const sequence = useRef(0);
+
+  useEffect(() => {
+    // An invitation link (/register?ref=CODE) pre-fills the field once, on arrival.
+    const ref = new URLSearchParams(window.location.search).get('ref');
+    if (ref) setReferral((current) => current || normalizeReferralInput(ref));
+  }, []);
 
   const ticking = resendAt > now || (proof !== null && proof.expiresAt > now);
   useEffect(() => {
@@ -337,6 +347,7 @@ function RegisterForm() {
             remember,
             verification_id: proof.id,
             code,
+            ...referralField(meta?.referral_enabled, referral),
           }),
         },
         false,
@@ -525,6 +536,21 @@ function RegisterForm() {
             autoComplete="new-password"
             size="md"
           />
+          {meta.referral_enabled === true ? (
+            <TextInput
+              label="推荐码（选填）"
+              placeholder="8 位字母或数字"
+              description="填写好友的推荐码，好友可获得流量奖励"
+              value={referral}
+              onChange={(e) => setReferral(normalizeReferralInput(e.currentTarget.value))}
+              maxLength={referralInputMax}
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              size="md"
+              styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+            />
+          ) : null}
           <Checkbox
             checked={remember}
             onChange={(e) => setRemember(e.currentTarget.checked)}

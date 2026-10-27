@@ -319,6 +319,27 @@ a:focus-visible {
   letter-spacing: -1px;
   font-weight: 650;
 }
+.referral-code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 40px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #0b5d46;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.referral-code-small {
+  font-size: 24px;
+}
+@media (max-width: 480px) {
+  .referral-code {
+    font-size: 30px;
+  }
+  .referral-code-small {
+    font-size: 22px;
+  }
+}
 .plan-card {
   display: flex;
   flex-direction: column;

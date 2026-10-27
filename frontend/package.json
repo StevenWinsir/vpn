@@ -12,7 +12,8 @@
     "test:api-proxy": "node --test scripts/api-proxy.test.mjs",
     "test:nodes": "node --experimental-strip-types --test scripts/node-list.test.mjs",
     "test:downloads": "node --experimental-strip-types --test scripts/downloads.test.mjs",
-    "test:dashboard": "node --experimental-strip-types --test scripts/dashboard.test.mjs"
+    "test:dashboard": "node --experimental-strip-types --test scripts/dashboard.test.mjs",
+    "test:referral": "node --experimental-strip-types --test scripts/referral.test.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -18,9 +18,10 @@ import {
 import { IconArrowRight, IconRefresh, IconShieldCheck } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
 import { date, gib, type Dashboard, type DeviceStatus, type UsageHistory } from '@/lib/types';
-import { isDeviceStatus, isUsageHistory } from '@/lib/dashboard';
+import { formatBytes, isDeviceStatus, isUsageHistory } from '@/lib/dashboard';
 import { usePolling } from '@/lib/use-polling';
 import { DevicesCard } from './devices-card';
+import { ReferralCard } from './referral-card';
 import { UsageChart } from './usage-chart';
 
 export function DashboardView({ refreshMs }: { refreshMs: number }) {
@@ -158,6 +159,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
                     ? '按所连线路倍率折算后扣减'
                     : '近 24 小时暂无计量数据'
               }
+              bonus={data.bonus_bytes ?? 0}
             />
             <Metric
               label="累计订单"
@@ -165,6 +167,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
               detail="订单来自当前账户的真实数据库记录"
             />
           </SimpleGrid>
+          <ReferralCard refreshMs={refreshMs} />
           <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={24}>
             <Paper withBorder p={26} radius="lg">
               <Group justify="space-between">
@@ -239,7 +242,17 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
     </div>
   );
 }
-function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+function Metric({
+  label,
+  value,
+  detail,
+  bonus = 0,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  bonus?: number;
+}) {
   return (
     <Paper withBorder p={23} radius="lg">
       <Text size="xs" c="dimmed" mb={12}>
@@ -248,6 +261,7 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
       <div className="metric-value">{value}</div>
       <Text c="dimmed" size="xs" mt={12} lh={1.6}>
         {detail}
+        {bonus > 0 ? ` · 含推荐奖励 ${formatBytes(bonus)}` : ''}
       </Text>
     </Paper>
   );
