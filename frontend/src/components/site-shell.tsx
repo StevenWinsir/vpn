@@ -35,6 +35,8 @@ import { appName } from '@/lib/types';
 import { APIError, api, message } from '@/lib/api';
 import { AnnouncementGate } from './announcement-gate';
 import { useMeta } from '@/lib/use-meta';
+import { BrandMark } from './brand-mark';
+import { ThemeToggle } from './theme-toggle';
 
 const links = [
   { href: '/dashboard', label: '总览', icon: IconLayoutDashboard },
@@ -51,9 +53,7 @@ const current = (href: string, path: string) =>
 export function Logo() {
   return (
     <Link className="brand" href="/">
-      <span className="brand-icon">
-        <IconShieldLock size={23} stroke={1.7} />
-      </span>
+      <BrandMark />
       <span>
         {appName}
         <small>连接，自有边界。</small>
@@ -224,6 +224,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                 </Link>
               </>
             ) : null}
+            <ThemeToggle />
             {user ? (
               <Menu shadow="md" width={220}>
                 <Menu.Target>

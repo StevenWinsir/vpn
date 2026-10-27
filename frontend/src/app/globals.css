@@ -1,12 +1,138 @@
+/* Design tokens (handoff_ui.md 6.4). Every colour of this file is defined here, once for the light
+   and once for the dark scheme; the rules below only use the variables (scripts/theme.test.mjs
+   checks that). The scheme is the data-mantine-color-scheme attribute that the head script sets
+   before the first paint. Attribute selectors rather than light-dark(), which older browsers lack.
+   tokens:start */
+:root,
+:root[data-mantine-color-scheme='light'] {
+  --al-bg: #f7f8fa;
+  --al-surface: #ffffff;
+  --al-surface-2: #f3f7f5;
+  --al-surface-3: #eef3ef;
+  --al-border: #e9eeed;
+  --al-border-strong: #cdd9d4;
+  --al-text: #172d2b;
+  --al-text-2: #566a66;
+  --al-text-3: #66756f;
+  --al-brand: #0d7b61;
+  --al-brand-strong: #0b5d46;
+  --al-brand-icon: #1c9671;
+  --al-brand-fill: #0d7b61;
+  --al-brand-fill-hover: #09624f;
+  --al-on-brand: #ffffff;
+  --al-brand-soft: #e8f5ef;
+  --al-brand-tint: #edf5f0;
+  --al-brand-tint-border: #e0eae3;
+  --al-brand-line: #b8d4c7;
+  --al-brand-tint-text: #195c46;
+  --al-brand-tint-muted: #517362;
+  --al-featured-bg: #fcfefd;
+  --al-featured-border: #90cdb6;
+  --al-banner-bg: #173f35;
+  --al-banner-border: #173f35;
+  --al-banner-text: #ffffff;
+  --al-banner-muted: #b3cbbf;
+  --al-banner-action-bg: #ffffff;
+  --al-banner-action-hover: #eef3ef;
+  --al-banner-action-text: #172d2b;
+  --al-banner-action-border: #ffffff;
+  --al-seg-active-bg: #173f35;
+  --al-seg-active-text: #ffffff;
+  --al-success-bg: #e8f5ef;
+  --al-success-text: #0b5d46;
+  --al-warn-bg: #fff4ec;
+  --al-warn-bg-hover: #ffe9d9;
+  --al-warn-border: #f3c7a8;
+  --al-warn-text: #7c2d12;
+  --al-warn-focus: #c2410c;
+  --al-danger-bg: #fdecec;
+  --al-danger-text: #b91c1c;
+  --al-hot-from: #c2410c;
+  --al-hot-to: #b91c1c;
+  --al-on-hot: #ffffff;
+  --al-focus: #3dc89a;
+  --al-focus-strong: #1c9671;
+  --al-shadow: 0 1px 2px rgba(23, 45, 43, 0.06), 0 8px 24px rgba(23, 45, 43, 0.06);
+  --al-chart-grid: #eef3f0;
+  --al-chart-axis: #66756f;
+  --al-chart-active: rgba(18, 184, 134, 0.06);
+  /* The sign-in story column is a dark brand area in both schemes. */
+  --al-story-bg: #123f34;
+  --al-story-edge: transparent;
+  --al-story-text: #ffffff;
+  --al-story-copy: #b1c9be;
+  --al-story-muted: #afc4bb;
+  --al-story-promise: #dcebe3;
+  --al-story-check: #77c6a4;
+  /* The impersonation notice stays the same loud yellow in both schemes. */
+  --al-notice-bg: #ffe066;
+  --al-notice-text: #3b2f00;
+  --al-notice-border: #e0b800;
+}
+:root[data-mantine-color-scheme='dark'] {
+  --al-bg: #121a18;
+  --al-surface: #19221f;
+  --al-surface-2: #212c29;
+  --al-surface-3: #1d2724;
+  --al-border: #2a3633;
+  --al-border-strong: #3d4d49;
+  --al-text: #dbe5e2;
+  --al-text-2: #b4c3bf;
+  --al-text-3: #93a5a0;
+  --al-brand: #3dc89a;
+  --al-brand-strong: #69d6b1;
+  --al-brand-icon: #3dc89a;
+  --al-brand-fill: #0d7b61;
+  --al-brand-fill-hover: #09624f;
+  --al-on-brand: #ffffff;
+  --al-brand-soft: rgba(61, 200, 154, 0.13);
+  --al-brand-tint: rgba(61, 200, 154, 0.07);
+  --al-brand-tint-border: rgba(61, 200, 154, 0.18);
+  --al-brand-line: rgba(61, 200, 154, 0.35);
+  --al-brand-tint-text: #9ee5cd;
+  --al-brand-tint-muted: #93a5a0;
+  --al-featured-bg: #1b2724;
+  --al-featured-border: rgba(61, 200, 154, 0.5);
+  --al-banner-bg: linear-gradient(135deg, #1d3c34 0%, #1a2a26 100%);
+  --al-banner-border: rgba(61, 200, 154, 0.35);
+  --al-banner-text: #eef6f3;
+  --al-banner-muted: #a9c1b9;
+  --al-banner-action-bg: rgba(219, 229, 226, 0.08);
+  --al-banner-action-hover: rgba(219, 229, 226, 0.15);
+  --al-banner-action-text: #eef6f3;
+  --al-banner-action-border: rgba(61, 200, 154, 0.45);
+  --al-seg-active-bg: #0d7b61;
+  --al-seg-active-text: #ffffff;
+  --al-success-bg: rgba(61, 200, 154, 0.13);
+  --al-success-text: #69d6b1;
+  --al-warn-bg: rgba(234, 88, 12, 0.12);
+  --al-warn-bg-hover: rgba(234, 88, 12, 0.2);
+  --al-warn-border: rgba(251, 146, 60, 0.4);
+  --al-warn-text: #fdba74;
+  --al-warn-focus: #fb923c;
+  --al-danger-bg: rgba(250, 82, 82, 0.12);
+  --al-danger-text: #ff8787;
+  --al-focus: #3dc89a;
+  --al-focus-strong: #3dc89a;
+  --al-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+  --al-chart-grid: #24302d;
+  --al-chart-axis: #93a5a0;
+  --al-chart-active: rgba(61, 200, 154, 0.1);
+  --al-story-bg: #0f2f28;
+  --al-story-edge: rgba(61, 200, 154, 0.25);
+}
+/* tokens:end */
+
 * {
   box-sizing: border-box;
 }
+/* ":root body" outranks Mantine's own body rule, which the production build may load later. */
 html,
-body {
+:root body {
   margin: 0;
   min-height: 100%;
-  background: #f7f8fa;
-  color: #172d2b;
+  background: var(--al-bg);
+  color: var(--al-text);
 }
 body {
   font-size: 15px;
@@ -22,12 +148,12 @@ input {
   -webkit-tap-highlight-color: transparent;
 }
 a:focus-visible {
-  outline: 3px solid #3dc89a;
+  outline: 3px solid var(--al-focus);
   outline-offset: 4px;
 }
 .site-header {
-  background: #fff;
-  border-bottom: 1px solid #e9eeed;
+  background: var(--al-surface);
+  border-bottom: 1px solid var(--al-border);
 }
 .brand {
   display: flex;
@@ -37,15 +163,10 @@ a:focus-visible {
   font-weight: 750;
   letter-spacing: -0.5px;
 }
-.brand-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 39px;
-  height: 39px;
-  border-radius: 12px;
-  background: #0d7b61;
-  color: #fff;
+/* The brand mark is the same artwork as the favicon (brand/mark.svg). */
+.brand-mark {
+  display: block;
+  flex: none;
 }
 .brand small {
   display: block;
@@ -53,18 +174,18 @@ a:focus-visible {
   letter-spacing: 1.2px;
   line-height: 1.5;
   font-weight: 500;
-  color: #81908d;
+  color: var(--al-text-3);
 }
 .quiet-link {
   font-size: 14px;
-  color: #566a66;
+  color: var(--al-text-2);
 }
 .nav-link {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  color: #697974;
+  color: var(--al-text-2);
   font-size: 14px;
   border-radius: 9px;
   transition:
@@ -72,11 +193,11 @@ a:focus-visible {
     color 0.15s;
 }
 .nav-link:hover {
-  background: #f3f7f5;
+  background: var(--al-surface-2);
 }
 .nav-link.active {
-  background: #e8f5ef;
-  color: #0d7b61;
+  background: var(--al-brand-soft);
+  color: var(--al-brand);
   font-weight: 650;
 }
 .sidebar-note {
@@ -89,7 +210,7 @@ a:focus-visible {
   gap: 7px;
   font-size: 12px;
   margin-top: 18px;
-  color: #526b63;
+  color: var(--al-text-2);
 }
 .page-wrap {
   max-width: 1400px;
@@ -114,15 +235,15 @@ a:focus-visible {
   font-weight: 600;
 }
 .primary-link {
-  background: #0d7b61;
-  color: white;
+  background: var(--al-brand-fill);
+  color: var(--al-on-brand);
 }
 .primary-link:hover {
-  background: #09624f;
+  background: var(--al-brand-fill-hover);
 }
 .secondary-link {
-  border: 1px solid #cdd9d4;
-  background: #fff;
+  border: 1px solid var(--al-border-strong);
+  background: var(--al-surface);
 }
 .landing {
   max-width: 1240px;
@@ -145,11 +266,11 @@ a:focus-visible {
   margin: 0 0 26px;
 }
 .hero h1 span {
-  color: #0d7b61;
+  color: var(--al-brand);
 }
 .hero-copy > p {
   font-size: 16px;
-  color: #74847e;
+  color: var(--al-text-3);
   line-height: 1.95;
 }
 .hero-actions {
@@ -159,27 +280,27 @@ a:focus-visible {
 }
 .hero-side {
   min-height: 382px;
-  background: #edf5f0;
-  border: 1px solid #e0eae3;
+  background: var(--al-brand-tint);
+  border: 1px solid var(--al-brand-tint-border);
   border-radius: 22px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  color: #195c46;
+  color: var(--al-brand-tint-text);
   padding: 35px;
 }
 .connection-symbol {
   height: 116px;
   width: 116px;
   border-radius: 50%;
-  border: 1px solid #b8d4c7;
+  border: 1px solid var(--al-brand-line);
   display: flex;
   justify-content: center;
   align-items: center;
   margin-bottom: 20px;
-  background: #f6faf7;
+  background: var(--al-surface);
 }
 .hero-side-heading {
   font-size: 21px;
@@ -187,7 +308,7 @@ a:focus-visible {
 }
 .hero-side p {
   font-size: 13px;
-  color: #688d7c;
+  color: var(--al-brand-tint-muted);
   line-height: 1.85;
 }
 .hero-side-bottom {
@@ -195,17 +316,17 @@ a:focus-visible {
   gap: 30px;
   margin-top: 23px;
   font-size: 11px;
-  color: #517362;
+  color: var(--al-brand-tint-muted);
 }
 .feature-strip {
-  border-top: 1px solid #dfe7e2;
+  border-top: 1px solid var(--al-border);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 40px;
   padding: 40px 0;
 }
 .feature-strip > div > svg {
-  color: #0d7b61;
+  color: var(--al-brand);
 }
 .feature-strip h2 {
   font-size: 16px;
@@ -214,7 +335,7 @@ a:focus-visible {
 }
 .feature-strip p {
   font-size: 12px;
-  color: #7a8881;
+  color: var(--al-text-3);
   margin: 0;
 }
 .landing-footer {
@@ -222,30 +343,28 @@ a:focus-visible {
   justify-content: space-between;
   gap: 20px;
   padding: 25px 0;
-  border-top: 1px solid #e5eae7;
+  border-top: 1px solid var(--al-border);
   font-size: 11px;
-  color: #929c96;
+  color: var(--al-text-3);
 }
 .auth-layout {
   min-height: 100dvh;
   display: grid;
   grid-template-columns: 43% 57%;
-  background: #fff;
+  background: var(--al-surface);
 }
 .auth-story {
   padding: 46px 58px;
-  background: #123f34;
-  color: white;
+  background: var(--al-story-bg);
+  border-right: 1px solid var(--al-story-edge);
+  color: var(--al-story-text);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   min-height: 760px;
 }
-.auth-story .brand-icon {
-  background: #2a5a4c;
-}
 .auth-story .brand small {
-  color: #afc4bb;
+  color: var(--al-story-muted);
 }
 .auth-story-copy h2 {
   font-size: clamp(36px, 4vw, 55px);
@@ -257,7 +376,7 @@ a:focus-visible {
 .auth-story-copy > p {
   font-size: 15px;
   line-height: 1.9;
-  color: #b1c9be;
+  color: var(--al-story-copy);
   max-width: 295px;
 }
 .auth-promises {
@@ -271,10 +390,14 @@ a:focus-visible {
   align-items: center;
   gap: 13px;
   font-size: 13px;
-  color: #dcebe3;
+  color: var(--al-story-promise);
 }
 .auth-promises svg {
-  color: #77c6a4;
+  color: var(--al-story-check);
+}
+.auth-story-footer {
+  font-size: 12px;
+  color: var(--al-story-muted);
 }
 .auth-panel {
   position: relative;
@@ -291,13 +414,20 @@ a:focus-visible {
   align-items: center;
   gap: 7px;
 }
+/* The sign-in pages have no site header, so the appearance switch sits opposite "返回首页". */
+.auth-theme {
+  position: absolute;
+  top: 26px;
+  right: 34px;
+}
 .auth-form {
   width: 100%;
   max-width: 400px;
 }
 .subscription-banner {
-  background: #173f35;
-  color: #fff;
+  background: var(--al-banner-bg);
+  border: 1px solid var(--al-banner-border);
+  color: var(--al-banner-text);
   border-radius: 15px;
   padding: 30px 32px;
   display: flex;
@@ -306,7 +436,24 @@ a:focus-visible {
   gap: 24px;
 }
 .subscription-banner .muted {
-  color: #b3cbbf;
+  color: var(--al-banner-muted);
+}
+.banner-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border: 1px solid var(--al-banner-action-border);
+  border-radius: 8px;
+  background: var(--al-banner-action-bg);
+  color: var(--al-banner-action-text);
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.banner-action:hover {
+  background: var(--al-banner-action-hover);
 }
 .metric-value {
   font-size: 29px;
@@ -320,7 +467,7 @@ a:focus-visible {
   line-height: 1.2;
   font-weight: 700;
   letter-spacing: 0.14em;
-  color: #0b5d46;
+  color: var(--al-brand-strong);
   user-select: all;
   overflow-wrap: anywhere;
 }
@@ -336,26 +483,27 @@ a:focus-visible {
   overflow: hidden;
 }
 .plan-card.featured {
-  border-color: #90cdb6;
-  background: #fcfefd;
+  border-color: var(--al-featured-border);
+  background: var(--al-featured-bg);
+  box-shadow: var(--al-shadow);
 }
 .plan-feature {
   display: flex;
   gap: 10px;
   align-items: flex-start;
   font-size: 13px;
-  color: #556d63;
+  color: var(--al-text-2);
 }
 .plan-feature svg {
-  color: #1c9671;
+  color: var(--al-brand-icon);
   flex-shrink: 0;
   margin-top: 2px;
 }
 .empty-state {
   padding: 40px 20px;
   text-align: center;
-  color: #86958e;
-  border: 1px dashed #dce5df;
+  color: var(--al-text-3);
+  border: 1px dashed var(--al-border-strong);
   border-radius: 12px;
 }
 .quota-label {
@@ -366,18 +514,18 @@ a:focus-visible {
 .order-id {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
-  color: #7c8983;
+  color: var(--al-text-3);
 }
 .page-footer {
   font-size: 11px;
-  color: #98a39c;
-  border-top: 1px solid #e4eae5;
+  color: var(--al-text-3);
+  border-top: 1px solid var(--al-border);
   margin-top: 36px;
   padding-top: 18px;
 }
 .mantine-Table-th {
   font-size: 12px;
-  color: #7c8b82;
+  color: var(--al-text-3);
   font-weight: 500 !important;
 }
 .mantine-Table-td {
@@ -414,6 +562,10 @@ a:focus-visible {
   .back-link {
     left: 25px;
     top: 28px;
+  }
+  .auth-theme {
+    right: 19px;
+    top: 19px;
   }
   .hero {
     grid-template-columns: 1fr;
@@ -480,13 +632,13 @@ a:focus-visible {
   grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 6px;
   height: 180px;
-  border-bottom: 1px solid #dce5df;
+  border-bottom: 1px solid var(--al-border-strong);
   background: repeating-linear-gradient(
     to top,
     transparent 0,
     transparent calc(25% - 1px),
-    #eef3f0 calc(25% - 1px),
-    #eef3f0 25%
+    var(--al-chart-grid) calc(25% - 1px),
+    var(--al-chart-grid) 25%
   );
 }
 .usage-bar {
@@ -501,7 +653,7 @@ a:focus-visible {
   cursor: pointer;
 }
 .usage-bar[data-active] {
-  background: rgba(18, 184, 134, 0.06);
+  background: var(--al-chart-active);
 }
 .usage-bar:focus-visible {
   outline: 2px solid var(--mantine-color-teal-6);
@@ -534,7 +686,7 @@ a:focus-visible {
   font-size: 10px;
   line-height: 1.35;
   text-align: center;
-  color: #86958e;
+  color: var(--al-chart-axis);
   font-variant-numeric: tabular-nums;
 }
 .usage-table {
@@ -543,11 +695,11 @@ a:focus-visible {
 }
 .usage-table summary {
   cursor: pointer;
-  color: var(--mantine-color-teal-7);
+  color: var(--al-brand);
 }
 .device-row {
   padding: 12px 0;
-  border-bottom: 1px solid #eef3f0;
+  border-bottom: 1px solid var(--al-border);
 }
 .device-row:last-child {
   border-bottom: 0;
@@ -563,7 +715,7 @@ a:focus-visible {
   align-items: center;
   gap: 12px;
   padding: 14px;
-  border: 1.5px solid var(--mantine-color-gray-3);
+  border: 1.5px solid var(--mantine-color-default-border);
   border-radius: 12px;
   text-align: left;
 }
@@ -597,13 +749,13 @@ a:focus-visible {
   top: 80px;
   z-index: 120;
   padding: 10px 20px;
-  background: #ffe066;
-  color: #3b2f00;
-  border-bottom: 1px solid #e0b800;
+  background: var(--al-notice-bg);
+  color: var(--al-notice-text);
+  border-bottom: 1px solid var(--al-notice-border);
 }
 
 /* Plan shop: billing-cycle switch, discount badge, banner and yearly ribbon (handoff_shop.md 8).
-   White text on #c2410c / #b91c1c is 5.2:1 / 6.5:1 (WCAG AA). */
+   White text on the hot gradient is 5.2:1 / 6.5:1 (WCAG AA) in both schemes. */
 .cycle-switch {
   display: flex;
   justify-content: center;
@@ -614,8 +766,8 @@ a:focus-visible {
   gap: 4px;
   padding: 4px;
   border-radius: 999px;
-  background: #eef3ef;
-  border: 1px solid #d9e3dc;
+  background: var(--al-surface-3);
+  border: 1px solid var(--al-border);
   max-width: 100%;
 }
 .cycle-seg button {
@@ -627,18 +779,18 @@ a:focus-visible {
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: #3f564c;
+  color: var(--al-text-2);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
 .cycle-seg button[aria-checked='true'] {
-  background: #173f35;
-  color: #fff;
+  background: var(--al-seg-active-bg);
+  color: var(--al-seg-active-text);
 }
 .cycle-seg button:focus-visible {
-  outline: 3px solid #1c9671;
+  outline: 3px solid var(--al-focus-strong);
   outline-offset: 2px;
 }
 .cycle-badge {
@@ -646,8 +798,8 @@ a:focus-visible {
   white-space: nowrap;
   padding: 2px 8px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #c2410c, #b91c1c);
-  color: #fff;
+  background: linear-gradient(135deg, var(--al-hot-from), var(--al-hot-to));
+  color: var(--al-on-hot);
   font-size: 12px;
   font-weight: 700;
   line-height: 1.4;
@@ -672,10 +824,10 @@ a:focus-visible {
   width: 100%;
   margin: 0 0 22px;
   padding: 12px 18px;
-  border: 1px solid #f3c7a8;
+  border: 1px solid var(--al-warn-border);
   border-radius: 12px;
-  background: #fff4ec;
-  color: #7c2d12;
+  background: var(--al-warn-bg);
+  color: var(--al-warn-text);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -683,10 +835,10 @@ a:focus-visible {
   cursor: pointer;
 }
 .cycle-banner:hover {
-  background: #ffe9d9;
+  background: var(--al-warn-bg-hover);
 }
 .cycle-banner:focus-visible {
-  outline: 3px solid #c2410c;
+  outline: 3px solid var(--al-warn-focus);
   outline-offset: 2px;
 }
 .plan-ribbon {
@@ -696,8 +848,8 @@ a:focus-visible {
   width: 140px;
   padding: 3px 0;
   transform: rotate(45deg);
-  background: linear-gradient(135deg, #c2410c, #b91c1c);
-  color: #fff;
+  background: linear-gradient(135deg, var(--al-hot-from), var(--al-hot-to));
+  color: var(--al-on-hot);
   font-size: 12px;
   font-weight: 700;
   text-align: center;
@@ -711,13 +863,13 @@ a:focus-visible {
   row-gap: 2px;
 }
 .plan-original {
-  color: #6b7a72;
+  color: var(--al-text-3);
   font-size: 14px;
   text-decoration: line-through;
   white-space: nowrap;
 }
 .plan-saving {
-  color: #b91c1c;
+  color: var(--al-danger-text);
   font-weight: 700;
   font-size: 14px;
   white-space: nowrap;
@@ -726,6 +878,6 @@ a:focus-visible {
   white-space: nowrap;
 }
 .quote-saving {
-  color: #b91c1c;
+  color: var(--al-danger-text);
   font-weight: 700;
 }

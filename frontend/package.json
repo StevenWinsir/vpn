@@ -14,7 +14,9 @@
     "test:downloads": "node --experimental-strip-types --test scripts/downloads.test.mjs",
     "test:dashboard": "node --experimental-strip-types --test scripts/dashboard.test.mjs",
     "test:referral": "node --experimental-strip-types --test scripts/referral.test.mjs",
-    "test:copy": "node --test scripts/copy-guard.test.mjs"
+    "test:copy": "node --test scripts/copy-guard.test.mjs",
+    "test:theme": "node --test scripts/theme.test.mjs",
+    "brand:icons": "node scripts/brand-icons.mjs"
   },
   "engines": {
     "node": ">=22"

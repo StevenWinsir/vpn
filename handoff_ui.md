@@ -509,3 +509,33 @@
 偏离规划之处：
 - /nodes 的“同步节点”按钮名保留（规划未要求改名，且 user-nodes.spec 依赖），总览的“同步数据”改为“刷新”。
 - 运行时文案守卫只检查页面可见文本，不检查弹窗内部（购买弹窗、删除账号弹窗的文案由静态守卫覆盖）。
+
+### 第 2 轮：暗色主题、设计令牌、品牌标识与 favicon（2026-10-27，分支 worktree-ui-round2-theme，PR 见合并记录）
+
+完成内容：
+- R7 机制：根布局 ColorSchemeScript 与 MantineProvider 都改为 defaultColorScheme="auto"，共用 src/lib/theme.ts 的存储键 asterlink-color-scheme（localStorageColorSchemeManager）；从未选择时不写存储，等同跟随系统。head 中另加一段兜底脚本：本地存储抛错（部分隐私模式）时按系统外观设置 html 属性，避免停在服务端渲染的 light。
+- 切换控件 ThemeToggle（src/components/theme-toggle.tsx）：40×40 图标按钮，可访问名称“切换外观”，菜单三项“浅色/深色/跟随系统”，当前项带勾与 aria-current；按钮内太阳/月亮两个图标用 Mantine 的 mantine-dark-hidden/mantine-light-hidden 类按 html 属性显隐，无水合差异。放在 AppShell 头部（工作台、管理后台、首页、404）与认证页右上角。
+- 设计令牌：globals.css 顶部唯一的 tokens:start…tokens:end 块，--al-* 变量浅色挂 :root 与 [data-mantine-color-scheme='light']、暗色挂 [data-mantine-color-scheme='dark']，不使用 light-dark()；其余规则全部改用令牌（页面背景、表面、边框、三级文字、品牌色/强调/浅底、横幅、认证左栏、套餐推荐卡、年付切换与徽标、警示/危险、焦点、阴影、用量图网格与坐标）。
+- Mantine 主题：10 阶偏冷、略带青绿的 dark 色板；primaryShade 浅色 7、暗色 5；autoContrast；theme.black 设为品牌正文色 #172d2b；浅色 dimmed 由 Mantine 默认 #868e96（白底 3.3:1）改为 #66756f（≥4.5:1）；自定义 variantColorResolver 让主色 filled 按钮文字用随配色方案变化的 --mantine-primary-color-contrast（Mantine 的 autoContrast 只按浅色色阶计算，暗色下会给 teal-5 配白字 2.6:1）。
+- 逐区域适配：总览订阅横幅暗色下为深色渐变 + 品牌色细边，“管理套餐/选择套餐”改为令牌化的 banner-action 链接（原 Mantine white 按钮在暗色下文字不可读）；认证左栏两种主题都保持深色，暗色下右侧加品牌色细分界线；空状态标题原用 c="dark.4"（暗色色板的表面色，暗色下不可读）改为正文令牌；模拟登录黄色横幅两种主题不变；管理后台未改任何文字。
+- R6b 品牌标识：唯一源文件 frontend/brand/mark.svg（Tabler shield-lock，MIT，加粗线条、钥匙孔改实心以适应 16 像素）；scripts/brand-icons.mjs（npm run brand:icons，仅开发时手动运行，用 Playwright 渲染）生成 src/app/icon.svg、favicon.ico（16/32/48 PNG 内嵌）、apple-icon.png（180，不透明底）、public/icons/icon-192.png 与 icon-512.png（manifest 用）、src/components/brand-mark-art.ts（BrandMark 组件的图形）。头部 Logo 与认证页左栏改用 BrandMark。新增 src/app/manifest.ts 与 viewport 的浅/深两个 theme-color。用法写入 docs/web-appearance.md。
+- 测试：scripts/theme.test.mjs（npm run test:theme，已加入 CI Web validation）——globals.css 令牌块外无颜色字面量（十六进制、rgb/hsl 等函数、white/black；改动验证过能抓到）、两套令牌一致且被引用的令牌都有定义、head 脚本与 Provider 同键同默认、图标全套与源文件一致（icon.svg 逐字相同、art 模块为当前生成结果、ICO 三个尺寸、PNG 尺寸）、子路由无图标文件且无页面覆盖 icons。tests/theme.spec.ts（加入 playwright.payment.config.ts，夹具新增 themea 普通用户与 themeroot 管理员两个专用账户）。
+
+测试与结果（本地，worktree，基线 133f42e）：
+- npm run lint、npm run typecheck、npm run build -- --webpack：通过。
+- test:nodes 3/3、test:downloads 6/6、test:dashboard 6/6、test:referral 5/5、test:copy 3/3、test:theme 5/5：通过；test:api-proxy 16/16 通过（PLAYWRIGHT_CHROME_PATH 指向系统 Chrome）。
+- scripts/test-payment-web.py --skip-build：56/56 通过（原 49 个 + theme.spec 7 个），用时 3.4 分钟。theme.spec 覆盖：系统深/浅色首次访问与打开期间实时跟随；手动深色后刷新、新标签、保留存储重开上下文、系统切浅色都保持深色，手动浅色同理，选“跟随系统”写入 auto 并恢复跟随；另一已打开标签页同步；无闪烁（初始化脚本在 body 插入时和 DOMContentLoaded 时记录 html 属性与 body 背景色，均为所选方案）；本地存储抛错时跟随系统、可切换、无页面错误；登录页标题/弱化文字/主按钮/链接在两种主题下计算对比度 ≥ 4.5:1；/、/login、/plans、404、/dashboard、/admin/console/users 的图标链接完全相同，/favicon.ico、icon.svg、apple-icon、manifest 与两个 manifest 图标 200 且类型正确，apple-icon 角点不透明，两个 theme-color；全部用户页（总览、节点、套餐、订单、推荐、下载、账号、支付结果、404、首页、登录、注册、找回、重置、公开套餐页、购买弹窗）与管理后台（用户、订单、套餐、登录记录、优惠码、公告、节点管理、用户详情抽屉）在暗色下无大面积白底（自动扫描），浅色与暗色各截图一套，手机 390 宽度截图总览、套餐、导航抽屉、登录，切换按钮 ≥ 40×40。
+- scripts/test-node-catalog.py --skip-build：浏览器部分 10/10 通过；其后的 Mihomo 内核验收在本地 BLOCKED（worktree 中没有 native/third_party/Clash.Meta 子模块），由 CI 的 web-core job 完整执行。
+- scripts/test-release-rehearsal.py：本地未运行，以 CI 的 rehearsal job 为准。
+- 截图：/tmp/ui-r2-pay-full/browser-artifacts/screens/theme-{light,dark}-*.png，CI 中随 payment-web-evidence 工件上传。人工评审了暗色总览、套餐、购买弹窗、登录、管理后台用户列表与节点管理、手机导航与登录。
+- NOT RUN：Chrome/Safari/Firefox 标签栏在浅色与深色外观下的图标人工查看（第 11 节第 2 轮验收），以及 U-20、U-21 需求方实测。
+
+对比度抽查（WCAG，PR 中同列）：浅色 正文 #172d2b/#f7f8fa 13.7、次要 #566a66/#fff 5.8、弱化 #66756f/#f7f8fa 4.6、导航选中 #0d7b61/#e8f5ef 4.7、主按钮白/#0d7b61 5.2；暗色 正文 #dbe5e2/#121a18 13.8、次要 #b4c3bf/#19221f 8.9、弱化 #93a5a0/#19221f 6.3、品牌字 #3dc89a/#19221f 7.7、主按钮 #172d2b/#21b98a 5.8、横幅次要字 #a9c1b9/#1d3c34 6.3、危险字 #ff8787/#19221f 7.0；年付徽标白/#c2410c 5.2（两种主题相同）。
+
+偏离规划之处：
+- 页面背景：生产构建中 globals.css 排在 Mantine 样式之前，Mantine 的 body 背景规则一直覆盖了原来的 #f7f8fa（改版前页面实际是白底）。本轮把选择器提高为 :root body，令牌真正生效：浅色下内容区为 #f7f8fa、卡片白色，暗色下页面 #121a18、卡片 #19221f。
+- 为满足第 6.6 节 4.5:1，浅色的几种弱化灰（#81908d、#86958e、#98a39c 等，约 2.6–3.2:1）合并为 #66756f，次要灰合并为 #566a66，视觉略深。
+- 暗色 primaryShade 取 5 并配深色文字（规划写“5–6 之间以对比度达标为准”；6 配白字只有 3.7:1）。
+- manifest 的 192/512 图标放在 public/icons（manifest 需要固定地址，Next 的 app 目录约定文件会被注入为页面 icon 链接）；其余图标按规划放在 src/app 根目录。
+- 支付按钮的微信绿、支付宝蓝为品牌色，两种主题保留；用量图上传/下载两色沿用 Mantine blue-4 / teal-6，暗色下可区分。
+- 暗色主题下的 Crisp 窗口外观不在本轮（第 4 轮）。

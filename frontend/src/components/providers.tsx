@@ -8,9 +8,17 @@ import {
   useRef,
   useState,
 } from 'react';
-import { MantineProvider, createTheme } from '@mantine/core';
+import {
+  MantineProvider,
+  createTheme,
+  defaultVariantColorsResolver,
+  localStorageColorSchemeManager,
+  type CSSVariablesResolver,
+  type VariantColorsResolver,
+} from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { api, APIError, message, onSessionEnded } from '@/lib/api';
+import { colorSchemeKey } from '@/lib/theme';
 import type { Impersonation, User } from '@/lib/types';
 
 type Auth = {
@@ -24,8 +32,25 @@ type Auth = {
   logout: () => Promise<void>;
 };
 const AuthContext = createContext<Auth | null>(null);
+// Light and dark (handoff_ui.md 6): the scheme follows the system until the user picks one, which
+// is then kept under colorSchemeKey, the key the head script in the root layout reads too.
+const colorSchemeManager = localStorageColorSchemeManager({ key: colorSchemeKey });
+// Mantine picks the text colour of filled buttons from the light shade only; the primary
+// contrast variable follows the scheme (white on teal 7 in light, dark on teal 5 in dark).
+const variantColorResolver: VariantColorsResolver = (input) => {
+  const colors = defaultVariantColorsResolver(input);
+  const primary = !input.color || input.color === input.theme.primaryColor;
+  return input.variant === 'filled' && primary
+    ? { ...colors, color: 'var(--mantine-primary-color-contrast)' }
+    : colors;
+};
 const theme = createTheme({
   primaryColor: 'teal',
+  // Filled teal: shade 7 with white text in light (5.2:1); shade 5 with dark text in dark (5.8:1).
+  primaryShade: { light: 7, dark: 5 },
+  autoContrast: true,
+  variantColorResolver,
+  black: '#172d2b',
   defaultRadius: 'md',
   fontFamily:
     'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
@@ -43,8 +68,28 @@ const theme = createTheme({
       '#09624f',
       '#074d40',
     ],
+    // Mantine's dark scale, cool and slightly brand-tinted: 0 text, 2 dimmed, 4 borders,
+    // 6 inputs, 7 cards and body, 8 the page behind them (globals.css --al-bg).
+    dark: [
+      '#dbe5e2',
+      '#b4c3bf',
+      '#93a5a0',
+      '#6d807b',
+      '#3d4d49',
+      '#2e3c39',
+      '#24302d',
+      '#19221f',
+      '#121a18',
+      '#0c1211',
+    ],
   },
   components: { Button: { defaultProps: { fw: 600 } } },
+});
+// Mantine's light "dimmed" grey is 3.3:1 on white; this one reaches 4.5:1 on the page background.
+const cssVariablesResolver: CSSVariablesResolver = () => ({
+  variables: {},
+  light: { '--mantine-color-dimmed': '#66756f' },
+  dark: {},
 });
 export function Providers({ children }: { children: React.ReactNode }) {
   const [user, setStoredUser] = useState<User | null>(null);
@@ -123,7 +168,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
     [user, impersonation, loading, error, setUser, reload, logout],
   );
   return (
-    <MantineProvider theme={theme} defaultColorScheme="light">
+    <MantineProvider
+      theme={theme}
+      defaultColorScheme="auto"
+      colorSchemeManager={colorSchemeManager}
+      cssVariablesResolver={cssVariablesResolver}
+    >
       <Notifications position="top-right" />
       <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
     </MantineProvider>

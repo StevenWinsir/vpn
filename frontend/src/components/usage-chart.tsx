@@ -54,7 +54,7 @@ export function UsageChart({ history, error }: { history: UsageHistory | null; e
       ) : historyEmpty(intervals) ? (
         <div className="empty-state">
           <IconChartBar size={34} stroke={1.3} aria-hidden />
-          <Text size="sm" fw={600} c="dark.4" mt="sm">
+          <Text size="sm" fw={600} c="var(--al-text)" mt="sm">
             近 24 小时没有流量
           </Text>
           <Text size="xs" mt={8} lh={1.8}>
