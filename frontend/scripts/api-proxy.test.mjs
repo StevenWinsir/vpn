@@ -572,7 +572,7 @@ test(
           const sendButton = () =>
             page.getByRole('button', { name: /获取验证码|重新发送|秒后可重发|发送中/ });
           await page.goto(browserURL + '/');
-          await page.getByRole('link', { name: '创建账户' }).click();
+          await page.getByTestId('hero-actions').getByRole('link', { name: '创建账户' }).click();
           await page.waitForURL('**/register');
           await page.getByRole('heading', { name: '创建你的账户' }).waitFor();
           await page.getByText('支持：qq.com、gmail.com').waitFor();
@@ -665,7 +665,10 @@ test(
             await second.getByText('当前暂未开放注册').waitFor();
             assert.equal(await second.getByLabel('邮箱验证码').count(), 0);
             await second.goto(browserURL + '/');
-            await second.getByRole('main').getByRole('link', { name: '登录账户' }).waitFor();
+            await second
+              .getByTestId('hero-actions')
+              .getByRole('link', { name: '登录账户' })
+              .waitFor();
             assert.equal(await second.getByRole('link', { name: '创建账户' }).count(), 0);
             await second.goto(browserURL + '/login');
             await second.getByRole('heading', { name: '欢迎回来' }).waitFor();

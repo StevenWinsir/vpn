@@ -37,7 +37,38 @@ const banned = [
   '心跳',
   '联系管理员',
   '管理员配置',
+  // Claims the service cannot prove and the advertising law forbids (handoff_ui.md D12, D5).
+  ...claims(),
 ];
+function claims() {
+  return [
+    '最快',
+    '最好',
+    '最强',
+    '最稳定',
+    '最安全',
+    '最低价',
+    '第一品牌',
+    '行业第一',
+    '全网第一',
+    '国内第一',
+    'No.1',
+    '100% 安全',
+    '100%安全',
+    '百分百',
+    '百分之百',
+    '零日志',
+    '无日志',
+    '不限速',
+    '无限速',
+    '军用级',
+    '军工级',
+    '绝对安全',
+    '永久免费',
+    '翻墙',
+    '科学上网',
+  ];
+}
 // Wording that is not ours: Apple's own dialog and settings label for an enterprise-signed app.
 const allowed = ['未受信任的开发者', '信任该开发者'];
 
@@ -88,6 +119,8 @@ test('the scan covers the user pages and leaves the administration out', () => {
     'components/dashboard-view.tsx',
     'components/plans-view.tsx',
     'components/site-shell.tsx',
+    'components/home/home-faq.tsx',
+    'components/home/plan-preview.tsx',
     'lib/api.ts',
   ])
     assert.ok(userFiles.includes(path), path);

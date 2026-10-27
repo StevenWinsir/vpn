@@ -82,8 +82,9 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	}
 	// The shop spec (yearly checkout, renewal, price change, rebuy) and the referral spec
 	// (refa: a referrer who buys a plan, refd: one who never has a plan) use accounts of their own,
-	// as does the user-page copy spec (copya never buys, copyb buys a plan; handoff_ui.md 4.6).
-	for _, kind := range []string{"shopa", "shopb", "shopc", "shopd", "refa", "refd", "copya", "copyb"} {
+	// as does the user-page copy spec (copya never buys, copyb buys a plan; handoff_ui.md 4.6) and the
+	// home page spec (homea only signs in; handoff_ui.md 8).
+	for _, kind := range []string{"shopa", "shopb", "shopc", "shopd", "refa", "refd", "copya", "copyb", "homea"} {
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: "user", Status: "active", AuthVersion: 1}
 		if err = db.Create(&u).Error; err != nil {
 			t.Fatal(err)

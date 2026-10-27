@@ -191,6 +191,8 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     }
   };
   if (authPage) return <main>{children}</main>;
+  // The home page brings its own marketing header, landmarks and footer (handoff_ui.md 8.2).
+  if (path === '/') return children;
   return (
     <AppShell
       header={{ height: 80 }}

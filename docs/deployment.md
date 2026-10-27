@@ -47,6 +47,15 @@ NEXT_PUBLIC_APP_NAME=AsterLink
 
 该接口禁止缓存，**不公开内部 URL、数据库凭据、JWT 密钥或全部环境变量**。格式错误的配置返回 503，后端不可达返回 502，代理超时返回 504。
 
+### 前端：首页页脚的备案号与客服邮箱（可选）
+
+```dotenv
+SITE_ICP_RECORD=京ICP备12345678号-1
+SITE_SUPPORT_EMAIL=support@example.com
+```
+
+两项都只由 Next.js 服务端按请求读取，修改后重启 Next.js 即可，无需重新构建。`SITE_ICP_RECORD` 设置后首页页脚显示备案号并链接到工信部备案查询网站（https://beian.miit.gov.cn/）；`SITE_SUPPORT_EMAIL` 设置后页脚和常见问题中显示客服邮箱。未设置或格式不合法（备案号只允许汉字、字母、数字、空格和连字符，最长 40 字；邮箱须为普通地址）时不显示对应内容。首页的 Android、iOS 下载状态与 `/download` 共用 `ANDROID_*`、`IOS_*` 配置。
+
 ### 后端：上线必须调整的安全配置
 
 在服务器的 `backend/.env` 中核对：

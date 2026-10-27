@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir, readFile } from 'node:fs/promises';
+import { bannedIn } from './copy-words';
 
 // Runtime copy guard for the user pages (handoff_ui.md 4.6, round 1). It runs against the real API
 // with the payment gateway on, which is what production looks like, and reads what a customer
@@ -13,26 +14,6 @@ type Fixture = {
 };
 type FixtureOrder = { id: string; trade_no: string; status: string };
 
-// The same vocabulary as scripts/copy-guard.test.mjs; the source scan explains each word.
-const banned = [
-  '开发',
-  '联调',
-  '测试',
-  '模拟',
-  '演示',
-  '尚未接入',
-  '待接入',
-  '后端',
-  '前端',
-  '数据库',
-  '快照',
-  '服务端',
-  '计量',
-  '心跳',
-  '联系管理员',
-  '管理员配置',
-];
-const allowed = ['未受信任的开发者', '信任该开发者'];
 const removed = [
   '推荐有礼 · 我的推荐码',
   '线路信息，与管理员配置同步',
@@ -81,9 +62,8 @@ async function visibleText(page: Page) {
 
 async function check(page: Page, path: string, title: RegExp, screenshot?: string) {
   await page.goto(path);
-  let text = await visibleText(page);
-  for (const phrase of allowed) text = text.replaceAll(phrase, '');
-  const words = banned.filter((word) => text.includes(word));
+  const text = await visibleText(page);
+  const words = bannedIn(text);
   expect(words, `${path} shows ${words.join(', ')}`).toEqual([]);
   for (const phrase of removed) expect(text, path).not.toContain(phrase);
   await expect(page).toHaveTitle(title);
