@@ -203,12 +203,12 @@ test('payment method and coupon rules in the dialog; a session that ends closes 
 test('the test price is flagged for listed accounts only', async ({ page, browser }) => {
   await login(page, fixture.emails.tester);
   await openDialog(page, '轻量计划');
-  await expect(page.getByText('测试价：当前账户按测试价结算，会产生真实扣款。')).toBeVisible();
+  await expect(page.getByText('专属价：本账户按专属价格结算，付款将实际扣款。')).toBeVisible();
   await expect(page.getByLabel('应付金额')).toHaveText('¥0.01');
   const other = await browser.newPage();
   await login(other, fixture.emails.bob);
   await openDialog(other, '轻量计划');
-  await expect(other.getByText('测试价')).toHaveCount(0);
+  await expect(other.getByText('专属价')).toHaveCount(0);
   await other.close();
 });
 

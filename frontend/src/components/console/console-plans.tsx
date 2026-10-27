@@ -212,7 +212,7 @@ function PlanRow({
           <>
             {money(p.yearly.price_cents)}（{foldText(p.yearly.discount_percent)}，
             {p.yearly_discount_source === 'plan' ? '单独设置' : '跟随全局'}）/{' '}
-            {p.yearly.duration_days} 天 / {trafficLabel(p.yearly)}
+            {p.yearly.duration_days} 天 / {trafficLabel(p.yearly, 'GiB')}
             <Text size="xs" c="dimmed">
               原价 {money(p.yearly.original_cents)}，折合 {money(p.yearly.monthly_equivalent_cents)}{' '}
               / 月

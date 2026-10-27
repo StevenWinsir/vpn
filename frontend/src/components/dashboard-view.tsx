@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useCallback, useState } from 'react';
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Divider,
@@ -21,7 +22,6 @@ import { date, gib, type Dashboard, type DeviceStatus, type UsageHistory } from 
 import { formatBytes, isDeviceStatus, isUsageHistory } from '@/lib/dashboard';
 import { usePolling } from '@/lib/use-polling';
 import { DevicesCard } from './devices-card';
-import { ReferralCard } from './referral-card';
 import { UsageChart } from './usage-chart';
 
 export function DashboardView({ refreshMs }: { refreshMs: number }) {
@@ -82,7 +82,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
             {data ? `${data.user.name}，欢迎回来` : '账户总览'}
           </Title>
           <Text c="dimmed" size="sm" mt={8}>
-            你的订阅、流量与账户动态，都在这里。
+            订阅状态、流量使用与在线设备，一目了然。
           </Text>
         </div>
         <Button
@@ -92,7 +92,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
           loading={syncing}
           onClick={refresh}
         >
-          同步数据
+          刷新
         </Button>
       </Group>
       {error ? (
@@ -120,6 +120,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
                 </Text>
                 {sub?.is_test ? (
                   <Badge color="teal" variant="light">
+                    {/* copy-guard-next-line: dev-only (test subscriptions exist only outside production) */}
                     测试套餐
                   </Badge>
                 ) : null}
@@ -130,7 +131,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
               <Text size="sm" className="muted" mt={10}>
                 {sub
                   ? `${data.entitlement_active ? '有效期至' : '权益已失效 · 到期时间'} ${date(sub.expires_at)}`
-                  : '选择适合你的计划，体验套餐开通与订单流程。'}
+                  : '选择适合你的套餐，立即开始安全连接。'}
               </Text>
             </div>
             <Button
@@ -147,27 +148,36 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
             <Metric
               label="套餐权益"
               value={data.entitlement_active ? '已开通' : '未生效'}
-              detail={sub?.is_test ? '测试权益 · 不等于代理已连接' : '有效期和额度以订阅快照为准'}
+              detail={
+                data.entitlement_active
+                  ? '有效期内可正常连接使用'
+                  : sub
+                    ? '套餐已到期或流量已用尽，续费后即可恢复'
+                    : '开通套餐后即可连接使用'
+              }
             />
             <Metric
-              label="剩余计费额度"
-              value={`${gib(Math.max(0, limit - usedBytes))} GiB`}
+              label="剩余流量"
+              value={`${gib(Math.max(0, limit - usedBytes))} GB`}
               detail={
                 resetsAt
-                  ? `本周期剩余 · ${date(resetsAt)} 重置为 ${gib(cycleBytes)} GiB`
+                  ? `本周期剩余 · ${date(resetsAt)} 重置为 ${gib(cycleBytes)} GB`
                   : data.metering_connected
-                    ? '按所连线路倍率折算后扣减'
-                    : '近 24 小时暂无计量数据'
+                    ? '按所连线路倍率计费'
+                    : '近 24 小时暂无使用记录'
               }
               bonus={data.bonus_bytes ?? 0}
             />
             <Metric
               label="累计订单"
               value={`${data.order_count}`}
-              detail="订单来自当前账户的真实数据库记录"
+              detail={
+                <Anchor component={Link} href="/orders" size="xs">
+                  查看全部订单
+                </Anchor>
+              }
             />
           </SimpleGrid>
-          <ReferralCard refreshMs={refreshMs} />
           <SimpleGrid cols={{ base: 1, lg: 2 }} spacing={24}>
             <Paper withBorder p={26} radius="lg">
               <Group justify="space-between">
@@ -175,7 +185,7 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
                   流量概览
                 </Title>
                 <Badge variant="light" color="gray">
-                  {data.metering_connected ? '24 小时内有计量' : '24 小时内无计量'}
+                  {data.metering_connected ? '近 24 小时有使用' : '近 24 小时无使用'}
                 </Badge>
               </Group>
               <Group justify="center" gap={35} my={22}>
@@ -196,10 +206,10 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
                 <Stack gap={15}>
                   <div>
                     <Text size="xs" c="dimmed">
-                      已用计费流量
+                      已用流量
                     </Text>
                     <Text size="lg" fw={600}>
-                      {gib(usedBytes)} GiB
+                      {gib(usedBytes)} GB
                     </Text>
                   </div>
                   <div>
@@ -207,14 +217,14 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
                       {cycleBytes ? '本周期额度' : '套餐总额度'}
                     </Text>
                     <Text size="lg" fw={600}>
-                      {gib(limit)} GiB
+                      {gib(limit)} GB
                     </Text>
                   </div>
                 </Stack>
               </Group>
               <Divider />
               <Text size="xs" c="dimmed" mt="lg" lh={1.8}>
-                实际上下行流量 × 所连线路的倍率 = 扣除的计费流量。
+                计费流量 = 实际上传与下载流量 × 线路倍率。
                 <Link href="/nodes">查看各线路倍率</Link>
               </Text>
             </Paper>
@@ -226,19 +236,8 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
             />
           </SimpleGrid>
           <UsageChart history={history} error={historyError} />
-          <Text size="xs" c="dimmed" ta="right">
-            页面可见时每 {refreshMs / 1000} 秒自动刷新，返回页面时也会刷新。
-          </Text>
-          {sub?.is_test ? (
-            <Alert color="gray" title="测试套餐">
-              测试订单不会扣款；套餐权益不代表客户端已连接，连接状态以“连接与客户端”为准。
-            </Alert>
-          ) : null}
         </Stack>
       )}
-      <div className="page-footer">
-        统计口径：1 GiB = 1,073,741,824 字节。套餐权限最终由后端校验。
-      </div>
     </div>
   );
 }
@@ -250,7 +249,7 @@ function Metric({
 }: {
   label: string;
   value: string;
-  detail: string;
+  detail: React.ReactNode;
   bonus?: number;
 }) {
   return (

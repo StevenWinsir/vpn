@@ -114,21 +114,21 @@ export function PayResultView() {
     view = {
       icon: <IconAlertTriangle size={42} stroke={1.4} color="var(--mantine-color-red-6)" />,
       title: '支付未成功',
-      body: '支付网关报告这笔订单未成功。需要时请重新购买。',
+      body: '这笔订单没有支付成功，未产生扣款。需要时请重新购买。',
       tone: 'red',
     };
   else if (status === 'review')
     view = {
       icon: <IconAlertTriangle size={42} stroke={1.4} color="var(--mantine-color-orange-6)" />,
       title: '待人工核对',
-      body: '付款需要人工核对后才能开通。请联系客服并提供下方的订单号。',
+      body: '付款需要人工核对后才能开通，请联系客服并提供下方的订单号。',
       tone: 'orange',
     };
   else if (gatewayPaid)
     view = {
       icon: <Loader size={34} color="teal" aria-label="正在确认到账" />,
       title: '支付已完成，正在确认到账',
-      body: '正在等待支付网关通知，通常几秒内完成。请不要重复付款。',
+      body: '正在确认付款结果，通常几秒内完成，请不要重复付款。',
       tone: 'teal',
     };
   else

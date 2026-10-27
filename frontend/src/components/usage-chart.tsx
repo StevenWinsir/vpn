@@ -163,8 +163,7 @@ export function UsageChart({ history, error }: { history: UsageHistory | null; e
         </>
       )}
       <Text size="xs" c="dimmed" mt="md" lh={1.7}>
-        以服务端当前时间为基线，每 5 分钟汇总一次；只保留最近 24
-        小时的记录。计费流量按线路倍率折算。
+        数据每 5 分钟更新一次，保留最近 24 小时。计费流量按线路倍率计算。
       </Text>
     </Paper>
   );

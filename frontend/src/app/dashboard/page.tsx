@@ -4,6 +4,8 @@ import { dashboardRefreshMs } from '@/lib/dashboard';
 
 export const dynamic = 'force-dynamic';
 
+export const metadata = { title: '总览' };
+
 export default function DashboardPage() {
   return (
     <RequireAuth>

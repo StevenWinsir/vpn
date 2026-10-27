@@ -50,7 +50,7 @@ async function register(page: Page, email: string, referral?: string) {
   await page.getByLabel('邮箱验证码').fill(await mailCode(email));
   await page.locator('input[type="password"]').fill(`Compat-${randomUUID()}`);
   if (referral !== undefined) await page.getByLabel('推荐码（选填）').fill(referral);
-  await page.getByRole('button', { name: '注册并进入工作台' }).click();
+  await page.getByRole('button', { name: '创建账户' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
 }
 

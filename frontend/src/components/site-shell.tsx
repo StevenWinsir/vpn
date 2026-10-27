@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import {
   AppShell,
   Avatar,
-  Badge,
   Burger,
   Button,
   Group,
@@ -62,8 +61,7 @@ export function Logo() {
     </Link>
   );
 }
-// One /meta read serves the note and the programme entry, which shows only when the backend
-// announces it (older backends do not).
+// The referral entry shows only when /meta announces the programme (older backends do not).
 function Sidebar({
   admin,
   path,
@@ -86,7 +84,7 @@ function Sidebar({
     <>
       <Stack gap={7}>
         <Text c="dimmed" size="xs" fw={600} px="sm" mb="sm">
-          个人工作台
+          用户中心
         </Text>
         {navigation.map(({ href, label, icon: Icon }) => (
           <Link
@@ -101,14 +99,6 @@ function Sidebar({
         ))}
       </Stack>
       <div className="sidebar-note">
-        <Badge variant="light" color="gray" mb="sm">
-          开发联调版
-        </Badge>
-        <Text size="xs" c="dimmed" lh={1.8}>
-          {meta?.payment_enabled
-            ? '已接入微信支付、支付宝支付。节点与客户端流量正在联调，节点侧强制配额尚未接入。'
-            : '节点与客户端流量正在联调。真实支付和节点侧强制配额尚未接入。'}
-        </Text>
         <Link href="/" className="sidebar-home">
           返回首页 <IconArrowUpRight size={14} />
         </Link>

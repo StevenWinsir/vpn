@@ -41,7 +41,7 @@ type PublicPlan = {
 const GiB = 1024 ** 3;
 const cents = (c: number) => `¥${(c / 100).toFixed(2)}`;
 const gibOf = (bytes: number) =>
-  `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(bytes / GiB)} GiB`;
+  `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(bytes / GiB)} GB`;
 
 async function shot(page: Page, name: string) {
   const dir = `${process.env.PAYMENT_OUTPUTS ?? 'test-results'}/screens`;
@@ -351,7 +351,7 @@ test('S3-04 yearly payment through the gateway, then the result page, orders and
   await page.getByRole('button', { name: `购买 ${monthName}（年付）`, exact: true }).click();
   await expect(dialog(page)).toBeVisible();
   await expect(dialog(page).getByText(`购买 ${monthName}（年付）`)).toBeVisible();
-  await expect(dialog(page).getByText('每 30 天 10 GiB · 365 天')).toBeVisible();
+  await expect(dialog(page).getByText('每 30 天 10 GB · 365 天')).toBeVisible();
   await expect(dialog(page).getByText('原价（12 个月）')).toBeVisible();
   await expect(dialog(page).getByLabel('原价')).toHaveText('¥300.00');
   await expect(dialog(page).getByLabel('年付优惠')).toHaveText('-¥30.00');
@@ -550,7 +550,7 @@ test('S3-09 the test-purchase dialog offers yearly and sends the cycle only for 
   await page.getByRole('button', { name: `测试购买 ${monthName}（年付）`, exact: true }).click();
   await expect(dialog(page).getByText('确认测试购买（年付）')).toBeVisible();
   await expect(dialog(page).getByText(`${monthName}（年付）`)).toBeVisible();
-  await expect(dialog(page).getByText('每 30 天 10 GiB · 365 天')).toBeVisible();
+  await expect(dialog(page).getByText('每 30 天 10 GB · 365 天')).toBeVisible();
   await expect(dialog(page).getByLabel('演示金额')).toHaveText('¥270.00');
   await dialog(page).getByRole('button', { name: '确认模拟开通' }).click();
   await expect(dialog(page).getByText('测试桩：未开通')).toBeVisible();

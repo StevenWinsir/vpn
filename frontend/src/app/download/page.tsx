@@ -4,6 +4,8 @@ import { androidDownload, iosDownload } from '@/lib/downloads';
 // Read the release facts on every request: a new APK needs a .env edit and a restart, not a rebuild.
 export const dynamic = 'force-dynamic';
 
+export const metadata = { title: '下载客户端' };
+
 export default function DownloadPage() {
   return <DownloadView android={androidDownload(process.env)} ios={iosDownload(process.env)} />;
 }

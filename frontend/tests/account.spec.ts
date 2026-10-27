@@ -107,7 +107,7 @@ test('changing the password: checks, a wrong current password, success keeps thi
 
   // Local checks use the server's byte rules and never reach the server.
   await fillPasswordForm(page, fixture.password, 'short');
-  await expect(page.getByText('新密码需要 10–72 字节')).toBeVisible();
+  await expect(page.getByText('新密码需要 10–72 位')).toBeVisible();
   await expect(submitChange(page)).toBeDisabled();
   await fillPasswordForm(page, fixture.password, next, next + 'x');
   await expect(page.getByText('两次输入的新密码不一致').first()).toBeVisible();
@@ -119,7 +119,7 @@ test('changing the password: checks, a wrong current password, success keeps thi
   await fillPasswordForm(page, fixture.password, '密'.repeat(24));
   await expect(submitChange(page)).toBeEnabled();
   await fillPasswordForm(page, fixture.password, '密'.repeat(25));
-  await expect(page.getByText('当前 75 字节')).toBeVisible();
+  await expect(page.getByText('当前 75 位')).toBeVisible();
 
   // A wrong current password is refused by the server and changes nothing.
   await fillPasswordForm(page, 'not-the-current-password', next);
@@ -251,5 +251,5 @@ test('an administrator account cannot delete itself on the website', async ({ pa
   await fillPasswordForm(page, fixture.password, 'fifteen-bytes-ok');
   await expect(submitChange(page)).toBeEnabled();
   await fillPasswordForm(page, fixture.password, 'fifteen-bytes-x');
-  await expect(page.getByText('新密码需要 16–72 字节')).toBeVisible();
+  await expect(page.getByText('新密码需要 16–72 位')).toBeVisible();
 });

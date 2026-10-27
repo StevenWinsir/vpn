@@ -17,7 +17,7 @@ import { IconArrowRight, IconCircleCheck, IconMailCheck } from '@tabler/icons-re
 import { api, APIError, message } from '@/lib/api';
 import { utf8Bytes, type ForgotPasswordReceipt, type ResetRules } from '@/lib/types';
 import { useMeta } from '@/lib/use-meta';
-import { AuthLayout, Footnote } from './auth-form';
+import { AuthLayout } from './auth-form';
 import { useAuth } from './providers';
 
 const remaining = (until: number, now: number) => Math.max(0, Math.ceil((until - now) / 1000));
@@ -123,7 +123,7 @@ export function ForgotPasswordForm() {
       </Text>
       {unavailable ? (
         <Alert color="gray" title="邮件找回暂不可用" role="status">
-          当前服务未开启邮件找回，请稍后再试或联系管理员。
+          暂时无法通过邮件找回密码，请稍后再试或联系客服。
         </Alert>
       ) : (
         <form onSubmit={submit} noValidate>
@@ -163,7 +163,6 @@ export function ForgotPasswordForm() {
         </form>
       )}
       {backToLogin}
-      <Footnote />
     </AuthLayout>
   );
 }
@@ -252,7 +251,7 @@ export function ResetPasswordForm() {
     const problems: Fields = {};
     const bytes = utf8Bytes(password);
     if (bytes < rules.password_min_bytes || bytes > rules.password_max_bytes)
-      problems.password = `密码需要 ${rules.password_min_bytes}–${rules.password_max_bytes} 字节（当前 ${bytes} 字节）`;
+      problems.password = `密码需要 ${rules.password_min_bytes}–${rules.password_max_bytes} 位（当前 ${bytes} 位）`;
     if (confirmation !== password) problems.confirmation = '两次输入的新密码不一致';
     setFields(problems);
     if (Object.keys(problems).length) return;
@@ -360,8 +359,8 @@ export function ResetPasswordForm() {
           ) : null}
           <PasswordInput
             label="新密码"
-            placeholder={`${rules?.password_min_bytes}–${rules?.password_max_bytes} 字节`}
-            description="中文等字符每个占 3 字节；密码不会被裁剪或去除空格，且不能与当前密码相同。"
+            placeholder={`${rules?.password_min_bytes}–${rules?.password_max_bytes} 位`}
+            description="中文等字符每个计 3 位；空格同样计入密码。新密码不能与当前密码相同。"
             value={password}
             onChange={(e) => {
               setPassword(e.currentTarget.value);
@@ -408,7 +407,6 @@ export function ResetPasswordForm() {
       </Text>
       {body}
       {phase === 'done' ? null : backToLogin}
-      <Footnote />
     </AuthLayout>
   );
 }

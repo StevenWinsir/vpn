@@ -40,7 +40,7 @@ export function DownloadView({
         <div>
           <Title order={1}>下载客户端</Title>
           <Text c="dimmed" mt="xs">
-            登录网站上注册的账号即可使用；套餐、线路与流量以账户为准，客户端只负责连接。
+            使用网站账户登录即可连接，套餐、线路与流量在各设备间实时同步。
           </Text>
         </div>
 

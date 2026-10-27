@@ -18,13 +18,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import {
-  IconArrowRight,
-  IconRefresh,
-  IconSearch,
-  IconServer2,
-  IconShieldCheck,
-} from '@tabler/icons-react';
+import { IconArrowRight, IconRefresh, IconSearch, IconServer2 } from '@tabler/icons-react';
 import { api, APIError, message } from '@/lib/api';
 import { filterNodes, nodeRate } from '@/lib/node-list';
 import { date, type NodeCatalog, type PublicNode } from '@/lib/types';
@@ -123,7 +117,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
             节点列表
           </Title>
           <Text c="dimmed" size="sm" mt={8}>
-            查看当前套餐可用的线路（节点组）与流量倍率，找到适合你的连接。
+            查看当前套餐可用的线路与流量倍率，选择适合你的连接。
           </Text>
         </div>
         <Button
@@ -136,14 +130,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
         </Button>
       </Group>
       <Stack gap={24}>
-        <Alert color="teal" icon={<IconShieldCheck size={20} />} title="线路信息，与管理员配置同步">
-          这里只展示线路名称、地区、线路类型和计费倍率，不提供连接参数或配置下载。
-          每条线路由一组服务器提供，客户端连接时会自动分配组内一台可用服务器；线路满载时连接会被拒绝，可稍后再试或选择其他线路。
-        </Alert>
-        <Group justify="space-between" gap="xs">
-          <Text size="xs" c="dimmed">
-            页面可见时每 {refreshMs / 1000} 秒同步，返回页面时也会刷新。
-          </Text>
+        <Group justify="flex-end" gap="xs">
           <Text size="xs" c="dimmed" role="status" aria-live="polite">
             {syncing
               ? '正在同步节点…'
@@ -158,7 +145,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
           <Alert color="red" title="节点同步失败" role="alert">
             <Text size="sm">{error}</Text>
             <Text size="sm" mt={6}>
-              已收起旧列表，避免展示过时信息。请点击“同步节点”重试。
+              请点击“同步节点”重试。
             </Text>
           </Alert>
         ) : inactive ? (
@@ -168,7 +155,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
                 套餐权益不可用
               </Title>
               <Text c="dimmed" size="sm">
-                你尚未开通有效套餐、套餐已到期或流量已用尽。恢复有效权益后才能查看节点。
+                你尚未开通套餐，或套餐已到期、流量已用尽。开通或续费后即可查看可用线路。
               </Text>
               <Button component={Link} href="/plans" rightSection={<IconArrowRight size={16} />}>
                 查看套餐
@@ -217,6 +204,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
                     显示 {visible.length} / {nodes.length} 个节点
                   </Text>
                   <Text size="xs" c="dimmed">
+                    {/* copy-guard-next-line: dev-only (test subscriptions exist only outside production) */}
                     {catalog.is_test ? '测试套餐 · ' : ''}有效期至 {date(catalog.expires_at)}
                   </Text>
                 </Group>
@@ -229,7 +217,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
                   暂无可见节点
                 </Title>
                 <Text c="dimmed" size="sm" mt="sm">
-                  当前套餐没有已启用且允许访问的线路，请联系管理员或稍后同步。
+                  当前套餐暂无可用线路，请稍后同步或联系客服。
                 </Text>
               </Paper>
             ) : visible.length === 0 ? (
@@ -261,7 +249,7 @@ function NodeList({ refreshMs }: { refreshMs: number }) {
         )}
       </Stack>
       <div className="page-footer">
-        倍率由管理员配置：实际上下行合计流量 × 倍率 = 扣除的套餐流量。节点列表不会建立代理连接。
+        计费流量 = 实际上传与下载流量 × 线路倍率。请在客户端中选择线路并连接。
       </div>
     </div>
   );
@@ -322,7 +310,7 @@ function NodeCard({ node }: { node: PublicNode }) {
           </Text>
         </Group>
         <Text size="xs" c="dimmed" lh={1.8}>
-          实际使用 1 GiB，扣除 {rate} GiB 套餐流量（上传 + 下载）。
+          实际使用 1 GB，扣除 {rate} GB 套餐流量（上传 + 下载）。
         </Text>
       </Stack>
     </Paper>

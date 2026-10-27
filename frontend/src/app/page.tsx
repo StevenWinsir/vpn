@@ -13,9 +13,9 @@ export default function Home() {
             <span>尽在掌握。</span>
           </h1>
           <p>
-            一个清晰、有序的工作台。
+            稳定的线路，透明的计费。
             <br />
-            管理你的账户、订阅与流量，让连接回归简单。
+            一个账户，在手机与电脑上随时安全连接。
           </p>
           <div className="hero-actions">
             <StartLink />
@@ -23,7 +23,6 @@ export default function Home() {
               查看套餐
             </Link>
           </div>
-          <div className="hero-disclaimer">开发联调版 · 支持模拟购买 · 尚未提供实际代理服务</div>
         </div>
         <div className="hero-side">
           <div className="connection-symbol">
@@ -31,9 +30,9 @@ export default function Home() {
           </div>
           <div className="hero-side-heading">连接，自有边界。</div>
           <p>
-            从登录到订阅
+            线路、流量与订阅
             <br />
-            每一步都清晰可见
+            一目了然
           </p>
           <div className="hero-side-bottom">
             <span>账户</span>
@@ -46,7 +45,7 @@ export default function Home() {
         <div>
           <IconShieldCheck size={26} stroke={1.5} />
           <h2>账户安全</h2>
-          <p>独立身份认证，可撤销登录会话。</p>
+          <p>邮箱验证注册，登录记录可查，改密即退出其他设备。</p>
         </div>
         <div>
           <IconDeviceLaptop size={26} stroke={1.5} />
@@ -56,12 +55,12 @@ export default function Home() {
         <div>
           <IconReceipt size={26} stroke={1.5} />
           <h2>订阅透明</h2>
-          <p>从套餐选择到测试开通，订单全程可查。</p>
+          <p>支持微信与支付宝付款，订单记录随时可查。</p>
         </div>
       </section>
       <footer className="landing-footer">
         <span>{appName}</span>
-        <span>网站账户服务已搭建；真实支付和各平台客户端待接入。</span>
+        <span>© {new Date().getFullYear()} 保留所有权利。</span>
       </footer>
     </div>
   );

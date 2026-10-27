@@ -305,6 +305,7 @@ export const orderStatusLabel: Record<string, { text: string; color: string }> =
   expired: { text: '已超时', color: 'gray' },
   failed: { text: '支付失败', color: 'red' },
   review: { text: '待人工核对', color: 'orange' },
+  // copy-guard-next-line: dev-only (test purchases exist only outside production)
   paid_test: { text: '测试成功', color: 'teal' },
 };
 export const payTypeLabel: Record<string, string> = { wxpay: '微信支付', alipay: '支付宝' };

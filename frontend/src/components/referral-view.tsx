@@ -53,7 +53,7 @@ export function ReferralView() {
         <Skeleton height={220} radius="lg" />
       ) : meta?.referral_enabled === undefined ? (
         // A backend from before the programme answers /meta without the flag.
-        <Alert color="gray" title="功能暂不可用" role="status">
+        <Alert color="gray" title="活动暂未开放" role="status">
           推荐有礼暂时不可用，请稍后再来看看。
         </Alert>
       ) : (
@@ -120,8 +120,8 @@ function ReferralBody() {
       ) : (
         <>
           {!summary.enabled ? (
-            <Alert color="gray" title="推荐功能暂时关闭" role="status">
-              暂停期间新注册不再绑定推荐关系、奖励也不会发放；重新开启后会继续处理。
+            <Alert color="gray" title="推荐活动暂停中" role="status">
+              暂停期间新注册的好友不计入推荐，待发放的奖励会在活动恢复后继续处理。
             </Alert>
           ) : null}
           {!summary.has_active_plan ? (

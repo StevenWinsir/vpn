@@ -7,7 +7,6 @@ import {
   Button,
   Divider,
   Group,
-  List,
   Modal,
   Paper,
   SimpleGrid,
@@ -178,8 +177,8 @@ export function PlansView() {
       setChoice(null);
       requestKey.current = null;
       notifications.show({
-        title: '测试套餐已开通',
-        message: '订单已保存，未发生真实扣款。',
+        title: '测试套餐已开通', // copy-guard: dev-only
+        message: '未发生扣款。',
         color: 'teal',
       });
       router.push('/dashboard');
@@ -196,7 +195,7 @@ export function PlansView() {
         找到适合你的连接计划
       </Title>
       <Text c="dimmed" size="sm" mt={10} mb={28} className="page-subtitle">
-        清晰的额度、明确的权益。选择套餐，体验完整的订阅流程。
+        清晰的额度，明确的权益。月付灵活，年付更划算，付款后立即开通。
       </Text>
       {error ? (
         <Alert color="red" title="套餐加载失败" mb="lg">
@@ -208,20 +207,15 @@ export function PlansView() {
           </Stack>
         </Alert>
       ) : null}
-      {meta && payOn ? (
-        <Alert mb={28} color="blue" title="支持微信支付与支付宝支付">
-          选择套餐后可使用微信或支付宝扫码付款，并可输入优惠码。付款成功后套餐自动开通或续期。
-        </Alert>
-      ) : meta ? (
-        <Alert
-          mb={28}
-          color={meta.test_purchase_enabled ? 'yellow' : 'gray'}
-          title={meta.test_purchase_enabled ? '当前为测试购买模式' : '测试购买已关闭'}
-        >
-          {meta.test_purchase_enabled
-            ? '所有价格仅用于流程演示。模拟开通不会产生扣款，也不提供实际代理服务。'
-            : '后端已禁用模拟购买；真实支付通道尚未接入。'}
-        </Alert>
+      {meta && !payOn ? (
+        meta.test_purchase_enabled ? (
+          // copy-guard: dev-only (test purchase never runs in production)
+          <Alert mb={28} color="yellow" title="当前为测试环境，购买不会扣款" />
+        ) : (
+          <Alert mb={28} color="gray" title="在线购买暂未开放">
+            请稍后再来，或联系客服了解开通方式。
+          </Alert>
+        )
       ) : null}
       {hasYearly && !loading ? (
         <>
@@ -330,7 +324,7 @@ export function PlansView() {
                     </Group>
                   ) : null}
                   <Text size="xs" c="dimmed">
-                    {payOn ? '人民币 · 以结算报价为准' : '测试定价 · 人民币'}
+                    {payOn ? '人民币 · 以结算报价为准' : '人民币'}
                   </Text>
                   <Divider my={24} />
                   {tier ? (
@@ -359,24 +353,28 @@ export function PlansView() {
                       onClick={() => choose(plan)}
                       rightSection={<IconArrowRight size={16} />}
                       aria-label={
-                        payOn ? label(st === 'renew' ? '续费' : '购买') : label('测试购买')
+                        payOn ? label(st === 'renew' ? '续费' : '购买') : label('测试购买') // copy-guard: dev-only
                       }
                     >
-                      {payOn
-                        ? !user
-                          ? '登录后购买'
-                          : st === 'renew'
-                            ? yearly
-                              ? '续费为年付'
-                              : '续费'
-                            : yearly
-                              ? '购买年付'
-                              : '立即购买'
-                        : user
-                          ? yearly
-                            ? '测试购买年付'
-                            : '测试购买'
-                          : '登录后测试购买'}
+                      {
+                        payOn
+                          ? !user
+                            ? '登录后购买'
+                            : st === 'renew'
+                              ? yearly
+                                ? '续费为年付'
+                                : '续费'
+                              : yearly
+                                ? '购买年付'
+                                : '立即购买'
+                          : !meta?.test_purchase_enabled
+                            ? '暂未开放'
+                            : user // copy-guard: dev-only (test purchase never runs in production)
+                              ? yearly
+                                ? '测试购买年付' // copy-guard: dev-only
+                                : '测试购买' // copy-guard: dev-only
+                              : '登录后测试购买' /* copy-guard: dev-only */
+                      }
                     </Button>
                   ) : (
                     <Button
@@ -410,9 +408,9 @@ export function PlansView() {
               流量按线路倍率扣减
             </Text>
             <Text c="dimmed" size="xs" lh={1.9}>
-              普通线路按 0.5 倍、专线按 1 倍计费。例如实际使用 10 GiB，分别计费 5 GiB 和 10
-              GiB。具体倍率以节点配置为准。年付套餐从开通起每 30
-              天把流量重置为一个月的额度，不论上个周期是否用完；周期内用完需等到下次刷新。
+              计费流量 = 实际上传与下载流量 ×
+              线路倍率，不同线路的倍率可在节点列表中查看。年付套餐从开通起每 30
+              天把流量重置为一个月的额度，上个周期未用完的部分不累计；周期内用完需等到下次重置。
             </Text>
           </div>
           <div>
@@ -444,6 +442,7 @@ export function PlansView() {
         onClose={() => {
           if (!busy) setChoice(null);
         }}
+        // copy-guard: dev-only (this dialog exists only while test purchase is enabled)
         title={selectedCycle === 'yearly' ? '确认测试购买（年付）' : '确认测试购买'}
         centered
         radius="lg"
@@ -453,7 +452,8 @@ export function PlansView() {
       >
         {selected && selectedTier ? (
           <Stack gap="lg">
-            <Alert color="yellow">这是一笔模拟订单。不会扣款，也不会建立 VPN 连接。</Alert>
+            {/* copy-guard-next-line: dev-only (test purchase dialog) */}
+            <Alert color="yellow">当前为测试环境，购买不会扣款。</Alert>
             <div>
               <Text size="lg" fw={650}>
                 {selected.name}
@@ -464,28 +464,24 @@ export function PlansView() {
               </Text>
             </div>
             <Group justify="space-between">
-              <Text size="sm">{selectedCycle === 'yearly' ? '演示金额（年付）' : '演示金额'}</Text>
+              <Text size="sm">{selectedCycle === 'yearly' ? '金额（年付）' : '金额'}</Text>
+              {/* copy-guard: dev-only (accessible name kept for the end-to-end tests) */}
               <Text size="xl" fw={650} aria-label="演示金额">
                 {money(selectedTier.price_cents)}
               </Text>
             </Group>
-            <List size="xs" c="dimmed" spacing="xs">
-              <List.Item>测试订单将保存到数据库。</List.Item>
-              <List.Item>重试同一请求不会重复增加有效期或额度。</List.Item>
-              <List.Item>有效期内仅支持续购相同测试套餐。</List.Item>
-            </List>
             {purchaseError ? (
               <Alert color="red" title="开通未完成" role="alert">
                 {purchaseError}
               </Alert>
             ) : null}
             <Button size="md" loading={busy} onClick={() => void purchase()}>
+              {/* copy-guard-next-line: dev-only */}
               确认模拟开通
             </Button>
           </Stack>
         ) : null}
       </Modal>
-      <div className="page-footer">价格和权限由后端提供，浏览器不能自行指定订单金额。</div>
     </div>
   );
 }

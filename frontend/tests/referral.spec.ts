@@ -103,7 +103,7 @@ async function register(
   await page.getByLabel('邮箱验证码').fill(await mailCode(email));
   await page.locator('input[type="password"]').fill(registrationPassword);
   if (field !== null) await page.getByLabel('推荐码（选填）').fill(field);
-  await page.getByRole('button', { name: '注册并进入工作台' }).click();
+  await page.getByRole('button', { name: '创建账户' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
 }
 // The body the browser sent to POST /auth/register, to see exactly what the field contributes.
@@ -289,12 +289,11 @@ test('R2-01 the example of the plan: B pays 29.00 yuan and A gets 29 GB', async 
   expect((await subscriptionOf(fixture.emails.refa)).traffic_limit_bytes).toBe(39 * GiB);
   await page.goto('/dashboard');
   await expect(page.getByText('含推荐奖励 29 GB')).toBeVisible();
-  await expect(page.getByText('39 GiB', { exact: true }).first()).toBeVisible();
-  const card = page.getByTestId('referral-card');
-  await expect(card).toContainText(aCode);
-  await expect(card).toContainText('29 GB');
+  await expect(page.getByText('39 GB', { exact: true }).first()).toBeVisible();
+  // The overview carries no referral card any more (handoff_ui.md R2); the sidebar leads there.
+  await expect(page.getByTestId('referral-card')).toHaveCount(0);
   await shot(page, 'referral-dashboard-1440');
-  await card.getByRole('link', { name: '查看推荐详情' }).click();
+  await page.getByRole('link', { name: '推荐有礼', exact: true }).click();
   await expect(page).toHaveURL(/\/referral$/);
   await b.context.close();
 });
