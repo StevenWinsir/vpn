@@ -539,3 +539,9 @@
 - manifest 的 192/512 图标放在 public/icons（manifest 需要固定地址，Next 的 app 目录约定文件会被注入为页面 icon 链接）；其余图标按规划放在 src/app 根目录。
 - 支付按钮的微信绿、支付宝蓝为品牌色，两种主题保留；用量图上传/下载两色沿用 Mantine blue-4 / teal-6，暗色下可区分。
 - 暗色主题下的 Crisp 窗口外观不在本轮（第 4 轮）。
+
+CI 首轮（PR #82，4f82b81）两个失败，均与本轮代码无关，处理如下：
+- Backend / PostgreSQL / race：TestResetConcurrentSubmissions 报“no reset link in mail 密码已修改”。原因是测试辅助函数 forgot() 取邮箱中的最后一封邮件；而上一次重置产生的“密码已修改”通知与新的重置邮件在同一次投递中发出，邮件 worker（authmail RunOnce）对每封邮件并发发送，先后顺序不固定。该问题自认证第 3 轮（f0f704c）起存在。修复（仅测试代码）：forgot() 在本次新到的邮件中，按是否含重置链接选取最新一封。本地验证：临时日志确认该步骤一次投递带两封邮件；修复后 -race -count=40 全部通过，Reset/Password/Legacy 相关测试 -race -count=3 通过；旧写法在本机 120 次未复现错误顺序（本机较快，与 CI 负载不同），因此复现证据只有 CI 那一次。
+- Android client CI 的 release.R01-connect：同意首次 VPN 授权后未连上，界面显示 profile_changed（“线路配置已更新，请重新选择线路”），模拟器负载 7.47（2 vCPU，NOT settled）。近期运行中首次出现；本轮未改动 Android、Core 及发放凭证相关代码。处理：随本次推送重跑；若再次失败，单独排查授权弹窗期间的连接重试与凭证版本的时序问题，不并入 UI 轮次。
+- 同时合并了 main（含 #83：Android 计费验收 B04/B01 测试加固），与本轮文件无交集，合并无冲突。
+
