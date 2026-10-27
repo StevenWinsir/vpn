@@ -607,19 +607,25 @@ func (r *runner) nodeReported(ctx context.Context) {
 	r.record("B04-connect", status, fmt.Sprintf("connected through a grant on the agent's forwarder; metering source %s, rate %d permille", meteringSource(s), rate))
 
 	out, err := r.world.post(ctx, "reject_probe", map[string]string{})
+	// The node keeps billing this live session, so the ledger may grow meanwhile; the probe
+	// judges whether the refused report itself was applied (its sequence or its own units).
 	var probe struct {
-		Status int    `json:"status"`
-		Code   string `json:"code"`
-		Moved  bool   `json:"ledger_moved"`
+		Status        int    `json:"status"`
+		Code          string `json:"code"`
+		Billed        bool   `json:"report_billed"`
+		SequenceMoved bool   `json:"sequence_moved"`
+		DeltaUnits    int64  `json:"delta_units"`
+		RefusedUnits  int64  `json:"refused_units"`
 	}
 	if err != nil || json.Unmarshal(out, &probe) != nil {
 		r.record("B04-reject", "FAIL", fmt.Sprintf("reject probe: %v", err))
 	} else {
 		status = "FAIL"
-		if probe.Status == 409 && probe.Code == "metering_source_mismatch" && !probe.Moved {
+		if probe.Status == 409 && probe.Code == "metering_source_mismatch" && !probe.Billed {
 			status = "PASS"
 		}
-		r.record("B04-reject", status, fmt.Sprintf("a client report on this node-reported session -> %d %s; ledger moved %v", probe.Status, probe.Code, probe.Moved))
+		r.record("B04-reject", status, fmt.Sprintf("a client report on this node-reported session -> %d %s; report billed %v (sequence moved %v, ledger +%d of %d refused units)",
+			probe.Status, probe.Code, probe.Billed, probe.SequenceMoved, probe.DeltaUnits, probe.RefusedUnits))
 	}
 
 	up, down := int64(2<<20), int64(8<<20)
