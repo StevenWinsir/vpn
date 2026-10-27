@@ -7,7 +7,7 @@ type Item = { q: string; a: React.ReactNode };
 
 // Frequently asked questions (handoff_ui.md 8.2). The answers restate the rules of the plan page
 // and the checkout; nothing here promises more than they do (no refunds: there is no refund flow).
-function items(payment: string, supportEmail: string | null): Item[] {
+function items(payment: string, supportEmail: string | null, chat: boolean): Item[] {
   const list: Item[] = [
     {
       q: '流量是如何计算的？',
@@ -34,25 +34,34 @@ function items(payment: string, supportEmail: string | null): Item[] {
       a: '在登录页点击“忘记密码”，按提示通过注册邮箱设置新密码。设置成功后，其他设备上的登录会自动退出。',
     },
   ];
-  if (supportEmail)
+  // The online chat (handoff_ui.md 9) is offered on the signed-in user pages; the address is the
+  // operator's optional SITE_SUPPORT_EMAIL. With neither there is nothing to promise.
+  const mail = supportEmail ? <a href={`mailto:${supportEmail}`}>{supportEmail}</a> : null;
+  if (chat)
     list.push({
       q: '如何联系客服？',
       a: (
         <>
-          发送邮件至 <a href={`mailto:${supportEmail}`}>{supportEmail}</a>，我们会尽快回复。
+          登录后，点击用户中心页面右下角的“在线客服”按钮，即可与客服在线沟通。
+          {mail ? <>也可以发送邮件至 {mail}，我们会尽快回复。</> : null}
         </>
       ),
+    });
+  else if (mail)
+    list.push({
+      q: '如何联系客服？',
+      a: <>发送邮件至 {mail}，我们会尽快回复。</>,
     });
   return list;
 }
 
-export function HomeFaq({ supportEmail }: { supportEmail: string | null }) {
+export function HomeFaq({ supportEmail, chat }: { supportEmail: string | null; chat: boolean }) {
   const { meta } = useHomeState();
   const [open, setOpen] = useState<number | null>(0);
   const base = useId();
   return (
     <div className="home-faq" data-testid="home-faq">
-      {items(paymentMethodsText(meta), supportEmail).map(({ q, a }, index) => {
+      {items(paymentMethodsText(meta), supportEmail, chat).map(({ q, a }, index) => {
         const expanded = open === index;
         return (
           <div className="home-faq-item" key={q} data-open={expanded ? '' : undefined}>

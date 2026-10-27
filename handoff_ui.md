@@ -581,3 +581,57 @@ CI 首轮（PR #82，4f82b81）两个失败，均与本轮代码无关，处理�
 - 常见问题使用自写的展开组件（button + aria-expanded + region），未引入 Mantine Accordion，以减少首页脚本体积；同一时间只展开一条，默认展开第一条。
 - 预览卡片按钮为“选择套餐”，统一跳转 /plans（不直接打开购买弹窗）。
 - 首页头部按钮文字为“登录”“免费注册”，首屏与收尾区主按钮沿用“创建账户/登录账户”，已登录均为“进入用户中心”。
+
+
+### 第 4 轮：Crisp 在线客服与全站回归（2026-10-27，分支 worktree-ui-round4-crisp，PR 见合并记录）
+
+完成内容：
+- 运行时配置（第 9.6 节，D10）：新增 src/lib/support-config.ts，CRISP_WEBSITE_ID 未设置或为空用默认网站 83336a84-ae9f-4345-ba1f-583c0790002d，off（不区分大小写）关闭，合法 UUID（大小写均可，统一为小写）使用该网站，其他任何值视为关闭并在 Next 日志告警一次（每个不同的错误值一次，日志不含该值本身）。/api/runtime-config 在原有字段之外增加 support: { crispWebsiteId, email }（email 即 SITE_SUPPORT_EMAIL），客服配置无论如何都不会让该接口失败。api.ts 把“获取运行时配置”抽成共享的 runtimeConfig()（原 requestTimeout 复用它），客服直接用同一个缓存结果，不额外请求；浏览器端对 support 字段再校验一次，异常即视为关闭。
+- 加载器 src/lib/support.ts（第 9.2–9.5 节）：模块级单例，状态 idle → loading → ready / failed，整个页面生命周期只注入一个 script 元素（严格模式、客户端跳转、重复挂载都不会重复）。预加载条件：load 事件已触发、标签页可见、距首次进入用户页面 ≥ 4 秒、requestIdleCallback（最长 2 秒；不支持时定时器回退）；navigator.connection.saveData 为真时不预加载。点击入口时立即加载。注入前设置 $crisp 队列、CRISP_WEBSITE_ID、CRISP_RUNTIME_CONFIG = { locale: "zh" }（Crisp 文档：locale 为 ISO 639-1，简体中文即 zh）、CRISP_READY_TRIGGER；20 秒未就绪或 script error 置为 failed，迟到的就绪仍接受。失败重试：script 报错的移除后重新注入（重新请求）；仍在挂起的不再注入第二份（第二份可能与迟到的第一份同时执行），只重新等待 20 秒。所有调用经 $crisp 队列并 try/catch，最多一条 console.warn。
+- 所用 Crisp SDK（docs.crisp.chat Web SDK，开工时逐一核对）：["safe", true]；["do", "chat:hide" | "chat:show" | "chat:open" | "chat:close"]；["do", "session:reset"]；["set", "user:email", [email]]、["set", "user:nickname", [name]]；["on", "chat:opened" | "chat:closed" | "message:received", fn]；window.CRISP_WEBSITE_ID、CRISP_RUNTIME_CONFIG、CRISP_READY_TRIGGER。没有使用 CRISP_TOKEN_ID（跨设备会话延续），因为它需要每个用户一个不可猜测的令牌，否则知道令牌的人能读到别人的对话。
+- 自有入口（第 9.3、9.8 节，src/components/support-widget.tsx）：右下角 56×56（手机 52）的品牌色圆形按钮，可访问名称“在线客服”（有未读时为“在线客服，有新消息”并显示红点），z-index 90：低于 Mantine 弹窗、通知与手机端导航抽屉（≥100），购买弹窗、公告弹窗打开时位于遮罩之下。点击后加载中显示“正在连接客服…”；失败时弹出提示卡“客服连接较慢，请稍后再试”，附“重试”、客服邮箱（设置了 SITE_SUPPORT_EMAIL 时）与关闭按钮。Crisp 自带气泡始终隐藏：就绪即 chat:close + chat:hide，点击时 chat:show + chat:open，chat:closed 事件后再 hide；对话窗口打开期间自有按钮让位。用户页面底部加一个 40 像素（手机 72 像素）的占位，滚到底时最后一行内容不被按钮挡住。侧栏底部“返回首页”上方加“在线客服”项，效果与按钮相同（第 5.4 节）。新增令牌 --al-unread（两种主题各一），令牌块外无颜色字面量。
+- 显示范围（D9）：已登录、非管理员、非模拟登录，且在 /dashboard、/nodes、/plans、/orders、/referral、/download、/account、/pay/result 之一，且客服已启用。首页、认证页、404、/admin/** 一律不显示；在已加载的页面中客户端跳转到这些页面时立即 chat:close + chat:hide。
+- 身份与会话隔离（第 9.4 节）：加载时向 Crisp 设置邮箱与昵称（不传用户 ID、套餐、订单）。浏览器本地存储 asterlink-support-owner 记录本浏览器 Crisp 对话所属的账户：加载时若记录的是另一个账户（或存储不可读），先 session:reset 再设置新身份，因此即使上一个账户退出时 Crisp 还没加载（Crisp 的会话 Cookie 仍在），下一个账户也看不到上一个账户的对话。退出登录或会话被服务端结束时，若本页已注入 Crisp：立即 chat:close、session:reset、chat:hide，并把页面自己的下一次跳转（退出后去 /login、删除账号后去 /、会话结束后 RequireAuth 去 /login）变成整页加载，使第三方脚本不会留在登录页上，也不会带给下一个账户；若当时已经不在用户页面则立即整页刷新。
+- 首页常见问题“如何联系客服？”：客服启用时始终显示（“登录后，点击用户中心页面右下角的‘在线客服’按钮……”，设置了客服邮箱时附邮箱）；客服关闭时仅在设置了客服邮箱时显示邮件方式（第 3 轮记录中的遗留项）。
+- 测试隔离（第 11 节第 4 轮第 3 条）：tests/crisp-hosts.ts 的 --host-resolver-rules 把 crisp.chat、*.crisp.chat、crisp.help、*.crisp.help 解析为 NOTFOUND，三个 Playwright 配置和 scripts/api-proxy.test.mjs 的浏览器都加上，所有既有 spec 因此都在“客服不可达”下运行。dashboard-presence、user-nodes、theme 三个会收集控制台错误的 spec 忽略 Chromium 自己打印的、指向 Crisp 地址的“Failed to load resource”（crispLoadFailure）。
+- 文档：docs/deployment.md 新增“前端：在线客服（Crisp）”（取值、行为、客服人员不得凭聊天邮箱操作账户、CSP 放行、隐私说明）与“网站前端：发布、回滚与紧急关闭客服”，并更新 runtime-config 默认响应示例；frontend/.env.example 增加 CRISP_WEBSITE_ID；docs/web-appearance.md 增加 Online support 一节。
+
+测试与结果（本地，worktree，基线 0261e10）：
+- npm run lint、npm run typecheck、npm run build -- --webpack：通过。
+- test:nodes、test:downloads、test:dashboard、test:referral、test:copy 3/3（59 个文件，豁免 16 行，未新增豁免）、test:theme 5/5、test:home 3/3：通过。新增 scripts/support.test.mjs（npm run test:support，已加入 CI Web validation）6/6：CRISP_WEBSITE_ID 的默认/off/大小写/非法值；在假 DOM 与假时钟上验证预加载必须同时满足 load、4 秒（离开再回来不重新计时）、可见、空闲，只注入一次；省流量只在点击后加载；就绪、打开、关闭、未读、离开用户页面、退出重置；20 秒超时、迟到就绪、挂起时重试不注入第二份、报错后重试换新 script 与新队列；另一账户/存储不可读时先重置再设置身份。
+- test:api-proxy 17/17（PLAYWRIGHT_CHROME_PATH 指向系统 Chrome）：新增“support chat switch”——默认、合法 UUID（大写）+ 客服邮箱、off、非法值四种 .env 下 runtime-config 均为 200 且 support 字段正确，/meta 正常，非法值只告警一次且日志不含该值；原有两个 runtime-config 断言补上 support 字段。
+- scripts/test-payment-web.py --skip-build：72/72 通过（原 65 个 + support-widget.spec 7 个），用时 5.2 分钟。夹具新增 supporta、supportb（普通用户）与 supportroot（管理员）三个专用账户（只改测试夹具）。support-widget.spec 覆盖第 11 节第 4 轮自动化验收的全部条目：未登录访问 /、/login、/register、/plans、/download 共 6.5 秒以上无任何 Crisp 请求、无入口，首页常见问题写明在线客服与邮箱；登录后入口 3 秒内可见、此时无 Crisp 请求，脚本请求在进入总览 ≥ 3.5 秒后且此刻没有任何进行中的 /api 请求，只有一次，调用序列为 loaded（默认网站 + {"locale":"zh"}）、safe、chat:hide、三个 on、set user:email、set user:nickname、chat:close、chat:hide；六个用户页面间客户端跳转始终只有一个 Crisp script 元素；点击入口记录 chat:show + chat:open，关闭事件后记录 chat:hide 且入口回来，新消息事件后出现红点与“有新消息”名称，侧栏入口同效并清除红点；购买弹窗遮罩覆盖入口（elementFromPoint）；客户端跳转到 /admin/console/users 时入口与侧栏项消失并记录 chat:close + chat:hide，后退恢复；退出登录记录 session:reset，落到 /login 时页面中已无 Crisp script，入口消失；同一标签页再登录 supportb，新序列中 session:reset 在 set user:email（supportb）之前，且不含 supporta 的邮箱；全程无页面异常。挂起：预加载前点击立即请求、显示“正在连接客服…”与 aria-busy，期间跳转套餐页、打开并关闭购买弹窗、订单页、总览都正常，约 20 秒（实测 ≥ 19 秒）后出现提示卡（含客服邮箱），重试不发第二个请求，随后放行挂起的请求即打开对话，script 元素仍为 1，无页面异常，相关 warn ≤ 1。失败（网络错误）：提示立即出现，关闭提示后再点与“重试”都重新请求（共 3 次），成功后打开对话，script 元素为 1。省流量：手机 390 宽、暗色下登录后约 8 秒内无请求，点击后立即加载并打开；底部占位 ≥ 72 像素且完整位于按钮之下。管理员登录总览无入口、6.5 秒无请求；管理员模拟登录普通用户后无入口、无请求，可返回管理员。客服 off 与非法网站 ID（拦截 runtime-config 改写 support 字段）：无入口、无侧栏项、无请求，总览数据正常加载。
+- scripts/test-node-catalog.py --skip-build：浏览器部分 10/10 通过；其后的 Mihomo 内核验收在本地 BLOCKED（worktree 中没有 native/third_party/Clash.Meta 子模块），由 CI 的 web-core job 完整执行。第一次运行时 dashboard-presence 与 user-nodes 失败：它们断言控制台无错误，而预加载请求不可解析的 Crisp 域名时 Chromium 会打印“Failed to load resource: net::ERR_NAME_NOT_RESOLVED”（浏览器自身输出，代码无法抑制，真实用户网络屏蔽 Crisp 时同样出现）；已按上面所述只忽略指向 Crisp 地址的这一类日志。
+- 第一次完整运行 test-payment-web.py 时 account.spec 的删除账号用例失败：删除后页面应跳转首页，却落到 /login。原因是早期实现在退出时立即整页刷新当前地址，抢在应用自己的跳转之前；已改为“下一次跳转变整页加载”（见上），复跑 72/72。ui-copy.spec 的侧栏断言由“以返回首页开头”改为“在线客服 + 返回首页”（第 5.4 节的预期变化）。
+- scripts/test-release-rehearsal.py：本地未运行，以 CI 的 rehearsal job 为准（playwright.config.ts 同样加入了 Crisp 主机规则）。
+- 真实 Crisp 冒烟（本机网络，使用默认网站，不设置身份、不发送消息，页面为本机 http://localhost:8765 的独立测试页）：l.js 1.2 秒加载，约 9.5 秒触发 CRISP_READY_TRIGGER 与 session:loaded；队列中的 chat:hide 生效后气泡不可见（截图确认）；show + open 后 is("chat:visible")、is("chat:opened") 均为真并触发 chat:opened，close 触发 chat:closed；session:reset 会再次触发 CRISP_READY_TRIGGER，且 Crisp 重新显示气泡——加载器的就绪回调在未请求打开时总是 close + hide，因此重置后仍保持隐藏；重置后 on 注册的事件仍有效。这次冒烟会在 Crisp 后台留下一个没有消息的匿名访客会话。
+- 截图：/tmp/ui-r4/pay-spec4/browser-artifacts/screens/support-launcher-{light,dark,unread,mobile-dark}.png、support-fallback.png，CI 中随 payment-web-evidence 工件上传。人工评审了浅色、暗色、未读、失败提示卡与手机暗色。
+
+性能对比（第 11 节第 4 轮）：同一个支付夹具、同一来源，依次启动三个 Next：cd4780a 基线、本轮 CRISP_WEBSITE_ID=off、本轮默认网站且所有 Crisp 请求被拦截后永不应答（挂起）。每种 9 轮，每轮新浏览器上下文（冷缓存），系统 Chrome，数值为中位数 [最小–最大]，单位 ms（导航计时 domContentLoadedEventEnd / loadEventEnd；“数据”为总览标题出现时的 performance.now()；最后一行为在总览停留 7 秒（挂起变体此时已有一个挂起的 l.js 请求）后客户端跳转到订单页直到数据显示的时间）。挂起变体每轮恰好发出 1 个 Crisp 请求，基线与 off 为 0。
+
+| 指标 | cd4780a 基线 | 本轮 off | 本轮挂起 |
+| --- | --- | --- | --- |
+| / DCL | 38 [20–60] | 44 [22–100] | 45 [25–92] |
+| / load | 66 [63–111] | 81 [71–129] | 81 [70–119] |
+| /login DCL | 20 [16–51] | 22 [15–39] | 22 [14–42] |
+| /login load | 37 [30–119] | 39 [32–62] | 39 [37–60] |
+| /dashboard DCL | 26 [25–65] | 28 [25–36] | 28 [26–36] |
+| /dashboard load | 43 [38–92] | 46 [39–60] | 48 [41–57] |
+| /dashboard 数据 | 85 [80–183] | 87 [85–99] | 87 [84–98] |
+| /plans DCL | 18 [16–23] | 17 [15–19] | 16 [15–24] |
+| /plans load | 38 [35–47] | 35 [32–43] | 33 [27–44] |
+| 总览→订单（客户端跳转） | 52 [46–62] | 52 [43–62] | 57 [50–69] |
+
+结论：客服挂起与客服关闭相比，各项差值都在测量波动范围内（预加载按设计在 load 之后至少 4 秒才开始，不可能影响首屏）；首页 load 比 cd4780a 多约 15 ms，来自第 3 轮的新首页（off 与挂起相同）。原始数据：/tmp/ui-r4/perf/*.json。此组数据在“退出时跳转方式”修正之前的构建上测得，修正不涉及加载时机。
+- 脚本体积（与第 3 轮相同口径：所有 /_next/static JS、gzip -9，0261e10 构建 vs 本轮构建）：/ 251.8 → 253.9 KB、/login 240.7 → 242.7 KB、/dashboard 290.0 → 293.0 KB、/plans 273.1 → 275.4 KB，客服代码约 2–3 KB；Crisp 自己的脚本只在预加载或点击时才下载。
+
+偏离规划之处：
+- 退出登录或会话结束时，除 session:reset 外，还让页面自己的下一次跳转变为整页加载（规划只要求“重置并隐藏”）。理由：单页应用里已注入的第三方脚本会一直驻留，客户端跳转到登录页后它仍能读取页面（包括正在输入的密码），也会带给同一标签页的下一个账户。
+- 管理员账户在任何页面都不加载客服（规划 D9 只排除 /admin/** 页面与模拟登录）。理由同上：管理员在 /dashboard 加载 Crisp 后客户端跳转进管理后台，脚本会随之进入高权限页面，隐藏无法消除这一点。若同一标签页中先有普通用户用过客服、再有管理员登录，会立即整页刷新一次。
+- 规划要求“退出/切换账号时重置，未加载时无需处理”；实现额外用 asterlink-support-owner 处理“未加载”的情况（理由见上：Crisp 的会话 Cookie 在本页未加载时依然存在）。
+- 挂起时的重试不重新请求脚本，只重新等待（规划写的“重试会重新请求”在报错时成立）。理由：挂起的 script 元素移除后仍可能迟到执行，再注入一份会让 Crisp 初始化两次。
+- 未使用需求方示例中的 next/script afterInteractive 立即注入（规划第 9.1 节已说明原因），保留了示例中的网站 ID、官方 l.js 地址与 $crisp 队列。
+
+范围外但需记录（第 7.5 节）：iOS 与 Android APP 图标仍与网站标识不一致（iOS 为蓝色电源键、Android 为四角星占位图，网站为 frontend/brand/mark.svg 的青绿盾牌），统一 APP 图标需另行规划。
+
+遗留与需求方实测：U-17、U-18、U-19、U-23 依赖国内网络与 Crisp 后台，开发方无法在 CI 完成（U-18 请确认 Crisp 后台显示的邮箱即登录账户邮箱；U-23 请在 Crisp 控制台把主题色设为 #0d7b61、语言设为简体中文）。Crisp 中显示的邮箱未经签名校验，客服人员不得仅凭它执行账户操作（已写入 docs/deployment.md）。

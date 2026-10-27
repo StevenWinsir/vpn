@@ -20,6 +20,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
+// The operator's Crisp website, used while CRISP_WEBSITE_ID is unset (handoff_ui.md D10).
+const defaultCrisp = '83336a84-ae9f-4345-ba1f-583c0790002d';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Synthetic reset token (43 URL-safe characters, like the Go token); never a real secret.
 const resetToken = 'ProxyTestResetTokenProxyTestResetToken12345';
@@ -358,6 +360,8 @@ test(
       'NEXT_PUBLIC_API_URL',
       'NEXT_PUBLIC_API_TIMEOUT_MS',
       'CLIENT_IP_HEADER',
+      'CRISP_WEBSITE_ID',
+      'SITE_SUPPORT_EMAIL',
       '__NEXT_PROCESSED_ENV',
     ])
       delete cleanEnv[name];
@@ -438,7 +442,11 @@ test(
           const response = await fetch(nextURL + '/api/runtime-config');
           assert.equal(response.status, 200);
           assert.equal(response.headers.get('cache-control'), 'no-store');
-          assert.deepEqual(await response.json(), { apiBaseUrl: '/api/v1', apiTimeoutMs: 6000 });
+          assert.deepEqual(await response.json(), {
+            apiBaseUrl: '/api/v1',
+            apiTimeoutMs: 6000,
+            support: { crispWebsiteId: defaultCrisp, email: null },
+          });
           assert.equal((await (await api('/meta')).json()).upstream, 'default-loopback');
         },
       );
@@ -450,8 +458,9 @@ test(
             ...(process.env.PLAYWRIGHT_CHROME_PATH
               ? { executablePath: process.env.PLAYWRIGHT_CHROME_PATH }
               : {}),
+            // Crisp never resolves (handoff_ui.md 11, round 4): the dashboard runs without it.
             args: [
-              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1',
+              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1, MAP crisp.chat ~NOTFOUND, MAP *.crisp.chat ~NOTFOUND',
               '--no-proxy-server',
             ],
           });
@@ -558,8 +567,9 @@ test(
             ...(process.env.PLAYWRIGHT_CHROME_PATH
               ? { executablePath: process.env.PLAYWRIGHT_CHROME_PATH }
               : {}),
+            // Crisp never resolves (handoff_ui.md 11, round 4): the dashboard runs without it.
             args: [
-              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1',
+              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1, MAP crisp.chat ~NOTFOUND, MAP *.crisp.chat ~NOTFOUND',
               '--no-proxy-server',
             ],
           });
@@ -691,8 +701,9 @@ test(
             ...(process.env.PLAYWRIGHT_CHROME_PATH
               ? { executablePath: process.env.PLAYWRIGHT_CHROME_PATH }
               : {}),
+            // Crisp never resolves (handoff_ui.md 11, round 4): the dashboard runs without it.
             args: [
-              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1',
+              '--host-resolver-rules=MAP vpn-proxy.example.test 127.0.0.1, MAP crisp.chat ~NOTFOUND, MAP *.crisp.chat ~NOTFOUND',
               '--no-proxy-server',
             ],
           });
@@ -1011,6 +1022,7 @@ test(
           assert.deepEqual(await (await fetch(nextURL + '/api/runtime-config')).json(), {
             apiBaseUrl: '/api/v1',
             apiTimeoutMs: 6500,
+            support: { crispWebsiteId: defaultCrisp, email: null },
           });
           assert.equal(
             (await (await fetch('http://127.0.0.1:8080/api/v1/meta')).json()).upstream,
@@ -1044,6 +1056,36 @@ test(
           );
           for (const bad of ['not-an-ip', '203.0.113.9:443', '203.0.113.9, garbage', ''])
             assert.equal(await echo({ 'X-Real-IP': bad, 'X-Forwarded-For': '1.2.3.4' }), undefined);
+        },
+      );
+
+      await t.test(
+        'support chat switch: default, off and invalid never fail the runtime configuration',
+        async () => {
+          const support = async () => {
+            const response = await fetch(nextURL + '/api/runtime-config');
+            assert.equal(response.status, 200);
+            return (await response.json()).support;
+          };
+          const own = '0f2b6c1e-3a4d-4e5f-8a9b-0c1d2e3f4a5b';
+          for (const [configuration, expected] of [
+            ['', { crispWebsiteId: defaultCrisp, email: null }],
+            [
+              `CRISP_WEBSITE_ID=${own.toUpperCase()}\nSITE_SUPPORT_EMAIL=help@example.test\n`,
+              { crispWebsiteId: own, email: 'help@example.test' },
+            ],
+            ['CRISP_WEBSITE_ID=off\n', { crispWebsiteId: null, email: null }],
+            ['CRISP_WEBSITE_ID=not-a-website\n', { crispWebsiteId: null, email: null }],
+          ]) {
+            await startNext(configuration);
+            assert.deepEqual(await support(), expected, configuration);
+            // Repeated requests: still fine, and a bad value is logged once, not per request.
+            assert.deepEqual(await support(), expected, configuration);
+            assert.equal((await api('/meta')).status, 200);
+            const warnings = logs.split('CRISP_WEBSITE_ID is neither').length - 1;
+            assert.equal(warnings, configuration.includes('not-a-website') ? 1 : 0, logs);
+            assert.doesNotMatch(logs, /not-a-website/);
+          }
         },
       );
 

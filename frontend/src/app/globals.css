@@ -77,6 +77,8 @@
   --al-notice-bg: #ffe066;
   --al-notice-text: #3b2f00;
   --al-notice-border: #e0b800;
+  /* The support launcher's unread dot, ringed with the page colour. */
+  --al-unread: #e03131;
 }
 :root[data-mantine-color-scheme='dark'] {
   --al-bg: #121a18;
@@ -137,6 +139,7 @@
   --al-shadow-lg: 0 30px 70px -24px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.4);
   --al-story-bg: #0f2f28;
   --al-story-edge: rgba(61, 200, 154, 0.25);
+  --al-unread: #ff6b6b;
 }
 /* tokens:end */
 
@@ -228,6 +231,145 @@ a:focus-visible {
   font-size: 12px;
   margin-top: 18px;
   color: var(--al-text-2);
+}
+/* Online support (handoff_ui.md 9.8): the launcher sits under Mantine's dialogs, notifications and
+   the mobile navigation (z-index 100 and up), and the spacer keeps the last line of a page clear. */
+/* A button that looks like the navigation links above it (the note's padding is undone). */
+.sidebar-support {
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.support-spacer {
+  height: 40px;
+}
+.support-launcher {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+.support-launcher > * {
+  pointer-events: auto;
+}
+.support-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--al-brand-fill);
+  color: var(--al-on-brand);
+  box-shadow: var(--al-shadow-lg);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+.support-button:hover {
+  background: var(--al-brand-fill-hover);
+}
+.support-button:active {
+  transform: scale(0.96);
+}
+.support-button:focus-visible,
+.support-card-close:focus-visible,
+.sidebar-support:focus-visible {
+  outline: 2px solid var(--al-focus-strong);
+  outline-offset: 3px;
+}
+.support-unread {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--al-unread);
+  box-shadow: 0 0 0 2px var(--al-bg);
+}
+.support-hint {
+  padding: 7px 13px;
+  border: 1px solid var(--al-border);
+  border-radius: 999px;
+  background: var(--al-surface);
+  color: var(--al-text-2);
+  font-size: 13px;
+  box-shadow: var(--al-shadow);
+}
+.support-card {
+  position: relative;
+  width: min(300px, calc(100vw - 40px));
+  padding: 16px 18px;
+  border: 1px solid var(--al-border);
+  border-radius: 12px;
+  background: var(--al-surface);
+  color: var(--al-text);
+  box-shadow: var(--al-shadow-lg);
+}
+.support-card-title {
+  margin: 0 22px 6px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.support-card-text {
+  margin: 0 0 12px;
+  color: var(--al-text-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.support-card-text a {
+  color: var(--al-brand);
+}
+.support-card .mantine-Button-root {
+  margin-top: 6px;
+}
+.support-card-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--al-text-3);
+  cursor: pointer;
+}
+.support-card-close:hover {
+  background: var(--al-surface-2);
+}
+@media (max-width: 767px) {
+  .support-spacer {
+    height: 72px;
+  }
+  .support-launcher {
+    right: 16px;
+    bottom: 16px;
+  }
+  .support-button {
+    width: 52px;
+    height: 52px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .support-button {
+    transition: none;
+  }
 }
 .page-wrap {
   max-width: 1400px;

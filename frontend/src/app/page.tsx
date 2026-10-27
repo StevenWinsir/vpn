@@ -24,6 +24,7 @@ import { ProductVisual } from '@/components/home/product-visual';
 import { Reveal } from '@/components/home/reveal';
 import { androidDownload, iosDownload } from '@/lib/downloads';
 import { icpLookupUrl, siteFacts } from '@/lib/site';
+import { crispSetting } from '@/lib/support-config';
 import { appName } from '@/lib/types';
 
 // The download status and the operator facts come from the server environment on every request,
@@ -75,6 +76,7 @@ export default function Home() {
   const android = androidDownload(process.env) !== null;
   const ios = iosDownload(process.env) !== null;
   const { icpRecord, supportEmail } = siteFacts(process.env);
+  const chat = crispSetting(process.env).websiteId !== null;
   const platforms = [
     { name: 'macOS', note: 'Mac 电脑', icon: IconDeviceLaptop, ready: false },
     { name: 'Windows', note: 'Windows 电脑', icon: IconBrandWindows, ready: false },
@@ -224,7 +226,7 @@ export default function Home() {
                 <p className="home-kicker">常见问题</p>
                 <h2 id="faq-title">你可能想了解</h2>
               </div>
-              <HomeFaq supportEmail={supportEmail} />
+              <HomeFaq supportEmail={supportEmail} chat={chat} />
             </div>
           </section>
 
