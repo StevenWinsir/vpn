@@ -839,9 +839,12 @@ class BillingAcceptanceTest {
         record("B04-connect", if (s.snapshot.metering?.source == "node_reported") "PASS" else "FAIL",
             "connected through a grant on the agent's forwarder; metering source ${s.snapshot.metering?.source}, rate $rate‰")
         val probe = Json.parseToJsonElement(world("reject_probe")).jsonObject
-        val moved = probe.getValue("ledger_moved").jsonPrimitive.boolean
-        record("B04-reject", if (probe.getValue("status").jsonPrimitive.int == 409 && probe.str("code") == "metering_source_mismatch" && !moved) "PASS" else "FAIL",
-            "a client report on this node-reported session -> ${probe.getValue("status").jsonPrimitive.int} ${probe.str("code")}; ledger moved $moved")
+        // The node keeps billing this live session, so the ledger may grow meanwhile; the probe
+        // judges whether the refused report itself was applied (sequence or its own units).
+        val billed = probe.getValue("report_billed").jsonPrimitive.boolean
+        record("B04-reject", if (probe.getValue("status").jsonPrimitive.int == 409 && probe.str("code") == "metering_source_mismatch" && !billed) "PASS" else "FAIL",
+            "a client report on this node-reported session -> ${probe.getValue("status").jsonPrimitive.int} ${probe.str("code")}; report billed $billed " +
+                "(sequence moved ${probe.getValue("sequence_moved").jsonPrimitive.boolean}, ledger +${probe.getValue("delta_units").jsonPrimitive.long} of ${probe.getValue("refused_units").jsonPrimitive.long} refused units)")
         val resolved = runCatching { InetAddress.getAllByName(target).toList() }.getOrDefault(emptyList())
         val fake = resolved.isNotEmpty() && resolved.all { it is Inet4Address && (it.address[0].toInt() and 0xff) == 198 && (it.address[1].toInt() and 0xfe) == 18 }
         if (!fake) {
