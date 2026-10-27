@@ -134,15 +134,10 @@ export function DashboardView({ refreshMs }: { refreshMs: number }) {
                   : '选择适合你的套餐，立即开始安全连接。'}
               </Text>
             </div>
-            <Button
-              component={Link}
-              href="/plans"
-              color="gray"
-              variant="white"
-              rightSection={<IconArrowRight size={16} />}
-            >
+            <Link href="/plans" className="banner-action">
               {sub ? '管理套餐' : '选择套餐'}
-            </Button>
+              <IconArrowRight size={16} aria-hidden />
+            </Link>
           </section>
           <SimpleGrid cols={{ base: 1, sm: 3 }} spacing={20}>
             <Metric

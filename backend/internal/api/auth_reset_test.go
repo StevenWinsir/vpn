@@ -99,7 +99,9 @@ func (e *regEnv) reload(t *testing.T, id string) model.User {
 }
 
 // forgot requests a link and returns the token the recipient would read ("" if no
-// mail arrived for this request).
+// reset mail arrived for this request). The same delivery may also carry mail queued
+// earlier, such as the "password changed" notice of a previous reset, and the worker
+// sends in parallel, so the newest reset mail is picked by its link, not by position.
 func (e *regEnv) forgot(t *testing.T, email string) string {
 	t.Helper()
 	before := len(e.mail.box.to(email))
@@ -107,20 +109,23 @@ func (e *regEnv) forgot(t *testing.T, email string) string {
 	expect(t, w, 202, "")
 	e.mail.deliver(t)
 	msgs := e.mail.box.to(email)
-	if len(msgs) == before {
-		return ""
+	for i := len(msgs) - 1; i >= before; i-- {
+		if strings.Contains(msgs[i].Text, resetLinkPrefix) {
+			return resetTokenIn(t, msgs[i])
+		}
 	}
-	return resetTokenIn(t, msgs[len(msgs)-1])
+	return ""
 }
+
+const resetLinkPrefix = "https://app.example.com/reset-password#token="
 
 func resetTokenIn(t *testing.T, msg authmail.Message) string {
 	t.Helper()
-	const prefix = "https://app.example.com/reset-password#token="
-	i := strings.Index(msg.Text, prefix)
-	if i < 0 || len(msg.Text) < i+len(prefix)+43 {
+	i := strings.Index(msg.Text, resetLinkPrefix)
+	if i < 0 || len(msg.Text) < i+len(resetLinkPrefix)+43 {
 		t.Fatalf("no reset link in mail %q", msg.Subject)
 	}
-	token := msg.Text[i+len(prefix) : i+len(prefix)+43]
+	token := msg.Text[i+len(resetLinkPrefix) : i+len(resetLinkPrefix)+43]
 	if !authmail.ValidTokenFormat(token) {
 		t.Fatal("reset link carries a malformed token")
 	}

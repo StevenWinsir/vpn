@@ -74,7 +74,7 @@ export function DevicesCard({
       ) : devices.online.length === 0 ? (
         <div className="empty-state">
           <IconWifiOff size={34} stroke={1.3} aria-hidden />
-          <Text size="sm" fw={600} c="dark.4" mt="sm">
+          <Text size="sm" fw={600} c="var(--al-text)" mt="sm">
             当前没有在线设备
           </Text>
           <Text size="xs" mt={8} lh={1.8}>

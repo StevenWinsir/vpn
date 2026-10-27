@@ -68,9 +68,10 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// frank, gina and hank belong to the console spec (plan edit, deletion, manual confirmation);
 	// ivan, judy, kyle, lena and boss (a second administrator) to the announcement, impersonation
 	// and coupon specs, which publish announcements that must not reach the other specs' users.
-	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root"} {
+	// themeroot (an administrator) and themea belong to the appearance spec (handoff_ui.md 6).
+	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea"} {
 		role := "user"
-		if kind == "root" || kind == "boss" {
+		if kind == "root" || kind == "boss" || kind == "themeroot" {
 			role = "admin"
 		}
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}

@@ -31,6 +31,7 @@ import { normalizeReferralInput, referralField, referralInputMax } from '@/lib/r
 import { useMeta } from '@/lib/use-meta';
 import { useAuth } from './providers';
 import { Logo } from './site-shell';
+import { ThemeToggle } from './theme-toggle';
 
 export function AuthForm({ register = false }: { register?: boolean }) {
   return <AuthLayout>{register ? <RegisterForm /> : <LoginForm />}</AuthLayout>;
@@ -62,14 +63,17 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
             ))}
           </div>
         </div>
-        <Text size="xs" c="gray.4">
+        <div className="auth-story-footer">
           © {new Date().getFullYear()} {appName}
-        </Text>
+        </div>
       </section>
       <section className="auth-panel">
         <Anchor component={Link} href="/" c="dimmed" size="sm" className="back-link">
           <IconArrowLeft size={16} /> 返回首页
         </Anchor>
+        <div className="auth-theme">
+          <ThemeToggle />
+        </div>
         <div className="auth-form">{children}</div>
       </section>
     </div>
