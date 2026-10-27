@@ -472,3 +472,31 @@ lib/types.ts 补充 ReferralSummary、ReferralItem、ReferralStatus 等类型和
 - 总览的“含推荐奖励”放在“剩余计费额度”的说明文字里，只出现一处。
 - “待发放 → 已发放”的实时过渡没有在端到端用例里捕获（worker 每秒运行），这一状态的界面用替换响应的方式验证；用户部署后的 U-14 可以在真实网关上观察。
 - flow.spec 和 register.spec 没有改动：它们只用标签选择器，不受新字段影响，运行它们的 test-release-rehearsal.py 和 test-node-catalog.py 以 CI 结果为准（本机未运行）。
+
+### 第 3 轮：全链路回归、发布演练与文档（2026-10-27，分支 worktree-referral-round3-rehearsal，PR 见合并记录）
+
+交付内容：
+- **发布演练**（scripts/test-release-rehearsal.py）：新增第五个二进制（PR #77 的 8c311ee，推荐功能之前的最后一个版本）和新的“推荐”阶段。浏览器阶段的测试组装里，通过真实的邮箱验证码注册流程绑定 6 条推荐关系（一位老用户第一次打开推荐页才生成推荐码、再打开不变；未知码、乱码和不带码都注册成功并且不绑定）；之后在正常二进制上用真实付款和真实发奖进程（REFERRAL_POLL_INTERVAL=1s）制造已发放、未生效（referrer_no_plan）、关闭开关期间的待发放记录，年付推荐人带着奖励；回滚到 8c311ee，旧版本完成一笔首单、推荐人换新订阅期、删号；再升级后补扫、发奖、锚点失效、年付刷新保留奖励、`doctor`。
+- **新旧前后端混合**：演练里用推荐功能之前的前端（PR #78 的 e1fa661，从它自己的源码树构建）对接当前后端，原有的浏览器用例（注册、购买、登录登出、公开页）全部通过；新前端对接“没有推荐功能的后端”由测试组装里的仿旧后端开关（/meta 没有 referral_enabled、没有推荐路由、带 referral_code 的注册按未知字段拒绝）和 tests/referral-compat.spec.ts 完成。
+- **安全审查**：backend/internal/api/referral_security_test.go（R3-04、R3-05），结论写入 docs/payment-operations.md 第十节。
+- **APP 兼容**：backend/internal/api/referral_compat_test.go：APP 在线期间推荐人收到奖励，同一个会话不被要求重新授权，配置仍可获取，下一次会话刷新的总额度正好增加奖励。
+- **文档**：README 的“推荐有礼”段落；docs/payment-operations.md 第九节（发布顺序、排查指引、回滚、实测清单 U-13 … U-16）和第十节（安全审查结论）；backend/DEPLOYMENT.md 补充回滚的订阅期与年付刷新说明。
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R3-01 | PASS | 演练“推荐”阶段（见上）：老用户打开推荐页后才有推荐码；真实付款后约 1 秒内奖励到账，金额 = 实付分 × 1 GiB ÷ 100，年付推荐人的 30 天周期不变、奖励记为本订阅期的 bonus；没有有效套餐的推荐人得到 forfeited（referrer_no_plan）；关闭开关期间首单被记为待发放且不发奖；回滚到 8c311ee 后旧版本能启动、读取推荐人的总览、完成被推荐人的首单（记录保持 registered）、让推荐人在旧订阅期结束后重新购买（新订阅期的额度等于套餐额度，旧奖励的锚点失效）、完成两个账号的清除（被推荐人的记录保留且被推荐人置空，推荐人的记录随之删除），其余每条推荐记录和每个推荐码逐字节不变；再升级后补扫把旧版本完成的首单判为待发放并发奖（订单号是旧版本履约的那一笔），关闭期间积压的奖励在重新开启后发放，推荐人的总览和推荐页都不显示失效的奖励（历史记录保留），年付订阅在周期 31 天后刷新时保留全部奖励（周期额度加奖励） |
+| R3-02 | PASS | 演练：旧网站（e1fa661）对接当前后端，原有 flow 用例 2/2 通过；新网站对接当前后端，链接预填、无效码不报错、入口出现，对接仿旧后端，注册页没有字段、请求体没有 referral_code（仿旧后端会拒绝它）、入口隐藏、/referral 显示“功能暂不可用”且不发任何 /me/referral 请求（referral-compat.spec.ts 2/2）。注意：仿旧后端是前置在当前 API 前面的模拟，真正的旧二进制无法在演练里收邮件验证码，所以“新网站 + 真旧二进制的注册”没有执行 |
+| R3-03 | PASS（自动化部分）；NOT RUN（各平台真机） | TestClientStaysConnectedWhenRewarded（同一个客户端会话在奖励前后：可连接、原因为空、配置仍可获取，总额度正好增加奖励）；四个平台的注册入口都是网站 /register，页面显示推荐码字段由 referral.spec 和 referral-compat.spec 验证；各平台 APP 自己的套件（Android、iOS、macOS、Windows）没有改动，随 CI 运行；本机没有设备，真机上的“在线期间收到奖励”留给用户的 U-14 |
+| R3-04 | PASS | docs/payment-operations.md 第十节逐项列出证据：TestReferralDoesNotRevealCodes（响应逐项相同、整张路由表只有 3 条推荐路由、没有按码查询的接口）、TestReferralEndpoints（401 / 403 / 模拟会话）、TestReferralTextAndHeaders（脱敏、纯文本、安全头）、TestReferralLogsStayClean 和演练里四个真实后端进程的日志（没有推荐码和邮箱）、刷奖风险已写进文档 |
+| R3-05 | PASS | TestReferralReadinessInBothConfigurations（开发和生产风格配置）与演练里的 doctor：referral 段为开关、封顶和各状态数量，人为制造一条超过 10 分钟的待发放记录时警告 referral_rewards_stale，恢复后消失，输出里没有推荐码、邮箱或 ID。没有用真实生产环境变量启动 doctor 二进制（生产配置需要真实的 TLS、代理和邮件设置），生产风格配置由 Go 测试覆盖 |
+| R3-06 | PASS | U-13 … U-16 已写入 docs/payment-operations.md 第 9.4 节，每一项对应的自动化用例是 referral.spec.ts R2-01、R2-02、R2-04（本地模拟网关逐步走通）；真实网关上的结果由用户部署后填写，不在这里记结果 |
+| R3-07 | 待 CI | PR 上的 gh pr checks 应出现 Release rehearsal / migration / rollback 和 Browser / node catalog 两个作业运行新增的内容 |
+
+本机回归：Go 全量 `go test ./...`（私有 PostgreSQL，不带 -race）全部通过，新增测试在 -race 下通过；前端 lint、typecheck 通过；发布演练全程通过（22 项检查，6 个互不相同的后端二进制）。完整的 scripts/test-native.py（-race，全部包，约 9 分钟的 internal/api）和 test-payment-web.py 没有重跑，因为本轮没有改动业务代码和网页，以 CI 为准。
+
+本地证据目录：artifacts/referral-round3-rehearsal/（已被 .gitignore 忽略，不提交）。
+
+偏离与补充：
+- 演练中的推荐关系绑定放在浏览器阶段的测试组装里（只有它能读邮箱验证码），付款、发奖、回滚和再升级都在正常二进制上。
+- 旧版本年付刷新会刷掉当期奖励这一点，演练没有制造（需要旧二进制跨过刷新点）；它的结论来自代码阅读和 billing 的单元测试（TestBonusSurvivesRefresh），已按第 15.1 节写进文档。演练里验证的是更重要的两件事：旧版本不改动任何推荐记录和推荐码，以及再升级后年付刷新保留奖励。
+- 演练的旧版本清除账号要等后端的清除循环（每 60 秒一次），所以这一步会多等约一分钟。

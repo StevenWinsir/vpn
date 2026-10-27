@@ -10,7 +10,7 @@ if (
 export default defineConfig({
   testDir: './tests',
   // The catalog specs need scripts/test-node-catalog.py's fixture, not this one.
-  testMatch: ['flow.spec.ts'],
+  testMatch: ['flow.spec.ts', 'referral-compat.spec.ts'],
   fullyParallel: false,
   workers: 1,
   retries: 0,
