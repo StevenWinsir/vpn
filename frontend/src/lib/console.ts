@@ -38,6 +38,27 @@ export type ConsoleUser = {
   subscription: ConsoleSub | null;
   online_devices: number;
 };
+// GET /admin/console/users/:id/referrals (read only; full addresses, for support questions).
+export type ConsoleReferral = {
+  id: string;
+  referee_id: string | null;
+  referee_email: string;
+  status: 'registered' | 'qualified' | 'rewarded' | 'forfeited';
+  first_order_cents: number;
+  reward_bytes: number;
+  granted_bytes: number;
+  forfeit_reason: string;
+  last_error_kind: string;
+  created_at: string;
+  qualified_at: string | null;
+  granted_at: string | null;
+};
+export type ConsoleReferralDetail = {
+  code: string | null;
+  referrer: { id: string; email: string } | null;
+  stats: import('./types').ReferralStats;
+  items: ConsoleReferral[];
+};
 export type ConsoleOrder = {
   id: string;
   trade_no: string | null;

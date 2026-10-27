@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--skip-build', action='store_true')
+    parser.add_argument('--spec', action='append', default=[], help='run only the matching spec file (repeatable); for local iteration')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -103,7 +104,7 @@ def main():
             chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
             if Path(chrome).is_file():
                 browser_env['PLAYWRIGHT_CHROME_PATH'] = chrome
-            run('browser', ['node', 'node_modules/@playwright/test/cli.js', 'test', '--config=playwright.payment.config.ts'],
+            run('browser', ['node', 'node_modules/@playwright/test/cli.js', 'test', '--config=playwright.payment.config.ts', *args.spec],
                 ROOT / 'frontend', browser_env)
             summary['checks'].append('checkout dialog, gateway redirect, callback, result page, orders page, coupon reasons, expiry paths and tamper display on a local gateway fake')
             summary['passed'] = True

@@ -47,6 +47,7 @@ import {
   type ConsoleDevice,
   type ConsoleLogin,
   type ConsoleOrder,
+  type ConsoleReferralDetail,
   type ConsoleSub,
   type ConsoleUser,
 } from '@/lib/console';
@@ -62,6 +63,8 @@ import {
   type Values,
 } from './console-common';
 import { planOptions } from '@/lib/plan-math';
+import { formatBytes } from '@/lib/dashboard';
+import { referralBadge } from '@/lib/referral';
 import { useAuth } from '../providers';
 
 const keys = [
@@ -290,6 +293,7 @@ export function ConsoleUsers() {
         id={values.user}
         plans={plans}
         onClose={() => apply({ user: '', page: values.page })}
+        onOpenUser={(id) => apply({ user: id, page: values.page })}
         onChanged={list.reload}
       />
     </Stack>
@@ -379,11 +383,13 @@ function UserDrawer({
   id,
   plans,
   onClose,
+  onOpenUser,
   onChanged,
 }: {
   id: string;
   plans: AdminPlan[];
   onClose: () => void;
+  onOpenUser: (id: string) => void;
   onChanged: () => void;
 }) {
   const { user: me } = useAuth();
@@ -527,6 +533,7 @@ function UserDrawer({
                 </Table>
               )}
             </Section>
+            <ReferralSection id={u.id} onOpenUser={onOpenUser} />
             <Section title="最近登录">
               {detail.logins.length === 0 ? (
                 <Text size="sm" c="dimmed">
@@ -623,6 +630,137 @@ function UserDrawer({
         ) : null}
       </Stack>
     </Drawer>
+  );
+}
+
+// The referral programme as support needs it: the user's code, who referred them, and what
+// their referrals did (handoff_coupon.md 12.5). Read only; the full addresses are the reason
+// the endpoint refuses impersonated sessions.
+function ReferralSection({ id, onOpenUser }: { id: string; onOpenUser: (id: string) => void }) {
+  const { data, error } = useFetched<ConsoleReferralDetail>(
+    `/admin/console/users/${encodeURIComponent(id)}/referrals`,
+  );
+  return (
+    <Section title="推荐">
+      <div data-testid="user-referrals">
+        <ErrorBox text={error} />
+        {!data && !error ? <Skeleton height={80} /> : null}
+        {data ? (
+          <Stack gap="sm">
+            <Paper withBorder radius="md" p="md">
+              <Stack gap={4}>
+                <Info
+                  label="推荐码"
+                  value={
+                    data.code ? (
+                      <Text span ff="monospace" fw={600} data-testid="referral-user-code">
+                        {data.code}
+                      </Text>
+                    ) : (
+                      <Text span c="dimmed">
+                        尚未生成（用户打开推荐页时生成）
+                      </Text>
+                    )
+                  }
+                />
+                <Info
+                  label="推荐人"
+                  value={
+                    data.referrer ? (
+                      <Button
+                        variant="subtle"
+                        size="compact-sm"
+                        px={0}
+                        onClick={() => onOpenUser(data.referrer!.id)}
+                        data-testid="referrer-link"
+                      >
+                        {data.referrer.email}
+                      </Button>
+                    ) : (
+                      <Text span c="dimmed">
+                        无（未使用推荐码注册）
+                      </Text>
+                    )
+                  }
+                />
+                <Info
+                  label="推荐统计"
+                  value={`注册 ${data.stats.registered_count} · 已消费 ${data.stats.purchased_count} · 待发放 ${data.stats.pending_count} · 已发放 ${data.stats.rewarded_count}（${formatBytes(data.stats.rewarded_bytes)}） · 未生效 ${data.stats.forfeited_count}`}
+                />
+              </Stack>
+            </Paper>
+            {data.items.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                暂无被推荐用户
+              </Text>
+            ) : (
+              <ScrollArea>
+                <Table verticalSpacing={6} aria-label="被推荐用户" miw={560}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>邮箱</Table.Th>
+                      <Table.Th>状态</Table.Th>
+                      <Table.Th>首单</Table.Th>
+                      <Table.Th>注册</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {data.items.map((r) => {
+                      const badge = referralBadge(
+                        {
+                          email_masked: r.referee_email,
+                          registered_at: r.created_at,
+                          status: r.status,
+                          reward_bytes: r.reward_bytes,
+                          granted_bytes: r.granted_bytes,
+                          granted_at: r.granted_at,
+                          forfeit_reason: r.forfeit_reason,
+                          referee_deleted: r.referee_id === null,
+                        },
+                        formatBytes,
+                      );
+                      return (
+                        <Table.Tr key={r.id}>
+                          <Table.Td style={{ wordBreak: 'break-all' }}>
+                            {r.referee_email}
+                            {r.referee_id === null ? (
+                              <Text span size="xs" c="dimmed">
+                                {' '}
+                                （已注销）
+                              </Text>
+                            ) : null}
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge
+                              color={badge.color}
+                              variant="light"
+                              style={{ textTransform: 'none' }}
+                            >
+                              {badge.text}
+                            </Badge>
+                            {r.last_error_kind ? (
+                              <Text size="xs" c="red">
+                                重试中：{r.last_error_kind}
+                              </Text>
+                            ) : null}
+                          </Table.Td>
+                          <Table.Td>
+                            {r.status === 'registered' ? '—' : money(r.first_order_cents)}
+                          </Table.Td>
+                          <Table.Td>
+                            <When value={r.created_at} />
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            )}
+          </Stack>
+        ) : null}
+      </div>
+    </Section>
   );
 }
 

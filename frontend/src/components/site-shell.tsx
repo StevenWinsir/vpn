@@ -21,6 +21,7 @@ import {
   IconArrowUpRight,
   IconEye,
   IconDownload,
+  IconGift,
   IconLayoutDashboard,
   IconLogout,
   IconReceipt,
@@ -41,6 +42,7 @@ const links = [
   { href: '/nodes', label: '节点列表', icon: IconServer2 },
   { href: '/plans', label: '套餐与订阅', icon: IconStack2 },
   { href: '/orders', label: '订单记录', icon: IconReceipt },
+  { href: '/referral', label: '推荐有礼', icon: IconGift },
   { href: '/download', label: '下载客户端', icon: IconDownload },
   { href: '/account', label: '账号设置', icon: IconUserCog },
 ];
@@ -60,14 +62,58 @@ export function Logo() {
     </Link>
   );
 }
-function SidebarNote() {
+// One /meta read serves the note and the programme entry, which shows only when the backend
+// announces it (older backends do not).
+function Sidebar({
+  admin,
+  path,
+  onNavigate,
+}: {
+  admin: boolean;
+  path: string;
+  onNavigate: () => void;
+}) {
   const { meta } = useMeta();
+  const userLinks = links.filter((link) => link.href !== '/referral' || meta?.referral_enabled);
+  const navigation = admin
+    ? [
+        ...userLinks,
+        { href: '/admin/console/users', label: '管理后台', icon: IconUsersGroup },
+        { href: '/admin/nodes', label: '节点管理', icon: IconShieldLock },
+      ]
+    : userLinks;
   return (
-    <Text size="xs" c="dimmed" lh={1.8}>
-      {meta?.payment_enabled
-        ? '已接入微信支付、支付宝支付。节点与客户端流量正在联调，节点侧强制配额尚未接入。'
-        : '节点与客户端流量正在联调。真实支付和节点侧强制配额尚未接入。'}
-    </Text>
+    <>
+      <Stack gap={7}>
+        <Text c="dimmed" size="xs" fw={600} px="sm" mb="sm">
+          个人工作台
+        </Text>
+        {navigation.map(({ href, label, icon: Icon }) => (
+          <Link
+            onClick={onNavigate}
+            key={href}
+            href={href}
+            className={`nav-link ${current(href, path) ? 'active' : ''}`}
+          >
+            <Icon size={19} stroke={1.6} />
+            {label}
+          </Link>
+        ))}
+      </Stack>
+      <div className="sidebar-note">
+        <Badge variant="light" color="gray" mb="sm">
+          开发联调版
+        </Badge>
+        <Text size="xs" c="dimmed" lh={1.8}>
+          {meta?.payment_enabled
+            ? '已接入微信支付、支付宝支付。节点与客户端流量正在联调，节点侧强制配额尚未接入。'
+            : '节点与客户端流量正在联调。真实支付和节点侧强制配额尚未接入。'}
+        </Text>
+        <Link href="/" className="sidebar-home">
+          返回首页 <IconArrowUpRight size={14} />
+        </Link>
+      </div>
+    </>
   );
 }
 // While an administrator looks at the site as a user (handoff_payment_account.md 9.7): the
@@ -133,17 +179,16 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const [leaving, setLeaving] = useState(false);
   const authPage = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
   const workspace =
-    ['/dashboard', '/nodes', '/plans', '/orders', '/download', '/account', '/pay/result'].includes(
-      path,
-    ) || path.startsWith('/admin/');
-  const navigation =
-    user?.role === 'admin'
-      ? [
-          ...links,
-          { href: '/admin/console/users', label: '管理后台', icon: IconUsersGroup },
-          { href: '/admin/nodes', label: '节点管理', icon: IconShieldLock },
-        ]
-      : links;
+    [
+      '/dashboard',
+      '/nodes',
+      '/plans',
+      '/orders',
+      '/referral',
+      '/download',
+      '/account',
+      '/pay/result',
+    ].includes(path) || path.startsWith('/admin/');
   const signout = async () => {
     setLeaving(true);
     try {
@@ -250,31 +295,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       </AppShell.Header>
       {workspace ? (
         <AppShell.Navbar p="lg">
-          <Stack gap={7}>
-            <Text c="dimmed" size="xs" fw={600} px="sm" mb="sm">
-              个人工作台
-            </Text>
-            {navigation.map(({ href, label, icon: Icon }) => (
-              <Link
-                onClick={close}
-                key={href}
-                href={href}
-                className={`nav-link ${current(href, path) ? 'active' : ''}`}
-              >
-                <Icon size={19} stroke={1.6} />
-                {label}
-              </Link>
-            ))}
-          </Stack>
-          <div className="sidebar-note">
-            <Badge variant="light" color="gray" mb="sm">
-              开发联调版
-            </Badge>
-            <SidebarNote />
-            <Link href="/" className="sidebar-home">
-              返回首页 <IconArrowUpRight size={14} />
-            </Link>
-          </div>
+          <Sidebar admin={user?.role === 'admin'} path={path} onNavigate={close} />
         </AppShell.Navbar>
       ) : null}
       <AppShell.Main>

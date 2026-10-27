@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
-	"vpn/backend/internal/authmail"
 	"vpn/backend/internal/config"
 	"vpn/backend/internal/model"
 	"vpn/backend/internal/payment"
@@ -79,14 +79,24 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 		}
 		emails[kind] = u.Email
 	}
-	// The shop spec (yearly checkout, renewal, price change, rebuy) uses accounts of its own.
-	for _, kind := range []string{"shopa", "shopb", "shopc", "shopd"} {
+	// The shop spec (yearly checkout, renewal, price change, rebuy) and the referral spec
+	// (refa: a referrer who buys a plan, refd: one who never has a plan) use accounts of their own.
+	for _, kind := range []string{"shopa", "shopb", "shopc", "shopd", "refa", "refd"} {
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: "user", Status: "active", AuthVersion: 1}
 		if err = db.Create(&u).Error; err != nil {
 			t.Fatal(err)
 		}
 		emails[kind] = u.Email
 	}
+	// The referral spec registers new accounts through the real code flow: mail goes to the
+	// in-process capture Mailer and codes are read back only through the control-token endpoint.
+	cfg = withTestMail(cfg)
+	mail := newMailHarness(db, cfg, clock.Now)
+	mail.worker.Poll = 200 * time.Millisecond
+	mailCtx, stopMail := context.WithCancel(context.Background())
+	mailDone := make(chan struct{})
+	go func() { defer close(mailDone); mail.worker.Run(mailCtx) }()
+	defer func() { stopMail(); <-mailDone }()
 	gw := newFakeGateway(t, gatewayName, "test-only-gateway-secret", clock.Now)
 	cfg.Origins = []string{origin.String()}
 	cfg.WebsiteBaseURL = origin.String()
@@ -109,7 +119,7 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	router := newServerAt(db, cfg, authmail.NewService(db, cfg), clock.Now)
+	router := newServerAt(db, cfg, mail.service, clock.Now)
 	stop := make(chan struct{})
 	reconciler := &Server{db: db, cfg: cfg, clock: clock.Now}
 	go func() {
@@ -121,6 +131,8 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			case <-ticker.C:
 				_, _ = reconciler.reconcilePayments(t.Context())
+				// The referral worker of cmd/api, driven on the fixture's clock.
+				_, _ = reconciler.processReferrals(t.Context())
 			}
 		}
 	}()
@@ -140,6 +152,17 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(v)
 		}
 		switch r.URL.Path {
+		case "/fixture/mail":
+			msgs := mail.box.to(r.URL.Query().Get("to"))
+			code, ok := "", false
+			if len(msgs) > 0 {
+				code, ok = codeIn(msgs[len(msgs)-1])
+			}
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			reply(map[string]any{"code": code, "count": len(msgs)})
 		case "/fixture/advance":
 			seconds, _ := strconv.Atoi(r.URL.Query().Get("seconds"))
 			clock.Advance(time.Duration(seconds) * time.Second)
