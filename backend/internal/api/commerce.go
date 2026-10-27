@@ -41,7 +41,8 @@ func (s *Server) dashboard(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"user": currentUser(c), "subscription": sub, "entitlement_active": billing.Eligible(sub, now, s.allowTest()), "order_count": count,
-		"metering_connected": metered > 0, "proxy_service_ready": false, "online_devices": online, "device_limit": s.deviceLimit(sub), "quota_resets_at": billing.NextQuotaReset(sub)})
+		"metering_connected": metered > 0, "proxy_service_ready": false, "online_devices": online, "device_limit": s.deviceLimit(sub), "quota_resets_at": billing.NextQuotaReset(sub),
+		"bonus_bytes": billing.CurrentBonus(sub)})
 }
 func (s *Server) orders(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))

@@ -52,6 +52,8 @@ type Config struct {
 	// ImpersonationTTL is the hard lifetime of an administrator's "sign in as user" session
 	// (IMPERSONATION_MINUTES, handoff_payment_account.md 4).
 	ImpersonationTTL time.Duration
+	// Referral is the referral programme (handoff_coupon.md 14.2).
+	Referral Referral
 }
 
 func Load() (Config, error) {
@@ -174,6 +176,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if err := loadPayment(&c); err != nil {
+		return c, err
+	}
+	if err := loadReferral(&c); err != nil {
 		return c, err
 	}
 	if c.Host == "" || c.Database == "" || c.User == "" || c.Password == "" {

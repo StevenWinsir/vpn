@@ -200,7 +200,12 @@ func (s *Server) fulfilOrder(tx *gorm.DB, order *model.Order, paidCents int64, n
 			return false, err
 		}
 	}
-	return true, tx.Model(order).Updates(map[string]any{"status": model.OrderPaid, "paid_cents": paidCents, "paid_at": now, "review_reason": "", "updated_at": now}).Error
+	if err := tx.Model(order).Updates(map[string]any{"status": model.OrderPaid, "paid_cents": paidCents, "paid_at": now, "review_reason": "", "updated_at": now}).Error; err != nil {
+		return false, err
+	}
+	// The buyer's first real paid order qualifies a referral binding (handoff_coupon.md
+	// 7.1); the reward itself is granted later by the referral worker.
+	return true, s.qualifyReferral(tx, order.UserID, now)
 }
 
 // Reconciliation (handoff_payment_account.md 6.4).

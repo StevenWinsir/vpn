@@ -150,6 +150,7 @@ func main() {
 		go paymentLoop(ctx, db, c)
 	}
 	go purgeLoop(ctx, db, c)
+	go referralLoop(ctx, db, c)
 	if !c.Geo.Enabled() {
 		log.Print("login location lookup is not configured (GEOIP_LOOKUP_URL); login records show no location for public addresses")
 	}
@@ -257,6 +258,35 @@ func paymentLoop(ctx context.Context, db *gorm.DB, c config.Config) {
 				log.Print("payment reconciliation failed (will retry)")
 			} else if changed > 0 {
 				log.Printf("payment reconciliation settled %d orders", changed)
+			}
+		}
+	}
+}
+
+// referralLoop grants referral rewards (handoff_coupon.md 8) and, less often, sweeps for
+// first purchases fulfilled without the referral check (7.3). Instances claim rewards
+// with SKIP LOCKED, so several may run at once.
+func referralLoop(ctx context.Context, db *gorm.DB, c config.Config) {
+	ticker := time.NewTicker(c.ReferralPoll())
+	defer ticker.Stop()
+	lastSweep := time.Time{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Since(lastSweep) >= api.ReferralSweepInterval {
+				lastSweep = time.Now()
+				if n, err := api.SweepReferrals(ctx, db, c); err != nil && ctx.Err() == nil {
+					log.Print("referral sweep failed (will retry)")
+				} else if n > 0 {
+					log.Printf("referral sweep qualified %d referrals", n)
+				}
+			}
+			if n, err := api.ProcessReferrals(ctx, db, c); err != nil && ctx.Err() == nil {
+				log.Print("referral rewards failed (will retry)")
+			} else if n > 0 {
+				log.Printf("referral rewards settled %d referrals", n)
 			}
 		}
 	}
