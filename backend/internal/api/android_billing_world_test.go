@@ -330,25 +330,35 @@ func TestAndroidBillingWorld(t *testing.T) {
 				http.Error(w, "no grant seen yet", 409)
 				return
 			}
-			status := env.client("GET", "/session", token, nil, nil)
-			var session struct {
+			type sessionState struct {
 				LastSequence int64 `json:"last_sequence"`
 				UsedUnits    int64 `json:"used_units"`
+				RatePermille int64 `json:"rate_permille"`
 			}
-			_ = json.Unmarshal(status.Body.Bytes(), &session)
-			refused := env.client("POST", "/traffic", token, nil, map[string]int64{"sequence": session.LastSequence + 1, "upload_bytes": 1 << 20, "download_bytes": 1 << 20})
+			var session, later sessionState
+			_ = json.Unmarshal(env.client("GET", "/session", token, nil, nil).Body.Bytes(), &session)
+			const up, down = 1 << 20, 1 << 20
+			refused := env.client("POST", "/traffic", token, nil, map[string]int64{"sequence": session.LastSequence + 1, "upload_bytes": up, "download_bytes": down})
 			var body struct {
 				Error struct {
 					Code string `json:"code"`
 				} `json:"error"`
 			}
 			_ = json.Unmarshal(refused.Body.Bytes(), &body)
-			after := env.client("GET", "/session", token, nil, nil)
-			var later struct {
-				UsedUnits int64 `json:"used_units"`
+			_ = json.Unmarshal(env.client("GET", "/session", token, nil, nil).Body.Bytes(), &later)
+			// The session stays connected through the node, whose agent reports usage every
+			// second, so the ledger may legitimately grow between the two reads. What must not
+			// happen is the refused report being applied: its sequence accepted, or its own
+			// units (both directions at the session's rate) charged.
+			rate := session.RatePermille
+			if rate <= 0 {
+				rate = 1000
 			}
-			_ = json.Unmarshal(after.Body.Bytes(), &later)
-			answer(map[string]any{"status": refused.Code, "code": body.Error.Code, "ledger_moved": later.UsedUnits != session.UsedUnits})
+			refusedUnits := (up + down) * rate
+			delta := later.UsedUnits - session.UsedUnits
+			billed := later.LastSequence != session.LastSequence || delta >= refusedUnits
+			answer(map[string]any{"status": refused.Code, "code": body.Error.Code, "report_billed": billed,
+				"sequence_moved": later.LastSequence != session.LastSequence, "delta_units": delta, "refused_units": refusedUnits})
 		case "api": // round 5: the client API becomes unreachable (connections closed) or comes back
 			apiOffline = in.Offline
 			w.WriteHeader(http.StatusNoContent)
