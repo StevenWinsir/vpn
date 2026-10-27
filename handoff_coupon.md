@@ -406,3 +406,39 @@ lib/types.ts 补充 ReferralSummary、ReferralItem、ReferralStatus 等类型和
 ## 19. 实施记录
 
 （每轮完成后在此追加：日期、分支、PR、验收结果表、偏离本文的决定及理由。）
+
+### 第 1 轮：后端闭环（2026-10-26，分支 worktree-referral-round1-backend，PR 见合并记录）
+
+交付内容：
+- 新包 backend/internal/referral：字符集、拒绝采样生成器、输入规范化、邮箱脱敏、奖励折算（纯函数）。
+- 迁移：users.referral_code（可空唯一）、subscriptions.bonus_bytes / bonus_starts_at、新表 referrals（推荐人外键级联删除、被推荐人外键置空，带 CHECK），以及 idx_referral_qualified、idx_referral_registered 两个部分索引；doctor 表清单和发布演练脚本的 ALL_TABLES 已加入 referrals。
+- 注册：registerInput 新增 referral_code；规范化在事务外完成，格式无效时不查库；绑定是保存点内的一条条件插入语句，出错时回滚到保存点，只记类别日志。
+- 履约：fulfilOrder 在订单置为 paid 之后调用 qualifyReferral，按“最早一笔 status=paid、provider≠test 的订单”判定首单。
+- 发奖：api.ProcessReferrals（SKIP LOCKED 加 60 秒租约，单条事务锁顺序为 User → Referral → Subscription → Period，失败按 30 秒起指数退避、最长 30 分钟）；api.SweepReferrals 每 10 分钟补扫一次；cmd/api 新增 referralLoop。
+- 年付：billing.RollQuotaCycle 在刷新时保留 min(bonus_bytes, 剩余量)；新增 BonusActive、CurrentBonus、AddBonus；applyPlan 开启新周期时奖励自然清零；管理员编辑订阅时把 bonus_bytes 截到新的总额度。
+- 清除：purgeAccount 中增加“被推荐人置空、推荐人删除”两步。
+- 接口：GET /me/referral、GET /me/referrals、GET /admin/console/users/:id/referrals；/meta 增加 referral_enabled；dashboard 增加 bonus_bytes。
+- 配置：REFERRAL_ENABLED、REFERRAL_REWARD_MAX_GIB、REFERRAL_POLL_INTERVAL（config/referral.go，开关在内部存为 Disabled，未经 Load 的测试配置默认开启）。
+- doctor：新增 referral 段（开关、封顶、各状态计数、滞留数），滞留时警告 referral_rewards_stale。
+- 文档：backend/.env.example、backend/DEPLOYMENT.md 新增“推荐码与推荐送流量”一节。
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R1-01 | PASS | store.TestReferralMigrationOverLegacyData：先回退到 8c311ee 的表结构并写入旧数据，迁移两次后旧列逐值不变，新列为默认值，五个索引都存在；唯一约束、CHECK 约束、外键的级联和置空都被数据库强制执行 |
+| R1-02 | PASS | referral.TestGenerateMillion：100 万个码中有 1 次碰撞（期望约 0.6 次），每个字符的频率都在期望值 ±5% 以内；TestGenerateRejectsBiasedBytes、TestNormalize（含 0/O/1/I/L、全角字符、超过 64 个字符）；api.TestReferralCodeCreation 覆盖碰撞重试、连续 5 次碰撞返回 503 referral_unavailable、8 个并发首次访问拿到同一个码、User 的 JSON 不含推荐码 |
+| R1-03 | PASS | api.TestReferralRegistrationIsSilent：空码、乱码、7 位、易混字符、不存在的码、超长输入、推荐人正在注销、推荐人已停用、功能关闭，都不写记录；所有情况返回的都是 201，响应字段集合完全相同，且响应中不含 referral 字样；小写加空格的有效码会绑定；其他未知字段仍返回 400 |
+| R1-04 | PASS | api.TestReferralRegistrationCostAndRobustness：带码注册只多一个 SAVEPOINT 和一条 INSERT（统计到的语句数正好多 2 条），无效码不多任何语句；EXPLAIN 显示走的是 Index Scan；用回调注入让绑定语句失败后，注册仍返回 201、会话可用、没有推荐记录。耗时（各 100 次，交替执行）：普通 go test 下 p50 1.09 ms / 1.21 ms，p95 1.52 ms / 1.65 ms；-race 下 p50 9.26 ms / 9.38 ms，p95 9.61 ms / 9.75 ms（前者不带码，后者带码），差值都远小于 5 ms |
+| R1-05 | PASS | api.TestReferralRequirementExample 与 TestReferralQualification：29.00 元首单得到 29 GiB；用 9 折优惠码后计费金额为 26.10 元；测试购买不触发判定；先进入 review、由管理员确认到账后触发判定；两笔订单并发回调，只判定一次，并且记录的金额与它认定的订单一致；测试价 0.01 元得到 GiB/100 字节；封顶 10 GiB 生效 |
+| R1-06 | PASS | api.TestReferralGrantRules：没有套餐时 forfeited，之后买了套餐也不补发；套餐已过期、账号正在注销、生产配置下只有测试订阅时都是 forfeited；流量用完但在有效期内时发奖成功，并且恢复可用；接近 1 PiB 上限时截断，只发 5 GiB；开发环境的测试订阅可以得到奖励。需求原例中，PlanID、StartsAt 和原生指纹都不变，Version+1，当前周期的账本同步为 129 GiB |
+| R1-07 | PASS | billing.TestBonusSurvivesRefresh / TestBonusOfAnotherPeriod（剩余周期额度、用完周期额度、用掉部分奖励、全部用完、一次跨多个周期、用量不足 1 字节时向下取整、锚点失效）；api.TestReferralYearlyReferrer（年付推荐人在第一个周期用了 110 GiB，刷新后剩余 19 GiB 奖励；管理员把额度改为 10 GiB 时奖励被截断；过期后重新购买，奖励清零；月付带奖励续成年付后，奖励在刷新后保留） |
+| R1-08 | PASS | api.TestReferralWorker：3 个 worker 并发处理 30 条记录，每条只发一次，订阅的 Version 正好加 30；租约未到期时不会被接手，到期后被接手；注入订阅写入失败后，attempts=1、30 秒后重试、last_error_kind=database，恢复后发放成功并清空错误；功能关闭时首单仍被判定、不发奖，重新开启后补发 |
+| R1-09 | PASS | api.TestReferralSweep：直接写入已付订单（模拟旧二进制），补扫选中最早的一笔真实付款订单（忽略 provider=test 的订单），重复执行时为 0 |
+| R1-10 | PASS | api.TestReferralPurge：清除 B 后，记录保留，referee_id 和 first_order_id 为空，脱敏邮箱和已发放的奖励不变，A 的列表显示 referee_deleted；清除 A 后，他的推荐记录全部删除，C 的账号不受影响；迁移测试中还验证了直接删除 users 行时外键的行为 |
+| R1-11 | PASS | api.TestReferralEndpoints：未登录 401；summary、stats 和列表项的字段集合与白名单逐一相等；不泄露被推荐人 id，邮箱都已脱敏；分页 20+5，第 10001 页返回 400；/auth/me 中没有推荐码；dashboard 的 subscription 对象字段不变，并新增顶层 bonus_bytes；普通用户访问管理员接口返回 403，管理员能看到完整邮箱和推荐人；模拟会话可以读推荐页，但访问管理后台返回 403；/meta 中有 referral_enabled。api.TestReferralReadiness 覆盖 doctor 的计数、滞留警告，并确认输出中没有邮箱和推荐码 |
+| R1-12 | PASS | scripts/test-native.py（go test -race，全部包）全部通过，其中 internal/api 耗时 530 秒；scripts/test-backend-standalone.py 通过（170 个文件，Linux amd64/arm64 交叉编译）；scripts/test-payment-web.py 通过（真实浏览器 → Next.js → Gin/PG → 本地模拟网关；worktree 中先执行 npm ci --prefer-offline，用指向主检出目录的 node_modules 符号链接时 Next 构建会失败）；test-node-catalog.py 和发布演练脚本（本轮只在 ALL_TABLES 中加入 referrals）以 CI 结果为准 |
+
+本地证据目录：artifacts/referral-round1-backend/（已被 .gitignore 忽略，不提交）。
+
+偏离与补充：
+- 文档第 7.1 节写的是“一条带条件的更新”。实现上是先用 SELECT … FOR UPDATE 按 referee_id 唯一索引查一次（没有推荐关系的用户只多这一次查询），再查最早一笔已付订单，最后执行更新，效果相同。
+- 推荐码生成连续冲突时，返回的错误码为 503 referral_unavailable，与第 11 节一致。
