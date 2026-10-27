@@ -117,6 +117,10 @@ func (s *Server) purgeAccount(ctx context.Context, id string) (bool, error) {
 			{`DELETE FROM ` + t("login_events") + ` WHERE user_id = ?`, []any{id}},
 			{`DELETE FROM ` + t("auth_mail_jobs") + ` WHERE challenge_id IN (SELECT id FROM ` + t("email_auth_challenges") + ` WHERE user_id = ? OR email = ?)`, []any{id, user.Email}},
 			{`DELETE FROM ` + t("email_auth_challenges") + ` WHERE user_id = ? OR email = ?`, []any{id, user.Email}},
+			// Referral rows (handoff_coupon.md 10): as a referee the row stays for the
+			// referrer, anonymous; as a referrer its rows go.
+			{`UPDATE ` + t("referrals") + ` SET referee_id = NULL, first_order_id = NULL WHERE referee_id = ?`, []any{id}},
+			{`DELETE FROM ` + t("referrals") + ` WHERE referrer_id = ?`, []any{id}},
 			// The callback ledger stays, without the link to the account.
 			{`UPDATE ` + t("payment_notifications") + ` SET order_id = NULL WHERE order_id IN (SELECT id FROM ` + t("orders") + ` WHERE user_id = ?)`, []any{id}},
 			{`DELETE FROM ` + t("orders") + ` WHERE user_id = ?`, []any{id}},

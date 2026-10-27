@@ -29,6 +29,9 @@ type Server struct {
 	// random picks among equally loaded servers (math/rand/v2 in production); tests
 	// inject one to make every tie-break reproducible.
 	random func(n int) int
+	// referralCodes draws a referral code (referral.Generate in production); tests inject
+	// one to force collisions.
+	referralCodes func() (string, error)
 }
 
 func (s *Server) randomIndex(n int) int {
@@ -136,6 +139,9 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 		for key, value := range paymentMeta(cfg) {
 			meta[key] = value
 		}
+		// The website only shows and sends the referral field when this is true, so a new
+		// website never sends it to an older backend that rejects unknown fields.
+		meta["referral_enabled"] = cfg.ReferralEnabled()
 		c.JSON(200, meta)
 	})
 	v.GET("/plans", s.plans)
@@ -161,6 +167,8 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	secured.POST("/me/password", s.changePassword)
 	secured.POST("/me/account/delete", s.requestAccountDeletion)
 	secured.GET("/me/logins", s.myLogins)
+	secured.GET("/me/referral", s.myReferral)
+	secured.GET("/me/referrals", s.myReferrals)
 	secured.GET("/orders", s.orders)
 	secured.POST("/orders/test-purchase", s.testPurchase)
 	secured.GET("/client/bootstrap", s.bootstrap)
@@ -177,6 +185,7 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	console.POST("/users/:id/subscription", s.consoleUserSubscription)
 	console.POST("/users/:id/subscription/end", s.consoleUserSubscriptionEnd)
 	console.POST("/users/:id/delete", s.consoleUserDelete)
+	console.GET("/users/:id/referrals", s.consoleUserReferrals)
 	console.GET("/orders", s.consoleOrderList)
 	console.GET("/orders/:id", s.consoleOrderDetail)
 	console.POST("/orders/:id/check", s.consoleOrderCheck)

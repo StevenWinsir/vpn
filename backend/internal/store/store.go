@@ -52,7 +52,7 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}, &model.PaymentNotification{}, &model.Coupon{}, &model.LoginEvent{}, &model.IPGeoCache{}, &model.Announcement{}, &model.AnnouncementRead{}, &model.ShopSettings{}); err != nil {
+		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}, &model.PaymentNotification{}, &model.Coupon{}, &model.LoginEvent{}, &model.IPGeoCache{}, &model.Announcement{}, &model.AnnouncementRead{}, &model.ShopSettings{}, &model.Referral{}); err != nil {
 			return err
 		}
 		s := `"` + c.Schema + `".`
@@ -73,6 +73,10 @@ func Migrate(db *gorm.DB, c config.Config) error {
 			// (handoff_payment_account.md 5.1).
 			`CREATE INDEX IF NOT EXISTS idx_order_pending_user ON ` + s + `orders (user_id, expires_at) WHERE status = 'pending'`,
 			`CREATE INDEX IF NOT EXISTS idx_order_pending_expiry ON ` + s + `orders (expires_at) WHERE status = 'pending'`,
+			// Referral reward queue and the sweep for first purchases a binding missed
+			// (handoff_coupon.md 5.3).
+			`CREATE INDEX IF NOT EXISTS idx_referral_qualified ON ` + s + `referrals (next_attempt_at) WHERE status = 'qualified'`,
+			`CREATE INDEX IF NOT EXISTS idx_referral_registered ON ` + s + `referrals (created_at) WHERE status = 'registered'`,
 		} {
 			if err := tx.Exec(stmt).Error; err != nil {
 				return err

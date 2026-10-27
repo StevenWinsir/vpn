@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"vpn/backend/internal/authmail"
 	"vpn/backend/internal/model"
+	"vpn/backend/internal/referral"
 )
 
 type registerCodeInput struct {
@@ -28,6 +29,9 @@ type registerInput struct {
 	Remember       bool   `json:"remember"`
 	VerificationID string `json:"verification_id"`
 	Code           string `json:"code"`
+	// ReferralCode is optional; an invalid one is ignored without any sign
+	// (handoff_coupon.md 6).
+	ReferralCode string `json:"referral_code"`
 }
 
 // Password byte limits for ordinary accounts (bcrypt truncates beyond 72 bytes).
@@ -137,6 +141,8 @@ func (s *Server) register(c *gin.Context) {
 		failAuthMail(c, authmail.ErrCodeFormat)
 		return
 	}
+	referralCode, referred := referral.Normalize(in.ReferralCode)
+	referred = referred && s.cfg.ReferralEnabled()
 	// bcrypt runs before any row lock is taken.
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), s.cfg.BcryptCost)
 	if err != nil {
@@ -158,6 +164,9 @@ func (s *Server) register(c *gin.Context) {
 		}
 		if e := tx.Create(&user).Error; e != nil {
 			return e
+		}
+		if referred {
+			s.bindReferral(tx, user, referralCode, s.now())
 		}
 		var e error
 		sess, raw, e = s.createSession(tx, user.ID, in.Remember)

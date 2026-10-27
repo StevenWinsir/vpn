@@ -23,6 +23,10 @@ type User struct {
 	PasswordChangedAt *time.Time `json:"-"`
 	// AuthVersion increments only when the password actually changes.
 	AuthVersion int64 `gorm:"not null;default:1" json:"-"`
+	// ReferralCode is the account's own referral code (handoff_coupon.md 5.1), created the
+	// first time the account opens its referral page; NULL until then. Never serialized
+	// with the user: only the referral endpoints return it.
+	ReferralCode *string `gorm:"size:8;uniqueIndex" json:"-"`
 }
 
 type Session struct {
@@ -100,6 +104,13 @@ type Subscription struct {
 	QuotaCycleDays     int        `gorm:"not null;default:0;check:quota_cycle_days >= 0 AND quota_cycle_days <= 365" json:"quota_cycle_days"`
 	QuotaCycleBytes    int64      `gorm:"not null;default:0;check:quota_cycle_bytes >= 0" json:"quota_cycle_bytes"`
 	QuotaCycleStartsAt *time.Time `json:"quota_cycle_starts_at"`
+	// Referral rewards (handoff_coupon.md 5.2, 9). BonusBytes is what is left of the
+	// rewards granted in the period that starts at BonusStartsAt; it is already part of
+	// TrafficLimitBytes and only survives a traffic refresh. An anchor other than
+	// StartsAt belongs to another period and counts as no bonus. Not serialized: the
+	// client contracts keep their exact shape.
+	BonusBytes    int64      `gorm:"not null;default:0;check:bonus_bytes >= 0" json:"-"`
+	BonusStartsAt *time.Time `json:"-"`
 }
 
 type Order struct {

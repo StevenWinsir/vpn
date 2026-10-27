@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"math"
 	"time"
 
 	"vpn/backend/internal/model"
@@ -34,9 +35,51 @@ func RollQuotaCycle(s *model.Subscription, now time.Time) bool {
 		return false
 	}
 	next := start.Add(now.Sub(start) / length * length).UTC()
+	// Referral rewards survive the reset and are spent last (handoff_coupon.md 9): what
+	// is kept is the bonus, but no more than was left of the ending cycle.
+	var keep int64
+	if BonusActive(s) {
+		keep = min(s.BonusBytes, remainingBytes(s))
+	}
 	s.QuotaCycleStartsAt = &next
-	s.TrafficLimitBytes, s.UsedUnits, s.UploadBytes, s.DownloadBytes = s.QuotaCycleBytes, 0, 0, 0
+	s.TrafficLimitBytes, s.UsedUnits, s.UploadBytes, s.DownloadBytes = s.QuotaCycleBytes+keep, 0, 0, 0
+	s.BonusBytes = keep
 	return true
+}
+
+// BonusActive reports whether sub carries referral reward traffic for its current
+// period. An anchor other than StartsAt belongs to another period (an older binary may
+// have started a new period without clearing it).
+func BonusActive(s *model.Subscription) bool {
+	return s != nil && s.BonusBytes > 0 && s.BonusStartsAt != nil && s.BonusStartsAt.Equal(s.StartsAt)
+}
+
+// CurrentBonus is the reward traffic sub still carries in its current period.
+func CurrentBonus(s *model.Subscription) int64 {
+	if !BonusActive(s) {
+		return 0
+	}
+	return s.BonusBytes
+}
+
+// remainingBytes is the unspent allowance in whole bytes (usage is counted in
+// thousandths of a byte).
+func remainingBytes(s *model.Subscription) int64 {
+	if s.TrafficLimitBytes <= 0 || s.TrafficLimitBytes > math.MaxInt64/1000 {
+		return 0
+	}
+	return max(0, (s.TrafficLimitBytes*1000-s.UsedUnits)/1000)
+}
+
+// AddBonus adds granted reward bytes to sub's allowance and to its bonus for the current
+// period (a bonus anchored to another period is dropped first).
+func AddBonus(s *model.Subscription, granted int64) {
+	if !BonusActive(s) {
+		start := s.StartsAt
+		s.BonusBytes, s.BonusStartsAt = 0, &start
+	}
+	s.TrafficLimitBytes += granted
+	s.BonusBytes += granted
 }
 
 // NextQuotaReset is when the current cycle's allowance is next refreshed, or nil when

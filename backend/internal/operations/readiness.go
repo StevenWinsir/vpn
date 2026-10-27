@@ -54,6 +54,24 @@ type ReadinessReport struct {
 	Impersonation ImpersonationReadiness `json:"impersonation"`
 	// Shop (handoff_shop.md 13). Counts and switches only.
 	Shop ShopReadiness `json:"shop"`
+	// Referral programme (handoff_coupon.md 14.3). Switches and counts only: never an
+	// address or a code.
+	Referral ReferralReadiness `json:"referral"`
+}
+
+// ReferralStaleAfter is how long a qualified referral may wait for its reward before
+// doctor warns (the worker normally settles it within seconds).
+const ReferralStaleAfter = 10 * time.Minute
+
+type ReferralReadiness struct {
+	Enabled      bool  `json:"enabled"`
+	MaxRewardGiB int   `json:"max_reward_gib"`
+	Registered   int64 `json:"registered"`
+	Qualified    int64 `json:"qualified"`
+	Rewarded     int64 `json:"rewarded"`
+	Forfeited    int64 `json:"forfeited"`
+	// StaleQualified counts rewards waiting longer than ReferralStaleAfter.
+	StaleQualified int64 `json:"stale_qualified"`
 }
 
 // ShopReadiness: the settings row must exist, something must be on sale, and a plan
@@ -150,7 +168,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons", "login_events", "ip_geo_caches", "announcements", "announcement_reads", "shop_settings"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons", "login_events", "ip_geo_caches", "announcements", "announcement_reads", "shop_settings", "referrals"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -257,6 +275,32 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		}
 		if report.Payment.ReviewOrders > 0 {
 			report.Warnings = append(report.Warnings, "payment_orders_need_review")
+		}
+		report.Referral.Enabled, report.Referral.MaxRewardGiB = cfg.ReferralEnabled(), cfg.Referral.MaxRewardGiB
+		var statuses []struct {
+			Status string
+			Count  int64
+		}
+		if err := tx.Model(&model.Referral{}).Select("status, count(*) AS count").Group("status").Scan(&statuses).Error; err != nil {
+			return err
+		}
+		for _, row := range statuses {
+			switch row.Status {
+			case model.ReferralRegistered:
+				report.Referral.Registered = row.Count
+			case model.ReferralQualified:
+				report.Referral.Qualified = row.Count
+			case model.ReferralRewarded:
+				report.Referral.Rewarded = row.Count
+			case model.ReferralForfeited:
+				report.Referral.Forfeited = row.Count
+			}
+		}
+		if err := tx.Model(&model.Referral{}).Where("status = ? AND qualified_at < ?", model.ReferralQualified, report.CheckedAt.Add(-ReferralStaleAfter)).Count(&report.Referral.StaleQualified).Error; err != nil {
+			return err
+		}
+		if report.Referral.StaleQualified > 0 {
+			report.Warnings = append(report.Warnings, "referral_rewards_stale")
 		}
 		// Node-authoritative means a live agent governs a node; it does not certify that
 		// enforcement was accepted on that protocol (the warning above stays).

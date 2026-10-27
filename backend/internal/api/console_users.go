@@ -559,6 +559,9 @@ func (s *Server) consoleUserSubscription(c *gin.Context) {
 			current.TrafficLimitBytes == next.TrafficLimitBytes && current.UsedUnits == next.UsedUnits && current.UploadBytes == next.UploadBytes {
 			return &apiError{400, "no_change", "没有需要保存的修改"}
 		}
+		// Referral bonus left in this period cannot exceed the allowance it is part of
+		// (handoff_coupon.md 9); a moved start date already detaches it by its anchor.
+		next.BonusBytes = min(next.BonusBytes, next.TrafficLimitBytes)
 		next.Version++
 		next.UpdatedAt = now
 		saved, e := saveSubscription(tx, &next)

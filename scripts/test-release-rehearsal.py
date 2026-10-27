@@ -48,7 +48,7 @@ ALL_TABLES = WEB_TABLES + ['native_sessions', 'client_traffic_reports', 'node_co
     'node_agents', 'subscription_periods', 'connection_grants', 'node_usage_reports',
     'email_auth_challenges', 'auth_mail_jobs', 'auth_rate_buckets',
     'node_groups', 'connection_leases', 'node_assignments', 'usage_buckets', 'node_health_events',
-    'payment_notifications', 'coupons', 'login_events', 'ip_geo_caches', 'announcements', 'announcement_reads', 'shop_settings']
+    'payment_notifications', 'coupons', 'login_events', 'ip_geo_caches', 'announcements', 'announcement_reads', 'shop_settings', 'referrals']
 # main before handoff_auth.md round 1: open registration, no mailbox verification.
 LEGACY_REF = '67e7b37f935e654e4378c14a32bc888ccff2065f'
 # PR #49 merge, the last release before node groups (presence plan 14 step 5); it also has
