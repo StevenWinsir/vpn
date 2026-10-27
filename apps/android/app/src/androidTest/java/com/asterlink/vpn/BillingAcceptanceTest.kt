@@ -19,6 +19,7 @@ import com.asterlink.vpn.session.SessionState
 import com.asterlink.vpn.vpn.NotificationAlerts
 import com.asterlink.vpn.vpn.VpnNotifications
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -323,8 +324,17 @@ class BillingAcceptanceTest {
     /**
      * Select -> Connect -> controlled transfer through the tunnel -> Disconnect (tail settled),
      * with the server's ledger and the sink read before and after. Null when a case failed.
+     *
+     * A transfer that aborts with an I/O error after a clean connect (on a loaded CI emulator the
+     * socket is sometimes reset: "Software caused connection abort") runs the whole case once
+     * more: Disconnect has settled, so the retry reads fresh ledger and sink baselines and its
+     * figures are exact. The retry is named in its connect line. A second abort, a short read
+     * without an error, or a connect that was not clean still fails.
      */
-    private suspend fun measure(tag: String, c: SessionController, who: String, node: String, up: Long, down: Long, during: suspend () -> Unit = {}): Measured? {
+    private suspend fun measure(tag: String, c: SessionController, who: String, node: String, up: Long, down: Long, during: suspend () -> Unit = {}): Measured? =
+        measureOnce(tag, c, who, node, up, down, during, null)
+
+    private suspend fun measureOnce(tag: String, c: SessionController, who: String, node: String, up: Long, down: Long, during: suspend () -> Unit, retryOf: String?): Measured? {
         main { c.selectNow(nodeIds.getValue(node)) }
         if (!selected(c, node)) {
             record("$tag-select", "FAIL", "line not selected: ${c.state.value.message?.code} ${c.state.value.snapshot.lastError?.code}")
@@ -341,9 +351,11 @@ class BillingAcceptanceTest {
             return null
         }
         val rate = s.snapshot.metering?.ratePermille
-        record("$tag-connect", if (vpnNetworkUp() && container.vpnHosts.current != null) "PASS" else "FAIL",
+        val connectedCleanly = vpnNetworkUp() && container.vpnHosts.current != null
+        record("$tag-connect", if (connectedCleanly) "PASS" else "FAIL",
             "connected in ${SystemClock.elapsedRealtime() - started} ms after the Core's gates, first ACK, TUN and Verify; health ${s.snapshot.tunnelHealth}, " +
-                "bound rate $rate‰, source ${s.snapshot.metering?.source}, VPN network ${vpnNetworkUp()}, service running ${container.vpnHosts.current != null}")
+                "bound rate $rate‰, source ${s.snapshot.metering?.source}, VPN network ${vpnNetworkUp()}, service running ${container.vpnHosts.current != null}" +
+                (retryOf?.let { "; retried once after the first transfer aborted ($it)" } ?: ""))
         val host = sink.str("name")
         val gotUp = runCatching { upload(host, up) }
         val gotDown = runCatching { download(host, down) }
@@ -353,6 +365,13 @@ class BillingAcceptanceTest {
         main { c.disconnectNow() }
         waitFor(c, 15_000) { !it.snapshot.tunnelBusy && it.snapshot.metering?.pending != true }
         s = c.state.value
+        val aborted = listOf(gotUp, gotDown).firstNotNullOfOrNull { it.exceptionOrNull() as? IOException }
+        if (aborted != null && retryOf == null && connectedCleanly && !s.snapshot.tunnelBusy && s.snapshot.metering?.pending != true) {
+            // This attempt proves nothing: drop its connect line, the retry records its own.
+            cases.removeAt(cases.indexOfLast { it.getValue("case_id").jsonPrimitive.content == "$tag-connect" })
+            val which = if (gotUp.exceptionOrNull() is IOException) "upload" else "download"
+            return measureOnce(tag, c, who, node, up, down, during, "$which: ${aborted.message}")
+        }
         if (gotUp.getOrNull() != up || gotDown.getOrNull() != down) {
             record("$tag-transfer", "FAIL", "upload ${gotUp.getOrNull() ?: gotUp.exceptionOrNull()?.message}, download ${gotDown.getOrNull() ?: gotDown.exceptionOrNull()?.message}")
             return null
