@@ -16,7 +16,8 @@
     "test:referral": "node --experimental-strip-types --test scripts/referral.test.mjs",
     "test:copy": "node --test scripts/copy-guard.test.mjs",
     "test:theme": "node --test scripts/theme.test.mjs",
-    "brand:icons": "node scripts/brand-icons.mjs"
+    "brand:icons": "node scripts/brand-icons.mjs",
+    "test:home": "node --experimental-strip-types --test scripts/home.test.mjs"
   },
   "engines": {
     "node": ">=22"

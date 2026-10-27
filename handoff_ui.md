@@ -545,3 +545,39 @@ CI 首轮（PR #82，4f82b81）两个失败，均与本轮代码无关，处理�
 - Android client CI 的 release.R01-connect：同意首次 VPN 授权后未连上，界面显示 profile_changed（“线路配置已更新，请重新选择线路”），模拟器负载 7.47（2 vCPU，NOT settled）。近期运行中首次出现；本轮未改动 Android、Core 及发放凭证相关代码。处理：随本次推送重跑；若再次失败，单独排查授权弹窗期间的连接重试与凭证版本的时序问题，不并入 UI 轮次。
 - 同时合并了 main（含 #83：Android 计费验收 B04/B01 测试加固），与本轮文件无交集，合并无冲突。
 
+
+### 第 3 轮：门户首页（2026-10-27，分支 worktree-ui-round3-landing，PR 见合并记录）
+
+完成内容：
+- 首页绕开 AppShell：SiteShell 对 / 直接返回页面内容；首页自带营销头部、main 与页脚三个地标（src/app/page.tsx，组件在 src/components/home/）。删除只被旧首页使用的 start-link.tsx 与 globals.css 中旧首页的全部样式（.landing、.hero*、.connection-symbol、.feature-strip*、.landing-footer）。
+- 营销头部（home-header.tsx）：品牌标识；锚点导航“产品能力 / 套餐价格 / 客户端 / 常见问题”；主题切换（沿用 ThemeToggle）；未登录显示“登录”与“免费注册”（注册关闭时只显示登录），已登录显示“进入用户中心”。吸顶，滚动后加半透明背景与细分隔线；宽度 < 900 折叠为菜单（Burger，Esc 关闭，点选后关闭）。
+- 首屏：标语徽标、主标题“每一次连接，都稳定而从容。”、副标题、主按钮（创建账户 / 登录账户 / 进入用户中心）与次按钮“查看套餐”、三个卖点；右侧风格化客户端界面主图（product-visual.tsx，HTML/CSS/内联 SVG：连接状态环、线路列表与“普通/专线”标记、近 24 小时用量柱图，不含任何数字统计，对辅助技术隐藏）。
+- 产品能力 6 项、三步开始、套餐预览、多平台客户端、常见问题、收尾行动区、页脚，内容按第 8.2 节。
+- 账户动作的状态（home-state.tsx）：一次 /meta 请求与 Providers 的登录状态共同决定；登录状态或（未登录时）/meta 未返回前，头部与主按钮只占位不显示文字，因此不会闪现“登录”再变成“注册”或“进入用户中心”；/meta 失败按未开放注册处理。
+- 套餐预览（plan-preview.tsx）：客户端读取公开的 /plans（与 /plans 页同一数据源），最多 3 个，推荐套餐优先入选、按商店顺序展示；显示名称、说明、月付价格（/ N 天）、计费流量、同时在线设备数、线路权限，按钮跳转 /plans；有年付优惠时显示“年付最高省 X%”。加载时骨架占位；失败或无上架套餐时整块隐藏，只保留“查看全部套餐”，无任何错误提示。
+- 平台下载状态（第 8.3 节二选一）：选择首页服务端按请求读取（export const dynamic = 'force-dynamic'），与 /download 共用 androidDownload/iosDownload。理由：渲染不读数据库、不调接口，只读环境变量，首字节开销可忽略；避免额外的客户端请求和状态闪变；与 /download 行为一致。macOS、Windows 固定“即将上线”。
+- 可选配置（第 8.6 节）：SITE_ICP_RECORD（页脚显示并链接 https://beian.miit.gov.cn/，rel=noopener noreferrer）、SITE_SUPPORT_EMAIL（页脚“联系我们”与常见问题“如何联系客服”），服务端按请求读取，格式不合法时不显示（src/lib/site.ts）。写入 frontend/.env.example 与 docs/deployment.md。
+- 视觉与动效：最大宽度 1200；标题 clamp 字号与 text-wrap: balance；价格等宽数字；新增令牌 --al-home-*（两种主题各一套）与 --al-shadow-lg，令牌块外无颜色字面量；首屏背景为品牌色径向光晕 + 渐隐网格。动效只有主图连接状态的呼吸/脉冲和区块进入视口时一次性淡入上移（reveal.tsx，IntersectionObserver；加载时已在视口内的区块不隐藏，无脚本时内容照常可见）；prefers-reduced-motion 下无任何动画，锚点平滑滚动也关闭。锚点 scroll-margin-top 88（手机 76）。
+- 文案：遵守 D5/D12，不写统计数字、评价、极限用语。copy-guard 与运行时守卫加入 D12 词表（最快、最好、最强、最稳定、最安全、最低价、行业/全网/国内第一、No.1、100% 安全、百分百、零日志、无日志、不限速、军用级、绝对安全、永久免费、翻墙、科学上网等）；运行时词表抽到 tests/copy-words.ts，ui-copy.spec 与 home.spec 共用。
+- 测试：scripts/home.test.mjs（npm run test:home，已加入 CI Web validation）——预览选取规则、年付提示、页脚配置校验。tests/home.spec.ts（加入 playwright.payment.config.ts，夹具新增 homea 账户）。scripts/test-payment-web.py 为 Next 设置一个“已发布”的 Android（只是链接，不会被请求）、不设置 iOS，并设置备案号与客服邮箱；同时从宿主环境剔除 ANDROID_/IOS_/SITE_ 变量保证结果确定。register.spec 与 scripts/api-proxy.test.mjs 的首页入口改为限定在首屏按钮区（首页现在有两个“创建账户”/“登录账户”链接）。
+
+测试与结果（本地，worktree，基线 093cf0b）：
+- npm run lint、npm run typecheck、npm run build -- --webpack：通过。
+- test:nodes 3/3、test:downloads 6/6、test:dashboard 6/6、test:referral 5/5、test:copy 3/3、test:theme 5/5、test:home 3/3：通过；test:api-proxy 16/16 通过（PLAYWRIGHT_CHROME_PATH 指向系统 Chrome）。首次运行时它的注册用例失败：用例在首页点击名为“创建账户”的链接、等待 main 中的“登录账户”，新首页首屏与收尾区各有一个，严格模式报多匹配；已改为限定在首屏按钮区（data-testid=hero-actions），与 register.spec 相同。
+- scripts/test-payment-web.py --skip-build：65/65 通过（原 56 个 + home.spec 9 个），用时 3.8 分钟。home.spec 覆盖：标题、地标、锚点导航、六个区块标题；首页可见文本与全部常见问题答案不含开发词汇与 D12 词汇、不含“退款”；页脚链接只指向已存在页面、客服邮箱、备案号链接；整页滚动过程中没有任何非本站请求；预览的价格、流量、设备数、推荐标记、顺序与 /plans 一致，年付提示与 /plans 年付徽标同时出现；/plans 返回 503 或空列表时预览整块隐藏、无提示、无页面错误；注册开放为“创建账户”、关闭或 /meta 失败为“登录账户”且头部无“免费注册”；/meta 延迟 1.5 秒时从首次绘制起记录到的按钮文字只有最终文字（无“登录账户”闪现）；已登录且 /auth/me 延迟 1.5 秒时头部与主按钮只出现过“进入用户中心”；Android 卡片“立即下载”且 /download 提供 APK，iOS 卡片“即将上线”且 /download 显示“iPhone 版本暂未发布”，macOS、Windows“即将上线”；锚点跳转后区块顶部位于吸顶头部下方 0–24 像素内；键盘 Tab 顺序（品牌、四个锚点、切换外观、登录、免费注册、创建账户、查看套餐）与焦点描边；常见问题可用 Enter/Space 展开收起；减少动效偏好下 getAnimations 为 0、无隐藏区块、scroll-behavior 为 auto，无偏好时有动画且滚动后全部区块显示；浅色、暗色 × 1440、1024、768、390、360 共十组整页截图，overflowing 检查均为空，< 900 时折叠菜单可用且无横向溢出。theme.spec 的首页暗色无白底检查与图标一致性检查同时通过。
+- scripts/test-node-catalog.py --skip-build：浏览器部分 10/10 通过（含改动后的 register.spec）；其后的 Mihomo 内核验收在本地 BLOCKED（worktree 中没有 native/third_party/Clash.Meta 子模块），由 CI 的 web-core job 完整执行。
+- scripts/test-release-rehearsal.py：本地未运行，以 CI 的 rehearsal job 为准。
+- 截图：/tmp/ui-r3/pay-full/browser-artifacts/screens/home-{light,dark}-{1440,1024,768,390,360}.png、home-{light,dark}-390-menu.png、home-signed-in.png，CI 中随 payment-web-evidence 工件上传。人工评审了浅色与暗色的 1440、1024、390、360 整页与手机菜单。
+
+性能预算（第 8.5 节）：Next 16 的 next build 不再输出 First Load JS 列，改为实测。方法：两次构建（基线 093cf0b 与本轮，均 --webpack）分别 next start，用 Chrome 冷加载页面直到网络空闲，统计所有 /_next/static 下 JS 文件，按 gzip -9 求和。
+- /：249.5 KB → 251.4 KB（+1.9 KB，预算 25 KB）。首页自身的页面 chunk 2.4 KB → 4.6 KB，共享 chunk 未变。
+- /login 238.5 → 240.3 KB、/plans 270.8 → 272.7 KB：增量全部来自首页 chunk，因为这些页面有指向 / 的 Link，Next 会预取首页 chunk；它们自身的代码未变。
+- 仅统计 HTML 中 script 标签的口径（不含 RSC 按需加载的 chunk）：/ 264.4 → 266.6 KB。
+- 首页没有图片、网络字体与第三方请求，最大内容元素是首屏标题文字。
+
+偏离规划之处：
+- “如何联系客服”一条只在配置了 SITE_SUPPORT_EMAIL 时显示，内容为客服邮箱。规划写的是“登录后右下角在线客服”，但在线客服在第 4 轮才接入，本轮写入会成为无法兑现的说明；第 4 轮接入 Crisp 后改为始终显示并加入在线客服说明。
+- 常见问题“支持哪些付款方式”按 /meta 的 payment_methods 显示（例如只开支付宝时只写支付宝），未开放支付或读取失败时写“微信支付和支付宝”。
+- 常见问题使用自写的展开组件（button + aria-expanded + region），未引入 Mantine Accordion，以减少首页脚本体积；同一时间只展开一条，默认展开第一条。
+- 预览卡片按钮为“选择套餐”，统一跳转 /plans（不直接打开购买弹窗）。
+- 首页头部按钮文字为“登录”“免费注册”，首屏与收尾区主按钮沿用“创建账户/登录账户”，已登录均为“进入用户中心”。

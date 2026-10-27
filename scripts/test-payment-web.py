@@ -28,7 +28,8 @@ def main():
     os.umask(0o077)
     env = {key: value for key, value in os.environ.items() if not key.startswith(
         ('DATABASE_', 'PG', 'JWT_', 'APP_', 'API_', 'NEXT_PUBLIC_', 'HTTP_', 'CLIENT_', 'NODE_ENCRYPTION_KEY', 'AUTO_MIGRATE', 'COOKIE_', 'TEST_PURCHASE', 'ALLOWED_ORIGINS',
-        'SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES'))}
+        'SMTP_', 'AUTH_MAIL_', 'REGISTRATION_', 'ALLOW_REGISTRATION', 'WEBSITE_BASE_URL', 'TRUSTED_PROXIES',
+        'ANDROID_', 'IOS_', 'SITE_'))}
     env.update(PATH='/opt/homebrew/bin:' + env.get('PATH', ''), LC_ALL='C', LANG='C',
         GOPROXY='off', GOTOOLCHAIN='local', CGO_ENABLED='0', NEXT_TELEMETRY_DISABLED='1')
     for tool in ['initdb', 'pg_ctl', 'go', 'node']:
@@ -83,7 +84,13 @@ def main():
                     raise RuntimeError('Fixture readiness failed; see fixture.log')
                 time.sleep(0.1)
             metadata = json.loads(ready.read_text())
-            frontend_env = dict(env, API_INTERNAL_URL=metadata['api'] + '/api/v1')
+            # The home page spec (handoff_ui.md 8) needs one published client and one not: Android is
+            # "released" (a link only, nothing is fetched), iOS is not. The footer shows the optional
+            # filing number and service address. Next.js reads these on every request.
+            frontend_env = dict(env, API_INTERNAL_URL=metadata['api'] + '/api/v1',
+                ANDROID_APK_URL='https://downloads.example.test/AsterLink-1.2.3-android-arm64-v8a.apk',
+                ANDROID_APK_VERSION='1.2.3', ANDROID_APK_SHA256='ab' * 32,
+                SITE_SUPPORT_EMAIL='support@example.test', SITE_ICP_RECORD='京ICP备00000000号-1')
             if not args.skip_build:
                 run('frontend-build', ['node', 'node_modules/next/dist/bin/next', 'build'], ROOT / 'frontend', frontend_env)
             web = spawn('frontend', ['node', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1',

@@ -40,3 +40,13 @@ PLAYWRIGHT_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 Next.js adds the `src/app` icon files to every route. Do not put icon, favicon or apple-icon files in any route folder, and do not set `icons` in a page's metadata. `npm run test:theme` checks both rules, and also that the generated files match the source.
 
 The native apps' icons are not yet the same as this mark (handoff_ui.md 7.5).
+
+## Home page
+
+The home page (`src/app/page.tsx`, handoff_ui.md section 8, round 3) does not use the workspace shell: `SiteShell` hands `/` straight through, and the page brings its own sticky marketing header (`src/components/home/`), main content and footer.
+
+- It is rendered on every request (`force-dynamic`), like `/download`, because it reads `ANDROID_*`, `IOS_*`, `SITE_ICP_RECORD` and `SITE_SUPPORT_EMAIL` from the server environment. Rendering reads no database and calls no API.
+- In the browser, one `/meta` request and the signed-in state decide the account actions (sign in / free registration / user centre). They stay blank until both are known, so a visitor never sees one label turn into another. `/plans` feeds the plan preview (at most three plans, featured first); a failure or an empty shop hides the cards silently.
+- The hero illustration is HTML, CSS and inline SVG, colours from the tokens. The page loads no font, image, CDN or analytics from another host (`tests/home.spec.ts` checks every request).
+- Motion: sections below the fold fade in once (`Reveal`, IntersectionObserver), and the illustration's status dot breathes. With `prefers-reduced-motion: reduce` there is no animation and anchor scrolling is instant.
+- Copy follows handoff_ui.md D12: no figures that cannot be proved and no superlatives. `npm run test:copy` and the specs reject the D12 vocabulary on every user page.

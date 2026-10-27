@@ -24,7 +24,7 @@ test('email code registration end to end through Next.js and the real API', asyn
   const password = '浏览器注册-Test-2026';
 
   await page.goto('/');
-  await page.getByRole('main').getByRole('link', { name: '创建账户' }).click();
+  await page.getByTestId('hero-actions').getByRole('link', { name: '创建账户' }).click();
   await expect(page).toHaveURL(/\/register$/);
   await expect(page.getByText(/支持：qq\.com、.*gmail\.com/)).toBeVisible();
   await page.getByLabel('姓名 / 昵称').fill('浏览器注册');

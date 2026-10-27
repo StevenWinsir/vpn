@@ -105,6 +105,7 @@ jobs:
           npm run test:referral
           npm run test:copy
           npm run test:theme
+          npm run test:home
       - name: Legacy managed-core regressions (kept until the new Core re-implements them in stage 2)
         working-directory: native/legacy-core
         run: |
