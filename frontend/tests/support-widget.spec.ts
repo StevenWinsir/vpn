@@ -6,10 +6,11 @@ import { mkdir, readFile } from 'node:fs/promises';
 // The playwright configs make every Crisp host unresolvable; here request interception (which
 // runs before name resolution) stands in for Crisp: a fake l.js that records each $crisp call in
 // sessionStorage (it survives the reload after signing out), a request that never answers, or one
-// that fails. supporta and supportb are ordinary users, supportroot an administrator.
+// that fails. supporta and supportb are ordinary users, supportroot an administrator, and
+// supportdel deletes itself.
 type Fixture = {
   password: string;
-  emails: { supporta: string; supportb: string; supportroot: string };
+  emails: { supporta: string; supportb: string; supportroot: string; supportdel: string };
 };
 
 let fixture: Fixture;
@@ -474,4 +475,35 @@ test('switched off, or an invalid website ID: no launcher, no request, the API s
     await page.getByRole('menuitem', { name: '退出登录' }).click();
     await expect(page).toHaveURL(/\/login$/);
   }
+});
+
+test('deleting the account with the chat loaded still ends on the home page, without Crisp', async ({
+  page,
+  context,
+}) => {
+  // The page leaves by a full navigation (location.replace('/')) while the sign-in redirect runs
+  // in the app; the chat's own reload after signing out must not win and land on /login.
+  const fake = await crisp(context, 'ok');
+  const email = fixture.emails.supportdel;
+  await login(page, email);
+  await nav(page, '账号设置', /\/account$/);
+  await expect.poll(() => fake.scripts().length, { timeout: 20000 }).toBe(1);
+  await expect(page.locator('[data-testid="support-launcher"]')).toHaveAttribute(
+    'data-status',
+    'ready',
+  );
+  await page.getByRole('main').getByRole('button', { name: '删除账号' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('当前密码').fill(fixture.password);
+  await dialog.getByLabel(/请输入完整邮箱/).fill(email);
+  const confirm = dialog.getByRole('button', { name: /^永久删除账号/ });
+  await expect(confirm).toBeEnabled({ timeout: 15000 });
+  const mark = (await calls(page)).length;
+  await confirm.click();
+  await expect(page).toHaveURL((url) => url.pathname === '/');
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await expect(page).toHaveURL((url) => url.pathname === '/');
+  expect((await calls(page)).slice(mark)).toContain('do session:reset');
+  expect(await scriptElements(page)).toBe(0);
 });

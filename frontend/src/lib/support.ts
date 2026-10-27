@@ -178,6 +178,7 @@ function inject() {
       clearTimeout(readyTimer);
       if (state.status === 'loading') update({ status: 'failed' });
     });
+    watchLeaving();
     script = element;
     scriptFailed = false;
     update({ status: 'loading' });
@@ -266,6 +267,40 @@ export function suspendSupport() {
 }
 
 export const supportInjected = () => script !== null;
+
+// Whether the page has already started a navigation to another document (for example the account
+// deletion's location.replace('/')): a reload now would cancel it. The Navigation API reports it
+// as it starts; beforeunload is the fallback where that API is missing.
+let leavingDocument = false;
+let watching = false;
+function watchLeaving() {
+  if (watching) return;
+  watching = true;
+  const navigation = (
+    window as Window & {
+      navigation?: {
+        addEventListener: (
+          type: 'navigate',
+          listener: (event: { destination: { sameDocument: boolean } }) => void,
+        ) => void;
+      };
+    }
+  ).navigation;
+  navigation?.addEventListener('navigate', (event) => {
+    if (!event.destination.sameDocument) leavingDocument = true;
+  });
+  window.addEventListener('beforeunload', () => {
+    leavingDocument = true;
+  });
+}
+
+// Replaces the document with a fresh load of the current address, so Crisp's script is gone,
+// unless the page is already on its way to another document.
+export function reloadWithoutSupport() {
+  setTimeout(() => {
+    if (!leavingDocument) window.location.replace(window.location.href);
+  }, 0);
+}
 
 // Signed out or the session ended: the conversation must not reach the next account. The caller
 // then reloads the page, so the third-party script does not stay on the sign-in pages either.

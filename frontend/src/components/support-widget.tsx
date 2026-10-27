@@ -9,6 +9,7 @@ import {
   dismissSupport,
   endSupportSession,
   openSupport,
+  reloadWithoutSupport,
   subscribeSupport,
   supportInjected,
   supportServerSnapshot,
@@ -70,17 +71,17 @@ export function useSupportAccess(path: string): RuntimeConfig['support'] | null 
     const was = previous.current;
     previous.current = user?.id ?? null;
     if (leaving.current !== null) {
-      if (path !== leaving.current) window.location.replace(window.location.href);
+      if (path !== leaving.current) reloadWithoutSupport();
       return;
     }
     if (!supportInjected()) return;
     if (user?.role === 'admin') {
       endSupportSession();
-      window.location.reload();
+      reloadWithoutSupport();
     } else if (was && !user) {
       endSupportSession();
       if (supportPages.includes(path)) leaving.current = path;
-      else window.location.reload();
+      else reloadWithoutSupport();
     }
   }, [user, path]);
   return offered ? config : null;
