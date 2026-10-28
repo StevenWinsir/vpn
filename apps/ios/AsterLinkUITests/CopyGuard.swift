@@ -80,8 +80,9 @@ enum CopyGuard {
         "debug",
         "Debug",
     ]
-    /// D8: a development build may show the neutral marker "开发版"; a release build never does.
-    static let allowedPhrases = ["开发版"]
+    /// D8: a development build may show the neutral marker "开发版"; a release build never does. The
+    /// "调试" section of the account page exists only in Debug builds (#if DEBUG) and is the test target.
+    static let allowedPhrases = ["隧道调试（第 2 轮）", "调试", "开发版"]
 
     /// The forbidden words found in `texts` (empty when the copy is clean).
     static func violations(in texts: [String]) -> [String] {

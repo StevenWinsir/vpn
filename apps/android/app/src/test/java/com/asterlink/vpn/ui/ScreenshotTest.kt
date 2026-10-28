@@ -310,7 +310,7 @@ class ScreenshotTest {
         signedIn(connectedSnapshot().copy(tunnelHealth = "gated", gate = GateView("lifecycle_reconfirmation_required", attempts = 0))),
     ) {
         compose.onNodeWithText("正在重新验证").assertExists()
-        compose.onNodeWithText("确认前不转发任何流量", substring = true).assertExists()
+        compose.onNodeWithText("重新验证账户", substring = true).assertExists()
     }
 
     @Test
