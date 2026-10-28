@@ -34,7 +34,7 @@
             </StackPanel>
         </StackPanel>
 
-        <ui:CardGrid MinItemWidth="220" Gap="16">
+        <ui:CardGrid MinItemWidth="200" Gap="16">
             <!-- Current line. -->
             <HeaderedContentControl Style="{StaticResource InfoCard}" Header="当前线路" Tag="{StaticResource IconWorld}">
                 <StackPanel>

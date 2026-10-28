@@ -144,7 +144,20 @@ public static class PreviewRunner
             window.UpdateLayout();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
 
+            // Lay the window's content out again on its own at the full client size: a tall page (the account page) is
+            // taller than the CI screen, and a shown window is clamped to the screen.
             var content = (FrameworkElement)window.Content;
+            var client = new Size(content.ActualWidth, scene.Height - (window.ActualHeight - content.ActualHeight));
+            window.Content = null;
+            content.DataContext = model;
+            content.SetValue(TextElement.FontFamilyProperty, window.FontFamily);
+            content.SetValue(TextElement.FontSizeProperty, window.FontSize);
+            content.SetValue(TextElement.ForegroundProperty, window.Foreground);
+            TextOptions.SetTextFormattingMode(content, TextOptions.GetTextFormattingMode(window));
+            content.Measure(client);
+            content.Arrange(new Rect(client));
+            content.UpdateLayout();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var pixelsWide = (int)Math.Ceiling(content.ActualWidth * scale);
             var pixelsHigh = (int)Math.Ceiling(content.ActualHeight * scale);
             var bitmap = new RenderTargetBitmap(pixelsWide, pixelsHigh, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
@@ -155,7 +168,7 @@ public static class PreviewRunner
             bitmap.Render(content);
             Save(bitmap, Path.Combine(directory, name + ".png"));
             written.Add(new { scenario = name, file = name + ".png", width = Math.Round(content.ActualWidth), height = Math.Round(content.ActualHeight), scale, theme });
-            texts[name] = VisibleTexts(window, name, clipped);
+            texts[name] = VisibleTexts(content, name, clipped);
             window.Close();
         }
 
@@ -223,17 +236,17 @@ public static class PreviewRunner
     /// Every string a user can see or hear on the window: visible text, text box contents and hints, accessible names,
     /// help texts and tool tips. A one-line text that does not fit its box (cut with "…" or simply clipped) is reported.
     /// </summary>
-    private static List<string> VisibleTexts(Window window, string scenario, List<object> clipped)
+    private static List<string> VisibleTexts(FrameworkElement root, string scenario, List<object> clipped)
     {
         var found = new List<string>();
-        var dpi = VisualTreeHelper.GetDpi(window).PixelsPerDip;
+        var dpi = VisualTreeHelper.GetDpi(root).PixelsPerDip;
         void Add(string? text)
         {
             if (!string.IsNullOrWhiteSpace(text) && !found.Contains(text)) found.Add(text);
         }
         void Walk(DependencyObject node)
         {
-            if (node is UIElement { IsVisible: false }) return;
+            if (node is UIElement { Visibility: not Visibility.Visible }) return;
             if (node is FrameworkElement element)
             {
                 Add(System.Windows.Automation.AutomationProperties.GetName(element));
@@ -247,8 +260,10 @@ public static class PreviewRunner
                     Add(text);
                     if (block.TextWrapping == TextWrapping.NoWrap && text.Length > 0)
                     {
+                        // Measured the way the block renders it (Display text mode in this app), so a fit is not reported as cut.
                         var measured = new FormattedText(text, System.Globalization.CultureInfo.CurrentUICulture, block.FlowDirection,
-                            new Typeface(block.FontFamily, block.FontStyle, block.FontWeight, block.FontStretch), block.FontSize, Brushes.Black, dpi);
+                            new Typeface(block.FontFamily, block.FontStyle, block.FontWeight, block.FontStretch), block.FontSize, Brushes.Black, null,
+                            TextOptions.GetTextFormattingMode(block), dpi);
                         if (measured.WidthIncludingTrailingWhitespace > block.ActualWidth + 1)
                             clipped.Add(new { scenario, text, need = Math.Round(measured.WidthIncludingTrailingWhitespace), have = Math.Round(block.ActualWidth) });
                     }
@@ -259,7 +274,7 @@ public static class PreviewRunner
             }
             for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Walk(VisualTreeHelper.GetChild(node, i));
         }
-        Walk(window);
+        Walk(root);
         return found;
     }
 

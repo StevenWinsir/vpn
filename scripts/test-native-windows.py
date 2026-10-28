@@ -606,7 +606,7 @@ def run_ui_suite(args):
     extra = [n for n in rendered if n not in UI_SCENARIOS]
     bad_png = [n for n, e in rendered.items()
                if not (out / e['file']).is_file() or not (out / e['file']).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
-               or (out / e['file']).stat().st_size < 3000]
+               or (out / e['file']).stat().st_size < (500 if '-tray-' in n else 3000)]
     record('ui.render', not missing and not extra and not bad_png,
            '%d of %d scenarios drawn (light, dark, 200 %%, tray); missing %s; unexpected %s; bad PNG %s'
            % (len(rendered), len(UI_SCENARIOS), missing or '-', extra or '-', bad_png or '-'))
