@@ -56,7 +56,15 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertEqual(luminance < 90, expected, "background luminance \(luminance)", file: file, line: line)
     }
 
+    /// Everything the user can read on the screen right now (labels of texts, buttons and fields).
+    private func visibleTexts() -> [String] {
+        let elements = app.staticTexts.allElementsBoundByIndex + app.buttons.allElementsBoundByIndex
+            + app.textFields.allElementsBoundByIndex + app.secureTextFields.allElementsBoundByIndex
+        return elements.flatMap { [$0.label, $0.value as? String ?? "", $0.placeholderValue ?? ""] }.filter { !$0.isEmpty }
+    }
+
     private func capture(_ name: String) {
+        XCTAssertEqual(CopyGuard.violations(in: visibleTexts()), [], "forbidden wording on screen \(name)")
         let screenshot = app.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
@@ -73,7 +81,7 @@ final class ScreenshotTests: XCTestCase {
     func test01_login() {
         launch("login")
         present("login-email"); present("login-password"); present("login-submit"); present("login-register")
-        said("login-footer", "Mihomo 70f0570", contains: true)
+        said("login-footer", "版本", contains: true)
         XCTAssertEqual(el("login-remember").value as? String, "已关闭")
         absent("login-banner"); absent("login-password-error")
         assertDark(false)
@@ -110,8 +118,8 @@ final class ScreenshotTests: XCTestCase {
     func test06_connectReady() {
         launch("connect-ready")
         said("status-text", "未连接")
-        said("line-name", "香港 01"); said("line-summary", "专线 · 计费 1×")
-        said("plan-remaining", "剩余 68.00 GiB / 100.00 GiB")
+        said("line-name", "香港 01"); said("line-summary", "专线 · 线路倍率 1×")
+        said("plan-remaining", "剩余 68.00 GB / 100.00 GB")
         XCTAssertTrue(el("connect-button").isEnabled)
         XCTAssertEqual(el("connect-button").label, "连接")
         absent("blocker-text"); absent("traffic-card")
@@ -136,7 +144,7 @@ final class ScreenshotTests: XCTestCase {
     func test09_connectQuotaZero() {
         launch("connect-quota-zero")
         said("blocker-text", "流量已用完")
-        said("plan-remaining", "剩余 0 B / 100.00 GiB")
+        said("plan-remaining", "剩余 0 B / 100.00 GB")
         XCTAssertFalse(el("connect-button").isEnabled)
         capture("09-connect-quota-zero")
     }
@@ -187,8 +195,8 @@ final class ScreenshotTests: XCTestCase {
         launch("connect-connected")
         present("status-text")
         XCTAssertTrue(el("status-text").label.hasPrefix("已连接 · 00:"), el("status-text").label)
-        said("rate-up", "1.20 MiB/s", contains: true); said("rate-down", "8.40 MiB/s", contains: true)
-        said("usage-text", "本次用量 101.00 MiB · 计费 101.00 MiB")
+        said("rate-up", "1.20 MB/s", contains: true); said("rate-down", "8.40 MB/s", contains: true)
+        said("usage-text", "本次已用 101.00 MB · 按倍率计 101.00 MB")
         XCTAssertEqual(el("connect-button").label, "断开连接")
         present("rate-chart")
         said("plan-estimated", "预估剩余", contains: true)
@@ -197,21 +205,21 @@ final class ScreenshotTests: XCTestCase {
 
     func test16_connectConnectedHalfRate() {
         launch("connect-connected-half")
-        said("line-summary", "普通 · 计费 0.5×")
-        said("usage-text", "本次用量 101.00 MiB · 计费 50.50 MiB")
+        said("line-summary", "普通线路 · 线路倍率 0.5×")
+        said("usage-text", "本次已用 101.00 MB · 按倍率计 50.50 MB")
         capture("16-connect-connected-half-rate")
     }
 
     func test17_connectConnectedNodeMetered() {
         launch("connect-connected-node")
-        said("line-name", "洛杉矶 01"); said("line-summary", "计费 0.5×", contains: true)
+        said("line-name", "洛杉矶 01"); said("line-summary", "线路倍率 0.5×", contains: true)
         capture("17-connect-connected-node-metered")
     }
 
     func test18_connectGated() {
         launch("connect-gated")
         said("status-text", "正在重新验证")
-        said("status-detail", "确认前不转发任何流量", contains: true)
+        said("status-detail", "重新验证账户", contains: true)
         XCTAssertEqual(el("connect-button").label, "断开连接")
         capture("18-connect-gated")
     }
@@ -219,13 +227,13 @@ final class ScreenshotTests: XCTestCase {
     func test19_connectWaitingNetwork() {
         launch("connect-waiting-network")
         said("status-text", "等待网络")
-        said("status-detail", "隧道保持但不转发流量", contains: true)
+        said("status-detail", "网络恢复后自动继续", contains: true)
         capture("19-connect-waiting-network")
     }
 
     func test20_connectStopping() {
         launch("connect-stopping")
-        said("status-text", "正在断开并结算")
+        said("status-text", "正在断开")
         XCTAssertFalse(el("connect-button").isEnabled)
         capture("20-connect-stopping")
     }
@@ -233,7 +241,7 @@ final class ScreenshotTests: XCTestCase {
     func test21_connectError() {
         launch("connect-error")
         said("status-text", "无法连接")
-        said("failure-banner", "隧道验证未通过", contains: true)
+        said("failure-banner", "暂时无法访问网络", contains: true)
         capture("21-connect-error")
     }
 
@@ -245,7 +253,7 @@ final class ScreenshotTests: XCTestCase {
 
     func test23_connectTunnelUnavailable() {
         launch("connect-tun-unavailable")
-        said("message-banner", "暂时无法建立系统隧道", contains: true)
+        said("message-banner", "暂时无法建立连接", contains: true)
         capture("23-connect-tun-unavailable")
     }
 
@@ -262,8 +270,8 @@ final class ScreenshotTests: XCTestCase {
         launch("lines")
         present("lines-filter"); present("line-row-香港 01"); present("line-row-东京 01"); present("line-row-洛杉矶 01")
         XCTAssertEqual(el("line-row-香港 01").value as? String, "已选择")
-        XCTAssertTrue(el("line-row-香港 01").label.contains("专线") && el("line-row-香港 02").label.contains("计费 0.5×"))
-        XCTAssertTrue(el("line-row-洛杉矶 01").label.contains("节点计量"))
+        XCTAssertTrue(el("line-row-香港 01").label.contains("专线") && el("line-row-香港 02").label.contains("线路倍率 0.5×"))
+        XCTAssertFalse(el("line-row-洛杉矶 01").label.contains("计量"))
         capture("25-lines")
     }
 
@@ -289,7 +297,7 @@ final class ScreenshotTests: XCTestCase {
 
     func test29_linesNone() {
         launch("lines-none")
-        said("lines-empty-no_lines", "管理员尚未配置可用线路", contains: true)
+        said("lines-empty-no_lines", "暂无可用线路", contains: true)
         capture("29-lines-none")
     }
 
@@ -312,7 +320,7 @@ final class ScreenshotTests: XCTestCase {
     func test32_account() {
         launch("account")
         said("account-email", "vip@example.com"); said("account-plan", "VIP")
-        said("account-expiry", "2030-12-31", contains: true); said("account-remaining", "剩余 68.00 GiB / 100.00 GiB")
+        said("account-expiry", "2030-12-31", contains: true); said("account-remaining", "剩余 68.00 GB / 100.00 GB")
         present("appearance-picker")
         for _ in 0..<5 where !el("sign-out").exists { app.swipeUp() }
         present("sign-out"); present("copy-diagnostics")
@@ -335,14 +343,12 @@ final class ScreenshotTests: XCTestCase {
 
     func test35_accountAbout() {
         launch("account")
-        let about = el("about-mihomo")
+        let about = el("about-version")
         for _ in 0..<4 where !about.exists { app.swipeUp() }
-        present("about-mihomo")
-        present("open-licenses")
+        present("about-version"); present("copy-diagnostics")
+        // The about section shows the app version and nothing about what is inside the app.
+        absent("about-core"); absent("about-mihomo"); absent("open-licenses")
         capture("35-account-about")
-        el("open-licenses").tap()
-        present("licenses-sheet")
-        capture("36-licenses")
     }
 
     func test36_signOutAsksFirst() {
@@ -453,7 +459,7 @@ final class ScreenshotTests: XCTestCase {
 
     func test50_routeProbeFailed() {
         launch("connect-probe-failed")
-        said("message-banner", "系统流量没有经过隧道", contains: true)
+        said("message-banner", "连接未能生效", contains: true)
         capture("52-route-probe-failed")
     }
 }

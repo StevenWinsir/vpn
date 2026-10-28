@@ -175,10 +175,10 @@ class PresentationTest {
         assertEquals("1.25×", Formatting.rate(1250))
         assertEquals("0.001×", Formatting.rate(1))
         assertEquals("512 B", Formatting.bytes(512))
-        assertEquals("1.00 GiB", Formatting.bytes(1L shl 30))
-        assertEquals("68.20 GiB", Formatting.bytes(73_229_779_763L))
+        assertEquals("1.00 GB", Formatting.bytes(1L shl 30))
+        assertEquals("68.20 GB", Formatting.bytes(73_229_779_763L))
         assertEquals("0 B", Formatting.bytes(-5))
-        assertEquals("1.00 MiB/s", Formatting.speed(1_048_576))
+        assertEquals("1.00 MB/s", Formatting.speed(1_048_576))
         // 20 MiB up + 80 MiB down at 0.5x = 52,428,800 billed bytes (handoff section 8).
         assertEquals(52_428_800L, Formatting.billedBytes(104_857_600L, 500))
         assertEquals(104_857_600L, Formatting.billedBytes(104_857_600L, 1000))
@@ -196,12 +196,19 @@ class PresentationTest {
 
     @Test
     fun diagnosticsNeverCarryAccountOrLineDetails() {
-        val snapshot = fixtures().getValue("connected_metering")
-        val text = Diagnostics.build("0.1.0", "development", "demo.example.invalid", "Android 16 (API 36) arm64-v8a", "0.1.0", "70f0570405c3c2c47bb113b88db95006d239b346", snapshot)
+        val snapshot = fixtures().getValue("connected_metering").copy(lastError = ErrorView("tunnel_unhealthy"))
+        val text = Diagnostics.build("1.2.3", "Android 16", "已连接", snapshot, Instant.parse("2029-12-02T08:00:00Z"))
         for (secret in listOf("fixture@example.invalid", "HK Dedicated", "Fixture", "22222222-2222-4222-8222-222222222222", snapshot.selectedNodeId, snapshot.catalogRevision)) {
             assertFalse("diagnostics leaked $secret", text.contains(secret))
         }
-        assertTrue(text.contains("state connected"))
+        // handoff_app_standardization.md D9: the same six lines as every platform and nothing about what the app is built from.
+        val lines = text.trimEnd().split("\n")
+        assertEquals(listOf("AsterLink 诊断信息"), lines.take(1))
+        assertEquals(listOf("应用版本: 1.2.3", "系统版本: Android 16", "连接状态: 已连接", "错误码: tunnel_unhealthy"), lines.drop(2))
+        for (internal in listOf("core", "mihomo", "generation", "config_ready", "api ", "隧道", "代次")) {
+            assertFalse("diagnostics mention $internal", text.contains(internal, ignoreCase = true))
+        }
+        assertTrue(Diagnostics.build("1", "Android 16", "未连接", snapshot.copy(lastError = null)).trimEnd().endsWith("错误码: 无"))
     }
 
     @Test
@@ -225,7 +232,7 @@ class PresentationTest {
         // Not connected (or signed out): the title alone, no text.
         assertNull(TunnelNotice.from(state.copy(snapshot = connected.copy(state = CoreSnapshot.State.READY))).text)
         assertNull(TunnelNotice.from(state.copy(phase = AppPhase.SignedOut)).text)
-        assertEquals("↑0 B/s ↓1.00 KiB/s", TunnelNotice(true, null, 0, 1024).text)
+        assertEquals("↑0 B/s ↓1.00 KB/s", TunnelNotice(true, null, 0, 1024).text)
     }
 
     @Test

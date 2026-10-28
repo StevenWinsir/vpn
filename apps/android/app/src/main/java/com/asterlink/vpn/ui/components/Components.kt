@@ -139,9 +139,13 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
         enabled = enabled && !loading,
         modifier = modifier.fillMaxWidth().defaultMinSize(minHeight = Dimens.ButtonHeight),
         shape = CircleShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = LocalStatusColors.current.brandFill,
+            contentColor = LocalStatusColors.current.onBrand,
+        ),
     ) {
         if (loading) {
-            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalStatusColors.current.onBrand)
             Spacer(Modifier.width(12.dp))
         }
         Text(text, style = MaterialTheme.typography.labelLarge)

@@ -211,6 +211,8 @@ jobs:
         run: python3 test-native-env.py
       - name: Brand assets (app icons match frontend/brand/mark.svg, container formats valid)
         run: python3 scripts/test-brand-assets.py
+      - name: App copy guard (no internals, development leftovers or licence text in user-visible wording)
+        run: python3 scripts/test-app-copy.py
       - name: Mihomo patch integrity and real NAT lifecycle regression (no TUN required)
         run: python3 scripts/test-mihomo-patches.py
       - name: Core IPC, metering, state machine, engine template (race) and vet

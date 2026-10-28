@@ -207,19 +207,19 @@ private fun TopBar(snapshot: CoreSnapshot, onOpenAccount: () -> Unit) {
     }
 }
 
+fun statusLabelRes(status: ConnectionStatus): Int = when (status) {
+    ConnectionStatus.Disconnected -> R.string.status_disconnected
+    ConnectionStatus.Preparing -> R.string.status_preparing
+    ConnectionStatus.Connecting -> R.string.status_connecting
+    ConnectionStatus.Connected -> R.string.status_connected
+    ConnectionStatus.Stopping -> R.string.status_stopping
+    ConnectionStatus.Unavailable -> R.string.status_unavailable
+    ConnectionStatus.Reconfirming -> R.string.status_reconfirming
+    ConnectionStatus.WaitingNetwork -> R.string.status_waiting_network
+}
+
 @Composable
-fun statusText(status: ConnectionStatus): String = stringResource(
-    when (status) {
-        ConnectionStatus.Disconnected -> R.string.status_disconnected
-        ConnectionStatus.Preparing -> R.string.status_preparing
-        ConnectionStatus.Connecting -> R.string.status_connecting
-        ConnectionStatus.Connected -> R.string.status_connected
-        ConnectionStatus.Stopping -> R.string.status_stopping
-        ConnectionStatus.Unavailable -> R.string.status_unavailable
-        ConnectionStatus.Reconfirming -> R.string.status_reconfirming
-        ConnectionStatus.WaitingNetwork -> R.string.status_waiting_network
-    },
-)
+fun statusText(status: ConnectionStatus): String = stringResource(statusLabelRes(status))
 
 @Composable
 private fun detailText(status: ConnectionStatus): String? = when (status) {
@@ -261,8 +261,8 @@ private fun ConnectButton(view: ConnectionView, statusLabel: String, onClick: ()
     )
     val disc by animateColorAsState(
         when {
-            view.tone == Tone.Good -> colors.connected
-            enabled && view.showConnect -> scheme.primary
+            view.tone == Tone.Good -> colors.brandFill
+            enabled && view.showConnect -> colors.brandFill
             else -> scheme.surfaceVariant
         },
         animationSpec = tween(250),
@@ -351,11 +351,6 @@ private fun TrafficCard(metering: MeteringView, usage: ConnectionUsage) {
             style = MaterialTheme.typography.bodySmall.merge(TabularNumbers),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
-            stringResource(if (metering.source == "node_reported") R.string.metering_node else R.string.metering_client),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         if (metering.pending) {
             Text(stringResource(R.string.traffic_pending), style = MaterialTheme.typography.bodySmall, color = LocalStatusColors.current.pending)
         }
@@ -375,7 +370,7 @@ private fun Rate(icon: Int, label: String, value: String, modifier: Modifier) {
 @Composable
 private fun Sparkline(metering: MeteringView, modifier: Modifier) {
     val down = LocalStatusColors.current.connected
-    val up = MaterialTheme.colorScheme.primary
+    val up = LocalStatusColors.current.pending
     val samples = metering.history.takeLast(60)
     Canvas(modifier.clearAndSetSemantics { }) {
         val peak = samples.maxOf { maxOf(it.upload, it.download) }.coerceAtLeast(1).toFloat()
@@ -460,6 +455,5 @@ fun PlanSummary(snapshot: CoreSnapshot, now: Instant) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Text(stringResource(R.string.plan_units_note), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

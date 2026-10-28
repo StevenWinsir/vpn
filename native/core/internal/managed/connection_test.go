@@ -406,7 +406,7 @@ func TestAdmissionRefusals(t *testing.T) {
 		{apiError{403, "device_limit"}, "同时在线设备上限"},
 		{apiError{409, "group_full"}, "该线路当前已满"},
 		{apiError{503, "group_unavailable"}, "暂无可用服务器"},
-		{apiError{409, "grant_required"}, "节点授权"},
+		{apiError{409, "grant_required"}, "当前版本不支持该线路"},
 	} {
 		t.Run(tc.err.code, func(t *testing.T) {
 			h := newHarness(t, 1000)

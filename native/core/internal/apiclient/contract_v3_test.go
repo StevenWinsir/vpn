@@ -149,9 +149,9 @@ func TestV3ClientFacingCodesHaveMessages(t *testing.T) {
 		"group_full":            "该线路当前已满，请稍后再试或选择其他线路",
 		"group_unavailable":     "该线路暂无可用服务器，请选择其他线路",
 		"connection_reassigned": "线路服务器已调整，正在为你重新连接",
-		"connection_not_found":  "连接记录不存在，请重新连接",
-		"connection_expired":    "在线状态已过期，请重新连接",
-		"grant_required":        "此线路需使用节点授权连接",
+		"connection_not_found":  "连接已失效，请重新连接",
+		"connection_expired":    "连接已失效，请重新连接",
+		"grant_required":        "当前版本不支持该线路，请升级到最新版本",
 	} {
 		if Message(code) != text {
 			t.Errorf("%s: %q, plan 8.4 says %q", code, Message(code), text)

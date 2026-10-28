@@ -108,8 +108,10 @@ def declared_categories(manifest: Path) -> set:
     return {entry['NSPrivacyAccessedAPIType'] for entry in data.get('NSPrivacyAccessedAPITypes', [])}
 
 
-# Strings that exist only in debug or test code (#if DEBUG, the screenshot fixtures, the billing harness).
-DEBUG_MARKERS = (b'ASTER_UI_FIXTURE', b'UIFixtures', b'TunnelDebugView', b'HarnessRun', b'asterlink_harness', b'ASTER_APPEARANCE')
+# Strings that exist only in debug or test code (#if DEBUG, the screenshot fixtures, the billing harness), plus
+# the licence page that no client shows any more (handoff_app_standardization.md D10).
+DEBUG_MARKERS = (b'ASTER_UI_FIXTURE', b'UIFixtures', b'TunnelDebugView', b'HarnessRun', b'asterlink_harness', b'ASTER_APPEARANCE', b'open-tunnel-debug',
+                b'LicensesView', b'licenses-sheet', b'open-licenses')
 
 SECRET_PATTERNS = {
     'database url': re.compile(rb'postgres(?:ql)?://[^\s"\']{3,}'),

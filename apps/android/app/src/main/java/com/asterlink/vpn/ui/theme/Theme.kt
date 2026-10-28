@@ -17,9 +17,75 @@ import androidx.compose.ui.unit.sp
 import com.asterlink.vpn.security.ThemeMode
 
 /**
- * Design tokens (handoff_app_android.md 9.2), the same brand as the Windows client. Dynamic
- * (Material You) color is deliberately off so the brand looks the same on every device.
+ * Design tokens: one role per website token (frontend/src/app/globals.css), once for light and once for
+ * dark; scripts/test-brand-assets.py checks every value against the website. Dynamic (Material You)
+ * color is deliberately off so the brand looks the same on every device. Screens only use the roles.
  */
+@Immutable
+data class BrandTokens(
+    val brand: Color,
+    val brandFill: Color,
+    val onBrand: Color,
+    val brandSoft: Color,
+    val bg: Color,
+    val surface: Color,
+    val surface2: Color,
+    val border: Color,
+    val borderStrong: Color,
+    val text: Color,
+    val text2: Color,
+    val text3: Color,
+    val warnText: Color,
+    val warnBg: Color,
+    val warnBorder: Color,
+    val dangerText: Color,
+    val dangerBg: Color,
+    val focus: Color,
+)
+
+val LightTokens = BrandTokens(
+    brand = Color(0xFF0D7B61),
+    brandFill = Color(0xFF0D7B61),
+    onBrand = Color(0xFFFFFFFF),
+    brandSoft = Color(0xFFE8F5EF),
+    bg = Color(0xFFF7F8FA),
+    surface = Color(0xFFFFFFFF),
+    surface2 = Color(0xFFF3F7F5),
+    border = Color(0xFFE9EEED),
+    borderStrong = Color(0xFFCDD9D4),
+    text = Color(0xFF172D2B),
+    text2 = Color(0xFF566A66),
+    text3 = Color(0xFF66756F),
+    warnText = Color(0xFF7C2D12),
+    warnBg = Color(0xFFFFF4EC),
+    warnBorder = Color(0xFFF3C7A8),
+    dangerText = Color(0xFFB91C1C),
+    dangerBg = Color(0xFFFDECEC),
+    focus = Color(0xFF3DC89A),
+)
+
+val DarkTokens = BrandTokens(
+    brand = Color(0xFF3DC89A),
+    brandFill = Color(0xFF0D7B61),
+    onBrand = Color(0xFFFFFFFF),
+    brandSoft = Color(0x213DC89A),
+    bg = Color(0xFF121A18),
+    surface = Color(0xFF19221F),
+    surface2 = Color(0xFF212C29),
+    border = Color(0xFF2A3633),
+    borderStrong = Color(0xFF3D4D49),
+    text = Color(0xFFDBE5E2),
+    text2 = Color(0xFFB4C3BF),
+    text3 = Color(0xFF93A5A0),
+    warnText = Color(0xFFFDBA74),
+    warnBg = Color(0x1FEA580C),
+    warnBorder = Color(0x66FB923C),
+    dangerText = Color(0xFFFF8787),
+    dangerBg = Color(0x1FFA5252),
+    focus = Color(0xFF3DC89A),
+)
+
+/** The state colours the screens use, derived from the tokens. Connected is the brand green. */
 @Immutable
 data class StatusColors(
     val connected: Color,
@@ -31,76 +97,71 @@ data class StatusColors(
     val pendingContainer: Color,
     val errorContainer: Color,
     val brandContainer: Color,
+    val brandFill: Color,
+    val onBrand: Color,
 )
 
-private val LightStatus = StatusColors(
-    connected = Color(0xFF16A34A),
-    pending = Color(0xFFD97706),
-    error = Color(0xFFDC2626),
-    outline = Color(0xFFE3E8EF),
-    secondaryText = Color(0xFF5B6475),
-    connectedContainer = Color(0xFFE8F7EE),
-    pendingContainer = Color(0xFFFEF3E2),
-    errorContainer = Color(0xFFFDECEC),
-    brandContainer = Color(0xFFE8F0FE),
+private fun BrandTokens.status() = StatusColors(
+    connected = brand,
+    pending = warnText,
+    error = dangerText,
+    outline = border,
+    secondaryText = text2,
+    connectedContainer = brandSoft,
+    pendingContainer = warnBg,
+    errorContainer = dangerBg,
+    brandContainer = brandSoft,
+    brandFill = brandFill,
+    onBrand = onBrand,
 )
 
-private val DarkStatus = StatusColors(
-    connected = Color(0xFF22C55E),
-    pending = Color(0xFFF59E0B),
-    error = Color(0xFFF87171),
-    outline = Color(0xFF243049),
-    secondaryText = Color(0xFF98A2B3),
-    connectedContainer = Color(0xFF0F2A1C),
-    pendingContainer = Color(0xFF2E2210),
-    errorContainer = Color(0xFF341A1E),
-    brandContainer = Color(0xFF16254A),
-)
+private val LightStatus = LightTokens.status()
+private val DarkStatus = DarkTokens.status()
 
 private val LightScheme = lightColorScheme(
-    primary = Color(0xFF2F6FEB),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFE8F0FE),
-    onPrimaryContainer = Color(0xFF0B3B99),
-    secondaryContainer = Color(0xFFE8F0FE),
-    onSecondaryContainer = Color(0xFF0B3B99),
-    background = Color(0xFFF6F8FB),
-    onBackground = Color(0xFF0F172A),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFFF1F4F9),
-    onSurfaceVariant = Color(0xFF5B6475),
-    surfaceContainer = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFFFFFFF),
-    surfaceContainerHigh = Color(0xFFF1F4F9),
-    surfaceContainerHighest = Color(0xFFE9EEF5),
-    outline = Color(0xFFE3E8EF),
-    outlineVariant = Color(0xFFE3E8EF),
-    error = Color(0xFFDC2626),
-    onError = Color.White,
+    primary = LightTokens.brand,
+    onPrimary = LightTokens.onBrand,
+    primaryContainer = LightTokens.brandSoft,
+    onPrimaryContainer = LightTokens.brand,
+    secondaryContainer = LightTokens.brandSoft,
+    onSecondaryContainer = LightTokens.brand,
+    background = LightTokens.bg,
+    onBackground = LightTokens.text,
+    surface = LightTokens.surface,
+    onSurface = LightTokens.text,
+    surfaceVariant = LightTokens.surface2,
+    onSurfaceVariant = LightTokens.text2,
+    surfaceContainer = LightTokens.surface,
+    surfaceContainerLow = LightTokens.surface,
+    surfaceContainerHigh = LightTokens.surface2,
+    surfaceContainerHighest = LightTokens.border,
+    outline = LightTokens.border,
+    outlineVariant = LightTokens.border,
+    error = LightTokens.dangerText,
+    onError = LightTokens.onBrand,
 )
 
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFF5B8DEF),
-    onPrimary = Color(0xFF0B1220),
-    primaryContainer = Color(0xFF16254A),
-    onPrimaryContainer = Color(0xFFD6E2FB),
-    secondaryContainer = Color(0xFF16254A),
-    onSecondaryContainer = Color(0xFFD6E2FB),
-    background = Color(0xFF0B1220),
-    onBackground = Color(0xFFE6EAF2),
-    surface = Color(0xFF121A2B),
-    onSurface = Color(0xFFE6EAF2),
-    surfaceVariant = Color(0xFF1A2438),
-    onSurfaceVariant = Color(0xFF98A2B3),
-    surfaceContainer = Color(0xFF121A2B),
-    surfaceContainerLow = Color(0xFF121A2B),
-    surfaceContainerHigh = Color(0xFF1A2438),
-    surfaceContainerHighest = Color(0xFF222D44),
-    outline = Color(0xFF243049),
-    outlineVariant = Color(0xFF243049),
-    error = Color(0xFFF87171),
-    onError = Color(0xFF0B1220),
+    primary = DarkTokens.brand,
+    onPrimary = DarkTokens.bg,
+    primaryContainer = DarkTokens.brandSoft,
+    onPrimaryContainer = DarkTokens.brand,
+    secondaryContainer = DarkTokens.brandSoft,
+    onSecondaryContainer = DarkTokens.brand,
+    background = DarkTokens.bg,
+    onBackground = DarkTokens.text,
+    surface = DarkTokens.surface,
+    onSurface = DarkTokens.text,
+    surfaceVariant = DarkTokens.surface2,
+    onSurfaceVariant = DarkTokens.text2,
+    surfaceContainer = DarkTokens.surface,
+    surfaceContainerLow = DarkTokens.surface,
+    surfaceContainerHigh = DarkTokens.surface2,
+    surfaceContainerHighest = DarkTokens.border,
+    outline = DarkTokens.border,
+    outlineVariant = DarkTokens.border,
+    error = DarkTokens.dangerText,
+    onError = DarkTokens.bg,
 )
 
 /** Type scale: status 32/40, title 20/28, body 15/22, caption 13/18; system font. */

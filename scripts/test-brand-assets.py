@@ -11,12 +11,16 @@ still belong to the committed source and are structurally valid:
     (PNG header, ICO directory, ICNS entries, BMP header);
   * the iOS light icon has no alpha channel; Android vectors parse and use only white;
   * each platform actually references its assets (Info.plist key in the build script, csproj,
-    installer script, Android manifest).
+    installer script, Android manifest);
+  * palette (handoff_app_standardization.md 4.2): every colour role of the iOS and Android themes
+    equals the website token it maps to, in the light and the dark scheme (change a token in
+    frontend/src/app/globals.css and this fails until the apps follow).
 
 Standard library only, so it runs on any CI image.
 """
 import hashlib
 import json
+import re
 import struct
 import sys
 import xml.etree.ElementTree as ET
@@ -81,6 +85,10 @@ def icns_entries(data):
     return entries if offset == len(data) else None
 
 
+def text(path):
+    return (ROOT / path).read_text(encoding='utf-8-sig')
+
+
 ICNS_SIZES = {'icp4': 16, 'icp5': 32, 'ic11': 32, 'ic12': 64, 'ic07': 128, 'ic13': 256, 'ic08': 256,
               'ic14': 512, 'ic09': 512, 'ic10': 1024}
 
@@ -119,6 +127,125 @@ def verify_file(entry, data):
     else:
         check(False, '%s has an unknown kind %r' % (path, kind))
 
+# Website token -> (iOS Theme.swift role, Android BrandTokens field). The apps are checked in full for
+# these roles; the website has many more tokens (home page, banners) that an app has no use for.
+PALETTE = {
+    'brand': ('brand', 'brand'), 'brand-fill': ('brandFill', 'brandFill'), 'on-brand': ('onBrand', 'onBrand'),
+    'brand-soft': ('brandSoft', 'brandSoft'), 'bg': ('background', 'bg'), 'surface': ('surface', 'surface'),
+    'surface-2': ('surfaceMuted', 'surface2'), 'border': ('stroke', 'border'),
+    'border-strong': ('strokeStrong', 'borderStrong'), 'text': ('textPrimary', 'text'),
+    'text-2': ('textSecondary', 'text2'), 'text-3': ('textTertiary', 'text3'),
+    'warn-text': ('warnText', 'warnText'), 'warn-bg': ('warnBackground', 'warnBg'),
+    'warn-border': ('warnBorder', 'warnBorder'), 'danger-text': ('dangerText', 'dangerText'),
+    'danger-bg': ('dangerBackground', 'dangerBg'), 'focus': ('focus', 'focus'),
+}
+
+
+def parse_colour(value):
+    """'#rrggbb' or 'rgba(r, g, b, a)' -> (r, g, b, alpha 0..1); None when it is neither."""
+    value = value.strip().lower()
+    match = re.fullmatch(r'#([0-9a-f]{6})', value)
+    if match:
+        raw = int(match.group(1), 16)
+        return raw >> 16, (raw >> 8) & 255, raw & 255, 1.0
+    match = re.fullmatch(r'rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([0-9.]+)\s*\)', value)
+    if match:
+        return int(match.group(1)), int(match.group(2)), int(match.group(3)), float(match.group(4))
+    return None
+
+
+def website_tokens(css):
+    """{'light': {token: colour}, 'dark': {...}} from the tokens block of globals.css."""
+    block = css[css.index('tokens:start'):css.index('/* tokens:end')]
+    parts = block.split("[data-mantine-color-scheme='dark']")
+    schemes = {'light': parts[0], 'dark': parts[1]}
+    return {name: {m.group(1): parse_colour(m.group(2)) for m in re.finditer(r'--al-([a-z0-9-]+):\s*([^;]+);', body)
+                   if parse_colour(m.group(2))} for name, body in schemes.items()}
+
+
+def same_colour(a, b):
+    return a is not None and b is not None and a[:3] == b[:3] and abs(a[3] - b[3]) <= 0.01
+
+
+def luminance(colour):
+    def channel(value):
+        value /= 255
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+    return 0.2126 * channel(colour[0]) + 0.7152 * channel(colour[1]) + 0.0722 * channel(colour[2])
+
+
+def contrast(foreground, background):
+    high, low = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def over(colour, background):
+    """colour (r, g, b, alpha) laid over an opaque background (r, g, b)."""
+    return tuple(round(colour[i] * colour[3] + background[i] * (1 - colour[3])) for i in range(3))
+
+
+# (foreground token, background token): the pairs the apps draw text on. 4.5 is WCAG AA for body text.
+CONTRAST_PAIRS = [('text', 'surface'), ('text', 'bg'), ('text-2', 'surface'), ('text-3', 'surface'), ('brand', 'surface'),
+                  ('brand', 'bg'), ('brand', 'brand-soft'), ('on-brand', 'brand-fill'), ('warn-text', 'warn-bg'),
+                  ('danger-text', 'danger-bg'), ('danger-text', 'surface')]
+
+
+def check_contrast(tokens):
+    for scheme in ('light', 'dark'):
+        surface = tokens[scheme]['surface'][:3]
+        for foreground, background in CONTRAST_PAIRS:
+            base = tokens[scheme][background]
+            ratio = contrast(tokens[scheme][foreground][:3], over(base, surface) if base[3] < 1 else base[:3])
+            check(ratio >= 4.5, 'contrast %s on %s (%s) is %.2f, at least 4.5' % (foreground, background, scheme, ratio))
+
+
+def check_palette(tokens):
+    ios = text('apps/ios/AsterLink/Theme.swift')
+    pattern = re.compile(r'static let (\w+) = Color\(light: 0x([0-9A-Fa-f]{6}), dark: 0x([0-9A-Fa-f]{6})'
+                         r'(?:, lightAlpha: ([0-9.]+))?(?:, darkAlpha: ([0-9.]+))?\)')
+    roles = {}
+    for name, light, dark, light_alpha, dark_alpha in pattern.findall(ios):
+        roles[name] = {'light': parse_colour('#' + light.lower()[:6])[:3] + (float(light_alpha or 1),),
+                       'dark': parse_colour('#' + dark.lower()[:6])[:3] + (float(dark_alpha or 1),)}
+    kotlin = text('apps/android/app/src/main/java/com/asterlink/vpn/ui/theme/Theme.kt')
+    android = {}
+    for scheme, const in (('light', 'LightTokens'), ('dark', 'DarkTokens')):
+        body = re.search(const + r' = BrandTokens\((.*?)\n\)', kotlin, re.S).group(1)
+        for field, argb in re.findall(r'(\w+) = Color\(0x([0-9A-Fa-f]{8})\)', body):
+            raw = int(argb, 16)
+            android.setdefault(field, {})[scheme] = ((raw >> 16) & 255, (raw >> 8) & 255, raw & 255, (raw >> 24) / 255)
+    for token, (ios_role, android_field) in PALETTE.items():
+        for scheme in ('light', 'dark'):
+            want = tokens[scheme].get(token)
+            if want is None:  # a token the dark scheme inherits from nothing: it must be defined for both
+                check(False, 'the website defines --al-%s for the %s scheme' % (token, scheme))
+                continue
+            check(same_colour(roles.get(ios_role, {}).get(scheme), want),
+                  'iOS Theme.%s (%s) is --al-%s' % (ios_role, scheme, token))
+            check(same_colour(android.get(android_field, {}).get(scheme), want),
+                  'Android %sTokens.%s is --al-%s' % (scheme.capitalize(), android_field, token))
+    check(not re.search(r'\b(?:2F6FEB|5B8DEF)\b', ios + kotlin, re.I), 'the retired blue is gone from the iOS and Android themes')
+
+    # The accent colour, the launch background and the Android resource colours repeat tokens.
+    for asset, token in (('AccentColor', 'brand'), ('LaunchBackground', 'bg')):
+        contents = json.loads(text('apps/ios/AsterLink/Assets.xcassets/%s.colorset/Contents.json' % asset))
+        found = {}
+        for item in contents['colors']:
+            comps = item['color']['components']
+            dark = any(a.get('value') == 'dark' for a in item.get('appearances', []))
+            found['dark' if dark else 'light'] = tuple(int(str(comps[c]), 16) if str(comps[c]).startswith('0x') else round(float(comps[c]) * 255)
+                                                       for c in ('red', 'green', 'blue')) + (1.0,)
+        for scheme in ('light', 'dark'):
+            check(same_colour(found.get(scheme), tokens[scheme][token]), 'iOS %s (%s) is --al-%s' % (asset, scheme, token))
+    for path, scheme in (('values', 'light'), ('values-night', 'dark')):
+        xml = text('apps/android/app/src/main/res/%s/colors.xml' % path)
+        value = re.search(r'name="background">(#[0-9A-Fa-f]{6})<', xml)
+        check(value is not None and same_colour(parse_colour(value.group(1)), tokens[scheme]['bg']),
+              'Android %s/colors.xml background is --al-bg' % path)
+    icon = re.search(r'name="icon_background">(#[0-9A-Fa-f]{6})<', text('apps/android/app/src/main/res/values/colors.xml'))
+    check(icon is not None and same_colour(parse_colour(icon.group(1)), tokens['light']['brand-fill']),
+          'Android icon_background is --al-brand-fill')
+
 
 def main():
     manifest = json.loads((ROOT / 'apps/brand-manifest.json').read_text())
@@ -151,9 +278,6 @@ def main():
     check(expected <= set(paths), 'the manifest lists every expected asset (missing: %s)' % sorted(expected - set(paths)))
 
     # Each platform really uses its assets.
-    def text(path):
-        return (ROOT / path).read_text(encoding='utf-8-sig')
-
     build = text('scripts/build-native-macos.py')
     check("'CFBundleIconFile': 'AppIcon'" in build and "(macos / 'Branding')" in build,
           'the macOS build writes CFBundleIconFile and copies Branding into Resources')
@@ -172,6 +296,10 @@ def main():
     check('ic_launcher_foreground' in text('apps/android/app/src/main/res/mipmap-anydpi/ic_launcher.xml')
           and '<monochrome' in text('apps/android/app/src/main/res/mipmap-anydpi/ic_launcher.xml'),
           'the Android adaptive icon has foreground and monochrome layers')
+
+    tokens = website_tokens(text('frontend/src/app/globals.css'))
+    check_palette(tokens)
+    check_contrast(tokens)
 
     print('\n%d check(s) failed' % len(failures) if failures else '\nall brand asset checks passed')
     return 1 if failures else 0

@@ -72,7 +72,6 @@ fun AccountScreen(
     device: DeviceStatus = DeviceStatus(),
 ) {
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
-    var showLicenses by rememberSaveable { mutableStateOf(false) }
     val snapshot = state.snapshot
     val user = snapshot.user
     Column(
@@ -84,11 +83,11 @@ fun AccountScreen(
             Spacer(Modifier.height(8.dp))
             AsterCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(48.dp).background(LocalStatusColors.current.brandFill, CircleShape), contentAlignment = Alignment.Center) {
                         Text(
                             Formatting.initial(user?.name.orEmpty(), user?.email.orEmpty()),
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = LocalStatusColors.current.onBrand,
                         )
                     }
                     Spacer(Modifier.width(12.dp))
@@ -171,10 +170,6 @@ fun AccountScreen(
                 Text(stringResource(R.string.about_title), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
                 FactRow(stringResource(R.string.about_app_version), facts.appVersion)
-                FactRow(stringResource(R.string.about_core_version), state.identity?.coreVersion ?: snapshot.coreVersion.ifEmpty { "—" })
-                FactRow(stringResource(R.string.about_mihomo), state.identity?.mihomoRevision?.take(12) ?: "—")
-                FactRow(stringResource(R.string.about_server), facts.apiHost)
-                FactRow(stringResource(R.string.about_channel), facts.channel)
                 Spacer(Modifier.height(8.dp))
                 SecondaryButton(stringResource(R.string.copy_diagnostics), actions.copyDiagnostics, icon = R.drawable.ic_copy)
                 Text(
@@ -183,30 +178,12 @@ fun AccountScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp, start = 4.dp),
                 )
-                TextButton(onClick = { showLicenses = true }, modifier = Modifier.padding(top = 4.dp)) {
-                    Text(stringResource(R.string.about_licenses))
-                }
             }
 
             Spacer(Modifier.height(16.dp))
             SecondaryButton(stringResource(R.string.sign_out), { confirmSignOut = true }, icon = R.drawable.ic_logout, danger = true, enabled = !state.busy)
             Spacer(Modifier.height(24.dp))
         }
-    }
-
-    if (showLicenses) {
-        AlertDialog(
-            onDismissRequest = { showLicenses = false },
-            title = { Text(stringResource(R.string.about_licenses)) },
-            text = { Text(stringResource(R.string.about_licenses_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showLicenses = false
-                    actions.openWebsite(WebPage.Download)
-                }) { Text(stringResource(R.string.about_licenses_open)) }
-            },
-            dismissButton = { TextButton(onClick = { showLicenses = false }) { Text(stringResource(R.string.dialog_close)) } },
-        )
     }
 
     if (confirmSignOut) {

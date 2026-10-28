@@ -304,7 +304,7 @@ class AccountAcceptanceTest {
         record("A04.delete", deleted != null && deleted <= 7_000, "deleted line gone after ${deleted} ms")
 
         // Redaction: what the app could show or copy carries no node secret or account detail.
-        val diagnostics = Diagnostics.build("0", "development", "127.0.0.1", "test", "0", "0", c.state.value.snapshot)
+        val diagnostics = Diagnostics.build("0", "Android test", "未连接", c.state.value.snapshot)
         val text = c.state.value.toString() + diagnostics
         val secrets = listOf("metadata-private.example.invalid", "never-reaches-the-ui", "aes-256-gcm", password)
         record("A.redaction", secrets.none { text.contains(it) }, "UI state and diagnostics contain no node address, credential, cipher or password")

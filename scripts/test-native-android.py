@@ -308,6 +308,16 @@ def check_release_config():
 
 # ---------------------------------------------------------------- unit
 
+def failure_excerpt(output):
+    """The failed tests and their assertion messages from a Gradle log, else its tail."""
+    lines = output.splitlines()
+    picked = []
+    for index, line in enumerate(lines):
+        if ' FAILED' in line or 'AssertionError' in line or 'Exception' in line or line.startswith('e: '):
+            picked += lines[index:index + 2]
+    return ' | '.join(picked)[:1500] if picked else output[-600:]
+
+
 def count_go_tests(packages):
     process = subprocess.run(['go', 'test', '-count=1', '-json', *packages], cwd=CORE, capture_output=True, text=True, env=go_env())
     passed, failed = 0, []
@@ -370,7 +380,7 @@ def run_unit_suite():
     app = gradle([':app:testDebugUnitTest'], capture_output=True, text=True)
     tests, failures = junit_counts(ANDROID / 'app' / 'build' / 'test-results' / 'testDebugUnitTest')
     record('gradle.app_unit', app.returncode == 0 and tests > 0 and failures == 0,
-           '%d app JVM tests passed' % tests if app.returncode == 0 else app.stdout[-600:])
+           '%d app JVM tests passed' % tests if app.returncode == 0 else failure_excerpt(app.stdout))
 
 
 # ---------------------------------------------------------------- emulator
@@ -603,10 +613,13 @@ def run_emulator_suite(args):
             if foreign:
                 stalled.append(foreign)
                 continue
-            if core_record['mihomo_revision'][:12] in screen:
+            if re.search(r'Sign in to AsterLink|登录 AsterLink', screen):
                 break
-        shown = core_record['core_version'] in screen and core_record['mihomo_revision'][:12] in screen
-        record('emulator.app_shows_core', shown, 'the launched app shows Core %s and Mihomo %s' % (core_record['core_version'], core_record['mihomo_revision'][:12])
+        time.sleep(4)
+        screen = ui_text(adb, serial)
+        # No engine identity is on screen any more (D8): the Core is up when the sign-in form shows without a start failure.
+        shown = bool(re.search(r'Sign in to AsterLink|登录 AsterLink', screen)) and not re.search(r'could not start|应用启动失败', screen)
+        record('emulator.app_shows_core', shown, 'the launched app shows the sign-in screen with the Core running (no start failure)'
                + ('; dismissed the emulator\'s own ANR dialog for: %s' % ', '.join(sorted(set(stalled))) if stalled else ''))
         with open(out_dir / ('foundation-api%s-%s.png' % (facts['api'], abi)), 'wb') as png:
             png.write(subprocess.run([str(adb), '-s', serial, 'exec-out', 'screencap', '-p'], capture_output=True, check=True).stdout)
@@ -859,7 +872,7 @@ def run_ui_suite(args):
         shutil.copy2(png, out_dir / png.name)
     names = [p.stem for p in pngs]
     required = ('login', 'admin-no-plan', 'expired', 'quota-zero', 'no-line', 'ready', 'connecting', 'connected', 'failed',
-                'lines', 'lines-no-plan', 'lines-none', 'account', 'dark', 'font200', '360dp', 'en-', 'update-required', 'licenses')
+                'lines', 'lines-no-plan', 'lines-none', 'account', 'dark', 'font200', '360dp', 'en-', 'update-required')
     missing = [r for r in required if not any(r in n for n in names)]
     record('ui.states', len(pngs) >= 20 and not missing, '%d states in %s%s' % (len(pngs), out_dir, '; missing ' + ', '.join(missing) if missing else ''))
 

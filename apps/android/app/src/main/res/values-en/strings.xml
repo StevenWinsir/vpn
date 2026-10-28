@@ -15,10 +15,9 @@
     <string name="login_register">Create account</string>
     <string name="login_forgot_password">Forgot password</string>
     <string name="login_website">Visit website</string>
-    <string name="login_footer">Version %1$s · Core %2$s · Mihomo %3$s</string>
-    <string name="login_footer_starting">Version %1$s · starting the core</string>
-    <string name="login_dev_channel">Development build · %1$s</string>
-    <string name="env_from_example">Built from the public .env.example values (Debug only)</string>
+    <string name="login_footer">Version %1$s</string>
+    <!-- copy-guard: the neutral development-build marker allowed by D8; a release build never shows it -->
+    <string name="login_dev_channel">Development build</string>
 
     <string name="tab_connect">Connect</string>
     <string name="tab_lines">Lines</string>
@@ -28,13 +27,13 @@
     <string name="status_preparing">Preparing</string>
     <string name="status_connecting">Connecting</string>
     <string name="status_connected">Connected</string>
-    <string name="status_stopping">Disconnecting and settling</string>
+    <string name="status_stopping">Disconnecting</string>
     <string name="status_unavailable">Cannot connect</string>
     <string name="status_connected_for">Connected · %1$s</string>
-    <string name="status_detail_connected">Traffic is carried by the selected line</string>
-    <string name="status_detail_preparing">Checking the plan and line authorization</string>
-    <string name="status_detail_connecting">Building the tunnel and verifying it forwards</string>
-    <string name="status_detail_stopping">Closing the data path and settling this session\'s traffic</string>
+    <string name="status_detail_connected">Your secure connection is active</string>
+    <string name="status_detail_preparing">Getting ready to connect…</string>
+    <string name="status_detail_connecting">Connecting…</string>
+    <string name="status_detail_stopping">Disconnecting…</string>
     <string name="action_cancel_connect">Cancel</string>
     <string name="cancel_connect_hint">Cancelling ends this session; you will sign in again</string>
     <string name="action_buy_plan">Buy or renew a plan</string>
@@ -44,11 +43,9 @@
     <string name="choose_line">Choose a line</string>
     <string name="line_dedicated">Dedicated</string>
     <string name="line_direct">Standard</string>
-    <string name="line_rate">Billed %1$s</string>
-    <string name="metering_node">Metered by the node</string>
-    <string name="metering_client">Internal test line</string>
-    <string name="traffic_session">This connection %1$s · billed %2$s</string>
-    <string name="traffic_pending">The latest batch awaits server confirmation</string>
+    <string name="line_rate">Line rate %1$s</string>
+    <string name="traffic_session">This connection %1$s · at line rate %2$s</string>
+    <string name="traffic_pending">Syncing usage</string>
     <string name="upload">Upload</string>
     <string name="download">Download</string>
     <string name="plan_none">No active plan</string>
@@ -56,8 +53,7 @@
     <string name="plan_expired_on">Expired on %1$s</string>
     <string name="plan_remaining">%1$s left</string>
     <string name="plan_total">of %1$s</string>
-    <string name="plan_estimated">About %1$s left including unconfirmed use</string>
-    <string name="plan_units_note">Traffic is shown with 1 GiB = 1024³ bytes</string>
+    <string name="plan_estimated">About %1$s left</string>
 
     <string name="lines_title">Lines</string>
     <string name="lines_search">Search lines or regions</string>
@@ -69,18 +65,16 @@
     <string name="lines_region_other">Other regions</string>
     <string name="lines_count">%1$d</string>
     <string name="switch_line_title">Switch line?</string>
-    <string name="switch_line_body">Switching disconnects and settles this session first. Connect again afterwards.</string>
+    <string name="switch_line_body">Switching disconnects the current connection first. Connect again afterwards.</string>
     <string name="switch_line_confirm">Disconnect and switch</string>
     <string name="dialog_cancel">Cancel</string>
     <string name="dialog_close">Close</string>
     <string name="action_download_update">Download the new version</string>
-    <string name="update_hint">Install the new APK from the website\'s download page; installing over this one keeps your sign-in and settings</string>
-    <string name="about_licenses">Open-source licences and source code</string>
-    <string name="about_licenses_body">AsterLink embeds the Mihomo proxy core (GNU GPL v3) and open-source components such as AndroidX and Kotlin (Apache 2.0 and others). The full licence texts, the dependency list and the corresponding source code are offered with every version on the website\'s download page.</string>
-    <string name="about_licenses_open">Open the download page</string>
+    <string name="update_hint">Install the new version from the website\'s download page; installing over this one keeps your sign-in and settings</string>
 
     <string name="account_title">Me</string>
-    <string name="role_admin">Administrator</string>
+    <!-- copy-guard: the account's own role marker (D13) -->
+    <string name="role_admin">Administrator account</string>
     <string name="account_plan">Plan</string>
     <string name="account_renew">Renew or upgrade</string>
     <string name="account_orders">Orders</string>
@@ -95,36 +89,32 @@
     <string name="settings_vpn_hint">Always-on VPN is not supported in this version</string>
     <string name="about_title">About</string>
     <string name="about_app_version">App version</string>
-    <string name="about_core_version">Core version</string>
-    <string name="about_mihomo">Mihomo commit</string>
-    <string name="about_server">Server</string>
-    <string name="about_channel">Build channel</string>
     <string name="copy_diagnostics">Copy diagnostics</string>
-    <string name="copy_diagnostics_hint">No password, token, email or line configuration</string>
+    <string name="copy_diagnostics_hint">No password, email or other personal information</string>
     <string name="diagnostics_copied">Diagnostics copied</string>
     <string name="sign_out">Sign out</string>
     <string name="sign_out_title">Sign out?</string>
-    <string name="sign_out_body">This disconnects, settles this session\'s traffic and deletes the password saved on this device.</string>
+    <string name="sign_out_body">This disconnects and deletes the password saved on this device.</string>
 
     <string name="notice_input_missing">Enter your email and password</string>
     <string name="notice_email_too_long">The email is too long</string>
     <string name="notice_password_too_long">The password is too long (72 bytes at most)</string>
-    <string name="notice_core_start_failed">The proxy core cannot start; reinstall the app</string>
-    <string name="notice_core_lost">The core stopped and the connection ended; sign in again</string>
+    <string name="notice_core_start_failed">The app could not start; reinstall it</string>
+    <string name="notice_core_lost">The connection was interrupted; sign in again</string>
     <string name="notice_connect_cancelled">Cancelled. The session ended; sign in again</string>
     <string name="notice_session_ended">Your session expired; sign in again</string>
     <string name="notice_state_changed">The state changed; try again</string>
     <string name="notice_operation_failed">Something went wrong; try again later</string>
-    <string name="notice_invalid_request">Malformed request</string>
+    <string name="notice_invalid_request">Something went wrong; try again later</string>
     <string name="notice_vpn_permission_denied">Allow AsterLink to create a VPN connection to connect</string>
     <string name="notice_vpn_start_failed">The VPN service could not start; try again</string>
-    <string name="notice_vpn_stopping">The previous connection is still settling; try again shortly</string>
+    <string name="notice_vpn_stopping">The previous connection is still ending; try again shortly</string>
     <string name="notice_connect_timeout">Connecting timed out; try again or choose another line</string>
     <string name="notice_credential_read_failed">The saved password could not be read; enter it manually</string>
     <string name="notice_credential_save_failed">The password could not be stored securely and was not remembered</string>
     <string name="notice_credential_delete_failed">The saved password could not be deleted; clear the app\'s data in Settings</string>
     <string name="notice_no_plan">No usable plan; buy or renew one on the website</string>
-    <string name="notice_no_lines">The administrator has not configured any lines yet</string>
+    <string name="notice_no_lines">No lines are available yet</string>
     <string name="notice_select_line">Choose a line on the Lines tab first</string>
     <string name="notice_no_match">No line matches</string>
     <string name="notice_syncing">Syncing lines…</string>
@@ -150,9 +140,9 @@
     <string name="tile_open_app">Open the app</string>
     <string name="status_reconfirming">Re-verifying</string>
     <string name="status_waiting_network">Waiting for network</string>
-    <string name="status_detail_reconfirming">The device woke up or the network changed; confirming your authorization online. Nothing is forwarded until then</string>
-    <string name="status_detail_waiting_network">The server cannot be reached yet. The tunnel is kept but forwards nothing, and continues when the network is back</string>
-    <string name="notice_vpn_revoked">The VPN was turned off by system settings or another VPN app; this session\'s traffic is settled</string>
+    <string name="status_detail_reconfirming">The device woke up or the network changed; verifying your account again</string>
+    <string name="status_detail_waiting_network">The server cannot be reached yet; this continues when the network is back</string>
+    <string name="notice_vpn_revoked">The VPN was turned off by system settings or another VPN app; connect again</string>
     <string name="settings_notifications">Notifications</string>
     <string name="settings_notifications_on">Allowed: connection status, live rates and why a connection ended</string>
     <string name="settings_notifications_off">Off: the VPN still works, but status and disconnect reasons are not shown</string>

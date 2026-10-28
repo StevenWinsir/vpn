@@ -153,7 +153,7 @@ struct ConnectView: View {
                 RateChart(samples: Array((metering?.history ?? []).suffix(60)))
                     .frame(height: 72)
                 if let usage = state.usage {
-                    Text("本次用量 \(Formatting.bytes(usage.physicalBytes)) · 计费 \(Formatting.bytes(usage.billedBytes))")
+                    Text("本次已用 \(Formatting.bytes(usage.physicalBytes)) · 按倍率计 \(Formatting.bytes(usage.billedBytes))")
                         .font(.footnote.monospacedDigit()).foregroundStyle(Theme.textSecondary)
                         .accessibilityIdentifier("usage-text")
                 }
@@ -176,7 +176,7 @@ struct ConnectView: View {
     @ViewBuilder private var planCard: some View {
         if let entitlement = snapshot.entitlement {
             let plan = entitlement.planName.isEmpty ? "无有效套餐" : "\(entitlement.planName) 套餐"
-            // The confirmed balance is the server's; the estimate adds traffic not yet acknowledged.
+            // The synced balance is the server's; the estimate subtracts traffic not yet synced.
             let estimated = snapshot.metering?.estimatedRemainingBytes ?? entitlement.remainingBytes
             Card {
                 VStack(alignment: .leading, spacing: 10) {
@@ -195,7 +195,7 @@ struct ConnectView: View {
                             .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.textPrimary)
                             .accessibilityIdentifier("plan-remaining")
                         if state.usage != nil, estimated != entitlement.remainingBytes {
-                            Text("预估剩余 \(Formatting.bytes(estimated))" + (snapshot.metering?.pending == true ? " · 有流量待确认" : ""))
+                            Text("预估剩余 \(Formatting.bytes(estimated))" + (snapshot.metering?.pending == true ? " · 正在同步用量" : ""))
                                 .font(.footnote.monospacedDigit()).foregroundStyle(Theme.textSecondary)
                                 .accessibilityIdentifier("plan-estimated")
                         }
@@ -210,7 +210,7 @@ struct ConnectView: View {
     }
 
     private func lineSummary(_ node: NodeView) -> String {
-        "\(ErrorText.lineLabel(dedicated: node.isDedicated)) · 计费 \(Formatting.rate(node.ratePermille))"
+        "\(ErrorText.lineLabel(dedicated: node.isDedicated)) · 线路倍率 \(Formatting.rate(node.ratePermille))"
     }
 }
 
@@ -227,7 +227,7 @@ struct ConnectButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Circle().fill(view.tone == .good ? Theme.connected : Theme.surface)
+                Circle().fill(view.tone == .good ? Theme.brandFill : Theme.surface)
                 Circle().stroke(view.tone == .idle ? Theme.stroke : ring.opacity(0.35), lineWidth: 8)
                 if view.showProgress {
                     Circle().trim(from: 0, to: 0.28)

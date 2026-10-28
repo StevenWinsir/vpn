@@ -201,11 +201,6 @@ private fun LineRow(row: NodeRow, enabled: Boolean, onClick: () -> Unit) {
             Text(row.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(2.dp))
             LineTypeLabel(row.dedicated, Formatting.rate(row.ratePermille))
-            Text(
-                stringResource(if (row.nodeMetered) R.string.metering_node else R.string.metering_client),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
         if (row.selected) {
             Box(Modifier.size(28.dp).background(selectedBorder, CircleShape), contentAlignment = Alignment.Center) {

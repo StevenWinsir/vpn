@@ -186,28 +186,23 @@ fun LoginScreen(state: SessionState, facts: BuildFacts, actions: AppActions, mod
                     TextButton(onClick = { actions.openWebsite(WebPage.Home) }) { Text(stringResource(R.string.login_website)) }
                 }
                 Spacer(Modifier.height(32.dp))
-                Footer(state, facts)
+                Footer(facts)
             }
         }
     }
 }
 
 @Composable
-private fun Footer(state: SessionState, facts: BuildFacts) {
-    val identity = state.identity
+private fun Footer(facts: BuildFacts) {
     val caption = MaterialTheme.typography.bodySmall.merge(TabularNumbers)
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     Text(
-        if (identity != null) stringResource(R.string.login_footer, facts.appVersion, identity.coreVersion, identity.mihomoRevision.take(12))
-        else stringResource(R.string.login_footer_starting, facts.appVersion),
+        stringResource(R.string.login_footer, facts.appVersion),
         style = caption,
         color = color,
         textAlign = TextAlign.Center,
     )
     if (facts.channel != "release") {
-        Text(stringResource(R.string.login_dev_channel, facts.apiHost), style = caption, color = color, textAlign = TextAlign.Center)
-    }
-    if (facts.envFromExample) {
-        Text(stringResource(R.string.env_from_example), style = caption, color = color, textAlign = TextAlign.Center)
+        Text(stringResource(R.string.login_dev_channel), style = caption, color = color, textAlign = TextAlign.Center)
     }
 }

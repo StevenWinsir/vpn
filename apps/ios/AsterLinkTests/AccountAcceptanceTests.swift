@@ -205,7 +205,7 @@ struct AccountAcceptanceTests {
         rig.record("A04.delete", deleted != nil && (deleted ?? .max) <= 7_000, "deleted line gone after \(deleted.map(String.init) ?? "timeout") ms")
 
         // Redaction: what the app could show or copy carries no node secret or account detail.
-        let diagnostics = Diagnostics.report(appVersion: "0", channel: .development, state: rig.state)
+        let diagnostics = Diagnostics.report(appVersion: "0", osVersion: "iOS 0", state: rig.state)
         let text = String(describing: rig.state) + diagnostics
         let secrets = ["metadata-private.example.invalid", "never-reaches-the-ui", "aes-256-gcm", password]
         rig.record("A.redaction", secrets.allSatisfy { !text.contains($0) }, "UI state and diagnostics contain no node address, credential, cipher or password")

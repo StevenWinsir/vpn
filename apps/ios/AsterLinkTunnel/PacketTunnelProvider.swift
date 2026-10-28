@@ -105,7 +105,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         do {
             try startCore(platform)
         } catch {
-            return .failure(Self.failure("tun_unavailable", "隧道组件无法启动"))
+            return .failure(Self.failure("tun_unavailable", "当前设备暂时无法建立连接，请稍后重试"))
         }
         MobileTuneMemory(MemoryBudget.goHeapLimit, MemoryBudget.goGCPercent)
         startMemoryWatch()
@@ -117,7 +117,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         let adopted = MobileAdoptSession(ticket)
         guard let head = Self.snapshot(adopted), head.actionError == nil, head.state == "ready" else {
-            let failure = Self.failureFrom(adopted) ?? Self.failure("handoff_invalid", "会话交接失败")
+            let failure = Self.failureFrom(adopted) ?? Self.failure("handoff_invalid", "登录状态已变化，请重新登录")
             stopCore()
             return .failure(failure)
         }
@@ -126,7 +126,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             startEndWatch()
             return .success(())
         }
-        let failure = Self.failureFrom(connected) ?? Self.failure("tunnel_failed", "隧道启动失败")
+        let failure = Self.failureFrom(connected) ?? Self.failure("tunnel_failed", "连接失败，请更换线路或稍后重试")
         // The session was never forwarding here: give it up without revoking it, so the app
         // can take back the ticket it still holds.
         _ = MobileExportSession()
@@ -141,7 +141,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let build = try JSONSerialization.data(withJSONObject: ["cache_dir": cache.standardizedFileURL.path])
         var error: NSError?
         guard MobileStart(platform, String(decoding: build, as: UTF8.self), &error) else {
-            throw error ?? Self.failure("tun_unavailable", "隧道组件无法启动")
+            throw error ?? Self.failure("tun_unavailable", "当前设备暂时无法建立连接，请稍后重试")
         }
         coreStarted = true
     }

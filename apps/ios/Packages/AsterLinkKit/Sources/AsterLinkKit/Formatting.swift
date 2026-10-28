@@ -1,9 +1,9 @@
 import Foundation
 
-/// Display helpers. Traffic uses binary units (1 GiB = 2^30 bytes) and says so; accounting
+/// Display helpers. Traffic is shown in GB (1 GB = 2^30 bytes, like the website); accounting
 /// integers never go through a Double (only the final display rounding does).
 public enum Formatting {
-    private static let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
+    private static let units = ["B", "KB", "MB", "GB", "TB", "PB"]
 
     public static func bytes(_ value: Int64) -> String {
         let clamped = max(0, value)
