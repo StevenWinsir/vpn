@@ -17,6 +17,7 @@
     "test:copy": "node --test scripts/copy-guard.test.mjs",
     "test:theme": "node --test scripts/theme.test.mjs",
     "brand:icons": "node scripts/brand-icons.mjs",
+    "brand:apps": "node scripts/brand-apps.mjs",
     "test:home": "node --experimental-strip-types --test scripts/home.test.mjs",
     "test:support": "node --experimental-strip-types --test scripts/support.test.mjs"
   },

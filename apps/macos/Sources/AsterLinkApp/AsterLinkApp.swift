@@ -19,8 +19,10 @@ struct AsterLinkApp: App {
         }
         .windowResizability(.contentMinSize)
 
-        MenuBarExtra("AsterLink", systemImage: "bolt.shield") {
+        MenuBarExtra {
             MenuContent(session: model.session)
+        } label: {
+            MenuBarIcon(session: model.session)
         }
     }
 }
@@ -38,6 +40,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+}
+
+/// The brand shield as a template image (the system tints it for light, dark and highlighted menu bars):
+/// outline when not connected, solid when connected, with an exclamation mark when something is wrong.
+struct MenuBarIcon: View {
+    let session: SessionController?
+
+    var body: some View {
+        Image(nsImage: Self.image(named: name))
+    }
+
+    private var name: String {
+        switch session?.snapshot.state {
+        case .connected: "MenuBarActiveTemplate"
+        case .error, .blocked: "MenuBarErrorTemplate"
+        default: "MenuBarIdleTemplate"
+        }
+    }
+
+    private static func image(named name: String) -> NSImage {
+        // Not bundled when run straight from SwiftPM (development): fall back to a plain symbol.
+        guard let image = NSImage(named: name) else {
+            return NSImage(systemSymbolName: "shield", accessibilityDescription: "AsterLink") ?? NSImage()
+        }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
     }
 }
 

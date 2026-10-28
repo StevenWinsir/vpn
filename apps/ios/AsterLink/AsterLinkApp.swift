@@ -69,16 +69,16 @@ struct ConfigErrorView: View {
     }
 }
 
+/// The brand mark (frontend/brand/mark.svg, rendered into the LaunchMark asset by frontend/scripts/brand-apps.mjs).
 struct BrandMark: View {
     var size: CGFloat = 56
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous).fill(Theme.primary)
-            Image(systemName: "power").font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(.white)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        Image("LaunchMark")
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 

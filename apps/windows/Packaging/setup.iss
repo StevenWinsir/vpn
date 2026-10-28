@@ -50,6 +50,9 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallFilesDir={app}\setup
 UninstallDisplayIcon={app}\app\AsterLink.exe
+; Brand assets generated from frontend/brand/mark.svg (frontend/scripts/brand-apps.mjs).
+SetupIconFile=..\AsterLink.App\Assets\AsterLink.ico
+WizardSmallImageFile=wizard-small-55.bmp,wizard-small-110.bmp
 UninstallDisplayName={#AppName}
 CloseApplications=no
 RestartApplications=no

@@ -31,6 +31,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -210,18 +211,18 @@ fun FactRow(label: String, value: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** The placeholder brand mark (until the official logo is supplied): a star on the brand blue. */
+/** The brand mark of frontend/brand/mark.svg: the brand-colour tile with the shield glyph (the launcher foreground). */
 @Composable
 fun BrandMark(modifier: Modifier = Modifier, size: Dp = 64.dp) {
     val description = stringResource(R.string.app_name)
     Box(
         modifier
             .size(size)
-            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(size * 0.28f))
+            .background(colorResource(R.color.icon_background), RoundedCornerShape(size * 0.234f))
             .clearAndSetSemantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painterResource(R.drawable.ic_launcher_foreground), null, tint = Color.White, modifier = Modifier.size(size * 1.5f))
+        Icon(painterResource(R.drawable.ic_launcher_foreground), null, tint = Color.Unspecified, modifier = Modifier.size(size))
     }
 }
 

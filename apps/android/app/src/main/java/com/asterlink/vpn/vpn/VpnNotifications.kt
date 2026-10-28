@@ -81,7 +81,7 @@ object VpnNotifications {
             },
         )
         return NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_vpn_key)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.vpn_notification_title, title))
             .setContentText(notice.text)
             .setContentIntent(openApp(context))
@@ -115,7 +115,7 @@ object VpnNotifications {
         if (!mayPost(context)) return
         ensureAlertChannel(context)
         val notification = NotificationCompat.Builder(context, ALERT_CHANNEL)
-            .setSmallIcon(R.drawable.ic_vpn_key)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.alert_title))
             .setContentText(reason)
             .setStyle(NotificationCompat.BigTextStyle().bigText(reason))
