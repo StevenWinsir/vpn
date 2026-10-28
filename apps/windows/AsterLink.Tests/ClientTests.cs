@@ -21,17 +21,31 @@ public class FormattingTests
     [Theory]
     [InlineData(0, "0 B")]
     [InlineData(1023, "1023 B")]
-    [InlineData(1024, "1.00 KiB")]
-    [InlineData(104_857_600, "100.00 MiB")]
-    [InlineData(1L << 30, "1.00 GiB")]
+    [InlineData(1024, "1.00 KB")]
+    [InlineData(104_857_600, "100.00 MB")]
+    [InlineData(1L << 30, "1.00 GB")]
     [InlineData(-5, "0 B")]
-    public void Bytes_use_binary_units(long value, string expected) => Assert.Equal(expected, Formatting.Bytes(value));
+    public void Bytes_use_base_1024_with_the_website_unit_names(long value, string expected) => Assert.Equal(expected, Formatting.Bytes(value));
+
+    [Theory]
+    [InlineData(1000, 1000, 1000)]
+    [InlineData(1000, 500, 500)]
+    [InlineData(1999, 1500, 2998)]
+    [InlineData(0, 1000, 0)]
+    [InlineData(1000, 0, 0)]
+    [InlineData(long.MaxValue, 2000, long.MaxValue)]
+    public void Billed_bytes_follow_the_line_rate_in_integers(long physical, long permille, long expected) =>
+        Assert.Equal(expected, Formatting.BilledBytes(physical, permille));
+
+    [Fact]
+    public void Dates_are_shown_as_on_the_website() =>
+        Assert.Equal("2030-01-01", Formatting.Date(new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeZoneInfo.Local.GetUtcOffset(new DateTime(2030, 1, 1, 12, 0, 0)))));
 
     [Fact]
     public void Values_above_2_pow_53_do_not_throw_or_go_negative()
     {
         Assert.StartsWith("8", Formatting.Bytes(long.MaxValue / 1024 / 1024 / 1024 / 1024 / 1024));
-        Assert.EndsWith("TiB", Formatting.Bytes(long.MaxValue));
+        Assert.EndsWith("TB", Formatting.Bytes(long.MaxValue));
         Assert.Equal(1.0, Formatting.UsedFraction(9007199254740993, 0));
     }
 
@@ -180,8 +194,10 @@ public class PresentationTests
     public void No_nodes_is_its_own_empty_state()
     {
         var snapshot = Replies.Plan(nodes: []);
-        Assert.Contains("尚未配置", ConnectionView.From(snapshot, false).DisabledReason);
-        Assert.Contains("尚未配置", NodeList.EmptyText(snapshot, filtered: false));
+        Assert.Equal("暂无可用线路，请稍后刷新", ConnectionView.From(snapshot, false).DisabledReason);
+        Assert.Equal("暂无可用线路，请稍后刷新", NodeList.EmptyText(snapshot, filtered: false));
+        // Before the first catalog arrives the page says it is still syncing, not that there are none.
+        Assert.Equal("正在同步线路…", NodeList.EmptyText(new CoreSnapshot { Entitlement = snapshot.Entitlement, CatalogRevision = "" }, filtered: false));
     }
 
     [Fact]
@@ -211,18 +227,39 @@ public class PresentationTests
     {
         var snapshot = Replies.Plan(state: "blocked", lastError: new ErrorView { Code = "quota_exhausted", Message = "套餐流量已用完" });
         var view = ConnectionView.From(snapshot, false);
-        Assert.Equal("不可用", view.StatusText);
+        Assert.Equal("无法连接", view.StatusText);
         Assert.Equal(Tone.Bad, view.Tone);
         Assert.Equal("套餐流量已用完", view.Detail);
     }
 
-    [Theory]
-    [InlineData("node_reported", "计量：节点实测，由服务器强制执行")]
-    [InlineData("", "计量：客户端上报（内部测试线路）")]
-    [InlineData("client_reported", "计量：客户端上报（内部测试线路）")]
-    public void A_line_says_who_keeps_its_books(string source, string label)
+    [Fact]
+    public void Regions_group_lines_without_reordering_them()
     {
-        Assert.Equal(label, NodeRow.MeteringLabelOf(source));
+        var nodes = new[]
+        {
+            new NodeView { Id = "a", Name = "东京 1", Region = "日本", LineType = "dedicated", RatePermille = 1000 },
+            new NodeView { Id = "b", Name = "香港 1", Region = "香港", LineType = "direct", RatePermille = 500 },
+            new NodeView { Id = "c", Name = "东京 2", Region = "日本 ", LineType = "direct", RatePermille = 500 },
+            new NodeView { Id = "d", Name = "未知", Region = "", LineType = "direct", RatePermille = 500 },
+        };
+        var groups = NodeList.Group(NodeList.Build(Replies.Plan(nodes: nodes), "", LineFilter.All));
+        Assert.Equal(["日本", "香港", "其他"], groups.Select(g => g.Region));
+        Assert.Equal(["东京 1", "东京 2"], groups[0].Rows.Select(r => r.Name));
+        Assert.Equal("2 条", groups[0].CountText);
+    }
+
+    [Fact]
+    public void Status_words_carry_no_internal_terms()
+    {
+        foreach (var state in new[] { "ready", "connected", "connecting", "preparing", "stopping", "blocked", "error", "signed_out" })
+        {
+            var view = ConnectionView.From(Replies.Plan(state: state, selected: Replies.NodeA, configReady: true), false);
+            foreach (var word in new[] { "隧道", "转发", "结算", "数据通路", "校验", "内核", "就绪" })
+            {
+                Assert.DoesNotContain(word, view.StatusText);
+                Assert.DoesNotContain(word, view.Detail);
+            }
+        }
     }
 
     [Fact]
@@ -251,7 +288,8 @@ public class PresentationTests
         Assert.Equal("2.5×", rows[0].RateLabel);
         Assert.Equal("1×", rows[1].RateLabel);
         Assert.True(rows[0].Selected);
-        Assert.True(rows[0].ConfigVerified);
+        Assert.Equal("线路倍率 2.5×", rows[0].RateText);
+        Assert.Contains("已选", rows[0].SpokenName);
         Assert.False(rows[1].Selected);
         Assert.Equal("专线", rows[0].LineLabel);
         Assert.Equal("普通线路", rows[1].LineLabel);
@@ -300,14 +338,37 @@ public class PresentationTests
     }
 
     [Fact]
-    public void Diagnostics_hold_state_but_no_secret_shaped_fields()
+    public void Diagnostics_are_the_six_lines_of_every_platform_and_nothing_internal()
     {
         var snapshot = Replies.Plan(selected: Replies.NodeA, configReady: true, lastError: new ErrorView { Code = "tunnel_failed", Message = "x" });
-        var text = DiagnosticsReport.Build("0.1.0", "development", "api.example.test", "Windows 10", snapshot, "特权服务就绪");
-        Assert.Contains("state ready", text);
-        Assert.Contains("last_error tunnel_failed", text);
-        foreach (var forbidden in new[] { "password", "token", "yaml", Replies.NodeA, "user@example.com" })
+        var text = DiagnosticsReport.Build("0.1.0", "Windows 11 (10.0.26100)", "无法连接", snapshot, DateTimeOffset.UtcNow);
+        var lines = text.Split('\n');
+        Assert.Equal(6, lines.Length);
+        Assert.Equal("AsterLink 诊断信息", lines[0]);
+        Assert.StartsWith("时间: ", lines[1]);
+        Assert.Equal("应用版本: 0.1.0", lines[2]);
+        Assert.Equal("系统版本: Windows 11 (10.0.26100)", lines[3]);
+        Assert.Equal("连接状态: 无法连接", lines[4]);
+        Assert.Equal("错误码: tunnel_failed", lines[5]);
+        Assert.Equal("连接状态: 正在连接", DiagnosticsReport.Build("0.1.0", "w", "正在连接…", snapshot, DateTimeOffset.UtcNow).Split('\n')[4]);
+        Assert.EndsWith("错误码: 无", DiagnosticsReport.Build("0.1.0", "w", "未连接", Replies.Plan(), DateTimeOffset.UtcNow));
+        foreach (var forbidden in new[] { "password", "token", "yaml", "core", "mihomo", "api", "generation", "channel", "development", Replies.NodeA, "user@example.com" })
             Assert.DoesNotContain(forbidden, text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(ServiceErrors.ServiceNotInstalled)]
+    [InlineData(ServiceErrors.WorkerUnavailable)]
+    [InlineData(ServiceErrors.WorkerExited)]
+    [InlineData(ServiceErrors.LoginTargetMismatch)]
+    [InlineData(ServiceErrors.InvalidRequest)]
+    [InlineData("something_new")]
+    public void Service_error_text_is_plain_chinese_without_internals(string code)
+    {
+        var text = ErrorText.ForService(code);
+        Assert.Matches("[一-龥]", text);
+        foreach (var word in new[] { "特权", "内核", "代理", "服务器地址", "请求格式", "Core", "service" })
+            Assert.DoesNotContain(word, text);
     }
 }
 

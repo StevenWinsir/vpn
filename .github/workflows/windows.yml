@@ -24,6 +24,7 @@ on:
       - 'native/nodeagent/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
+      - 'scripts/test-app-copy.py'
       - 'scripts/package-native-windows.py'
       - 'scripts/windows_release.py'
       - 'scripts/windows/**'
@@ -39,6 +40,7 @@ on:
       - 'native/nodeagent/**'
       - 'shared/**'
       - 'scripts/test-native-windows.py'
+      - 'scripts/test-app-copy.py'
       - 'scripts/package-native-windows.py'
       - 'scripts/windows_release.py'
       - 'scripts/windows/**'
@@ -135,21 +137,27 @@ jobs:
           $json = Get-Content $report -Raw | ConvertFrom-Json
           if (-not $json.window.rendered) { throw 'window was not rendered' }
           if (-not $json.platform.is_native_windows_x64) { throw 'GUI did not run as native Windows x64' }
-          foreach ($page in 'login', 'connect', 'nodes', 'settings') {
+          foreach ($page in 'login', 'connect', 'lines', 'account') {
             if (-not $json.pages.$page) { throw "page '$page' did not load and lay out" }
           }
 
-      - name: GUI design preview - every page, empty state, error, dark and 200 percent rendered to PNG (scripted Core, no service)
+      - name: GUI design preview - every page and state, light and dark, 200 percent, tray menu, real desktop window (scripted Core, no service)
         shell: pwsh
         run: |
           $dir = 'artifacts/windows/ui-preview'
           $p = Start-Process -FilePath 'artifacts/windows/publish/app/AsterLink.exe' -ArgumentList '--preview', $dir -PassThru
-          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw 'GUI preview did not finish within 120 s' }
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw 'GUI preview did not finish within 300 s' }
           if (Test-Path "$dir/preview-error.txt") { Get-Content "$dir/preview-error.txt"; throw 'GUI preview failed' }
           if ($p.ExitCode -ne 0) { throw "GUI preview failed with exit code $($p.ExitCode)" }
           $index = Get-Content "$dir/index.json" -Raw | ConvertFrom-Json
-          "$($index.count) pages rendered"
-          if ($index.count -lt 20) { throw 'GUI preview rendered fewer pages than expected' }
+          "$($index.count) screens rendered on $($index.os); Mica available: $($index.mica_available)"
+
+      - name: GUI design preview checks - every scenario, expected text, runtime copy guard, nothing cut short
+        shell: pwsh
+        run: |
+          py -3 scripts/test-native-windows.py --suite ui --preview-dir artifacts/windows/ui-preview --report artifacts/windows/ui-suite.json
+          # 3 = BLOCKED: only the real-desktop capture could not run on this runner; every other check must pass.
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) { throw "UI suite failed with exit code $LASTEXITCODE" }
 
       - name: Service binary starts and reports (probe, not installed as a service)
         shell: pwsh
@@ -275,6 +283,7 @@ jobs:
           path: |
             artifacts/windows/machine.json
             artifacts/windows/gui-selftest.json
+            artifacts/windows/ui-suite.json
             artifacts/windows/service-probe.txt
             artifacts/windows/core-suite.json
             artifacts/windows/billing-suite.json

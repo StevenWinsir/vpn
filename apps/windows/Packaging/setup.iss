@@ -63,15 +63,17 @@ SignedUninstaller=yes
 #endif
 
 [Languages]
-; Inno Setup ships no official Simplified Chinese file; the product messages below are bilingual instead.
-Name: "english"; MessagesFile: "compiler:Default.isl"
+; Simplified Chinese only (handoff_app_standardization.md 6.6). Inno Setup ships no official Chinese file: the reviewed
+; community translation from the vendor's repository is kept next to this script (see its header).
+Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
 
 [CustomMessages]
-CloseFirst=AsterLink is running. Quit it from the tray icon (right-click, Exit), then press Retry.%n%nAsterLink 正在运行。请在托盘图标上右键选择“退出”，然后点“重试”。
-InstallFailed=AsterLink could not be installed / 无法安装 AsterLink。%n%n%1%n%nNothing was left half-installed; any previous version was restored. 没有留下半安装状态，已恢复之前的版本。%n%n%2
-ForgetPrompt=Also remove the saved passwords and preferences of the Windows user running this uninstall?%nYes: remove them. No: keep them (used again if you reinstall).%n%n同时删除当前 Windows 用户在本机保存的密码和偏好设置吗？%n是：删除。否：保留（重新安装后仍可使用）。
-UninstallFailed=AsterLink could not be fully removed / 无法完全卸载 AsterLink。%n%n%1
-LaunchAsUser=Start AsterLink now / 现在启动 AsterLink
+; Plain words for the user: what happened and what to do. The service verb's own answer goes to the setup log only.
+CloseFirst=AsterLink 正在运行。请右键点击任务栏右下角的 AsterLink 图标并选择“退出”（如果没有看到图标，请先点击“^”），然后点击“重试”。
+InstallFailed=无法安装 AsterLink（错误码 %1）。%n%n没有留下未完成的安装，之前的版本已恢复。请重新运行安装程序；如果问题仍然存在，请联系客服。
+ForgetPrompt=是否同时删除当前 Windows 用户在本机保存的密码和偏好设置？%n%n是：删除。%n否：保留（重新安装后仍可使用）。
+UninstallFailed=无法完全卸载 AsterLink（错误码 %1）。%n%n请稍后重新运行卸载程序；如果问题仍然存在，请联系客服。
+LaunchAsUser=立即启动 AsterLink
 
 [Files]
 ; Never installed by Inno (dontcopy): CurStepChanged(ssInstall) unpacks it to Setup's own temporary folder, which is
@@ -152,8 +154,7 @@ begin
   if not RunVerb(Service, 'install --stage "' + Stage + '"', InstallLog, ExitCode) or (ExitCode <> 0) then
   begin
     Log('install verb exit code ' + IntToStr(ExitCode) + ': ' + VerbMessage(InstallLog));
-    SuppressibleMsgBox(FmtMessage(CustomMessage('InstallFailed'), [IntToStr(ExitCode) + ' ' + VerbMessage(InstallLog), '(run Setup with /LOG=file for details)']),
-                       mbCriticalError, MB_OK, IDOK);
+    SuppressibleMsgBox(FmtMessage(CustomMessage('InstallFailed'), [IntToStr(ExitCode)]), mbCriticalError, MB_OK, IDOK);
     // Raised at ssInstall this stops Setup (exit code 3) before the uninstaller and the Start-menu entry exist.
     Abort;
   end;
@@ -214,7 +215,7 @@ begin
   begin
     Answer := VerbMessage(Log1);
     Log('uninstall verb exit code ' + IntToStr(ExitCode) + ': ' + Answer);
-    SuppressibleMsgBox(FmtMessage(CustomMessage('UninstallFailed'), [IntToStr(ExitCode) + ' ' + Answer]), mbCriticalError, MB_OK, IDOK);
+    SuppressibleMsgBox(FmtMessage(CustomMessage('UninstallFailed'), [IntToStr(ExitCode)]), mbCriticalError, MB_OK, IDOK);
     // Raised at usUninstall this stops before Inno removes its entry and unins000.exe, so the user can run it again.
     Abort;
   end

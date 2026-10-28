@@ -1,102 +1,145 @@
 <UserControl x:Class="AsterLink.App.Views.ConnectView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:AsterLink.App.Controls">
+    <!-- The home page: at most one notice, the big connect button and its status, then line, plan and live rate. -->
     <StackPanel>
-        <TextBlock Text="连接" Style="{StaticResource PageTitle}" />
+        <ui:NoticeBar Text="{Binding BlockerText}" Kind="{Binding BlockerKind}" ActionText="{Binding BlockerAction}" Command="{Binding BlockerCommand}"
+                      Margin="0,0,0,16" AutomationProperties.AutomationId="DisabledReason" />
+        <ui:NoticeBar Text="{Binding FailureText}" Kind="danger" Margin="0,0,0,16" AutomationProperties.AutomationId="LastError" />
 
-        <!-- Status: one large line of text, a coloured disc, and exactly one primary action. -->
-        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <Ellipse Width="14" Height="14" Fill="{Binding ConnBrush}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding ConnStatus}" FontSize="26" FontWeight="SemiBold" Margin="12,0,0,0"
-                               AutomationProperties.AutomationId="ConnectionState" />
-                </StackPanel>
-                <TextBlock Text="{Binding ConnDetail}" Margin="26,6,0,0" Style="{StaticResource Muted}"
-                           Visibility="{Binding HasConnDetail, Converter={StaticResource BoolToVisibility}}"
-                           AutomationProperties.AutomationId="ConnectionDetail" />
-                <ProgressBar IsIndeterminate="True" Margin="26,12,0,0" MaxWidth="320" HorizontalAlignment="Left"
-                             Visibility="{Binding ShowProgress, Converter={StaticResource BoolToVisibility}}" />
+        <!-- Hero. Three buttons share the place so each keeps its own command and enable rule: Connect, Disconnect, or a
+             disabled one that shows progress while a command runs. -->
+        <StackPanel HorizontalAlignment="Center" Margin="0,12,0,28">
+            <Grid HorizontalAlignment="Center" Margin="0,14,0,0">
+                <Button Style="{StaticResource ConnectButton}" Tag="{Binding ConnVisual}" Command="{Binding ConnectCommand}"
+                        Visibility="{Binding ShowConnect, Converter={StaticResource BoolToVisibility}}"
+                        AutomationProperties.AutomationId="Connect" AutomationProperties.Name="{Binding ConnectButtonName}" ToolTip="连接" />
+                <Button Style="{StaticResource ConnectButton}" Tag="{Binding ConnVisual}" Command="{Binding DisconnectCommand}"
+                        Visibility="{Binding ShowDisconnect, Converter={StaticResource BoolToVisibility}}"
+                        AutomationProperties.AutomationId="Disconnect" AutomationProperties.Name="{Binding DisconnectButtonName}" ToolTip="断开" />
+                <Button Style="{StaticResource ConnectButton}" Tag="{Binding ConnVisual}" IsEnabled="False"
+                        Visibility="{Binding ShowWaitButton, Converter={StaticResource BoolToVisibility}}"
+                        AutomationProperties.AutomationId="ConnectProgress" AutomationProperties.Name="{Binding WaitButtonName}" />
+            </Grid>
+            <TextBlock Text="{Binding ConnStatus}" Foreground="{Binding ConnTitleBrush}" FontSize="26" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" Margin="0,28,0,0" AutomationProperties.AutomationId="ConnectionState" />
+            <TextBlock Text="{Binding ConnDetail}" Style="{StaticResource Muted}" HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="460"
+                       Margin="0,6,0,0" Visibility="{Binding HasConnDetail, Converter={StaticResource BoolToVisibility}}"
+                       AutomationProperties.AutomationId="ConnectionDetail" />
+            <StackPanel HorizontalAlignment="Center" Margin="0,10,0,0" Visibility="{Binding ShowCancel, Converter={StaticResource BoolToVisibility}}">
+                <Button Content="取消连接" Style="{StaticResource LinkButton}" Command="{Binding CancelCommand}" HorizontalAlignment="Center"
+                        AutomationProperties.AutomationId="CancelConnect" />
+                <TextBlock Text="取消后需要重新登录" Style="{StaticResource Faint}" HorizontalAlignment="Center" />
+            </StackPanel>
+        </StackPanel>
 
-                <Border Margin="0,16,0,0" Padding="14" CornerRadius="8" Background="{DynamicResource SelectedBrush}">
-                    <StackPanel>
-                        <TextBlock Text="当前线路" Style="{StaticResource Muted}" />
-                        <TextBlock Text="{Binding SelectedNodeText}" FontWeight="SemiBold" Margin="0,2,0,0"
+        <ui:CardGrid MinItemWidth="220" Gap="16">
+            <!-- Current line. -->
+            <HeaderedContentControl Style="{StaticResource InfoCard}" Header="当前线路" Tag="{StaticResource IconWorld}">
+                <StackPanel>
+                    <StackPanel Visibility="{Binding HasSelectedNode, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="{Binding SelectedNodeText}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                   ToolTip="{Binding SelectedNodeText}" AutomationProperties.AutomationId="SelectedNode" />
+                        <TextBlock Text="{Binding SelectedNodeRegion}" Style="{StaticResource Caption}" Margin="0,4,0,0" />
+                        <WrapPanel Margin="0,10,0,0">
+                            <Border Style="{StaticResource LineTag}" Tag="{Binding SelectedNodeDedicated}" Margin="0,0,8,0">
+                                <TextBlock Text="{Binding SelectedNodeLine}" TextWrapping="NoWrap" />
+                            </Border>
+                            <TextBlock Text="{Binding SelectedNodeRate}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                        </WrapPanel>
+                    </StackPanel>
+                    <StackPanel Visibility="{Binding NoSelectedNode, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="未选择线路" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}"
                                    AutomationProperties.AutomationId="SelectedNode" />
-                        <TextBlock Text="{Binding SelectedNodeRegion}" Style="{StaticResource Muted}" />
-                        <TextBlock Text="{Binding SelectedNodeMetering}" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0"
-                                   AutomationProperties.AutomationId="SelectedNodeMetering" />
+                        <TextBlock Text="选择一条线路后即可连接" Style="{StaticResource Caption}" Margin="0,4,0,0" />
                     </StackPanel>
-                </Border>
-
-                <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-                    <Button Content="连接" Style="{StaticResource PrimaryButton}" MinWidth="140"
-                            Command="{Binding ConnectCommand}"
-                            Visibility="{Binding ShowConnect, Converter={StaticResource BoolToVisibility}}"
-                            AutomationProperties.AutomationId="Connect" />
-                    <Button Content="断开" MinWidth="140" Command="{Binding DisconnectCommand}"
-                            Visibility="{Binding ShowDisconnect, Converter={StaticResource BoolToVisibility}}"
-                            AutomationProperties.AutomationId="Disconnect" />
-                    <Button Content="取消连接" Margin="8,0,0,0" Command="{Binding CancelCommand}"
-                            Visibility="{Binding ShowCancel, Converter={StaticResource BoolToVisibility}}"
-                            AutomationProperties.AutomationId="CancelConnect" />
+                    <Button Content="{Binding LineCardAction}" Command="{Binding ShowLinesCommand}" HorizontalAlignment="Left" Margin="0,14,0,0"
+                            MinHeight="30" AutomationProperties.AutomationId="ChangeLine" />
                 </StackPanel>
-                <TextBlock Text="取消连接会结束本次会话，需要重新登录。" Style="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"
-                           Visibility="{Binding ShowCancel, Converter={StaticResource BoolToVisibility}}" />
-                <TextBlock Text="{Binding DisabledReason}" Foreground="{DynamicResource WarnBrush}" Margin="0,10,0,0"
-                           Visibility="{Binding ShowDisabledReason, Converter={StaticResource BoolToVisibility}}"
-                           AutomationProperties.AutomationId="DisabledReason" />
-            </StackPanel>
-        </Border>
+            </HeaderedContentControl>
 
-        <!-- Plan: expiry, confirmed balance, and the way to buy or renew. -->
-        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
-            <StackPanel>
-                <StackPanel Visibility="{Binding HasPlan, Converter={StaticResource BoolToVisibility}}">
-                    <Grid>
-                        <TextBlock Text="{Binding PlanName}" Style="{StaticResource SectionTitle}" AutomationProperties.AutomationId="PlanName" />
-                        <TextBlock Text="{Binding PlanExpires}" Style="{StaticResource Muted}" HorizontalAlignment="Right" />
-                    </Grid>
-                    <ProgressBar Minimum="0" Maximum="100" Value="{Binding PlanUsedPercent, Mode=OneWay}" Margin="0,12,0,0"
-                                 AutomationProperties.Name="已用流量比例" />
-                    <TextBlock Text="{Binding PlanRemaining}" Style="{StaticResource Muted}" Margin="0,8,0,0"
-                               AutomationProperties.AutomationId="PlanRemaining" />
-                </StackPanel>
-                <StackPanel Visibility="{Binding NoPlan, Converter={StaticResource BoolToVisibility}}">
-                    <TextBlock Text="暂无可用套餐" Style="{StaticResource SectionTitle}" />
-                    <TextBlock Text="{Binding NoPlanText}" Foreground="{DynamicResource WarnBrush}" Margin="0,6,0,0"
-                               AutomationProperties.AutomationId="NoPlanText" />
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                        <Button Content="购买 / 续费" Style="{StaticResource PrimaryButton}" Command="{Binding OpenPlansCommand}" />
-                        <Button Content="我已购买，刷新" Margin="8,0,0,0" Command="{Binding RefreshCommand}" />
+            <!-- Plan: name, days left, remaining traffic, the way to renew. -->
+            <HeaderedContentControl Style="{StaticResource InfoCard}" Header="套餐" Tag="{StaticResource IconCrown}">
+                <StackPanel>
+                    <StackPanel Visibility="{Binding HasPlan, Converter={StaticResource BoolToVisibility}}">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding PlanDays}" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                                       Margin="8,0,0,0" TextWrapping="NoWrap" />
+                            <TextBlock Text="{Binding PlanName}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                       AutomationProperties.AutomationId="PlanName" />
+                        </DockPanel>
+                        <ProgressBar Minimum="0" Maximum="100" Value="{Binding PlanUsedPercent, Mode=OneWay}" Margin="0,12,0,0"
+                                     AutomationProperties.Name="已用流量比例" />
+                        <TextBlock Text="{Binding PlanRemaining}" Style="{StaticResource Caption}" Margin="0,8,0,0"
+                                   AutomationProperties.AutomationId="PlanRemaining" />
+                        <TextBlock Text="{Binding PlanEstimate}" Style="{StaticResource Faint}" Margin="0,2,0,0"
+                                   Visibility="{Binding PlanEstimate, Converter={StaticResource TextToVisibility}}" />
+                        <TextBlock Text="{Binding PlanExpires}" Style="{StaticResource Faint}" Margin="0,2,0,0" />
                     </StackPanel>
+                    <StackPanel Visibility="{Binding NoPlan, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="暂无有效套餐" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource DangerTextBrush}" />
+                        <TextBlock Text="{Binding NoPlanText}" Style="{StaticResource Caption}" Margin="0,4,0,0" AutomationProperties.AutomationId="NoPlanText" />
+                    </StackPanel>
+                    <WrapPanel Margin="0,14,0,0">
+                        <Button Content="{Binding PlanAction}" Style="{StaticResource PrimaryButton}" Command="{Binding OpenPlansCommand}" MinHeight="30"
+                                Margin="0,0,8,0" ui:Ui.Icon="{StaticResource IconExternalLink}" AutomationProperties.AutomationId="OpenPlans" />
+                        <Button Content="我已购买，刷新" Command="{Binding RefreshCommand}" MinHeight="30"
+                                Visibility="{Binding NoPlan, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="RefreshPlan" />
+                    </WrapPanel>
                 </StackPanel>
-            </StackPanel>
-        </Border>
+            </HeaderedContentControl>
 
-        <!-- Usage: rates from the Core, one small chart, estimated vs confirmed balance told apart. -->
-        <Border Style="{StaticResource Card}" Margin="0,16,0,0"
-                Visibility="{Binding ShowMetering, Converter={StaticResource BoolToVisibility}}">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="{Binding UpSpeed}" FontWeight="SemiBold" AutomationProperties.AutomationId="UpSpeed" />
-                    <TextBlock Text="{Binding DownSpeed}" FontWeight="SemiBold" Margin="24,0,0,0" AutomationProperties.AutomationId="DownSpeed" />
-                    <TextBlock Text="{Binding RateText}" Style="{StaticResource Muted}" Margin="24,0,0,0" />
+            <!-- Live rate: download and upload, the last 60 seconds, this session's usage. -->
+            <HeaderedContentControl Style="{StaticResource InfoCard}" Header="实时速率" Tag="{StaticResource IconChartLine}">
+                <StackPanel>
+                    <StackPanel Visibility="{Binding ShowMetering, Converter={StaticResource BoolToVisibility}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <ContentControl Style="{StaticResource Icon}" Tag="{StaticResource IconArrowDown}" Width="14" Height="14" Foreground="{DynamicResource BrandBrush}" />
+                                    <TextBlock Text="下载" Style="{StaticResource Caption}" Margin="4,0,0,0" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding DownSpeed}" FontFamily="{StaticResource NumberFont}" FontSize="17" FontWeight="SemiBold" Margin="0,2,0,0"
+                                           TextWrapping="NoWrap" AutomationProperties.AutomationId="DownSpeed" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <StackPanel Orientation="Horizontal">
+                                    <ContentControl Style="{StaticResource Icon}" Tag="{StaticResource IconArrowUp}" Width="14" Height="14" Foreground="{DynamicResource WarnTextBrush}" />
+                                    <TextBlock Text="上传" Style="{StaticResource Caption}" Margin="4,0,0,0" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding UpSpeed}" FontFamily="{StaticResource NumberFont}" FontSize="17" FontWeight="SemiBold" Margin="0,2,0,0"
+                                           TextWrapping="NoWrap" AutomationProperties.AutomationId="UpSpeed" />
+                            </StackPanel>
+                        </Grid>
+                        <!-- Chart: every geometry spans the same 300 x 64 box, so Stretch=Fill scales them alike. -->
+                        <Grid Height="64" Margin="0,12,0,0" AutomationProperties.Name="最近一分钟的速率曲线">
+                            <Border BorderBrush="{DynamicResource ChartGridBrush}" BorderThickness="0,1,0,1" />
+                            <Border BorderBrush="{DynamicResource ChartGridBrush}" BorderThickness="0,1,0,0" VerticalAlignment="Center" />
+                            <Path Data="{Binding DownArea}" Stretch="Fill" Fill="{DynamicResource BrandSoftBrush}" />
+                            <Path Data="{Binding DownGeometry}" Stretch="Fill" Stroke="{DynamicResource BrandBrush}" StrokeThickness="2" StrokeLineJoin="Round" />
+                            <Path Data="{Binding UpGeometry}" Stretch="Fill" Stroke="{DynamicResource WarnTextBrush}" StrokeThickness="1.5" StrokeDashArray="3 2"
+                                  StrokeLineJoin="Round" />
+                        </Grid>
+                        <DockPanel Margin="0,6,0,0">
+                            <TextBlock DockPanel.Dock="Right" Text="最近 60 秒" Style="{StaticResource Faint}" />
+                            <StackPanel Orientation="Horizontal">
+                                <Border Width="12" Height="2" Background="{DynamicResource BrandBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="下载" Style="{StaticResource Faint}" Margin="4,0,12,0" />
+                                <Line X1="0" X2="12" Y1="1" Y2="1" Stroke="{DynamicResource WarnTextBrush}" StrokeThickness="1.5" StrokeDashArray="2 1.5" VerticalAlignment="Center" />
+                                <TextBlock Text="上传" Style="{StaticResource Faint}" Margin="4,0,0,0" />
+                            </StackPanel>
+                        </DockPanel>
+                        <TextBlock Text="{Binding SessionTotals}" Style="{StaticResource Caption}" Margin="0,10,0,0" AutomationProperties.AutomationId="SessionTotals" />
+                    </StackPanel>
+                    <TextBlock Text="连接后显示上传、下载速率" Style="{StaticResource Caption}"
+                               Visibility="{Binding NoMetering, Converter={StaticResource BoolToVisibility}}" />
                 </StackPanel>
-                <Viewbox Height="48" Width="300" HorizontalAlignment="Left" Margin="0,12,0,0" Stretch="Fill"
-                         AutomationProperties.Name="速率曲线">
-                    <Canvas Width="300" Height="48">
-                        <Polyline Points="{Binding DownPoints}" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2" />
-                        <Polyline Points="{Binding UpPoints}" Stroke="{DynamicResource PassBrush}" StrokeThickness="2" StrokeDashArray="3 2" />
-                    </Canvas>
-                </Viewbox>
-                <TextBlock Text="实线：下行　虚线：上行" Style="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" />
-                <TextBlock Text="{Binding SessionTotals}" Style="{StaticResource Muted}" Margin="0,10,0,0" />
-                <TextBlock Text="{Binding RemainingEstimate}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
-                <TextBlock Text="本线路由节点侧独立计量：套餐流量按节点实测的收发字节扣除，本机数值仅供参考。"
-                           Style="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"
-                           Visibility="{Binding ShowNodeMeteredNote, Converter={StaticResource BoolToVisibility}}" />
-            </StackPanel>
-        </Border>
+            </HeaderedContentControl>
+        </ui:CardGrid>
     </StackPanel>
 </UserControl>

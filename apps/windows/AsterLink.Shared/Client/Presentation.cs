@@ -1,4 +1,3 @@
-using System.Text;
 using AsterLink.Shared.Service;
 using AsterLink.Shared.Snapshot;
 
@@ -22,53 +21,60 @@ public sealed record ConnectionView(
         var authorized = snapshot.Entitlement?.AccountAuthorized == true;
         var selected = snapshot.SelectedNodeId.Length > 0 && snapshot.Nodes.Any(n => n.Id == snapshot.SelectedNodeId);
         var reason = !authorized
-            ? (snapshot.Entitlement?.ReasonMessage is { Length: > 0 } text ? text : "暂无可用套餐，请前往网站购买或续费")
-            : snapshot.Nodes.Count == 0 ? "管理员尚未配置可用线路"
-            : !selected ? "请先在“线路”页选择一条线路"
+            ? (snapshot.Entitlement?.ReasonMessage is { Length: > 0 } text ? text : NoPlanText)
+            : snapshot.Nodes.Count == 0 ? NodeList.NoLinesText(snapshot)
+            : !selected ? "请先选择一条线路"
             : "";
 
         switch (snapshot.State)
         {
             case "connected":
-                return new("已连接", "流量正在经所选线路转发", Tone.Good, false, true, false, false, "");
+                return new("已连接", "已为你建立安全连接", Tone.Good, false, true, false, false, "");
             case "connecting":
-                return new("正在连接…", "正在建立隧道并验证转发", Tone.Busy, false, false, true, false, "");
+                return new("正在连接…", "正在为你建立安全连接", Tone.Busy, false, false, true, false, "");
             case "preparing":
-                return new("正在准备…", "正在校验线路与授权", Tone.Busy, false, false, true, false, "");
+                return new("正在准备…", "正在准备连接，请稍候", Tone.Busy, false, false, true, false, "");
             case "stopping":
-                return new("正在断开…", "正在关闭数据通路并结算本次流量", Tone.Busy, false, false, true, false, "");
+                return new("正在断开…", "正在断开当前连接", Tone.Busy, false, false, true, false, "");
         }
 
         var (text2, tone) = snapshot.State switch
         {
-            "blocked" => ("不可用", Tone.Bad),
-            "error" => ("出错", Tone.Bad),
-            "ready" when snapshot.ConfigReady => ("已就绪，未连接", Tone.Idle),
+            "blocked" or "error" => ("无法连接", Tone.Bad),
             _ => ("未连接", Tone.Idle),
         };
         var failure = snapshot.LastError is { Message.Length: > 0 } e ? e.Message : "";
         var canConnect = reason.Length == 0 && !operationBusy;
         return new(text2, failure.Length > 0 ? failure : reason, tone, true, false, false, canConnect, reason);
     }
+
+    /// <summary>What the page says when the account has no plan and the Core gave no reason of its own.</summary>
+    public const string NoPlanText = "暂无可用套餐，请前往官网购买或续费";
 }
 
 public enum LineFilter { All, Dedicated, Direct }
 
-public sealed record NodeRow(string Id, string Name, string Region, string LineLabel, bool IsDedicated, string RateLabel, bool NodeMetered, bool Selected, bool ConfigVerified)
+public sealed record NodeRow(string Id, string Name, string Region, string LineLabel, bool IsDedicated, string RateLabel, bool Selected)
 {
     public static NodeRow From(NodeView node, CoreSnapshot snapshot) => new(
         node.Id, node.Name, node.Region,
         LineLabelOf(node.LineType), node.LineType == "dedicated", Formatting.Rate(node.RatePermille),
-        node.MeteringSource == "node_reported",
-        node.Id == snapshot.SelectedNodeId,
-        node.Id == snapshot.SelectedNodeId && snapshot.ConfigReady);
+        node.Id == snapshot.SelectedNodeId);
 
     /// <summary><c>direct</c> is the ordinary routed line, NOT a Clash DIRECT bypass.</summary>
     public static string LineLabelOf(string lineType) => lineType == "dedicated" ? "专线" : "普通线路";
 
-    /// <summary>Who keeps the books for a line. A node-governed line is billed by the node itself; any other is the client-reported development ledger, which is not a commercial guarantee.</summary>
-    public static string MeteringLabelOf(string meteringSource) =>
-        meteringSource == "node_reported" ? "计量：节点实测，由服务器强制执行" : "计量：客户端上报（内部测试线路）";
+    /// <summary>"线路倍率 1×": the rate as the website writes it.</summary>
+    public string RateText => "线路倍率 " + RateLabel;
+
+    /// <summary>What a screen reader says for the row; the selection is a word, never colour alone.</summary>
+    public string SpokenName => $"{Name}，{Region}，{LineLabel}，{RateText}" + (Selected ? "，已选" : "");
+}
+
+/// <summary>The lines of one region, in the order the server listed them.</summary>
+public sealed record RegionGroup(string Region, IReadOnlyList<NodeRow> Rows)
+{
+    public string CountText => Rows.Count + " 条";
 }
 
 public static class NodeList
@@ -91,31 +97,52 @@ public static class NodeList
             .Select(n => NodeRow.From(n, snapshot))];
     }
 
+    /// <summary>
+    /// Rows grouped by region for display. Nothing is re-ordered: inside a region the server's order is kept, and the
+    /// regions appear in the order of their first line in the server's list.
+    /// </summary>
+    public static IReadOnlyList<RegionGroup> Group(IReadOnlyList<NodeRow> rows)
+    {
+        var order = new List<string>();
+        var groups = new Dictionary<string, List<NodeRow>>();
+        foreach (var row in rows)
+        {
+            var key = row.Region.Trim();
+            if (!groups.TryGetValue(key, out var list)) { groups[key] = list = []; order.Add(key); }
+            list.Add(row);
+        }
+        return [.. order.Select(key => new RegionGroup(key.Length == 0 ? "其他" : key, groups[key]))];
+    }
+
     /// <summary>The text of the empty state, so "no plan", "no nodes" and "nothing matches" are never confused.</summary>
     public static string EmptyText(CoreSnapshot snapshot, bool filtered) =>
-        snapshot.Entitlement?.AccountAuthorized != true ? "购买套餐后可选择线路"
-        : snapshot.Nodes.Count == 0 ? "管理员尚未配置可用线路"
+        snapshot.Entitlement?.AccountAuthorized != true ? "购买套餐后即可选择线路"
+        : snapshot.Nodes.Count == 0 ? NoLinesText(snapshot)
         : filtered ? "没有符合条件的线路" : "";
+
+    /// <summary>An authorized account without lines: still syncing (no catalog yet) or really none.</summary>
+    public static string NoLinesText(CoreSnapshot snapshot) =>
+        snapshot.CatalogRevision.Length == 0 ? "正在同步线路…" : "暂无可用线路，请稍后刷新";
 }
 
 /// <summary>Stable service/transport error codes → text for the user. The Core's own codes carry their own Chinese message.</summary>
 public static class ErrorText
 {
-    public static string ForService(string code, string fallback = "") => code switch
+    public static string ForService(string code) => code switch
     {
-        ServiceErrors.ServiceNotInstalled => "特权服务尚未安装，请在“账户与设置”中安装",
-        ServiceErrors.ServiceNotRunning => "特权服务未运行，请在“账户与设置”中启动",
-        ServiceErrors.ServerRejected => "无法确认本机服务的身份，已拒绝连接。请修复安装",
-        ServiceErrors.PeerRejected => "服务拒绝了本程序（请从安装目录启动 AsterLink）",
-        ServiceErrors.OwnerBusy => "另一位 Windows 用户正在使用 AsterLink，请等待其退出",
-        ServiceErrors.VersionMismatch => "程序与服务版本不一致，请修复安装",
-        ServiceErrors.IntegrityFailed => "已安装的文件与清单不一致，请修复安装",
-        ServiceErrors.RecoveryBlocked => "上一次会话未能恢复网络状态，请修复安装",
-        ServiceErrors.WorkerUnavailable => "代理内核无法启动，请尝试修复安装",
-        ServiceErrors.WorkerExited or ServiceErrors.WorkerUnresponsive => "内核已意外退出，连接已停止，请重新登录",
-        ServiceErrors.LoginTargetMismatch => "应用的服务器地址配置与安装不一致，请重新安装",
-        ServiceErrors.PayloadTooLarge or ServiceErrors.InvalidRequest or ServiceErrors.UnknownCommand => "请求格式不正确",
-        _ => fallback.Length > 0 ? fallback : "无法连接本机服务，请在“账户与设置”中检查特权服务状态",
+        ServiceErrors.ServiceNotInstalled => "后台服务尚未安装，请按提示完成安装后再试",
+        ServiceErrors.ServiceNotRunning => "后台服务未运行，请按提示启动后再试",
+        ServiceErrors.ServerRejected => "无法确认后台服务的身份，请重新安装 AsterLink",
+        ServiceErrors.PeerRejected => "请从开始菜单打开已安装的 AsterLink",
+        ServiceErrors.OwnerBusy => "另一位 Windows 用户正在使用 AsterLink，请等待其退出后再试",
+        ServiceErrors.VersionMismatch => "应用版本不一致，请修复或重新安装 AsterLink",
+        ServiceErrors.IntegrityFailed => "应用文件不完整，请修复或重新安装 AsterLink",
+        ServiceErrors.RecoveryBlocked => "上次未能正常恢复网络设置，请修复 AsterLink",
+        ServiceErrors.WorkerUnavailable => "暂时无法建立连接，请尝试修复 AsterLink",
+        ServiceErrors.WorkerExited or ServiceErrors.WorkerUnresponsive => "连接已中断，请重新登录",
+        ServiceErrors.LoginTargetMismatch => "应用安装不完整，请从官网重新下载安装",
+        ServiceErrors.PayloadTooLarge or ServiceErrors.InvalidRequest or ServiceErrors.UnknownCommand => "操作失败，请稍后重试",
+        _ => "后台服务暂时不可用，请稍后重试或修复 AsterLink",
     };
 
     /// <summary>The Core/service lost the worker: the session lived only in that process, so nothing is resumed.</summary>
@@ -123,26 +150,25 @@ public static class ErrorText
         code is ServiceErrors.WorkerExited or ServiceErrors.WorkerUnresponsive or ServiceErrors.WorkerUnavailable;
 }
 
-/// <summary>Redacted diagnostics for support. Built from the Core's already-redacted snapshot; no field here can hold a token, password or node detail.</summary>
+/// <summary>
+/// The text behind "复制诊断信息" (handoff_app_standardization.md D9). It is pasted to customer support, so it is
+/// user-visible copy: the app version, the system version, the connection state and the last error code, with the
+/// time of the report. The same six lines as macOS, iOS and Android; no token, password, line or server detail.
+/// </summary>
 public static class DiagnosticsReport
 {
-    public static string Build(string appVersion, string channel, string apiHost, string osDescription, CoreSnapshot snapshot, string? serviceState)
+    public static string Build(string appVersion, string osVersion, string connectionState, CoreSnapshot snapshot, DateTimeOffset now)
     {
-        var lines = new List<string>
+        var code = snapshot.LastError?.Code ?? "";
+        var lines = new[]
         {
-            $"AsterLink {appVersion} ({channel})",
-            $"os {osDescription}",
-            $"core {(snapshot.CoreVersion.Length == 0 ? "-" : snapshot.CoreVersion)}",
-            $"service {serviceState ?? "-"}",
-            $"api {apiHost}",
-            $"state {(snapshot.State.Length == 0 ? "-" : snapshot.State)} generation {snapshot.Generation}",
-            $"nodes {snapshot.Nodes.Count} config_ready {snapshot.ConfigReady.ToString().ToLowerInvariant()}",
+            "AsterLink 诊断信息",
+            "时间: " + now.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
+            "应用版本: " + appVersion,
+            "系统版本: " + osVersion,
+            "连接状态: " + connectionState.Replace("…", "", StringComparison.Ordinal),
+            "错误码: " + (code.Length == 0 ? "无" : code),
         };
-        if (snapshot.Entitlement is { } entitlement)
-            lines.Add($"account_authorized {entitlement.AccountAuthorized.ToString().ToLowerInvariant()} reason {(entitlement.Reason.Length == 0 ? "-" : entitlement.Reason)}");
-        if (snapshot.LastError is { } error) lines.Add($"last_error {error.Code}");
-        var text = new StringBuilder();
-        foreach (var line in lines) text.Append(line).Append('\n');
-        return text.ToString();
+        return string.Join('\n', lines);
     }
 }

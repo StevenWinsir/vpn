@@ -35,6 +35,13 @@ Implemented suites:
     * live (ASTERLINK_BILL_* plus --spend-test-quota): the node-enforcement cases against the real API and a real
       managed node. Without a node-governed line on the test account the live part is BLOCKED, never PASS.
 
+  ui (app standardization round 4, checks the output of `AsterLink.exe --preview DIR` given with --preview-dir)
+    * every scenario of the design preview was drawn to a real PNG, light and dark (and 200 % for the wide ones),
+      with the tray menu and the minimum window size
+    * each scenario exposes its text, with the expected words
+    * runtime copy guard: no forbidden word (the lists of scripts/test-app-copy.py, plus "VPN") in any visible string
+    * no one-line text cut short or clipped, except the deliberately over-long demo line name and the e-mail address
+
 Exit codes: 0 = PASS, 1 = FAIL, 3 = BLOCKED (a prerequisite is missing, so nothing was proven).
 Suites that need a real Windows host (unit/service/tun/...) arrive in later rounds and refuse
 to run here instead of reporting a pass.
@@ -455,9 +462,13 @@ def run_release_suite(args):
         'REMOVEUSERDATA': 'explicit choice for saved data',
         'SetupIconFile=..\\AsterLink.App\\Assets\\AsterLink.ico': 'the installer carries the brand icon',
         'WizardSmallImageFile=wizard-small-55.bmp,wizard-small-110.bmp': 'the wizard shows the brand mark',
+        'MessagesFile: "Languages\\ChineseSimplified.isl"': 'the installer speaks Simplified Chinese (app standardization 6.6)',
     }
     for needle, why in required.items():
         record('release.iss[%s]' % needle, needle in iss, why)
+    isl = WINDOWS / 'Packaging' / 'Languages' / 'ChineseSimplified.isl'
+    record('release.iss_language_file', isl.is_file() and isl.read_bytes().startswith(b'\xef\xbb\xbf') and 'LanguageID=$0804' in isl.read_text(encoding='utf-8-sig')
+           and 'compiler:Default.isl' not in iss, 'the Chinese language file is present, UTF-8 with BOM, and no English stock file is used')
     # Inno must never copy product files into Program Files itself, and the stage must stay out of {app}.
     files_section = iss.split('[Files]')[1].split('[Icons]')[0]
     record('release.iss_files_only_to_tmp', '{tmp}' in files_section and '{app}' not in files_section, 'payload goes to Setup temp, never straight to {app}')
@@ -539,6 +550,104 @@ def run_release_suite(args):
     record('release.check', check.returncode == 0 and bool(cases), '%d cases from the harness, exit code %d' % (len(cases), check.returncode))
 
 
+# The design preview (AsterLink.App/PreviewRunner.cs): base scenarios, each drawn light and dark; the wide ones at 200 % too.
+UI_BASE = [
+    '01-login', '02-login-service-install', '03-login-service-repair', '04-login-service-start', '05-login-minimum-size',
+    '10-connect-ready', '11-connect-no-line-selected', '12-connect-connected', '13-connect-connecting', '14-connect-admin-no-plan',
+    '15-connect-expired', '16-connect-quota-exhausted', '17-connect-error', '18-connect-minimum-size',
+    '20-lines', '21-lines-empty-no-plan', '22-lines-empty-none', '23-lines-search-no-match', '24-lines-connected', '25-lines-minimum-size',
+    '30-account', '31-account-admin-no-plan', '32-account-service-problem',
+]
+UI_WIDE = ['12-connect-connected', '20-lines', '30-account']
+UI_TRAY = ['40-tray-signed-out', '41-tray-ready', '42-tray-connected']
+UI_SCENARIOS = ([n for b in UI_BASE for n in (b, b + '-dark')] + [n for b in UI_WIDE for n in (b + '-200pct', b + '-dark-200pct')]
+                + [n for b in UI_TRAY for n in (b, b + '-dark')])
+UI_EXPECT = {
+    '01-login': ['登录 AsterLink', '邮箱', '密码', '记住密码', '注册账号', '忘记密码', '购买套餐', '版本'],
+    '02-login-service-install': ['首次使用：安装后台服务', '安装（需要管理员权限）', '重新检测'],
+    '03-login-service-repair': ['需要修复 AsterLink', '修复（需要管理员权限）'],
+    '04-login-service-start': ['后台服务未运行', '启动（需要管理员权限）'],
+    '10-connect-ready': ['连接', '线路', '账户', '未连接', '当前线路', '东京专线 01', '线路倍率 1×', '套餐', '尊享月卡', '实时速率'],
+    '11-connect-no-line-selected': ['请先选择一条线路', '选择线路', '未选择线路'],
+    '12-connect-connected': ['已连接', '已通过“东京专线 01”为你建立安全连接', '下载', '上传', '最近 60 秒', '本次已用', '正在同步用量'],
+    '13-connect-connecting': ['正在连接…', '正在为你建立安全连接'],
+    '14-connect-admin-no-plan': ['管理员账号', '暂无有效套餐', '购买套餐'],
+    '15-connect-expired': ['套餐已到期，请前往网站续费'],
+    '16-connect-quota-exhausted': ['套餐流量已用完，请前往网站续费或升级'],
+    '17-connect-error': ['无法连接', '连接失败，请更换线路或稍后重试，或联系客服'],
+    '20-lines': ['搜索线路或地区', '全部', '专线', '普通线路', '日本 · 东京', '已选', '共 4 条线路', '刷新'],
+    '21-lines-empty-no-plan': ['购买套餐后即可选择线路'],
+    '22-lines-empty-none': ['暂无可用线路，请稍后刷新'],
+    '23-lines-search-no-match': ['没有符合条件的线路', '清除筛选'],
+    '24-lines-connected': ['已连接。更换线路会先断开当前连接。'],
+    '30-account': ['外观', '跟随系统', '浅色', '深色', '后台服务运行正常', '复制诊断信息', '访问官网', '退出登录', '退出 AsterLink',
+                   '续费或升级', '订单记录', '网站控制台', '版本 ', '关闭窗口后，AsterLink 会继续在任务栏右下角的通知区域运行'],
+    '32-account-service-problem': ['暂时无法建立连接，可以尝试修复。', '修复（需要管理员权限）', '故障排查'],
+    '40-tray-signed-out': ['未登录', '打开 AsterLink', '连接', '退出'],
+    '42-tray-connected': ['已连接 · 东京专线 01', '断开', '退出', 'AsterLink · 已连接 · 东京专线 01'],
+}
+# One-line texts that may be cut with "…" on purpose: the over-long demo line name and the e-mail address.
+UI_CLIP_ALLOWED = ['一个特别长的线路名称', '@example.com']
+
+
+def run_ui_suite(args):
+    import importlib.util
+    if not args.preview_dir:
+        record('ui.preview_dir', False, '--preview-dir is required (the output of AsterLink.exe --preview DIR)', status='BLOCKED')
+        return
+    out = Path(args.preview_dir)
+    if (out / 'preview-error.txt').is_file():
+        record('ui.render', False, (out / 'preview-error.txt').read_text(errors='replace')[:800])
+        return
+    index = json.loads((out / 'index.json').read_text(encoding='utf-8'))
+    texts = json.loads((out / 'texts.json').read_text(encoding='utf-8'))
+    rendered = {entry['scenario']: entry for entry in index['scenarios']}
+    missing = [n for n in UI_SCENARIOS if n not in rendered]
+    extra = [n for n in rendered if n not in UI_SCENARIOS]
+    bad_png = [n for n, e in rendered.items()
+               if not (out / e['file']).is_file() or not (out / e['file']).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+               or (out / e['file']).stat().st_size < 3000]
+    record('ui.render', not missing and not extra and not bad_png,
+           '%d of %d scenarios drawn (light, dark, 200 %%, tray); missing %s; unexpected %s; bad PNG %s'
+           % (len(rendered), len(UI_SCENARIOS), missing or '-', extra or '-', bad_png or '-'))
+    scaled = [n for n, e in rendered.items() if n.endswith('-200pct') and e.get('scale') != 2]
+    record('ui.scale_200', not scaled, 'the -200pct scenarios are drawn at twice the pixels' + (': wrong %s' % scaled if scaled else ''))
+    # The minimum window is 820 x 560 including the system frame, so the drawn client area is a little smaller.
+    small = [n for n, e in rendered.items() if 'minimum-size' in n and not (780 <= e['width'] <= 820 and 500 <= e['height'] <= 560)]
+    record('ui.minimum_size', not small, 'minimum-size scenarios drawn at the 820 x 560 window minimum' + (': wrong %s' % small if small else ''))
+
+    absent = []
+    for name, words in UI_EXPECT.items():
+        for variant in (name, name + '-dark'):
+            seen = '\n'.join(texts.get(variant, []))
+            absent += ['%s: %s' % (variant, w) for w in words if w not in seen]
+    empty = [n for n in rendered if len(texts.get(n, [])) < 3]
+    record('ui.text', not absent and not empty, 'expected words missing: %s; scenarios without text: %s' % (absent[:12] or '-', empty or '-'))
+
+    spec = importlib.util.spec_from_file_location('app_copy', ROOT / 'scripts' / 'test-app-copy.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    zh, en = module.FORBIDDEN_ZH, module.FORBIDDEN_EN + module.FORBIDDEN_DESKTOP_EN
+    hits = []
+    for name, strings in sorted(texts.items()):
+        for text in strings:
+            hits += ['%s: "%s" in %r' % (name, w, text) for w in zh if re.search(w, text)]
+            hits += ['%s: "%s" in %r' % (name, w, text) for w in en if re.search(r'(?<![A-Za-z])%s(?![a-z])' % re.escape(w), text)]
+    total = sum(len(v) for v in texts.values())
+    record('ui.copy', not hits, '%d visible strings, %d forbidden word(s)%s' % (total, len(hits), (': ' + '; '.join(hits[:8])) if hits else ''))
+
+    clipped = [c for c in index.get('clipped', []) if not any(a in c['text'] for a in UI_CLIP_ALLOWED)]
+    record('ui.no_clipping', not clipped, '%d one-line text(s) cut short%s' % (len(clipped), (': ' + '; '.join('%s: %r (%s > %s)' % (c['scenario'], c['text'], c['need'], c['have']) for c in clipped[:8])) if clipped else ''))
+
+    desktop = index.get('desktop', [])
+    captured = [d for d in desktop if 'file' in d]
+    record('ui.desktop_window', len(captured) == 2,
+           'real window on the desktop: %s (Mica available: %s, OS %s)' % (
+               '; '.join('%s backdrop=%s' % (d['scenario'], d.get('backdrop')) if 'file' in d else '%s %s' % (d['scenario'], d.get('error')) for d in desktop) or 'none',
+               index.get('mica_available'), index.get('os')),
+           status=None if captured else 'BLOCKED')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--suite', required=True)
@@ -549,10 +658,12 @@ def main():
     parser.add_argument('--out', help='core suite: directory for the built PE files (default artifacts/native-windows/core)')
     parser.add_argument('--sign', choices=('none', 'test', 'thumbprint', 'pfx'), default='test', help='release suite: signing mode used for the installer build (default: a self-signed TEST certificate)')
     parser.add_argument('--skip-source-archives', action='store_true', help='release suite: faster local run')
+    parser.add_argument('--preview-dir', help='ui suite: the directory written by AsterLink.exe --preview')
     args = parser.parse_args()
 
-    import prepare_mihomo
-    prepare_mihomo.prepare()
+    if args.suite != 'ui':
+        import prepare_mihomo
+        prepare_mihomo.prepare()
 
     if args.suite == 'foundation':
         check_lock_file()
@@ -574,6 +685,8 @@ def main():
         run_grants_suite(args)
     elif args.suite == 'release':
         run_release_suite(args)
+    elif args.suite == 'ui':
+        run_ui_suite(args)
     else:
         print('suite %r needs a Windows x64 host and is implemented in a later round' % args.suite)
         return EXIT_BLOCKED

@@ -9,9 +9,13 @@ AsterLinkUITests/CopyGuard.swift and the Android CopyGuard.kt are compared with 
 
 Scanned: Core messages.go values; the Chinese string literals of iOS, AsterLinkKit and the tunnel
 extension; the Android strings.xml files (Chinese and English) and Chinese literals in Kotlin; the
-macOS app and its shared module (round 3), where "VPN" is forbidden as well (7.1 item 7). The macOS
-design preview checks the text of every rendered screen against these same lists at run time
-(scripts/test-native-macos.py --suite ui imports them from this file).
+macOS app and its shared module (round 3), where "VPN" is forbidden as well (7.1 item 7); the Windows
+app (round 4): the user-visible attributes of its XAML (Text, Content, Header, ToolTip, the accessible
+name and help text, the empty-box hint) and the Chinese C# literals of the app and of the display text
+in AsterLink.Shared, plus the installer's messages (setup.iss [CustomMessages] and the language file
+named there). The macOS and Windows design previews check the text of every rendered screen against these
+same lists at run time (scripts/test-native-macos.py and scripts/test-native-windows.py --suite ui import
+them from this file).
 
 A line is exempt when it, or the line above it, contains the marker "copy-guard" followed by the
 reason. Whole files are exempt only when listed in DEBUG_ONLY_FILES (they are not compiled into
@@ -227,6 +231,65 @@ def list_in(path, name):
     return re.findall(r'"((?:[^"\\]|\\.)*)"', body[:end])
 
 
+XAML_ATTRIBUTE = re.compile(r'\b(Text|Content|Header|ToolTip|Title|AutomationProperties\.Name|AutomationProperties\.HelpText|ui:Ui\.Placeholder)'
+                            r'="([^"{][^"]*)"')
+CS_LITERAL = re.compile(r'\$?@?"((?:[^"\\\n]|\\.)*)"')
+
+
+def scan_xaml(path):
+    """The user-visible attributes and the sys:String elements of a XAML file."""
+    lines = text(path).splitlines()
+    for number, line in enumerate(lines, 1):
+        if line.strip().startswith('<!--'):
+            continue
+        for _, value in XAML_ATTRIBUTE.findall(line):
+            scan_literal(path, number, value.replace('&#x0a;', ' '), lines, FORBIDDEN_DESKTOP_EN)
+        for value in re.findall(r'<sys:String>([^<]*)</sys:String>', line):
+            scan_literal(path, number, value, lines, FORBIDDEN_DESKTOP_EN)
+
+
+def scan_csharp(path):
+    """The Chinese string literals of a C# file (comments skipped); interpolation holes stay in, so a field name such as
+    CoreVersion inside a displayed string is caught too."""
+    lines = text(path).splitlines()
+    for number, line in enumerate(lines, 1):
+        if line.strip().startswith(('//', '*')):
+            continue
+        for value in CS_LITERAL.findall(line):
+            if CJK.search(value):
+                scan_literal(path, number, value, lines, FORBIDDEN_DESKTOP_EN)
+
+
+def scan_installer():
+    """The installer's own messages and the language file it names (round 4: Chinese interface, 6.6)."""
+    path = 'apps/windows/Packaging/setup.iss'
+    lines = text(path).splitlines()
+    section = ''
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith('['):
+            section = stripped
+            continue
+        if section == '[CustomMessages]' and '=' in stripped and not stripped.startswith(';'):
+            scan_literal(path, number, stripped.split('=', 1)[1].replace('%n', ' '), lines, FORBIDDEN_DESKTOP_EN)
+    for language in re.findall(r'MessagesFile: "([^"]+\.isl)"', text(path)):
+        if language.startswith('compiler:'):
+            failures.append('%s: the installer still uses a stock language file (%s); the interface must be Simplified Chinese' % (path, language))
+            continue
+        isl = (Path(path).parent / language.replace('\\', '/')).as_posix()
+        isl_lines = text(isl).splitlines()
+        section = ''
+        for number, line in enumerate(isl_lines, 1):
+            stripped = line.strip()
+            if stripped.startswith('['):
+                section = stripped
+            elif section in ('[Messages]', '[CustomMessages]') and '=' in stripped and not stripped.startswith(';'):
+                scan_literal(isl, number, stripped.split('=', 1)[1].replace('%n', ' '), isl_lines, FORBIDDEN_DESKTOP_EN)
+
+
+WINDOWS_CODE = ['apps/windows/AsterLink.App', 'apps/windows/AsterLink.Shared/Client', 'apps/windows/AsterLink.Shared/Service/ServiceHealth.cs']
+
+
 def check_runtime_lists():
     """The UI tests carry their own copy of the word lists; they must not drift from this file."""
     expected = {'forbiddenZh': FORBIDDEN_ZH, 'forbiddenEn': FORBIDDEN_EN}
@@ -260,6 +323,18 @@ def main():
             relative = str(path.relative_to(ROOT))
             if relative not in DEBUG_ONLY_FILES:
                 scan_code(relative, FORBIDDEN_DESKTOP_EN)
+    for root in WINDOWS_CODE:
+        base = ROOT / root
+        files = [base] if base.is_file() else sorted(base.rglob('*'))
+        for path in files:
+            if '/bin/' in str(path) or '/obj/' in str(path):
+                continue
+            relative = str(path.relative_to(ROOT))
+            if path.suffix == '.xaml':
+                scan_xaml(relative)
+            elif path.suffix == '.cs':
+                scan_csharp(relative)
+    scan_installer()
     check_runtime_lists()
 
     for failure in failures:

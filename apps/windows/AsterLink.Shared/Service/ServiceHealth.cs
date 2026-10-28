@@ -29,32 +29,32 @@ public static class ServiceHealthClassifier
         if (scm == ScmState.NotInstalled)
         {
             return guiBesideStage || guiInInstalledRoot
-                ? new(ServiceHealthState.NotInstalled, RecommendedAction.InstallFromStage, "特权服务尚未安装。需要一次管理员授权来安装（内部测试渠道，未签名）。")
-                : new(ServiceHealthState.NotInstalled, RecommendedAction.None, "特权服务尚未安装，且当前程序不在安装包目录中，无法自动安装。");
+                ? new(ServiceHealthState.NotInstalled, RecommendedAction.InstallFromStage, "首次使用需要安装后台服务，安装时 Windows 会请求管理员权限。")
+                : new(ServiceHealthState.NotInstalled, RecommendedAction.None, "后台服务尚未安装，请从官网下载安装程序重新安装 AsterLink。");
         }
 
         if (!guiInInstalledRoot)
         {
             return new(ServiceHealthState.GuiNotInstalled, RecommendedAction.LaunchInstalledApp,
-                "服务已安装，但当前程序不是安装目录中的副本，服务会拒绝它。请从安装目录启动 AsterLink。");
+                "请从开始菜单打开已安装的 AsterLink。");
         }
 
         return scm switch
         {
-            ScmState.Stopped => new(ServiceHealthState.Stopped, RecommendedAction.StartService, "特权服务未运行。需要管理员授权来启动它。"),
-            ScmState.StartPending => new(ServiceHealthState.Starting, RecommendedAction.WaitAndRetry, "特权服务正在启动，请稍候。"),
+            ScmState.Stopped => new(ServiceHealthState.Stopped, RecommendedAction.StartService, "后台服务未运行，启动时 Windows 会请求管理员权限。"),
+            ScmState.StartPending => new(ServiceHealthState.Starting, RecommendedAction.WaitAndRetry, "后台服务正在启动，请稍候。"),
             ScmState.Running => lastErrorCode switch
             {
                 ServiceErrors.IntegrityFailed or ServiceErrors.VersionMismatch or ServiceErrors.RecoveryBlocked
-                    => new(ServiceHealthState.NeedsRepair, RecommendedAction.Repair, "安装文件或版本不一致，需要修复。修复需要管理员授权。"),
+                    => new(ServiceHealthState.NeedsRepair, RecommendedAction.Repair, "应用文件或版本不一致，需要修复。修复时 Windows 会请求管理员权限。"),
                 ServiceErrors.WorkerUnavailable
-                    => new(ServiceHealthState.StartFailed, RecommendedAction.Repair, "代理内核无法启动。可以尝试修复安装。"),
+                    => new(ServiceHealthState.StartFailed, RecommendedAction.Repair, "暂时无法建立连接，可以尝试修复。"),
                 ServiceErrors.PeerRejected or ServiceErrors.OwnerBusy
-                    => new(ServiceHealthState.StartFailed, RecommendedAction.None, "服务拒绝了本次连接（另一位用户正在使用，或程序身份无法确认）。"),
-                null => new(ServiceHealthState.Ready, RecommendedAction.None, "特权服务已就绪。"),
-                _ => new(ServiceHealthState.StartFailed, RecommendedAction.Repair, "与特权服务通信失败。可以尝试修复安装。"),
+                    => new(ServiceHealthState.StartFailed, RecommendedAction.None, "另一位 Windows 用户正在使用 AsterLink，请等待其退出后再试。"),
+                null => new(ServiceHealthState.Ready, RecommendedAction.None, "后台服务运行正常。"),
+                _ => new(ServiceHealthState.StartFailed, RecommendedAction.Repair, "后台服务暂时无法响应，可以尝试修复。"),
             },
-            _ => new(ServiceHealthState.Starting, RecommendedAction.WaitAndRetry, "特权服务状态变化中，请稍候。"),
+            _ => new(ServiceHealthState.Starting, RecommendedAction.WaitAndRetry, "后台服务正在准备，请稍候。"),
         };
     }
 }

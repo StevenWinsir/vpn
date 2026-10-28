@@ -1,63 +1,105 @@
 <UserControl x:Class="AsterLink.App.Views.LoginView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Width="400" Margin="0,40,0,40" HorizontalAlignment="Center" VerticalAlignment="Center">
-            <TextBlock Text="AsterLink" FontSize="32" FontWeight="SemiBold" HorizontalAlignment="Center"
-                       AutomationProperties.AutomationId="Title" />
-            <TextBlock Text="登录后同步您的套餐与线路" Style="{StaticResource Muted}" HorizontalAlignment="Center" Margin="0,4,0,24" />
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:AsterLink.App.Controls"
+             xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+    <!-- Two columns (handoff 5.1): the website's dark brand story on the left, the sign-in card on the right. -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="5*" MinWidth="320" MaxWidth="440" />
+            <ColumnDefinition Width="7*" />
+        </Grid.ColumnDefinitions>
 
-            <Border Style="{StaticResource Card}">
-                <StackPanel>
-                    <TextBlock Text="邮箱" FontWeight="SemiBold" />
-                    <TextBox x:Name="EmailBox" Margin="0,6,0,0" Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"
-                             AutomationProperties.AutomationId="Email" AutomationProperties.Name="邮箱"
-                             IsEnabled="{Binding LoginEnabled}" />
-                    <TextBlock Text="密码" FontWeight="SemiBold" Margin="0,16,0,0" />
-                    <PasswordBox x:Name="PasswordBox" Margin="0,6,0,0" MaxLength="72"
-                                 AutomationProperties.AutomationId="Password" AutomationProperties.Name="密码"
-                                 IsEnabled="{Binding LoginEnabled}" />
-                    <CheckBox Content="记住密码（保存在本机 Windows 凭据管理器）" Margin="0,16,0,0"
-                              IsChecked="{Binding RememberPassword}" IsEnabled="{Binding LoginEnabled}"
-                              AutomationProperties.AutomationId="Remember" />
-
-                    <Button x:Name="SubmitButton" Content="{Binding LoginButtonText}" Style="{StaticResource PrimaryButton}"
-                            Margin="0,20,0,0" IsDefault="True" IsEnabled="{Binding LoginEnabled}"
-                            Click="OnSubmit" AutomationProperties.AutomationId="Login" />
-
-                    <TextBlock Text="{Binding StartingText}" Style="{StaticResource Muted}" Margin="0,12,0,0" />
-                    <TextBlock Text="{Binding LoginMessage}" Foreground="{DynamicResource FailBrush}" Margin="0,12,0,0"
-                               Visibility="{Binding HasLoginMessage, Converter={StaticResource BoolToVisibility}}"
-                               AutomationProperties.AutomationId="LoginMessage" />
-                    <TextBlock Text="{Binding LoginWarning}" Foreground="{DynamicResource WarnBrush}" Margin="0,8,0,0"
-                               Visibility="{Binding HasLoginWarning, Converter={StaticResource BoolToVisibility}}" />
+        <Border Background="{DynamicResource StoryBackgroundBrush}">
+            <DockPanel Margin="36,36,36,28" LastChildFill="False">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
+                    <ContentControl Style="{StaticResource BrandMark}" Width="34" Height="34" />
+                    <TextBlock Text="AsterLink" FontSize="20" FontWeight="SemiBold" Margin="14,0,0,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource StoryTextBrush}" AutomationProperties.AutomationId="Title" />
                 </StackPanel>
-            </Border>
-
-            <!-- First-run / repair: the one action that helps, shown only while the privileged service is not ready. -->
-            <Border Style="{StaticResource Card}" Margin="0,16,0,0"
-                    Visibility="{Binding ShowServiceCard, Converter={StaticResource BoolToVisibility}}">
-                <StackPanel DataContext="{Binding Service}">
-                    <TextBlock Text="{Binding State}" Style="{StaticResource SectionTitle}"
-                               AutomationProperties.AutomationId="ServiceState" />
-                    <TextBlock Text="{Binding Message}" Margin="0,6,0,0" AutomationProperties.AutomationId="ServiceMessage" />
-                    <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}" Margin="0,6,0,0" />
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                        <Button Content="{Binding ActionLabel}" Command="{Binding ActionCommand}" Style="{StaticResource PrimaryButton}"
-                                Visibility="{Binding HasAction, Converter={StaticResource BoolToVisibility}}"
-                                AutomationProperties.AutomationId="ServiceAction" />
-                        <Button Content="重新检测" Command="{Binding RefreshCommand}" Margin="8,0,0,0"
-                                AutomationProperties.AutomationId="ServiceRefresh" />
-                    </StackPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="0,64,0,0">
+                    <TextBlock Text="住宅原生 IP · 专线稳定连接" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource StoryCheckBrush}" />
+                    <TextBlock FontSize="28" FontWeight="SemiBold" LineHeight="38" Margin="0,10,0,0" Foreground="{DynamicResource StoryTextBrush}">
+                        <Run Text="住宅原生 IP" /><LineBreak /><Run Text="专线加持，稳定在线" />
+                    </TextBlock>
+                    <TextBlock Text="一个账户，手机与电脑随时安全连接；线路、流量与订阅一目了然。" FontSize="14" LineHeight="22" Margin="0,14,0,0"
+                               Foreground="{DynamicResource StoryCopyBrush}" />
+                    <ItemsControl Margin="0,24,0,0" Focusable="False">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                    <ContentControl Style="{StaticResource Icon}" Tag="{StaticResource IconCheck}" Width="16" Height="16"
+                                                    Foreground="{DynamicResource StoryCheckBrush}" />
+                                    <TextBlock Text="{Binding}" FontSize="13" Margin="10,0,0,0" Foreground="{DynamicResource StoryTextBrush}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                        <ItemsControl.ItemsSource>
+                            <x:Array Type="{x:Type sys:String}">
+                                <sys:String>全平台客户端，一个账户通用</sys:String>
+                                <sys:String>线路倍率公开，计费清晰透明</sys:String>
+                                <sys:String>邮箱验证与登录记录，账户更安全</sys:String>
+                            </x:Array>
+                        </ItemsControl.ItemsSource>
+                    </ItemsControl>
                 </StackPanel>
-            </Border>
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal">
+                    <TextBlock Text="{Binding VersionText}" FontSize="12" Foreground="{DynamicResource StoryCopyBrush}" AutomationProperties.AutomationId="LoginVersion" />
+                    <TextBlock Text="{Binding DevelopmentMarker}" FontSize="12" Margin="6,0,0,0" Foreground="{DynamicResource StoryCopyBrush}"
+                               Visibility="{Binding IsDevelopmentBuild, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
 
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
-                <Button Content="注册账号" Style="{StaticResource LinkButton}" Command="{Binding OpenRegisterCommand}" />
-                <Button Content="忘记密码" Style="{StaticResource LinkButton}" Command="{Binding OpenForgotPasswordCommand}"
-                        AutomationProperties.AutomationId="ForgotPassword" />
-                <Button Content="购买套餐" Style="{StaticResource LinkButton}" Command="{Binding OpenPlansCommand}" />
+        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                      Background="{DynamicResource BackgroundBrush}">
+            <StackPanel Width="380" Margin="0,40,0,40" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <!-- First run / repair: the background service guide, only while the service is not ready. -->
+                <ui:ServiceGuide DataContext="{Binding Service}" Margin="0,0,0,20"
+                                 Visibility="{Binding DataContext.ShowServiceCard, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibility}}" />
+
+                <TextBlock Text="登录 AsterLink" Style="{StaticResource PageTitle}" FontSize="24" />
+                <TextBlock Text="使用你在官网注册的邮箱和密码登录" Style="{StaticResource PageSubtitle}" Margin="0,6,0,24" />
+
+                <TextBlock Text="邮箱" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="EmailBox" Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" ui:Ui.Placeholder="name@example.com"
+                         AutomationProperties.AutomationId="Email" AutomationProperties.Name="邮箱" IsEnabled="{Binding LoginEnabled}" />
+
+                <TextBlock Text="密码" Style="{StaticResource FieldLabel}" Margin="0,16,0,6" />
+                <Grid>
+                    <PasswordBox x:Name="PasswordBox" MaxLength="72" Padding="10,0,40,0" PasswordChanged="OnPasswordChanged"
+                                 AutomationProperties.AutomationId="Password" AutomationProperties.Name="密码" IsEnabled="{Binding LoginEnabled}" />
+                    <TextBox x:Name="PasswordText" MaxLength="72" Padding="10,0,40,0" Visibility="Collapsed" TextChanged="OnPasswordTextChanged"
+                             AutomationProperties.AutomationId="PasswordVisible" AutomationProperties.Name="密码" IsEnabled="{Binding LoginEnabled}" />
+                    <Button x:Name="RevealButton" Style="{StaticResource IconButton}" HorizontalAlignment="Right" Margin="0,0,4,0" Click="OnReveal"
+                            IsEnabled="{Binding LoginEnabled}" AutomationProperties.AutomationId="RevealPassword" AutomationProperties.Name="显示密码" ToolTip="显示密码">
+                        <ContentControl x:Name="RevealGlyph" Style="{StaticResource Icon}" Tag="{StaticResource IconEye}" Width="16" Height="16" />
+                    </Button>
+                </Grid>
+
+                <CheckBox Content="记住密码" Margin="0,16,0,0" IsChecked="{Binding RememberPassword}" IsEnabled="{Binding LoginEnabled}"
+                          AutomationProperties.AutomationId="Remember" />
+
+                <Button x:Name="SubmitButton" Content="{Binding LoginButtonText}" Style="{StaticResource PrimaryButton}" MinHeight="40"
+                        HorizontalAlignment="Stretch" Margin="0,22,0,0" IsDefault="True" IsEnabled="{Binding LoginEnabled}"
+                        Click="OnSubmit" AutomationProperties.AutomationId="Login" />
+                <ProgressBar IsIndeterminate="True" Margin="0,10,0,0" Height="3" Visibility="{Binding LoginBusy, Converter={StaticResource BoolToVisibility}}"
+                             AutomationProperties.Name="{Binding StartingText}" />
+
+                <TextBlock Text="{Binding StartingText}" Style="{StaticResource Caption}" Margin="0,10,0,0" HorizontalAlignment="Center"
+                           Visibility="{Binding StartingText, Converter={StaticResource TextToVisibility}}" />
+                <ui:NoticeBar Text="{Binding LoginMessage}" Kind="danger" Margin="0,14,0,0" AutomationProperties.AutomationId="LoginMessage" />
+                <ui:NoticeBar Text="{Binding LoginWarning}" Kind="warning" Margin="0,10,0,0" AutomationProperties.AutomationId="LoginWarning" />
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,24,0,0">
+                    <Button Content="注册账号" Style="{StaticResource LinkButton}" Command="{Binding OpenRegisterCommand}" AutomationProperties.AutomationId="Register" />
+                    <TextBlock Text="·" Style="{StaticResource Faint}" VerticalAlignment="Center" Margin="4,0" />
+                    <Button Content="忘记密码" Style="{StaticResource LinkButton}" Command="{Binding OpenForgotPasswordCommand}"
+                            AutomationProperties.AutomationId="ForgotPassword" />
+                    <TextBlock Text="·" Style="{StaticResource Faint}" VerticalAlignment="Center" Margin="4,0" />
+                    <Button Content="购买套餐" Style="{StaticResource LinkButton}" Command="{Binding OpenPlansCommand}" AutomationProperties.AutomationId="BuyPlan" />
+                </StackPanel>
             </StackPanel>
-        </StackPanel>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </UserControl>

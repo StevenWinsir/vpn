@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
-using System.Windows.Interop;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace AsterLink.App;
@@ -11,6 +11,8 @@ public partial class App : Application
 {
     private const string SingleInstanceName = @"Local\AsterLink.App.Single";
     private const string ActivateEventName = @"Local\AsterLink.App.Activate";
+    // How long a Windows sign-out or shutdown may wait for the usual disconnect-and-sync before AsterLink lets go.
+    private static readonly TimeSpan SessionEndBudget = TimeSpan.FromSeconds(4);
 
     private Mutex? singleInstance;
     private EventWaitHandle? activate;
@@ -58,6 +60,9 @@ public partial class App : Application
         model = new AppViewModel();
         model.ApplyTheme();
         window = new MainWindow(model);
+        var shown = window;
+        window.SourceInitialized += (_, _) => WindowBackdrop.Apply(shown, ThemeManager.IsDark);
+        ThemeManager.Applied += OnThemeApplied;
 
         if (selfTest is not null)
         {
@@ -70,11 +75,14 @@ public partial class App : Application
 
         tray = new TrayIcon(ShowWindow, ToggleConnection, () => _ = ExitAsync());
         model.StateChanged += UpdateTray;
+        model.PropertyChanged += (_, _) => UpdateTray();
         model.ExitRequested += () => _ = ExitAsync();
         window.Closing += OnWindowClosing;
         window.Activated += (_, _) => _ = model.SyncAsync(force: false);
         window.Loaded += async (_, _) => await StartAsync();
+        SessionEnding += OnSessionEnding;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         StartActivationListener();
         UpdateTray();
         window.Show();
@@ -116,23 +124,59 @@ public partial class App : Application
         window.Activate();
     }
 
+    /// <summary>
+    /// "×", Alt+F4 and the taskbar's "关闭窗口" only hide the window, in every state (signed out, idle, connected, failed):
+    /// the process, the connection and the sync go on, and the tray icon stays (handoff 6.4, D4). Quitting is the tray's
+    /// "退出" or the account page's "退出 AsterLink". During a Windows sign-out or shutdown the window is let go.
+    /// </summary>
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
         if (exiting) return;
         e.Cancel = true;
-        if (model!.IsLive)
+        window!.Hide();
+        if (!model!.TrayNoticeShown)
         {
-            window!.Hide();
-            if (!model.TrayNoticeShown)
-            {
-                model.TrayNoticeShown = true;
-                tray?.Notify("AsterLink 仍在运行", "连接保持中。点击通知区域的图标可重新打开；选择“退出”才会停止代理。");
-            }
+            model.TrayNoticeShown = true;
+            // Windows 11 puts a new tray icon in the overflow area, so say where to look (D6: once, never a dialog).
+            tray?.Notify("AsterLink 已在后台运行", "点击任务栏右下角的 AsterLink 图标即可重新打开；如果没有看到，请点击“^”显示隐藏的图标。");
         }
-        else
+    }
+
+    /// <summary>
+    /// Windows is signing out or shutting down. From here the window may close (WPF ends the application right after this
+    /// handler), and the usual disconnect-and-sync of "退出" runs first, pumped on this thread for at most
+    /// <see cref="SessionEndBudget"/> so AsterLink never shows up among the apps that block shutdown. If it cannot finish,
+    /// the service still stops the connection when this process goes away.
+    /// </summary>
+    private void OnSessionEnding(object? sender, SessionEndingCancelEventArgs e)
+    {
+        if (exiting) return;
+        exiting = true;
+        var frame = new DispatcherFrame();
+        async Task Shutdown()
         {
-            _ = ExitAsync();
+            try { await model!.ShutdownAsync(); }
+            catch (Exception) { /* the service closes the connection when the pipe goes away */ }
         }
+        _ = Task.WhenAny(Shutdown(), Task.Delay(SessionEndBudget)).ContinueWith(_ => frame.Continue = false, TaskScheduler.Default);
+        try { Dispatcher.PushFrame(frame); }
+        catch (InvalidOperationException) { /* message processing is suspended here: leave it to the service */ }
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+        tray?.Dispose();
+        tray = null;
+    }
+
+    private void OnThemeApplied(bool dark)
+    {
+        if (window is not null) WindowBackdrop.Apply(window, dark);
+        tray?.SetTheme(dark);
+    }
+
+    // "跟随系统": Windows switched between light and dark apps.
+    private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category == UserPreferenceCategory.General) Dispatcher.BeginInvoke(() => model?.FollowSystemTheme());
     }
 
     private void ToggleConnection()
@@ -146,7 +190,7 @@ public partial class App : Application
     {
         if (model is null || tray is null) return;
         var connected = model.State == "connected";
-        tray.Update(model.TrayText, model.State, model.IsSignedIn,
+        tray.Update(model.TrayText, model.TrayStatus, model.State, model.IsSignedIn,
             connected ? model.DisconnectCommand.CanExecute(null) : model.ConnectCommand.CanExecute(null), connected);
     }
 
@@ -156,7 +200,7 @@ public partial class App : Application
         if (e.Mode == PowerModes.Resume) Dispatcher.BeginInvoke(() => _ = model?.SyncAsync(force: true));
     }
 
-    /// <summary>Stop the proxy, settle the last traffic batch (bounded), then leave. The saved password stays unless the user signed out.</summary>
+    /// <summary>Disconnect, sync the last usage (bounded), then leave. The saved password stays unless the user signed out.</summary>
     private async Task ExitAsync()
     {
         if (exiting) return;
@@ -165,6 +209,7 @@ public partial class App : Application
         try { await model!.ShutdownAsync(); }
         catch (Exception) { /* the service closes the Core when the pipe goes away */ }
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         tray?.Dispose();
         singleInstance?.ReleaseMutex();
         Shutdown(0);
@@ -258,7 +303,7 @@ public partial class App : Application
         foreach (var (name, create) in new (string, Func<System.Windows.Controls.UserControl>)[]
         {
             ("login", () => new Views.LoginView()), ("connect", () => new Views.ConnectView()),
-            ("nodes", () => new Views.NodesView()), ("settings", () => new Views.SettingsView()),
+            ("lines", () => new Views.LinesView()), ("account", () => new Views.AccountView()),
         })
         {
             try
@@ -275,7 +320,7 @@ public partial class App : Application
         var passed = model!.CheckResults.All(c => c.Passed) && pages.Values.All(ok => ok);
         var report = new
         {
-            window = new { rendered = window.IsLoaded && window.IsVisible, width = window.ActualWidth, height = window.ActualHeight },
+            window = new { rendered = window.IsLoaded && window.IsVisible, width = window.ActualWidth, height = window.ActualHeight, backdrop = WindowBackdrop.Describe(window) },
             platform = model.Report,
             checks = model.CheckResults,
             pages,
