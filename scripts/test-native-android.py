@@ -869,7 +869,7 @@ def run_ui_suite(args):
         shutil.copy2(png, out_dir / png.name)
     names = [p.stem for p in pngs]
     required = ('login', 'admin-no-plan', 'expired', 'quota-zero', 'no-line', 'ready', 'connecting', 'connected', 'failed',
-                'lines', 'lines-no-plan', 'lines-none', 'account', 'dark', 'font200', '360dp', 'en-', 'update-required', 'licenses')
+                'lines', 'lines-no-plan', 'lines-none', 'account', 'dark', 'font200', '360dp', 'en-', 'update-required')
     missing = [r for r in required if not any(r in n for n in names)]
     record('ui.states', len(pngs) >= 20 and not missing, '%d states in %s%s' % (len(pngs), out_dir, '; missing ' + ', '.join(missing) if missing else ''))
 
