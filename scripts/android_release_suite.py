@@ -501,16 +501,19 @@ def smoke(ctx, adb, serial, apk: Path, info, case, label):
         record(case, False, '%s: install failed: %s' % (label, (result.stdout + result.stderr).strip()[-200:]))
         return
     launch(ctx, adb, serial)
-    identity = 'Core %s' % info['core']['core_version']
-    mihomo = info['core']['mihomo_revision'][:12]
-    shown, shot = wait_for(ctx, adb, serial, lambda s: s.find(re.escape(identity) + '.*' + mihomo), 90)
+    # The login screen shows no engine identity any more (D8); the Core having loaded is proven by the sign-in
+    # form being up with no start-failure banner after a settling pause, and by the process staying alive.
+    shown, shot = wait_for(ctx, adb, serial, lambda s: s.find(r'Sign in to AsterLink|登录 AsterLink'), 90)
+    time.sleep(4)
+    shot = screen(ctx, adb, serial)
+    failed_start = bool(shot.find(r'could not start|应用启动失败'))
     pid = ctx.adb_run(adb, serial, 'shell', 'pidof', PACKAGE, check=False).strip()
     crash = ctx.adb_run(adb, serial, 'logcat', '-d', '-b', 'crash', check=False)
     crashed = PACKAGE in crash
-    record(case, bool(shown) and bool(pid) and not crashed,
-           '%s: installed, started, the login screen shows %s · Mihomo %s (Core loaded through JNI under R8), process %s, no crash'
-           % (label, identity, mihomo, pid) if shown and pid and not crashed
-           else '%s: shown=%s pid=%s crashed=%s; visible %s' % (label, bool(shown), pid or '-', crashed, shot.texts()[:10]))
+    record(case, bool(shown) and bool(pid) and not crashed and not failed_start,
+           '%s: installed, started, the sign-in screen is up without a start failure (Core loaded through JNI under R8), process %s, no crash'
+           % (label, pid) if shown and pid and not crashed and not failed_start
+           else '%s: shown=%s start_failed=%s pid=%s crashed=%s; visible %s' % (label, bool(shown), failed_start, pid or '-', crashed, shot.texts()[:10]))
     subprocess.run([str(adb), '-s', serial, 'uninstall', PACKAGE], capture_output=True)
 
 

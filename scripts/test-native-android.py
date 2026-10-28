@@ -613,10 +613,13 @@ def run_emulator_suite(args):
             if foreign:
                 stalled.append(foreign)
                 continue
-            if core_record['mihomo_revision'][:12] in screen:
+            if re.search(r'Sign in to AsterLink|登录 AsterLink', screen):
                 break
-        shown = core_record['core_version'] in screen and core_record['mihomo_revision'][:12] in screen
-        record('emulator.app_shows_core', shown, 'the launched app shows Core %s and Mihomo %s' % (core_record['core_version'], core_record['mihomo_revision'][:12])
+        time.sleep(4)
+        screen = ui_text(adb, serial)
+        # No engine identity is on screen any more (D8): the Core is up when the sign-in form shows without a start failure.
+        shown = bool(re.search(r'Sign in to AsterLink|登录 AsterLink', screen)) and not re.search(r'could not start|应用启动失败', screen)
+        record('emulator.app_shows_core', shown, 'the launched app shows the sign-in screen with the Core running (no start failure)'
                + ('; dismissed the emulator\'s own ANR dialog for: %s' % ', '.join(sorted(set(stalled))) if stalled else ''))
         with open(out_dir / ('foundation-api%s-%s.png' % (facts['api'], abi)), 'wb') as png:
             png.write(subprocess.run([str(adb), '-s', serial, 'exec-out', 'screencap', '-p'], capture_output=True, check=True).stdout)
