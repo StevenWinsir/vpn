@@ -453,6 +453,8 @@ def run_release_suite(args):
         'install --stage': 'files are installed by the verifying service verb, not copied by Inno',
         'runasoriginaluser': 'the app never starts with the administrator token',
         'REMOVEUSERDATA': 'explicit choice for saved data',
+        'SetupIconFile=..\\AsterLink.App\\Assets\\AsterLink.ico': 'the installer carries the brand icon',
+        'WizardSmallImageFile=wizard-small-55.bmp,wizard-small-110.bmp': 'the wizard shows the brand mark',
     }
     for needle, why in required.items():
         record('release.iss[%s]' % needle, needle in iss, why)

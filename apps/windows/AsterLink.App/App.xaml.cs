@@ -3,7 +3,6 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
-using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 
 namespace AsterLink.App;
@@ -69,7 +68,6 @@ public partial class App : Application
             return;
         }
 
-        window.Icon = ToImageSource(TrayIcon.WindowIcon());
         tray = new TrayIcon(ShowWindow, ToggleConnection, () => _ = ExitAsync());
         model.StateChanged += UpdateTray;
         model.ExitRequested += () => _ = ExitAsync();
@@ -171,9 +169,6 @@ public partial class App : Application
         singleInstance?.ReleaseMutex();
         Shutdown(0);
     }
-
-    private static BitmapSource ToImageSource(System.Drawing.Icon icon) =>
-        Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
 
     // ---- CI / support modes ------------------------------------------------------------------
 

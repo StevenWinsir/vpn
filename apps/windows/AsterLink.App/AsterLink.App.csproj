@@ -19,7 +19,17 @@
     <PublishSingleFile>false</PublishSingleFile>
     <!-- The GUI always runs as the interactive user (asInvoker); privilege lives in the service. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The brand icon (generated from frontend/brand/mark.svg by frontend/scripts/brand-apps.mjs): the exe, the Start-menu entry, the taskbar, Alt+Tab and Apps & features all take it from here. -->
+    <ApplicationIcon>Assets\AsterLink.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The window icon (MainWindow.xaml) and the three notification-area states (TrayIcon.cs). -->
+    <Resource Include="Assets\AsterLink.ico" />
+    <EmbeddedResource Include="Assets\tray-idle.ico" LogicalName="tray-idle.ico" />
+    <EmbeddedResource Include="Assets\tray-live.ico" LogicalName="tray-live.ico" />
+    <EmbeddedResource Include="Assets\tray-error.ico" LogicalName="tray-error.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Both UI stacks define Application, Button, MessageBox...: keep them out of the implicit usings so every name means the WPF one. -->

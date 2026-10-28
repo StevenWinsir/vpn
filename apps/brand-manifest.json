@@ -1,0 +1,186 @@
+{
+  "generator": "frontend/scripts/brand-apps.mjs",
+  "source": {
+    "path": "frontend/brand/mark.svg",
+    "sha256": "9420c83623aeefb6e229c3fe6b9771efe8a353507e518b19228e30d6c63e98c3"
+  },
+  "files": [
+    {
+      "path": "apps/android/app/src/main/res/drawable/ic_launcher_foreground.xml",
+      "kind": "android-vector",
+      "source": "glyph",
+      "sha256": "ee6b0a69bb37f82633f980700c3708f7bd127a6feb940b19f2a8297a53b5ef48"
+    },
+    {
+      "path": "apps/android/app/src/main/res/drawable/ic_notification.xml",
+      "kind": "android-vector",
+      "source": "glyph",
+      "sha256": "e413ac12ca1cc799bed71ce04283ab9d0488e87b327b2335748fbf78cbecb595"
+    },
+    {
+      "path": "apps/ios/AsterLink/Assets.xcassets/AppIcon.appiconset/dark.png",
+      "kind": "png",
+      "width": 1024,
+      "height": 1024,
+      "source": "glyph in the dark-scheme brand colour",
+      "sha256": "b91053b281e801826816309c228dab157cb3b4ef73b0147eac8ad1c7f6b556b0"
+    },
+    {
+      "path": "apps/ios/AsterLink/Assets.xcassets/AppIcon.appiconset/light.png",
+      "kind": "png",
+      "width": 1024,
+      "height": 1024,
+      "opaque": true,
+      "source": "full mark, square",
+      "sha256": "ff515c46062b467f549b0e5c7772e4064ef0932a59b45c6575e65fd7dbd0a691"
+    },
+    {
+      "path": "apps/ios/AsterLink/Assets.xcassets/AppIcon.appiconset/tinted.png",
+      "kind": "png",
+      "width": 1024,
+      "height": 1024,
+      "source": "glyph, white (the system tints it)",
+      "sha256": "3ca86180a82b0ba33d90693edb721d200e42f0e4527e1a00abd872678c932f87"
+    },
+    {
+      "path": "apps/ios/AsterLink/Assets.xcassets/LaunchMark.imageset/launch-mark.png",
+      "kind": "png",
+      "width": 240,
+      "height": 240,
+      "source": "full mark",
+      "sha256": "ff96431a6a84454c02059b42ab27ad2eb26be0e057e9a3e502f4a3b037b6fbbe"
+    },
+    {
+      "path": "apps/macos/Branding/AppIcon.icns",
+      "kind": "icns",
+      "sizes": [
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024
+      ],
+      "source": "full mark on the macOS icon grid",
+      "sha256": "c6be4bd9877295f0118cbe48f1042f51a30b9f0b6b5d149fbcb277eca278bfe6"
+    },
+    {
+      "path": "apps/macos/Branding/MenuBarActiveTemplate.png",
+      "kind": "png",
+      "width": 18,
+      "height": 18,
+      "source": "glyph, template image",
+      "sha256": "f9d6c62dde461aa4208f8878a9e9611c47378ace96011a75dad0e26228dae596"
+    },
+    {
+      "path": "apps/macos/Branding/MenuBarActiveTemplate@2x.png",
+      "kind": "png",
+      "width": 36,
+      "height": 36,
+      "source": "glyph, template image",
+      "sha256": "63b1f20363e4b2ab9b382fecc85a0e143a70632a6dc162f1f1cbde53f0a67685"
+    },
+    {
+      "path": "apps/macos/Branding/MenuBarErrorTemplate.png",
+      "kind": "png",
+      "width": 18,
+      "height": 18,
+      "source": "glyph, template image",
+      "sha256": "332eed12d0c53b8d10fdb4e2084d2ad9ae53bb947f50d307021568ee17d799a1"
+    },
+    {
+      "path": "apps/macos/Branding/MenuBarErrorTemplate@2x.png",
+      "kind": "png",
+      "width": 36,
+      "height": 36,
+      "source": "glyph, template image",
+      "sha256": "2f9d3fe2b2be7a12ce92c42a6585581d37cc0cfca91ba30a64be5bddeb536fc4"
+    },
+    {
+      "path": "apps/macos/Branding/MenuBarIdleTemplate.png",
+      "kind": "png",
+      "width": 18,
+      "height": 18,
+      "source": "glyph, template image",
+      "sha256": "be8423ecf1dc95dbd17afc9ab980c7f1ccd9cc790b6be921b0b72f9afecdd7b0"
+    },
+    {
+      "path": "apps/macos/Branding/MenuBarIdleTemplate@2x.png",
+      "kind": "png",
+      "width": 36,
+      "height": 36,
+      "source": "glyph, template image",
+      "sha256": "9a2e5d519fc43b858e0a8da375e87d7f58d2b523ff379488cd56082ad47102d9"
+    },
+    {
+      "path": "apps/windows/AsterLink.App/Assets/AsterLink.ico",
+      "kind": "ico",
+      "sizes": [
+        16,
+        20,
+        24,
+        32,
+        40,
+        48,
+        64,
+        96,
+        256
+      ],
+      "source": "full mark",
+      "sha256": "10c508a16bd65f8a67e4bee7dfc0a4b2446a989bbd7caad2d3d68989df03709b"
+    },
+    {
+      "path": "apps/windows/AsterLink.App/Assets/tray-error.ico",
+      "kind": "ico",
+      "sizes": [
+        16,
+        20,
+        24,
+        32
+      ],
+      "source": "full mark, error state",
+      "sha256": "b182191fb0f922c9ae4e4f65486011d02ac586beb3fb697985a4293e49c0e58d"
+    },
+    {
+      "path": "apps/windows/AsterLink.App/Assets/tray-idle.ico",
+      "kind": "ico",
+      "sizes": [
+        16,
+        20,
+        24,
+        32
+      ],
+      "source": "full mark, idle state",
+      "sha256": "28946e4abc59565cb0ccc46252bbbf9ceca141a130935e03eed4e7f62363b865"
+    },
+    {
+      "path": "apps/windows/AsterLink.App/Assets/tray-live.ico",
+      "kind": "ico",
+      "sizes": [
+        16,
+        20,
+        24,
+        32
+      ],
+      "source": "full mark, live state",
+      "sha256": "3d247bf4a00bf803c8f48f422c6375b74e7d4974ed2020f67618e5b6e7624ced"
+    },
+    {
+      "path": "apps/windows/Packaging/wizard-small-110.bmp",
+      "kind": "bmp",
+      "width": 110,
+      "height": 110,
+      "source": "full mark on white",
+      "sha256": "8173f072a824635158e4dc256005c3a66b1a9631659915af8bcd3ef09a259ee9"
+    },
+    {
+      "path": "apps/windows/Packaging/wizard-small-55.bmp",
+      "kind": "bmp",
+      "width": 55,
+      "height": 55,
+      "source": "full mark on white",
+      "sha256": "d0571a7b9746f316751fbe9a825da1d227f1183952494828cd2bfb2613f39d52"
+    }
+  ]
+}

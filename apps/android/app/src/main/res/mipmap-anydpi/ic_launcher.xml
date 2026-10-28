@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder brand mark (handoff 9.2): replaced when the official logo is supplied. -->
+<!-- Brand colour tile + the brand glyph (frontend/brand/mark.svg); the monochrome layer feeds Android 13 themed icons. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/icon_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />

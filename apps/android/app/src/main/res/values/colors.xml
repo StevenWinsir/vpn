@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Mirrors ui/theme/Theme.kt for the window background and the launcher icon. -->
-    <color name="background">#F6F8FB</color>
-    <color name="icon_background">#2F6FEB</color>
+    <!-- The window background (website --al-bg) and the launcher icon tile (the brand colour of frontend/brand/mark.svg). -->
+    <color name="background">#F7F8FA</color>
+    <color name="icon_background">#0D7B61</color>
 </resources>

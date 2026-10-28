@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -148,6 +149,33 @@ def run(ctx, run_id, build_run_id):
         problems.append('Helper embedded version != app version')
     record('R-PLIST', 'https-only endpoints, no ATS exceptions, macOS 15, Helper/App versions equal', '; '.join(problems) or 'ok',
            'fail' if problems else 'pass')
+
+    # The app icon is part of the sealed bundle: the plist names it, it is a valid ICNS and it reaches 1024 px.
+    problems = []
+    icon_name = info.get('CFBundleIconFile')
+    icon_path = contents / 'Resources' / (icon_name if (icon_name or '').endswith('.icns') else '%s.icns' % icon_name)
+    if not icon_name or not icon_path.is_file():
+        problems.append('CFBundleIconFile missing or file absent')
+    else:
+        data = icon_path.read_bytes()
+        kinds, offset = [], 8
+        if data[:4] != b'icns' or struct.unpack('>I', data[4:8])[0] != len(data):
+            problems.append('not an ICNS container')
+        else:
+            while offset + 8 <= len(data):
+                kind, length = data[offset:offset + 4], struct.unpack('>I', data[offset + 4:offset + 8])[0]
+                if length < 8 or offset + length > len(data):
+                    problems.append('truncated ICNS entry')
+                    break
+                kinds.append(kind)
+                offset += length
+            if b'ic10' not in kinds:
+                problems.append('no 1024 px image')
+    for template in ('Idle', 'Active', 'Error'):
+        if not (contents / 'Resources' / ('MenuBar%sTemplate.png' % template)).is_file():
+            problems.append('menu-bar image %s' % template)
+    record('R-ICON', 'Info.plist names the app icon; it is a valid ICNS with a 1024 px image; menu-bar images ship',
+           '; '.join(problems) or 'ok', 'fail' if problems else 'pass')
 
     problems = [n for n, (path, _) in binaries.items() if built['sha256'][n] != sha256_file(path)]
     worker = json.loads((contents / 'Resources/worker-manifest.json').read_text())
