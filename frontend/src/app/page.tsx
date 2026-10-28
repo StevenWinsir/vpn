@@ -11,7 +11,7 @@ import {
   IconDevices,
   IconDeviceLaptop,
   IconDownload,
-  IconRoute,
+  IconHomeSignal,
   IconShieldLock,
 } from '@tabler/icons-react';
 import { BrandMark } from '@/components/brand-mark';
@@ -35,14 +35,14 @@ export const dynamic = 'force-dynamic';
 
 const features = [
   {
-    icon: IconRoute,
-    title: '智能线路分配',
-    text: '每条线路由一组服务器共同提供，连接时自动为你分配可用的服务器，无需手动挑选。',
+    icon: IconHomeSignal,
+    title: '住宅原生 IP',
+    text: '出口使用住宅宽带的原生 IP，访问常用网站与应用就像在当地上网一样自然。',
   },
   {
     icon: IconBolt,
-    title: '专线权益',
-    text: '部分套餐包含专线权限，适合对连接质量要求更高的使用场景。',
+    title: '专线稳定连接',
+    text: '专线套餐使用专属线路，每条线路由一组服务器共同承载并自动分配，晚高峰同样流畅。',
   },
   {
     icon: IconChartBar,
@@ -94,16 +94,36 @@ export default function Home() {
               <div className="home-hero-copy">
                 <p className="home-eyebrow">
                   <span />
-                  全平台安全连接服务
+                  住宅原生 IP · 专线稳定连接
                 </p>
                 <h1 id="home-title">
-                  每一次连接，
+                  <mark>住宅原生 IP</mark>
                   <br />
-                  <em>都稳定而从容。</em>
+                  <em>专线加持，稳定在线</em>
                 </h1>
                 <p className="home-lead">
-                  智能线路分配、公开透明的计费规则与多设备同时在线。一个账户，在手机与电脑上随时安全连接。
+                  真实住宅宽带出口，访问网站与应用如同本地用户；专线线路为稳定而生，晚高峰依然流畅。一个账户，手机与电脑随时连接。
                 </p>
+                <div className="home-highlights" data-testid="hero-highlights">
+                  <div className="home-highlight">
+                    <span className="home-highlight-icon">
+                      <IconHomeSignal size={22} stroke={1.7} aria-hidden />
+                    </span>
+                    <div>
+                      <strong>住宅原生 IP</strong>
+                      <span>真实家庭宽带出口</span>
+                    </div>
+                  </div>
+                  <div className="home-highlight">
+                    <span className="home-highlight-icon">
+                      <IconBolt size={22} stroke={1.7} aria-hidden />
+                    </span>
+                    <div>
+                      <strong>专线稳定连接</strong>
+                      <span>专属线路，高峰不拥堵</span>
+                    </div>
+                  </div>
+                </div>
                 <div className="home-hero-actions" data-testid="hero-actions">
                   <PrimaryAction />
                   <Link href="/plans" className="home-btn home-btn-ghost">
@@ -113,11 +133,11 @@ export default function Home() {
                 <ul className="home-points">
                   <li>
                     <IconCheck size={16} aria-hidden />
-                    线路倍率公开透明
+                    多设备同时在线
                   </li>
                   <li>
                     <IconCheck size={16} aria-hidden />
-                    多设备同时在线
+                    线路倍率公开透明
                   </li>
                   <li>
                     <IconCheck size={16} aria-hidden />
@@ -260,7 +280,7 @@ export default function Home() {
                     <small>连接，自有边界。</small>
                   </span>
                 </Link>
-                <p>稳定、透明的全平台安全连接服务。</p>
+                <p>住宅原生 IP 与专线稳定连接，多端通用。</p>
               </div>
               <nav aria-label="产品">
                 <h2>产品</h2>
