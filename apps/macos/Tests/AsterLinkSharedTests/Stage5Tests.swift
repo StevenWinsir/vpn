@@ -11,7 +11,9 @@ final class Stage5Tests: XCTestCase {
         let verdict = HelperUpgradePolicy.verdict(helperVersion: "1.0.0", appVersion: "1.1.0")
         XCTAssertEqual(verdict, .mismatch(helper: "1.0.0", app: "1.1.0"))
         let message = HelperUpgradePolicy.userMessage(for: verdict) ?? ""
-        XCTAssertTrue(message.contains("1.0.0") && message.contains("1.1.0") && message.contains("重新安装"))
+        // User-facing copy (handoff_app_standardization.md 7.3): the action, not the internals or version pair.
+        XCTAssertTrue(message.contains("后台服务") && message.contains("重新安装"))
+        XCTAssertFalse(message.contains("特权") || message.contains("1.0.0"))
     }
 
     func testDevVersionNeverMatchesARealRelease() {

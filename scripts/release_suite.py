@@ -142,12 +142,14 @@ def run(ctx, run_id, build_run_id):
         problems.append('ATS exceptions present')
     if info.get('LSMinimumSystemVersion') != '15.0':
         problems.append('min macOS')
+    if info.get('CFBundleDevelopmentRegion') != 'zh_CN' or info.get('CFBundleLocalizations') != ['zh_CN']:
+        problems.append('system menus not declared Chinese')
     if info.get('AsterLinkChannel') != built['channel'] or (developer_id and not info.get('AsterLinkTeamID')):
         problems.append('channel/team')
     helper_info = sh(['launchctl', 'plist', '__TEXT,__info_plist', str(binaries['AsterLinkHelper'][0])]).stdout
     if '"CFBundleShortVersionString" = "%s"' % built['app_version'] not in helper_info:
         problems.append('Helper embedded version != app version')
-    record('R-PLIST', 'https-only endpoints, no ATS exceptions, macOS 15, Helper/App versions equal', '; '.join(problems) or 'ok',
+    record('R-PLIST', 'https-only endpoints, no ATS exceptions, macOS 15, Chinese system menus, Helper/App versions equal', '; '.join(problems) or 'ok',
            'fail' if problems else 'pass')
 
     # The app icon is part of the sealed bundle: the plist names it, it is a valid ICNS and it reaches 1024 px.
@@ -225,10 +227,18 @@ def run(ctx, run_id, build_run_id):
                 problems.append('secret in DMG')
             if not os.access(mount / '卸载 AsterLink.command', os.X_OK):
                 problems.append('uninstall script missing')
+            if not (mount / '.VolumeIcon.icns').is_file():
+                problems.append('volume icon missing')
+            finder = sh(['xattr', '-px', 'com.apple.FinderInfo', str(mount)]).stdout.split()
+            if len(finder) < 9 or not int(finder[8], 16) & 0x04:
+                problems.append('volume icon flag not set')
+            readme = (mount / '安装说明.txt').read_text(encoding='utf-8') if (mount / '安装说明.txt').is_file() else ''
+            if not readme or any(word in readme for word in ('特权服务', '--apply', 'docs/', '预演', 'Helper')):
+                problems.append('install note missing or not customer copy')
         finally:
             sh(['hdiutil', 'detach', str(mount), '-force'])
             shutil.rmtree(mount, ignore_errors=True)
-    record('R-DMG', 'DMG verifies, mounts read-only, carries the byte-identical signed app, Applications link and uninstaller',
+    record('R-DMG', 'DMG verifies, mounts read-only, carries the byte-identical signed app, Applications link, uninstaller, volume icon and customer install note',
            '; '.join(problems) or 'ok', 'fail' if problems else 'pass')
 
     sandbox = Path(tempfile.mkdtemp(prefix='asterlink-uninstall-'))

@@ -1,34 +1,41 @@
 import AsterLinkShared
 import Foundation
 
-/// Build facts plus a redacted diagnostics report. The report is assembled from the
-/// Core's already-redacted snapshot; it cannot contain a token, password or node detail.
+/// The app version and the text behind "复制诊断信息" (handoff_app_standardization.md D9). The report
+/// is pasted to customer support, so it is user-visible copy: the app version, the system version,
+/// the connection state and the last error code, with the time of the report. The same six lines
+/// as iOS and Android. No token, password, line or server detail can reach it.
 struct AppDiagnostics {
     let appVersion: String
-    let channel: String
-    let mihomoRevision: String
-    let apiHost: String
+    /// Development builds carry a neutral marker next to the version (D8); release builds never do.
+    let isDevelopment: Bool
 
     init(environment: ClientEnvironment?) {
         let info = Bundle.main.infoDictionary ?? [:]
+        // Also the version the Core and the Helper are told; unchanged.
         appVersion = (info["CFBundleShortVersionString"] as? String) ?? "dev"
-        channel = environment?.channel.rawValue ?? "unconfigured"
-        mihomoRevision = String((info["AsterLinkMihomoRevision"] as? String ?? "70f0570405c3c2c47bb113b88db95006d239b346").prefix(10))
-        apiHost = environment?.apiBase.host ?? "—"
+        isDevelopment = environment.map { $0.channel == .development } ?? true
     }
 
-    func report(for snapshot: CoreSnapshot) -> String {
-        var lines = [
-            "AsterLink \(appVersion) (\(channel))",
-            "core \(snapshot.coreVersion) mihomo \(mihomoRevision)",
-            "api \(apiHost)",
-            "state \(snapshot.state.rawValue) generation \(snapshot.generation)",
-            "nodes \(snapshot.nodes.count) config_ready \(snapshot.configReady)",
-        ]
-        if let entitlement = snapshot.entitlement {
-            lines.append("account_authorized \(entitlement.accountAuthorized) reason \(entitlement.reason.isEmpty ? "-" : entitlement.reason)")
-        }
-        if let error = snapshot.lastError { lines.append("last_error \(error.code)") }
-        return lines.joined(separator: "\n")
+    init(appVersion: String, isDevelopment: Bool) {
+        self.appVersion = appVersion
+        self.isDevelopment = isDevelopment
+    }
+
+    static var osVersion: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+    }
+
+    func report(for snapshot: CoreSnapshot, now: Date = Date()) -> String {
+        let code = snapshot.lastError?.code ?? ""
+        return [
+            "AsterLink 诊断信息",
+            "时间: \(Formatting.dateTime(now))",
+            "应用版本: \(appVersion)",
+            "系统版本: \(Self.osVersion)",
+            "连接状态: \(ConnectionStatus(snapshot.state).title.replacingOccurrences(of: "…", with: ""))",
+            "错误码: \(code.isEmpty ? "无" : code)",
+        ].joined(separator: "\n")
     }
 }

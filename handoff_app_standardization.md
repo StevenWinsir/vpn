@@ -545,3 +545,59 @@ AsterLink.Service、AsterLink.Platform、AsterLink.Shared 中除展示文字之�
   - main 合并后的 CI 中“客服小组件”测试再次偶发失败（调用序列断言过早），与本轮无关，已单独修复，见 PR [#88](https://github.com/StevenWinsir/vpn/pull/88)。
   - 第 2 轮起各平台的色板一致性检查进入 test-brand-assets.py。
 
+
+### 第 2 轮：移动端色板、共享文案与文案守卫
+
+- 日期：2026-10-28。分支 `worktree-appstd-round2-palette-copy`（已删除），PR [#89](https://github.com/StevenWinsir/vpn/pull/89)，squash 合并为 84779dd，合并前 18 项检查全部通过。
+- 完成内容：
+  - 色板：iOS `Theme.swift`、Android `Theme.kt`（新增 `BrandTokens`，浅色 `LightTokens`、深色 `DarkTokens`）按第 4.2 节映射改写，蓝色 #2F6FEB 系退役。已连接状态使用品牌绿；填充面（主按钮、连接圆盘、头像）用 `brandFill`，文字与图标用 `brand`（深色为 #3dc89a）；警示与错误各自成套（文字、底、边）。`Banner` 改用对应底色。iOS 的 `Color` 初始化增加透明度参数以表达网站的半透明深色值。
+  - 色板测试：`scripts/test-brand-assets.py` 新增 `PALETTE` 映射，解析 globals.css 的 tokens 块，逐项比对 iOS（18 个角色）和 Android（18 个字段）在浅色与深色下的数值，另比对 AccentColor、LaunchBackground、Android 的 colors.xml，并检查旧蓝色已不在主题文件中；新增 11 组文字/底色对比度检查（WCAG AA 4.5）。本机验证：把网站 `--al-warn-text` 改一位后测试失败，还原后通过。
+  - Core 文案：`messages.go` 按第 7.2 节改写，并顺带处理 `profile_changed`、`vpn_conflict`（去掉“VPN”）、`session_mismatch`、`connection_not_found` 等表中未列出的条目；错误码、兜底文字、`TerminatesSession`、`InvalidatesConfig` 未改。同步更新 `contract_v3_test.go`、`connection_test.go` 的断言，以及 Windows `PreviewRunner.cs` 与 `ClientTests.cs` 中沿用旧 Core 文字的样例。
+  - iOS、AsterLinkKit、隧道扩展、Android（中、英）：按第 7.3 节改写；流量单位改为 GB（`Formatting` 的单位表改为 B/KB/MB/GB，基数不变），删除全部“1 GiB = 2³⁰ 字节”说明；删除节点计量/内部测试线路标签、Core/Mihomo/服务器/渠道各行；“计费 N×”改为“线路倍率 N×”，“本次用量·计费”改为“本次已用 X · 按倍率计 Y”；“普通”线路标签改为“普通线路”（筛选分段仍为“普通”）；登录页脚只显示“版本 x.y.z”，development 构建另显示“开发版”（带豁免标记）；iOS `LicensesView` 与 Android 许可对话框、入口、相关 UI 测试和截图（原 36 号）全部删除；Android `BuildFacts.envFromExample` 字段保留但不再显示。
+  - 诊断报告（D9）：iOS `Diagnostics.report(appVersion:osVersion:state:)` 与 Android `Diagnostics.build(appVersion, osVersion, statusLabel, snapshot)` 统一为六行（标题、时间、应用版本、系统版本、连接状态、错误码，无错误时为“无”）。Core 的错误结构没有发生时间，所以“时间”是生成报告的时间。两个平台各有单元测试断言报告不含 Core、Mihomo、代次、API 地址等字段。
+  - 文案守卫：`scripts/test-app-copy.py`（加入 ci.yml native-core）扫描 Core `messages.go`、iOS/AsterLinkKit/隧道扩展的字符串字面量（自带解析器，处理插值，跳过注释与 `#if DEBUG` 区域）、Android 两套 strings.xml 与含中文的 Kotlin 字面量。禁用词表为第 7.1 节加上“管理员（账号/权限除外）”“结算”“2³⁰”“1024³”等；英文技术词大小写敏感，Android 英文资源按整词不区分大小写。运行时守卫：iOS `AsterLinkUITests/CopyGuard.swift` 在每次 `capture` 前检查屏幕全部文字，Android `ui/CopyGuard.kt`（src/test）在每次 `shoot` 前遍历未合并语义树检查；脚本会比对两处词表与自身一致。本机 549 个字面量，3 处豁免，0 问题。
+  - 其他：`scripts/ios_release.py` 的调试标识增加 `open-tunnel-debug`、`LicensesView`、`licenses-sheet`、`open-licenses`，Release 套件会检查产物中没有这些标识；`scripts/test-native-android.py` 增加 `failure_excerpt`，Gradle 单元测试失败时输出失败用例。
+- 豁免项（均带 `copy-guard` 标记）：
+  1. iOS `LoginView.swift` 与 Android `login_dev_channel`（中、英）：D8 的“开发版”标记。
+  2. Android `role_admin`（中、英）：账号自身的“管理员账号”标记（D13）。
+  3. iOS UI 测试守卫另放行 Debug 构建独有的“调试”区块文字（`#if DEBUG`，Release 产物审计已检查不含）。
+- 偏离本文之处：
+  - 第 7.3 节要求“登录页脚等处删除后”的启动证明：Android 的 emulator 套件与发布包冒烟原先靠登录页显示 Core/Mihomo 版本判断 Core 已加载，现改为“出现登录界面且无启动失败提示、进程存活、无崩溃”，证明力略弱于看到版本号。
+  - Android 的 Release 产物没有新增专门的调试界面检查（资源字符串不在 dex 中），改由静态守卫保证 strings.xml 不含许可与调试文字。
+- 测试结果：
+  - PASS（本机）：AsterLinkKit `swift test` 87 项（含新增诊断测试）；Go `apiclient`、`managed` 测试；`test-brand-assets.py`；`test-app-copy.py`（改入禁用词后失败，还原后通过）。
+  - NOT RUN（本机）：iOS App/UI 测试、Android Gradle 测试、Go `engine`/`mobile` 包（工作树缺 Mihomo 子模块），以上由 CI 验证。
+  - PASS（CI）：合并前 18 项全部通过，含 iOS 49 个 UI 用例（含运行时文案检查）、Android 单元 106 项与 35 个截图状态、模拟器与发布包冒烟、Windows、后端、网站。
+  - 过程中的失败：iOS UI 守卫把 Debug 区块的“隧道调试”文字当违规（已放行）；Android 一处断言仍找旧文字、UI 套件仍要求“licenses”截图、模拟器与发布冒烟仍找页脚版本号（均已改）；Windows 的 `TestLoginSuccessAndSnapshotRedaction`、后端 `TestConsoleUserListScale`、Android 通知速率 N01 偶发失败，重跑通过，与本轮无关。
+  - NOT RUN：iOS/Android 截图的人工评审（品牌绿替换是否完整、无残留蓝色、已连接/警示/错误状态可辨），本轮只做了令牌数值与对比度的自动检查，人工评审留到第 6 轮的跨平台评审或需求方实测 U-29。
+- 遗留问题：
+  - 第 3、4 轮分别把 macOS、Windows 加入 `test-app-copy.py`；Windows 的 Light.xaml 仍是蓝色，按计划在第 4 轮随界面重做，其色板检查也在那时加入 `PALETTE`。
+  - macOS 的 `HelperClient` 等处仍有 Core 以外的旧文案，第 3 轮处理。
+
+### 第 3 轮：macOS 界面重设计与菜单栏常驻
+
+- 日期：2026-10-28。分支 `worktree-appstd-round3-macos`，PR 见本轮 PR 描述。
+- 完成内容：
+  - 界面：`Views.swift` 拆为 `Theme`（令牌）、`Components`（品牌标识、卡片、按钮、提示条、状态胶囊、连接按钮、速率图）、`Presentation`（状态文字、主操作与启用条件、阻断原因、线路分组）、`MainWindow`（外壳与侧栏）、`LoginView`（双栏登录与后台服务引导卡）、`ConnectPage`、`LinesPage`、`AccountPage`、`MenuBarPanel`（菜单栏面板与首次关闭提示）。登录前为独立双栏视图（左栏为网站登录页的深色品牌区与首页价值表述），登录后为侧栏（品牌、连接/线路/账户、状态胶囊与邮箱）加内容区；连接页为 156 点圆形连接按钮（未连接中性圆环、连接中品牌色圆弧转动、已连接品牌色实心加光晕、出错危险色圆环，“减少动态效果”时不转动）与三张信息卡（当前线路、套餐、实时速率与 60 秒曲线），每种阻断只给一个提示和一个下一步；线路页为搜索、全部/专线/普通线路分段、刷新与按地区分组的列表（组内保持服务器顺序）；账户页含账户卡与网站入口、外观三档、后台常驻说明、后台服务（D11）、关于与复制诊断、退出登录与退出 AsterLink。
+  - 品牌：应用内品牌标识用 `mark.svg` 的原始路径数据绘制（自带 SVG 路径解析），`test-brand-assets.py` 校验路径、圆角、描边宽度与圆点和 `mark.svg` 一致；macOS 色板（第 4.2 节全部角色加 `brandFillHover`、`chartGrid`、登录品牌区四色）加入一致性检查，并检查 `Theme.swift` 以外的视图文件不出现颜色字面量。
+  - 窗口与常驻：主窗口改为单实例 `Window`（960×640，最小内容 820×560，去掉“新建窗口”，关闭状态恢复），设置弹窗取消，⌘, 打开主窗口的账户页；`MenuBarExtra` 改为窗口式面板（300 宽：状态、与主窗口同条件的连接开关、当前线路、剩余流量、打开/退出，未登录时只有“未登录”“打开 AsterLink 登录”“退出”）。关闭主窗口后切换为仅菜单栏模式（Dock 图标与 ⌘Tab 消失），菜单栏面板、Finder/启动台再次打开（`applicationShouldHandleReopen`）、⌘, 都先切回普通模式、下一轮事件循环再打开并激活窗口；首次关闭时在菜单栏图标下方显示 6 秒不抢焦点的提示（`closeHintShown` 偏好）。外观偏好（跟随系统/浅色/深色）对主窗口与面板同时生效。
+  - 生命周期（第 5.6 节）：`launch`、后台服务注册监听、批准后继续启动、唤醒刷新移到 `AppDelegate`，全程有效；“应用变为活跃时刷新”改为“主窗口成为关键窗口时刷新”，打开面板不再可能触发刷新。退出仍走原 `applicationShouldTerminate` 延迟退出流程。
+  - 文案：`HelperClient`、`HelperConnection`、`HelperUpgradePolicy`、`SessionController` 中的“特权服务”“内核”“握手”及英文系统错误详情全部改为“后台服务”说法或一句可操作的话（`HelperUpgradePolicy` 文案不再带两个版本号）；启动失败页改为“应用安装不完整”；`AppDiagnostics` 按 D9 输出与 iOS/Android 相同的六行，删除内置 Mihomo 提交号、通道、服务器字段（Info.plist 的提交号键仍由第 5 轮删除）；流量单位改为 GB，日期改为 yyyy-MM-dd；“节点侧独立计量”“线路配置已校验”“服务器已确认/批次”等删除，改为“预估剩余 · 正在同步用量”“本次已用 X · 按倍率计 Y”。
+  - DMG：`安装说明.txt` 改写为安装、首次允许后台服务（含关闭后在菜单栏运行）、升级与卸载三段，不再出现特权服务、预演/--apply、文档路径；DMG 加卷图标（`.VolumeIcon.icns` 加卷根目录自定义图标标记，先做可写映像再转压缩只读映像）。卸载脚本的屏幕提示改写为用户说法，参数与行为不变。`release_suite` 的 R-DMG 增加卷图标与安装说明检查。
+  - 系统菜单：Info.plist 声明 `CFBundleDevelopmentRegion`/`CFBundleLocalizations` 为 zh_CN，应用菜单、编辑、窗口等系统菜单显示中文（此前为英文）；R-PLIST 增加该检查。
+  - 设计预览：DEBUG 构建的 `AsterLink --preview <目录>` 用脚本化 Core 驱动真实的 `SessionController`，把 28 个场景（登录浅/深、首次授权、连接就绪、未选线路、已连接浅/深、无套餐、到期、流量用尽、连接失败、最小尺寸、线路浅/深、无线路、无搜索结果、已连接时线路页、线路最小尺寸、账户浅/深、后台服务异常、未允许后台、菜单栏未登录/就绪/已连接各浅深）渲染为 PNG，并通过系统辅助功能接口导出每个场景的全部可见文字。`test-native-macos.py --suite ui` 构建 Debug、运行预览、检查场景齐全、期望文字出现，并用 `test-app-copy.py` 的同一套禁用词（桌面端另加“VPN”）检查运行时文字；已加入 ci.yml 的 macos job，预览上传为 `macos-ui-preview` 工件。`test-app-copy.py` 静态扫描加入 macOS 应用与共享模块。
+- 偏离本文之处：
+  - 关闭主窗口时的单实例与“再次打开”使用 SwiftUI 的 `openWindow`（从菜单栏图标视图取得），不直接操作 NSWindow；`HelperClient` 增加注册状态与安装位置两个注入参数（默认值即原行为），仅供设计预览模拟“未启用/待批准”。
+  - 新增两个确认：已连接时更换线路（与 iOS、Windows 一致，确认后调用原 `select`）与退出登录；点击已选中的线路不再重复发出选择命令（原来会重复发送，已连接时会因此断开）。
+  - `.toolbar(removing:)` 之外，侧栏宽度用最小 200 点保证字标不换行。
+  - 预览使用离屏窗口 `cacheDisplay` 抓图，毛玻璃材质与模糊在图中呈现为平面色，实机为系统材质。
+- 测试结果：
+  - PASS（本机）：`swift test` 54 项；`test-native-macos.py --suite ui` 4 项（28 个场景，593 条文字，0 命中；在预览样例里写入“内核”后 UI-COPY 失败，还原后通过）；`--suite bundle` 6 项；`--suite release` 12 项通过、2 项 BLOCKED（Gatekeeper 与公证需要 Developer ID，与以往相同），含新的卷图标、安装说明、中文系统菜单检查；`test-app-copy.py`（795 条，5 处豁免，0 问题；把改造前的 `Views.swift` 放回时报 15 处）；`test-brand-assets.py`。
+  - PASS（本机，命令序列对比，第 10 节）：用 DEBUG 直连 Core 模式加一个记录命令的脚本化 Core，在改造前（origin/main 84779dd）与改造后的构建上执行同一操作序列（启动并自动登录 → 选线路 → 连接 → 点红色关闭按钮 → 打开菜单栏 3 次 → 重新打开窗口 → 断开 → 退出）。两者 Core 收到的非轮询命令完全一致：login、select_node、connect、refresh_catalog（各自只在窗口重新回到前台时一次）、disconnect、logout；`read_snapshot` 轮询次数随时长不同。打开菜单栏面板 3 次不产生任何命令。为免触碰本机钥匙串，两次构建都在临时副本上打了同一个测试补丁（后台服务视为已启用、凭据放内存并预置测试密码），补丁未提交。
+  - PASS（本机实机，同一次运行）：关闭窗口后 Dock 图标消失、菜单栏图标变为已连接实心盾牌、连接与用量持续，首次关闭出现提示浮层，第二次关闭不再出现；从 Finder 再次打开应用后 Dock 图标恢复、窗口回到最前；⌘,（应用菜单“设置…”）打开账户页；外观切换即时生效；仅菜单栏模式下收到系统退出事件时先登出再退出。
+  - 过程中发现并修复：线路行与菜单栏行最初用 `accessibilityElement(children: .ignore)` 覆盖了按钮本身，辅助功能无法“按下”它们（VoiceOver 无法选线路），改为保留按钮元素只设置朗读文字；自动登录后系统的密码自动填充浮层残留，登录视图消失时清除焦点。
+  - NOT RUN：真实后台服务的系统批准流程与真实连接（本机无 Developer ID，仅 ad-hoc 包）；系统注销/关机时不被阻塞（不能注销本机会话，仅验证了仅菜单栏模式下的退出事件）；VoiceOver 实际朗读与完整键盘操作（只检查了辅助功能树中的名称与按下动作）；浅色、深色截图的人工评审结论留给需求方（CI 工件 `macos-ui-preview`）；macOS 26 上 Icon Composer 套框问题仍按第 4.3 节留到第 6 轮。
+  - 注：测试时直接从后台 shell 执行 .app 内的可执行文件，SwiftUI 不会在启动时弹出主窗口（从 Finder 或 `open` 启动正常），这是测试启动方式造成的，与用户使用无关。
+- 遗留问题：
+  - docs/macos-release.md 等文档中的“特权服务”“设置”描述按第 6 轮统一更新。
+  - 卸载脚本注释中的开发说明按第 5 轮清理（本轮只改了屏幕提示）。

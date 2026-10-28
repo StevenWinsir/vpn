@@ -22,9 +22,9 @@ enum HelperRegistration: Equatable {
     var summary: String {
         switch self {
         case .enabled: "已启用"
-        case .requiresApproval: "需要在“系统设置 › 通用 › 登录项”中批准"
+        case .requiresApproval: "需要在“系统设置 › 通用 › 登录项与扩展”中允许"
         case .notRegistered: "未启用"
-        case .notFound: "未找到服务（请使用完整签名的 App 包运行）"
+        case .notFound: "应用安装不完整，请从官网重新下载安装"
         case .unknown: "未知"
         }
     }
@@ -62,7 +62,7 @@ final class HelperConnection: @unchecked Sendable {
             connection = created
         }
         guard let proxy = connection?.remoteObjectProxyWithErrorHandler({ onError($0) }) as? AsterLinkHelperXPC else {
-            throw HelperUnavailable("无法建立与特权服务的安全连接")
+            throw HelperUnavailable("无法连接后台服务，请稍后重试")
         }
         return proxy
     }
@@ -95,12 +95,12 @@ final class XPCCoreTransport: CoreTransport {
 
     private func call(_ invoke: @escaping (AsterLinkHelperXPC, @escaping (Data) -> Void) -> Void) async throws -> Data {
         guard HelperConnection.registration == .enabled else {
-            throw HelperUnavailable("特权服务尚未启用，请先在设置中启用")
+            throw HelperUnavailable("后台服务尚未启用，请先按提示启用")
         }
         return try await withCheckedThrowingContinuation { continuation in
             let once = Once(continuation)
             do {
-                let proxy = try connection.proxy { once.resume(throwing: HelperUnavailable("特权服务连接中断：\($0.localizedDescription)")) }
+                let proxy = try connection.proxy { _ in once.resume(throwing: HelperUnavailable("与后台服务的连接已中断，请稍后重试")) }
                 invoke(proxy) { once.resume(returning: $0) }
             } catch {
                 once.resume(throwing: error)
@@ -112,18 +112,18 @@ final class XPCCoreTransport: CoreTransport {
         // Version gate first, so a stale Helper left over from an upgrade never starts a Core.
         let greeting = try await call { $0.hello(reply: $1) }
         guard let hello = try? JSONDecoder().decode(HelperReply.self, from: greeting), hello.protocolVersion == AsterLinkIdentity.protocolVersion else {
-            throw HelperUnavailable("特权服务返回了不兼容的数据")
+            throw HelperUnavailable("后台服务需要更新，请在“账户”页重新安装后台服务")
         }
         if let message = HelperUpgradePolicy.userMessage(for: HelperUpgradePolicy.verdict(helperVersion: hello.helperVersion, appVersion: appVersion)) {
             throw HelperUnavailable(message)
         }
         let data = try await call { $0.startWorker(reply: $1) }
         guard let reply = try? JSONDecoder().decode(HelperReply.self, from: data), reply.protocolVersion == AsterLinkIdentity.protocolVersion else {
-            throw HelperUnavailable("特权服务返回了不兼容的数据")
+            throw HelperUnavailable("后台服务需要更新，请在“账户”页重新安装后台服务")
         }
         // worker_busy means one is already running, which is exactly what we want.
         if !reply.ok && reply.errorCode != .workerBusy {
-            throw HelperUnavailable("无法启动内核：\(reply.detail ?? reply.errorCode?.rawValue ?? "未知错误")")
+            throw HelperUnavailable("连接服务启动失败，请在“账户”页重新安装后台服务")
         }
     }
 

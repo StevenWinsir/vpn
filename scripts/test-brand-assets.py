@@ -247,6 +247,48 @@ def check_palette(tokens):
           'Android icon_background is --al-brand-fill')
 
 
+# macOS (round 3) uses the iOS role names for the PALETTE tokens, plus the roles only the desktop needs.
+# A token the website leaves out of the dark scheme inherits the light value there.
+MACOS_EXTRA = {'brand-fill-hover': 'brandFillHover', 'chart-grid': 'chartGrid', 'story-bg': 'storyBackground',
+               'story-text': 'storyText', 'story-copy': 'storyCopy', 'story-check': 'storyCheck'}
+
+
+def check_macos(tokens, svg):
+    swift = text('apps/macos/Sources/AsterLinkApp/Theme.swift')
+    pattern = re.compile(r'static let (\w+) = Color\(light: 0x([0-9A-Fa-f]{6}), dark: 0x([0-9A-Fa-f]{6})'
+                         r'(?:, lightAlpha: ([0-9.]+))?(?:, darkAlpha: ([0-9.]+))?\)')
+    roles = {}
+    for name, light, dark, light_alpha, dark_alpha in pattern.findall(swift):
+        roles[name] = {'light': parse_colour('#' + light.lower())[:3] + (float(light_alpha or 1),),
+                       'dark': parse_colour('#' + dark.lower())[:3] + (float(dark_alpha or 1),)}
+    wanted = {token: ios_role for token, (ios_role, _) in PALETTE.items()}
+    wanted.update(MACOS_EXTRA)
+    for token, role in wanted.items():
+        for scheme in ('light', 'dark'):
+            want = tokens[scheme].get(token) or tokens['light'].get(token)
+            check(same_colour(roles.get(role, {}).get(scheme), want), 'macOS Theme.%s (%s) is --al-%s' % (role, scheme, token))
+    check(not re.search(r'\b(?:2F6FEB|5B8DEF)\b', swift, re.I), 'the retired blue is not in the macOS theme')
+    # No colour literal outside the theme file: views use role names only (4.2).
+    for path in sorted((ROOT / 'apps/macos/Sources/AsterLinkApp').glob('*.swift')):
+        if path.name == 'Theme.swift':
+            continue
+        body = path.read_text(encoding='utf-8')
+        literal = re.search(r'Color\((?:red|light|hue|white)|#[0-9A-Fa-f]{6}\b|\.(?:blue|green|orange|red|yellow)\b', body)
+        check(literal is None, 'macOS %s draws with theme roles only%s' % (path.name, ' (found %r)' % literal.group(0) if literal else ''))
+
+    # The in-app mark is drawn from the SVG's own path data.
+    components = text('apps/macos/Sources/AsterLinkApp/Components.swift')
+    paths = re.findall(r'<path d="([^"]+)"', svg)
+    swift_paths = re.findall(r'static let (?:shield|stem)Path = "([^"]+)"', components)
+    check(paths == swift_paths, 'macOS BrandGeometry paths are the mark.svg paths')
+    rx = re.search(r'<rect[^>]*rx="([0-9.]+)"', svg).group(1)
+    width = re.search(r'stroke-width="([0-9.]+)"', svg).group(1)
+    circle = re.search(r'<circle cx="([0-9.]+)" cy="([0-9.]+)" r="([0-9.]+)"', svg).groups()
+    check('cornerRadius: CGFloat = %s' % rx in components, 'macOS BrandGeometry corner radius is the mark.svg rx')
+    check('strokeWidth: CGFloat = %s' % width in components, 'macOS BrandGeometry stroke width is the mark.svg stroke-width')
+    check('dot = (x: CGFloat(%s), y: CGFloat(%s), r: CGFloat(%s))' % circle in components, 'macOS BrandGeometry dot is the mark.svg circle')
+
+
 def main():
     manifest = json.loads((ROOT / 'apps/brand-manifest.json').read_text())
     source = (ROOT / manifest['source']['path']).read_bytes()
@@ -299,6 +341,7 @@ def main():
 
     tokens = website_tokens(text('frontend/src/app/globals.css'))
     check_palette(tokens)
+    check_macos(tokens, source.decode('utf-8'))
     check_contrast(tokens)
 
     print('\n%d check(s) failed' % len(failures) if failures else '\nall brand asset checks passed')

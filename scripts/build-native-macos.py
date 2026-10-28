@@ -151,6 +151,9 @@ def main():
     write_plist(contents / 'Info.plist', {
         'CFBundleIdentifier': APP_ID, 'CFBundleName': 'AsterLink', 'CFBundleDisplayName': 'AsterLink',
         'CFBundleExecutable': 'AsterLink', 'CFBundleIconFile': 'AppIcon', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': args.app_version,
+        # The app speaks Chinese only: declaring it makes the system-provided menus (About, Quit, Window...)
+        # Chinese as well instead of falling back to English.
+        'CFBundleDevelopmentRegion': 'zh_CN', 'CFBundleLocalizations': ['zh_CN'],
         'CFBundleShortVersionString': args.app_version, 'LSMinimumSystemVersion': MIN_MACOS,
         'LSApplicationCategoryType': 'public.app-category.utilities', 'NSPrincipalClass': 'NSApplication',
         'AsterLinkChannel': values['APP_ENV'], 'AsterLinkTeamID': team, 'AsterLinkMihomoRevision': revision,
