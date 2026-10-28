@@ -166,13 +166,10 @@ struct LoginView: View {
 
     private var footer: some View {
         VStack(spacing: 2) {
-            if let identity = state.identity {
-                Text("版本 \(appVersion) · Core \(identity.coreVersion) · Mihomo \(String(identity.mihomoRevision.prefix(7)))")
-            } else {
-                Text("版本 \(appVersion)")
-            }
+            Text("版本 \(appVersion)")
             if case .success(let config) = model.config, config.environment.channel == .development {
-                Text("开发版 · \(config.environment.apiBase.host() ?? "")")
+                // copy-guard: the neutral development-build marker allowed by D8 (never shown by a release build)
+                Text("开发版")
             }
         }
         .font(.footnote.monospacedDigit()).foregroundStyle(Theme.textSecondary)

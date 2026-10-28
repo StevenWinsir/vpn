@@ -513,14 +513,14 @@ public class SessionControllerTests
         var snapshot = Replies.Plan(selected: Replies.NodeA, configReady: true);
         var harness = new Harness();
         harness.Transport.Handler = (command, _, _) => Task.FromResult(command == IpcCommands.Connect
-            ? Replies.Snapshot(Replies.Plan(state: "error", selected: Replies.NodeA, configReady: true, lastError: new ErrorView { Code = "tunnel_failed", Message = "隧道启动失败" }),
-                new ErrorView { Code = "tunnel_failed", Message = "隧道启动失败" })
+            ? Replies.Snapshot(Replies.Plan(state: "error", selected: Replies.NodeA, configReady: true, lastError: new ErrorView { Code = "tunnel_failed", Message = "连接失败，请更换线路或稍后重试" }),
+                new ErrorView { Code = "tunnel_failed", Message = "连接失败，请更换线路或稍后重试" })
             : Replies.Snapshot(snapshot));
         await harness.Session.LaunchAsync();
         await harness.Session.SignInAsync("user@example.com", "pw", false);
         await harness.Session.ConnectAsync();
 
-        Assert.Equal("隧道启动失败", harness.Session.Message);
+        Assert.Equal("连接失败，请更换线路或稍后重试", harness.Session.Message);
         Assert.NotEqual("connected", harness.Session.Snapshot.State);
         Assert.False(harness.Session.Connection.ShowDisconnect);
     }

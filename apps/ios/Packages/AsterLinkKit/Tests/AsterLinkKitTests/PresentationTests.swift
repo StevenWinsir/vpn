@@ -65,7 +65,7 @@ struct PresentationTests {
 
     @Test func formattingIsIntegerExact() {
         #expect(Formatting.rate(500) == "0.5×" && Formatting.rate(1000) == "1×" && Formatting.rate(1250) == "1.25×" && Formatting.rate(2000) == "2×")
-        #expect(Formatting.bytes(0) == "0 B" && Formatting.bytes(1536) == "1.50 KiB" && Formatting.bytes(1 << 30) == "1.00 GiB")
+        #expect(Formatting.bytes(0) == "0 B" && Formatting.bytes(1536) == "1.50 KB" && Formatting.bytes(1 << 30) == "1.00 GB")
         // 20 MiB up + 80 MiB down = 104,857,600 bytes: 1× bills all of it, 0.5× half.
         #expect(Formatting.billedBytes(physical: 104_857_600, ratePermille: 1000) == 104_857_600)
         #expect(Formatting.billedBytes(physical: 104_857_600, ratePermille: 500) == 52_428_800)
@@ -155,7 +155,25 @@ struct PresentationTests {
         #expect(ErrorText.text(for: .core("upgrade_required", "请购买")) == "请购买")
         #expect(ErrorText.text(for: .local(LocalCodes.noPlan)).contains("套餐"))
         #expect(ErrorText.text(for: .local("something_new")) == "操作失败，请稍后重试")
-        #expect(ErrorText.status(.waitingNetwork) == "等待网络" && ErrorText.status(.stopping) == "正在断开并结算")
+        #expect(ErrorText.status(.waitingNetwork) == "等待网络" && ErrorText.status(.stopping) == "正在断开")
+    }
+
+    // handoff_app_standardization.md D9: the report a user pastes to support has exactly these lines and
+    // nothing about what the app is built from or which server it talks to.
+    @Test func diagnosticsReportHoldsOnlyTheFiveCustomerFacingFacts() throws {
+        var state = SessionState()
+        state.phase = .signedIn
+        state.snapshot = try Self.snapshot("ready_with_selection").with { $0.lastError = ErrorView(code: "tunnel_unhealthy") }
+        state.identity = try JSONDecoder().decode(CoreHello.self, from: Data(
+            #"{"component":"asterlink-core","core_version":"9.9.9","protocol_version":1,"min_protocol_version":1,"max_protocol_version":1,"mihomo_revision":"abcdef0123456789abcdef"}"#.utf8))
+        let report = Diagnostics.report(appVersion: "1.2.3", osVersion: "iOS 18.0", state: state, now: Date(timeIntervalSince1970: 0))
+        let lines = report.split(separator: "\n").map(String.init)
+        #expect(lines.count == 6 && lines[0] == "AsterLink 诊断信息")
+        #expect(lines[2] == "应用版本: 1.2.3" && lines[3] == "系统版本: iOS 18.0")
+        #expect(lines[4].hasPrefix("连接状态: ") && lines[5] == "错误码: tunnel_unhealthy")
+        for forbidden in ["9.9.9", "abcdef", "Core", "Mihomo", "generation", "隧道", "代次"] { #expect(!report.contains(forbidden), "\(forbidden)") }
+        state.snapshot.lastError = nil
+        #expect(Diagnostics.report(appVersion: "1", osVersion: "iOS 18.0", state: state).hasSuffix("错误码: 无"))
     }
 
     @Test func accountKeysAreScopedAndNeverHoldTheAddress() {

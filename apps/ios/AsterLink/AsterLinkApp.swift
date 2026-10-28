@@ -61,9 +61,9 @@ struct SplashView: View {
 struct ConfigErrorView: View {
     var body: some View {
         ContentUnavailableView {
-            Label("应用配置无效", systemImage: "exclamationmark.triangle")
+            Label("应用安装不完整", systemImage: "exclamationmark.triangle")
         } description: {
-            Text("构建时的接口地址未通过校验，请重新安装官方版本。")
+            Text("请从官网重新下载安装。")
         }
         .accessibilityIdentifier("config-error")
     }

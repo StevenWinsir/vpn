@@ -13,7 +13,6 @@ struct AccountView: View {
     @State private var vpn = TunnelController()
     @State private var vpnInstalled: Bool?
     @State private var copied = false
-    @State private var showLicenses = false
 
     private var state: SessionState { session.state }
     private var snapshot: CoreSnapshot { state.snapshot }
@@ -63,9 +62,8 @@ struct AccountView: View {
             Button("退出并忘记本机密码", role: .destructive) { Task { await session.signOut() } }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("退出后会断开连接并结算流量，已保存的密码也会从本机删除。")
+            Text("退出后会断开连接，已保存的密码也会从本机删除。")
         }
-        .sheet(isPresented: $showLicenses) { LicensesView() }
     }
 
     private var accountCard: some View {
@@ -74,7 +72,7 @@ struct AccountView: View {
             HStack(spacing: 14) {
                 Text(Formatting.initial(name: user?.name ?? "", email: user?.email ?? ""))
                     .font(.title2.weight(.semibold)).foregroundStyle(.white)
-                    .frame(width: 52, height: 52).background(Circle().fill(Theme.primary)).accessibilityHidden(true)
+                    .frame(width: 52, height: 52).background(Circle().fill(Theme.brandFill)).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(user?.email ?? "").font(.headline).foregroundStyle(Theme.textPrimary).accessibilityIdentifier("account-email")
                     if user?.role == "admin" {
@@ -107,7 +105,7 @@ struct AccountView: View {
                         Text("剩余 \(Formatting.bytes(entitlement.remainingBytes)) / \(Formatting.bytes(entitlement.totalBytes))")
                             .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.textPrimary)
                             .accessibilityIdentifier("account-remaining")
-                        Text("流量以 GiB（2³⁰ 字节）计，按线路倍率扣减。").font(.footnote).foregroundStyle(Theme.textSecondary)
+                        Text("流量按线路倍率计算。").font(.footnote).foregroundStyle(Theme.textSecondary)
                     }
                     if !entitlement.accountAuthorized, !entitlement.reasonMessage.isEmpty {
                         Text(entitlement.reasonMessage).font(.subheadline).foregroundStyle(Theme.error).accessibilityIdentifier("account-reason")
@@ -126,11 +124,6 @@ struct AccountView: View {
     private var about: some View {
         Section {
             LabeledContent("应用版本", value: (try? model.config.get().appVersion) ?? "").accessibilityIdentifier("about-version")
-            if let identity = state.identity {
-                LabeledContent("Core 版本", value: identity.coreVersion).accessibilityIdentifier("about-core")
-                LabeledContent("Mihomo", value: String(identity.mihomoRevision.prefix(12))).accessibilityIdentifier("about-mihomo")
-            }
-            Button("开源许可与源代码") { showLicenses = true }.accessibilityIdentifier("open-licenses")
             Button(copied ? "已复制" : "复制诊断信息") { copyDiagnostics() }.accessibilityIdentifier("copy-diagnostics")
         } header: { SectionTitle(text: "关于") }
     }
@@ -155,40 +148,8 @@ struct AccountView: View {
     }
 
     private func copyDiagnostics() {
-        let channel = (try? model.config.get().environment.channel) ?? .release
-        UIPasteboard.general.string = Diagnostics.report(appVersion: (try? model.config.get().appVersion) ?? "", channel: channel, state: state)
+        UIPasteboard.general.string = Diagnostics.report(appVersion: (try? model.config.get().appVersion) ?? "",
+                                                         osVersion: "iOS \(UIDevice.current.systemVersion)", state: state)
         copied = true
-    }
-}
-
-/// What ships inside the app and where its source is (Mihomo is GPL-3.0).
-struct LicensesView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    entry("Mihomo (Clash.Meta)", "GPL-3.0", "https://github.com/MetaCubeX/mihomo")
-                    entry("sing-tun 及其依赖", "GPL-3.0 / MIT 等", "https://github.com/SagerNet/sing-tun")
-                    entry("AsterLink", "本应用源代码", "https://github.com/StevenWinsir/vpn")
-                } footer: {
-                    Text("完整的第三方许可清单与对应源码将随正式发行包提供。").font(.footnote)
-                }
-            }
-            .navigationTitle("开源许可")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
-        }
-        .accessibilityIdentifier("licenses-sheet")
-    }
-
-    private func entry(_ name: String, _ license: String, _ url: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(name).font(.body)
-            Text(license).font(.subheadline).foregroundStyle(Theme.textSecondary)
-            Text(url).font(.footnote).foregroundStyle(Theme.textSecondary)
-        }
-        .accessibilityElement(children: .combine)
     }
 }

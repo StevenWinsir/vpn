@@ -124,7 +124,7 @@ public static class PreviewRunner
         await Scenario("15-connect-admin-no-plan", "light", _ => Demo("blocked", authorized: false, role: "admin", reason: "paid_vip_required"));
         await Scenario("16-connect-expired", "light", _ => Demo("blocked", authorized: false, reason: "subscription_expired"));
         await Scenario("17-connect-quota-exhausted", "light", _ => Demo("blocked", authorized: false, reason: "quota_exhausted", remaining: 0));
-        await Scenario("18-connect-error", "light", _ => Demo("error", selected: NodeTokyo, configReady: true, error: ("tunnel_failed", "隧道启动失败，请稍后重试或联系管理员")));
+        await Scenario("18-connect-error", "light", _ => Demo("error", selected: NodeTokyo, configReady: true, error: ("tunnel_failed", "连接失败，请更换线路或稍后重试，或联系客服")));
         await Scenario("19-connect-min-size", "light", _ => Demo("connected", selected: NodeTokyo, configReady: true, metering: true), height: 560, width: 800);
 
         // Lines page.

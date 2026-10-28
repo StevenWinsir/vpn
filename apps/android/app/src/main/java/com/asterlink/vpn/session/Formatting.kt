@@ -6,11 +6,11 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * Display helpers. Traffic uses binary units (1 GiB = 2^30 bytes) and says so; accounting
+ * Display helpers. Traffic is shown in GB (1 GB = 2^30 bytes, like the website); accounting
  * integers never go through a Double (only the final display rounding does).
  */
 object Formatting {
-    private val UNITS = arrayOf("B", "KiB", "MiB", "GiB", "TiB", "PiB")
+    private val UNITS = arrayOf("B", "KB", "MB", "GB", "TB", "PB")
 
     fun bytes(value: Long): String {
         var amount = value.coerceAtLeast(0).toDouble()

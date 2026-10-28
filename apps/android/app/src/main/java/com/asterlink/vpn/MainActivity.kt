@@ -31,11 +31,13 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.asterlink.vpn.security.ThemeMode
 import com.asterlink.vpn.session.AppPhase
+import com.asterlink.vpn.session.ConnectionView
 import com.asterlink.vpn.session.Diagnostics
 import com.asterlink.vpn.ui.AppActions
 import com.asterlink.vpn.ui.BuildFacts
 import com.asterlink.vpn.ui.DeviceStatus
 import com.asterlink.vpn.ui.WebPage
+import com.asterlink.vpn.ui.connect.statusLabelRes
 import com.asterlink.vpn.ui.navigation.AsterRoot
 import com.asterlink.vpn.ui.navigation.Clock
 import com.asterlink.vpn.ui.theme.AsterTheme
@@ -189,13 +191,11 @@ class MainActivity : ComponentActivity() {
 
     private fun copyDiagnostics(facts: BuildFacts) {
         val state = container.session.state.value
+        val status = ConnectionView.from(state.snapshot, state.busy, state.activity).status
         val text = Diagnostics.build(
             appVersion = facts.appVersion,
-            channel = facts.channel,
-            apiHost = facts.apiHost,
-            device = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) ${Build.SUPPORTED_ABIS.firstOrNull().orEmpty()}",
-            coreVersion = state.identity?.coreVersion.orEmpty(),
-            mihomoRevision = state.identity?.mihomoRevision.orEmpty(),
+            osVersion = "Android ${Build.VERSION.RELEASE}",
+            statusLabel = getString(statusLabelRes(status)),
             snapshot = state.snapshot,
         )
         getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("AsterLink diagnostics", text))

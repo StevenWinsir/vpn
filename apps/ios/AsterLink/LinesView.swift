@@ -71,7 +71,7 @@ struct LinesView: View {
             Button("断开并切换到 \(row.name)", role: .destructive) { Task { await session.switchTo(row.id) } }
             Button("取消", role: .cancel) {}
         } message: { _ in
-            Text("将断开当前连接并结算本次流量，切换后需要重新连接。")
+            Text("将断开当前连接，切换后需要重新连接。")
         }
     }
 
@@ -80,11 +80,8 @@ struct LinesView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(row.name).font(.body.weight(.medium)).foregroundStyle(Theme.textPrimary)
-                    Text("\(ErrorText.lineLabel(dedicated: row.dedicated)) · 计费 \(Formatting.rate(row.ratePermille))")
+                    Text("\(ErrorText.lineLabel(dedicated: row.dedicated)) · 线路倍率 \(Formatting.rate(row.ratePermille))")
                         .font(.subheadline).foregroundStyle(row.dedicated ? Theme.primary : Theme.textSecondary)
-                    if row.nodeMetered {
-                        Text("节点计量").font(.footnote).foregroundStyle(Theme.textSecondary)
-                    }
                 }
                 Spacer(minLength: 0)
                 if row.selected {
@@ -97,7 +94,7 @@ struct LinesView: View {
         .buttonStyle(.plain)
         .listRowBackground(Theme.surface)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(row.name)，\(ErrorText.lineLabel(dedicated: row.dedicated))，计费 \(Formatting.rate(row.ratePermille))" + (row.nodeMetered ? "，节点计量" : ""))
+        .accessibilityLabel("\(row.name)，\(ErrorText.lineLabel(dedicated: row.dedicated))，线路倍率 \(Formatting.rate(row.ratePermille))")
         .accessibilityValue(row.selected ? "已选择" : "")
         .accessibilityAddTraits(row.selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityIdentifier("line-row-\(row.name)")
@@ -105,7 +102,7 @@ struct LinesView: View {
 
     private func choose(_ row: NodeRow) {
         if state.snapshot.tunnelBusy && row.id != snapshot.selectedNodeID {
-            // Switching while a tunnel exists ends it (and settles it) first.
+            // Switching while a connection exists ends it first.
             pendingSwitch = row
         } else {
             Task { await session.select(row.id); if state.message == nil { model.tab = .connect } }

@@ -423,7 +423,7 @@ class SessionControllerTest {
     fun aRefusedConnectShowsTheCoreReasonAndStaysReady() = runTest {
         val rig = rig()
         rig.signedInWithLine()
-        rig.core.connectFailure = ErrorView("tunnel_unhealthy", "已建立隧道但无法经线路访问网络，已断开；请更换线路或稍后重试")
+        rig.core.connectFailure = ErrorView("tunnel_unhealthy", "该线路暂时无法访问网络，已断开，请更换线路或稍后重试")
         rig.controller.connectNow()
         assertEquals(State.READY, rig.state.snapshot.state)
         assertEquals("tunnel_unhealthy", rig.state.message?.code)
@@ -554,7 +554,7 @@ class SessionControllerTest {
     fun aFailedConnectIsShownInTheAppNotAlerted() = runTest {
         val rig = rig()
         rig.signedInWithLine()
-        rig.core.connectFailure = ErrorView("tunnel_unhealthy", "已建立隧道但无法经线路访问网络，已断开；请更换线路或稍后重试")
+        rig.core.connectFailure = ErrorView("tunnel_unhealthy", "该线路暂时无法访问网络，已断开，请更换线路或稍后重试")
         rig.controller.connectNow()
         rig.controller.pollNow()
         assertTrue(rig.alerts.stopped.isEmpty())

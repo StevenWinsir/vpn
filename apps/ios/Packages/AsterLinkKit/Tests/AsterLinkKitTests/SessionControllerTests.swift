@@ -154,14 +154,14 @@ struct SessionControllerTests {
     @Test func connectOnIOSShowsTheCoresHonestRefusal() async {
         let core = ScriptedCore { command in
             switch command.name {
-            case "connect": .snapshot(vipSnapshot(generation: 2, selected: "a"), action: ErrorView(code: "tun_unavailable", message: "此设备暂时无法建立系统隧道"))
+            case "connect": .snapshot(vipSnapshot(generation: 2, selected: "a"), action: ErrorView(code: "tun_unavailable", message: "当前版本无法建立连接，请前往官网下载最新版本"))
             default: .snapshot(vipSnapshot(generation: 1, selected: "a"))
             }
         }
         let controller = makeController(core: core)
         await controller.signIn(email: "vip@example.invalid", password: "secret-pass", remember: false)
         await controller.connect()
-        #expect(controller.state.message == .core("tun_unavailable", "此设备暂时无法建立系统隧道"))
+        #expect(controller.state.message == .core("tun_unavailable", "当前版本无法建立连接，请前往官网下载最新版本"))
         #expect(controller.state.snapshot.state == "ready" && !controller.state.busy && controller.state.activity == .none)
     }
 

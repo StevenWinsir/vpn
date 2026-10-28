@@ -1,13 +1,14 @@
 package com.asterlink.vpn.ui
 
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import com.asterlink.vpn.core.CoreProtocol
 import com.asterlink.vpn.core.CoreSnapshot
 import com.asterlink.vpn.core.GateView
@@ -25,12 +26,12 @@ import com.asterlink.vpn.ui.navigation.Clock
 import com.asterlink.vpn.ui.navigation.Tab
 import com.asterlink.vpn.ui.theme.AsterTheme
 import com.github.takahirom.roborazzi.captureRoboImage
-import com.github.takahirom.roborazzi.captureScreenRoboImage
 import java.io.File
 import java.time.Instant
 import java.util.TimeZone
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -104,15 +105,29 @@ class ScreenshotTest {
         }
         compose.mainClock.advanceTimeBy(600)
         check()
+        assertEquals("forbidden wording on screen $name", emptyList<String>(), CopyGuard.violations(visibleTexts()))
         out.mkdirs()
         compose.onRoot().captureRoboImage(File(out, "$name.png").path)
+    }
+
+    /** Every text and content description on the screen, from the unmerged semantics tree. */
+    private fun visibleTexts(): List<String> {
+        val texts = mutableListOf<String>()
+        fun walk(node: SemanticsNode) {
+            node.config.getOrNull(SemanticsProperties.Text)?.forEach { texts += it.text }
+            node.config.getOrNull(SemanticsProperties.EditableText)?.let { texts += it.text }
+            node.config.getOrNull(SemanticsProperties.ContentDescription)?.let { texts += it }
+            node.children.forEach(::walk)
+        }
+        walk(compose.onRoot(useUnmergedTree = true).fetchSemanticsNode())
+        return texts.filter { it.isNotBlank() }
     }
 
     // ---- login ---------------------------------------------------------------------------------
 
     @Test
     fun login() = shoot("01-login", SessionState(phase = AppPhase.SignedOut, identity = identity, email = "")) {
-        compose.onNodeWithText("Mihomo 70f0570405c3", substring = true).assertExists()
+        compose.onNodeWithText("版本 0.1.0", substring = true).assertExists()
     }
 
     @Test
@@ -137,7 +152,7 @@ class ScreenshotTest {
     fun loginCoreFailed() = shoot(
         "05-login-core-failed",
         SessionState(phase = AppPhase.SignedOut, coreProblem = Notice.local(LocalCodes.CORE_START_FAILED)),
-    ) { compose.onNodeWithText("代理内核无法启动，请重新安装应用").assertExists() }
+    ) { compose.onNodeWithText("应用启动失败，请重新安装应用").assertExists() }
 
     // ---- connect -------------------------------------------------------------------------------
 
@@ -199,17 +214,17 @@ class ScreenshotTest {
     fun connectedNodeReported() = shoot(
         "13-connect-connected-node-metered",
         signedIn(connectedSnapshot().let { it.copy(metering = fixtures.getValue("connected_node_reported").metering, selectedNodeId = lines[2].id) }),
-    ) { compose.onNodeWithText("节点实测计量").assertExists() }
+    ) { compose.onNodeWithText("东京 IPLC 01", substring = true).assertExists() }
 
     @Test
     fun connectFailed() = shoot(
         "14-connect-failed",
-        signedIn(ready().copy(lastError = ErrorView("tunnel_unhealthy", "已建立隧道但无法经线路访问网络，已断开；请更换线路或稍后重试"))),
+        signedIn(ready().copy(lastError = ErrorView("tunnel_unhealthy", "该线路暂时无法访问网络，已断开，请更换线路或稍后重试"))),
     )
 
     @Test
     fun stopping() = shoot("15-connect-stopping", signedIn(connectedSnapshot(), SessionActivity.Disconnecting, busy = true)) {
-        compose.onNodeWithText("正在断开并结算").assertExists()
+        compose.onNodeWithText("正在断开").assertExists()
     }
 
     @Test
@@ -229,7 +244,7 @@ class ScreenshotTest {
 
     @Test
     fun linesNoneConfigured() = shoot("19-lines-none-configured", signedIn(ready().copy(nodes = emptyList(), selectedNodeId = "")), Tab.Lines) {
-        compose.onNodeWithText("管理员尚未配置可用线路").assertExists()
+        compose.onNodeWithText("暂无可用线路").assertExists()
     }
 
     // ---- account -------------------------------------------------------------------------------
@@ -241,7 +256,7 @@ class ScreenshotTest {
 
     @Test
     fun accountAdminWithoutPlan() = shoot("21-account-admin-no-plan", signedIn(fixtures.getValue("blocked_no_plan")), Tab.Account) {
-        compose.onNodeWithText("管理员").assertExists()
+        compose.onNodeWithText("管理员账号").assertExists()
     }
 
     // ---- dark, 200 % font, 360 dp, English -------------------------------------------------------
@@ -332,23 +347,6 @@ class ScreenshotTest {
     ) {
         compose.onNodeWithText("下载新版本").assertIsEnabled()
         compose.onNodeWithText("应用版本过低", substring = true).assertExists()
-    }
-
-    @Test
-    fun accountLicences() {
-        // The dialog is a second window: drive it with the real clock and capture the whole screen.
-        val state = signedIn(ready().copy(user = ready().user!!.copy(email = "vip@example.com", name = "Vip")))
-        compose.setContent {
-            AsterTheme(darkTheme = false) {
-                AsterRoot(state, facts, ThemeMode.System, AppActions(), clock, initialTab = Tab.Account, device = DeviceStatus())
-            }
-        }
-        compose.onNodeWithText("开源许可与源代码").performScrollTo().performClick()
-        compose.waitForIdle()
-        compose.onNodeWithText("GNU GPL v3", substring = true).assertExists()
-        compose.onNodeWithText("打开下载页").assertExists()
-        out.mkdirs()
-        captureScreenRoboImage(File(out, "36-account-licenses.png").path)
     }
 
     private fun connectedSnapshot(): CoreSnapshot {

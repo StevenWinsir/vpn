@@ -35,11 +35,11 @@ enum CoreBridge {
 
     static func decode<T: Decodable>(_ raw: String, as type: T.Type) -> Result<T, CoreFailure> {
         guard let response = try? JSONDecoder().decode(CoreResponse.self, from: Data(raw.utf8)) else {
-            return .failure(CoreFailure(code: "bad_response", message: "内核返回了无法识别的数据"))
+            return .failure(CoreFailure(code: "bad_response", message: "服务暂时异常，请稍后重试"))
         }
         if let failure = response.error { return .failure(CoreFailure(code: failure.code, message: failure.message)) }
         guard let value = try? response.decodeResult(T.self) else {
-            return .failure(CoreFailure(code: "bad_response", message: "内核返回了无法识别的数据"))
+            return .failure(CoreFailure(code: "bad_response", message: "服务暂时异常，请稍后重试"))
         }
         return .success(value)
     }
