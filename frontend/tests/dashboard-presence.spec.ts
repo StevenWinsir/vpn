@@ -5,6 +5,7 @@ import path from 'node:path';
 import { overflowing } from './layout';
 import { chargedBytes, formatBytes, intervalLabel } from '../src/lib/dashboard';
 import type { UsageHistory } from '../src/lib/types';
+import { crispLoadFailure } from './crisp-hosts';
 
 // Round 4 (handoff_node_use_history_and_load_balancing_c.md 12): an administrator builds the
 // JP1 group for 轻量计划 from five same-named servers; simulated devices connect through the
@@ -104,7 +105,7 @@ test('dashboard presence, device cap and node group load follow real connections
     // Customer dashboard before any connection.
     await login(lite, fixture.emails.lite, fixture.password);
     lite.on('console', (entry) => {
-      if (entry.type() === 'error') errors.push(entry.text());
+      if (entry.type() === 'error' && !crispLoadFailure(entry)) errors.push(entry.text());
     });
     const devicesCard = lite.getByRole('region', { name: '连接与客户端' });
     await expect(devicesCard.getByText('在线设备 0 / 2', { exact: true })).toBeVisible();

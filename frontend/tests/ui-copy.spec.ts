@@ -95,8 +95,9 @@ test('a customer without a plan sees no development wording and none of the remo
   await check(page, '/referral', /^推荐有礼 · /);
   await check(page, '/download', /^下载客户端 · /);
   await check(page, '/account', /^账号设置 · /);
-  // The sidebar ends with the way home; the development note is gone.
-  await expect(page.locator('.sidebar-note')).toHaveText(/^返回首页/);
+  // The sidebar ends with the online chat and the way home (handoff_ui.md 5.4); the development
+  // note is gone.
+  await expect(page.locator('.sidebar-note')).toHaveText(/^在线客服返回首页\s*$/);
 });
 
 test('a paying customer sees the same, including the overview, orders and payment result', async ({

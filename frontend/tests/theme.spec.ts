@@ -1,5 +1,6 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { crispLoadFailure } from './crisp-hosts';
 
 // Appearance acceptance (handoff_ui.md 6 and 7, round 2): follow the system until the user picks
 // light or dark, keep that choice, no flash of the other scheme, every page readable in both, and
@@ -217,7 +218,11 @@ test('with storage unavailable the page follows the system and reports no error'
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (entry) => {
     // The browser logs the signed-out /auth/me answer (401); that is not the page's error.
-    if (entry.type() === 'error' && !entry.text().includes('status of 401'))
+    if (
+      entry.type() === 'error' &&
+      !entry.text().includes('status of 401') &&
+      !crispLoadFailure(entry)
+    )
       errors.push(entry.text());
   });
   await page.goto('/login');

@@ -37,6 +37,7 @@ import { AnnouncementGate } from './announcement-gate';
 import { useMeta } from '@/lib/use-meta';
 import { BrandMark } from './brand-mark';
 import { ThemeToggle } from './theme-toggle';
+import { SupportLauncher, SupportNavItem, useSupportAccess } from './support-widget';
 
 const links = [
   { href: '/dashboard', label: '总览', icon: IconLayoutDashboard },
@@ -65,10 +66,12 @@ export function Logo() {
 function Sidebar({
   admin,
   path,
+  support,
   onNavigate,
 }: {
   admin: boolean;
   path: string;
+  support: boolean;
   onNavigate: () => void;
 }) {
   const { meta } = useMeta();
@@ -99,6 +102,7 @@ function Sidebar({
         ))}
       </Stack>
       <div className="sidebar-note">
+        {support ? <SupportNavItem onNavigate={onNavigate} /> : null}
         <Link href="/" className="sidebar-home">
           返回首页 <IconArrowUpRight size={14} />
         </Link>
@@ -167,6 +171,8 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   const returning = useReturnToAdmin();
   const [opened, { toggle, close }] = useDisclosure();
   const [leaving, setLeaving] = useState(false);
+  // The online support chat (handoff_ui.md 9): null where it is not offered.
+  const support = useSupportAccess(path);
   const authPage = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
   const workspace =
     [
@@ -288,7 +294,12 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       </AppShell.Header>
       {workspace ? (
         <AppShell.Navbar p="lg">
-          <Sidebar admin={user?.role === 'admin'} path={path} onNavigate={close} />
+          <Sidebar
+            admin={user?.role === 'admin'}
+            path={path}
+            support={support !== null}
+            onNavigate={close}
+          />
         </AppShell.Navbar>
       ) : null}
       <AppShell.Main>
@@ -296,8 +307,10 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
           <ImpersonationBanner expiresAt={impersonation.expires_at} email={user.email} />
         ) : null}
         {children}
+        {support ? <div className="support-spacer" aria-hidden /> : null}
       </AppShell.Main>
       {user && workspace ? <AnnouncementGate /> : null}
+      {support ? <SupportLauncher email={support.email} /> : null}
     </AppShell>
   );
 }

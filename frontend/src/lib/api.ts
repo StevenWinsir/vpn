@@ -75,10 +75,27 @@ function forUsers(error: APIError): APIError {
     { ...error.details, message: error.message },
   );
 }
-let timeoutInFlight: Promise<number> | null = null;
-function requestTimeout(): Promise<number> {
-  if (!timeoutInFlight) {
-    timeoutInFlight = fetch('/api/runtime-config', {
+export type RuntimeConfig = {
+  apiTimeoutMs: number;
+  // The online support chat (handoff_ui.md 9.6): null websiteId means it is switched off.
+  support: { crispWebsiteId: string | null; email: string | null };
+};
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// Anything unexpected in the support part only switches the chat off; it never fails the API.
+function supportPart(value: unknown): RuntimeConfig['support'] {
+  const support = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  const id = support.crispWebsiteId;
+  const email = support.email;
+  return {
+    crispWebsiteId: typeof id === 'string' && UUID.test(id) ? id : null,
+    email: typeof email === 'string' && email.includes('@') ? email : null,
+  };
+}
+// Fetched once, before the first API request, and shared (the support chat reads the same result).
+let configInFlight: Promise<RuntimeConfig> | null = null;
+export function runtimeConfig(): Promise<RuntimeConfig> {
+  if (!configInFlight) {
+    configInFlight = fetch('/api/runtime-config', {
       credentials: 'same-origin',
       cache: 'no-store',
       signal: AbortSignal.timeout(10000),
@@ -102,14 +119,20 @@ function requestTimeout(): Promise<number> {
         )
           // copy-guard-next-line: original wording; forUsers() replaces it outside /admin
           throw forUsers(new APIError(503, 'api_config_invalid', '服务端 API 配置不可用。'));
-        return config.apiTimeoutMs as number;
+        return {
+          apiTimeoutMs: config.apiTimeoutMs as number,
+          support: supportPart(config.support),
+        };
       })
       .catch((error) => {
-        timeoutInFlight = null;
+        configInFlight = null;
         throw error;
       });
   }
-  return timeoutInFlight;
+  return configInFlight;
+}
+async function requestTimeout(): Promise<number> {
+  return (await runtimeConfig()).apiTimeoutMs;
 }
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;

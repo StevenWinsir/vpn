@@ -41,6 +41,17 @@ Next.js adds the `src/app` icon files to every route. Do not put icon, favicon o
 
 The native apps' icons are not yet the same as this mark (handoff_ui.md 7.5).
 
+## Online support
+
+The Crisp chat (handoff_ui.md 9) lives in `src/lib/support.ts` (the loader: one injection per page,
+idle preload, hidden Crisp bubble, session reset), `src/components/support-widget.tsx` (where it is
+offered, the launcher, the sidebar entry) and `src/lib/support-config.ts` (`CRISP_WEBSITE_ID`).
+The launcher uses the `--al-*` tokens like everything else; Crisp's own window is styled in the
+Crisp console and does not follow the site's dark theme. Every Playwright config resolves the
+Crisp hosts to nothing (`tests/crisp-hosts.ts`), so no test ever reaches the real service;
+`tests/support-widget.spec.ts` stands in for it with request interception. Operations notes:
+docs/deployment.md "在线客服".
+
 ## Home page
 
 The home page (`src/app/page.tsx`, handoff_ui.md section 8, round 3) does not use the workspace shell: `SiteShell` hands `/` straight through, and the page brings its own sticky marketing header (`src/components/home/`), main content and footer.

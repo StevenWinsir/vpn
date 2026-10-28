@@ -68,10 +68,11 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// frank, gina and hank belong to the console spec (plan edit, deletion, manual confirmation);
 	// ivan, judy, kyle, lena and boss (a second administrator) to the announcement, impersonation
 	// and coupon specs, which publish announcements that must not reach the other specs' users.
-	// themeroot (an administrator) and themea belong to the appearance spec (handoff_ui.md 6).
-	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea"} {
+	// themeroot (an administrator) and themea belong to the appearance spec (handoff_ui.md 6);
+	// supportroot (an administrator), supporta and supportb to the support chat spec (handoff_ui.md 9).
+	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea", "supportroot", "supporta", "supportb"} {
 		role := "user"
-		if kind == "root" || kind == "boss" || kind == "themeroot" {
+		if kind == "root" || kind == "boss" || kind == "themeroot" || kind == "supportroot" {
 			role = "admin"
 		}
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}
@@ -83,8 +84,9 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// The shop spec (yearly checkout, renewal, price change, rebuy) and the referral spec
 	// (refa: a referrer who buys a plan, refd: one who never has a plan) use accounts of their own,
 	// as does the user-page copy spec (copya never buys, copyb buys a plan; handoff_ui.md 4.6) and the
-	// home page spec (homea only signs in; handoff_ui.md 8).
-	for _, kind := range []string{"shopa", "shopb", "shopc", "shopd", "refa", "refd", "copya", "copyb", "homea"} {
+	// home page spec (homea only signs in; handoff_ui.md 8); supportdel deletes itself with the support
+	// chat loaded (handoff_ui.md 9).
+	for _, kind := range []string{"shopa", "shopb", "shopc", "shopd", "refa", "refd", "copya", "copyb", "homea", "supportdel"} {
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: "user", Status: "active", AuthVersion: 1}
 		if err = db.Create(&u).Error; err != nil {
 			t.Fatal(err)

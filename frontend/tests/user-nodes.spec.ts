@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { NodeCatalog, PublicNode } from '../src/lib/types';
+import { crispLoadFailure } from './crisp-hosts';
 
 type Fixture = { emails: { admin: string; vip: string }; password: string; node_yaml: string };
 const sample: PublicNode = {
@@ -86,7 +87,8 @@ test('web catalog reflects real administrator changes without exposing connectio
     await page.clock.install();
     await login(page, fixture.emails.vip, fixture.password);
     page.on('console', (entry) => {
-      if (entry.type() === 'error' || entry.type() === 'warning') errors.push(entry.text());
+      if ((entry.type() === 'error' || entry.type() === 'warning') && !crispLoadFailure(entry))
+        errors.push(entry.text());
     });
     const sensitiveRequests: string[] = [];
     page.on('request', (request) => {

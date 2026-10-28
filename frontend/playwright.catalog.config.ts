@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { crispUnreachable } from './tests/crisp-hosts';
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL;
 if (
@@ -13,7 +14,13 @@ if (
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['admin-nodes.spec.ts', 'dashboard-presence.spec.ts', 'user-nodes.spec.ts', 'register.spec.ts', 'reset.spec.ts'],
+  testMatch: [
+    'admin-nodes.spec.ts',
+    'dashboard-presence.spec.ts',
+    'user-nodes.spec.ts',
+    'register.spec.ts',
+    'reset.spec.ts',
+  ],
   outputDir: process.env.CATALOG_OUTPUTS,
   workers: 1,
   retries: 0,
@@ -27,7 +34,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
     launchOptions: {
-      args: ['--no-proxy-server'],
+      // No browser of any spec reaches the real Crisp (handoff_ui.md 11, round 4): its hosts do not
+      // resolve, so every page also runs with the support chat unreachable. Request interception
+      // (support-widget.spec) happens before name resolution and is not affected.
+      args: ['--no-proxy-server', crispUnreachable],
       ...(process.env.PLAYWRIGHT_CHROME_PATH
         ? { executablePath: process.env.PLAYWRIGHT_CHROME_PATH }
         : {}),
