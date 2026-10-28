@@ -8,7 +8,10 @@ converted so far; the runtime guards of the UI tests use the same word lists (th
 AsterLinkUITests/CopyGuard.swift and the Android CopyGuard.kt are compared with this file below).
 
 Scanned: Core messages.go values; the Chinese string literals of iOS, AsterLinkKit and the tunnel
-extension; the Android strings.xml files (Chinese and English) and Chinese literals in Kotlin.
+extension; the Android strings.xml files (Chinese and English) and Chinese literals in Kotlin; the
+macOS app and its shared module (round 3), where "VPN" is forbidden as well (7.1 item 7). The macOS
+design preview checks the text of every rendered screen against these same lists at run time
+(scripts/test-native-macos.py --suite ui imports them from this file).
 
 A line is exempt when it, or the line above it, contains the marker "copy-guard" followed by the
 reason. Whole files are exempt only when listed in DEBUG_ONLY_FILES (they are not compiled into
@@ -38,6 +41,8 @@ FORBIDDEN_EN = [
     'channel', 'generation', 'handshake', 'protocol', 'metering', 'settle', 'ledger', 'tunnel', 'Tunnel',
     '.env', 'localhost', 'debug', 'Debug',
 ]
+# The desktop clients never ask the system for a VPN configuration, so they never say it (7.1 item 7).
+FORBIDDEN_DESKTOP_EN = ['VPN']
 # English words for the English strings.xml, case-insensitive whole words.
 FORBIDDEN_EN_TEXT = [
     'core', 'mihomo', 'clash', 'helper', 'gib', 'gpl', 'apache', 'github', 'channel', 'generation', 'handshake',
@@ -49,6 +54,8 @@ FORBIDDEN_EN_TEXT = [
 DEBUG_ONLY_FILES = {
     'apps/ios/AsterLink/TunnelDebugView.swift',
     'apps/ios/AsterLink/UIFixtures.swift',
+    'apps/macos/Sources/AsterLinkApp/DirectCoreTransport.swift',
+    'apps/macos/Sources/AsterLinkApp/PreviewRunner.swift',
 }
 MARKER = 'copy-guard'
 
@@ -65,14 +72,14 @@ def report(path, line, word, literal):
     failures.append('%s:%d  "%s" in %r' % (path, line, word, literal))
 
 
-def scan_literal(path, line_no, literal, lines):
+def scan_literal(path, line_no, literal, lines, extra_en=()):
     """Check one user-visible string; lines is the source so the exemption marker can be found."""
     global scanned, exempted
     scanned += 1
     here = lines[line_no - 1]
     above = lines[line_no - 2] if line_no > 1 else ''
     hits = [w for w in FORBIDDEN_ZH if re.search(w, literal)]
-    hits += [w for w in FORBIDDEN_EN if re.search(r'(?<![A-Za-z])%s(?![a-z])' % re.escape(w), literal)]
+    hits += [w for w in FORBIDDEN_EN + list(extra_en) if re.search(r'(?<![A-Za-z])%s(?![a-z])' % re.escape(w), literal)]
     if not hits:
         return
     if MARKER in here or MARKER in above:
@@ -163,7 +170,7 @@ def debug_lines(source):
     return inside
 
 
-def scan_code(path):
+def scan_code(path, extra_en=()):
     """Scan the user-visible string literals of a Swift or Kotlin file."""
     source = text(path)
     lines = source.splitlines()
@@ -174,7 +181,7 @@ def scan_code(path):
         literal = literal.strip()
         if CJK.search(literal) or (path.endswith('.swift') and VIEW_CALL.search(lines[number - 1])
                                    and re.search('[A-Za-z]{3}', literal)):
-            scan_literal(path, number, literal, lines)
+            scan_literal(path, number, literal, lines, extra_en)
 
 
 def scan_core():
@@ -248,6 +255,11 @@ def main():
         source = path.read_text(encoding='utf-8')
         if CJK.search(source):
             scan_code(str(path.relative_to(ROOT)))
+    for module in ('AsterLinkApp', 'AsterLinkShared'):
+        for path in sorted((ROOT / 'apps/macos/Sources' / module).glob('*.swift')):
+            relative = str(path.relative_to(ROOT))
+            if relative not in DEBUG_ONLY_FILES:
+                scan_code(relative, FORBIDDEN_DESKTOP_EN)
     check_runtime_lists()
 
     for failure in failures:

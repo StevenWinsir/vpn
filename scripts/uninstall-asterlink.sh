@@ -7,7 +7,9 @@
 # Never touches other VPNs, routes, DNS, or network settings; the only network change it can
 # make is undoing AsterLink's own system DNS capture left by a killed worker
 # (dns-override.json, see native/core/internal/engine/sysdns.go). Quit AsterLink first (the app's
-# Settings -> "移除特权服务" is the cleanest way to unregister the privileged service).
+# 账户 page -> 后台服务 -> 故障排查 -> "移除后台服务" is the cleanest way to unregister the privileged service).
+# Everything it prints is user-facing copy (handoff_app_standardization.md 5.8); the flags and the
+# behaviour are unchanged.
 set -euo pipefail
 
 APPLY=0
@@ -31,37 +33,40 @@ system_paths=(
 )
 
 if pgrep -x AsterLink >/dev/null 2>&1 || pgrep -x asterlink-core >/dev/null 2>&1; then
-  echo "AsterLink 仍在运行。请先在 App 中断开连接并退出（菜单“退出”），再重试。" >&2
+  echo "AsterLink 仍在运行。请先点击屏幕右上角菜单栏中的 AsterLink 图标，选择“退出”，然后再试。" >&2
   exit 2
 fi
 
-echo "将处理（仅限 AsterLink 自身的资源）："
+echo "卸载 AsterLink 将删除以下内容（不会影响其他应用）："
 for p in "${user_paths[@]}" "${system_paths[@]}"; do
-  [[ -e "$p" ]] && echo "  存在  $p" || echo "  不存在 $p"
+  [[ -e "$p" ]] && echo "  · $p"
 done
-echo "  钥匙串条目  ${APP_ID}.credentials、${APP_ID}.device（记住的密码与设备 ID）"
-echo "  launchd 服务 system/${HELPER_LABEL}（如仍已注册）"
-[[ -e "$dns_record" ]] && echo "  恢复 AsterLink 遗留的系统 DNS 接管（$dns_record）"
+echo "  · 钥匙串中保存的 AsterLink 登录密码与设备标识"
+echo "  · AsterLink 后台服务（如仍在运行）"
+[[ -e "$dns_record" ]] && echo "  · 恢复 AsterLink 修改过的系统 DNS 设置"
 
 if [[ $APPLY -ne 1 ]]; then
-  echo "（这是预演，未做任何改动；加 --apply 才会执行。）"
+  echo ""
+  echo "以上只是检查，尚未删除任何内容。"
+  echo "确认卸载：打开“终端”，输入下面这一行后按回车（过程中需要输入本机登录密码）："
+  echo "  \"$0\" --apply"
   exit 0
 fi
 
 for p in "${user_paths[@]}"; do rm -rf -- "$p"; done
 
 if [[ -z "$SYSROOT" ]] && launchctl print "system/${HELPER_LABEL}" >/dev/null 2>&1; then
-  echo "注销特权服务 ${HELPER_LABEL}（需要管理员密码）"
-  sudo launchctl bootout "system/${HELPER_LABEL}" || echo "  bootout 失败；请在 App 设置中点击“移除特权服务”或在系统设置的登录项中关闭" >&2
+  echo "正在移除 AsterLink 后台服务（需要输入本机登录密码）"
+  sudo launchctl bootout "system/${HELPER_LABEL}" || echo "  未能移除后台服务。请在“系统设置 › 通用 › 登录项与扩展”中关闭 AsterLink。" >&2
 fi
 
 # Before the record and the binary that understands it are deleted.
 if [[ -z "$SYSROOT" && -e "$dns_record" ]]; then
-  echo "恢复 AsterLink 遗留的系统 DNS 设置（需要管理员密码）"
+  echo "正在恢复系统 DNS 设置（需要输入本机登录密码）"
   if [[ -x "$core_bin" ]]; then
-    sudo "$core_bin" --recover-network || echo "  恢复失败；请在系统设置 → 网络 → DNS 中检查是否仍为 198.18.0.2" >&2
+    sudo "$core_bin" --recover-network || echo "  未能自动恢复。请在“系统设置 › 网络”中当前网络的“详细信息 › DNS”里删除 198.18.0.2。" >&2
   else
-    echo "  找不到 $core_bin；请在系统设置 → 网络 → DNS 中删除 198.18.0.2" >&2
+    echo "  未能自动恢复。请在“系统设置 › 网络”中当前网络的“详细信息 › DNS”里删除 198.18.0.2。" >&2
   fi
 fi
 
@@ -75,4 +80,4 @@ if [[ "${ASTERLINK_UNINSTALL_SKIP_KEYCHAIN:-0}" != "1" ]]; then
     while security delete-generic-password -s "$service" >/dev/null 2>&1; do :; done
   done
 fi
-echo "AsterLink 已卸载。其他 VPN 与系统网络设置未改动。"
+echo "AsterLink 已卸载。其他应用与系统网络设置未受影响。"

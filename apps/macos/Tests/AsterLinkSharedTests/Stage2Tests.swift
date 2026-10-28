@@ -326,7 +326,7 @@ final class SessionControllerTests: XCTestCase {
         let prefs = MemoryPreferences()
         prefs.rememberedEmail = "fixture@example.invalid"
         let transport = loginTransport()
-        transport.startError = HelperUnavailable("特权服务尚未启用，请先在设置中启用")
+        transport.startError = HelperUnavailable("后台服务尚未启用，请先按提示启用")
         let controller = makeController(transport, store: store, preferences: prefs)
         await controller.launch()
         XCTAssertEqual(controller.phase, .signedOut)
@@ -354,13 +354,13 @@ final class SessionControllerTests: XCTestCase {
 
     func testHelperUnavailableIsReportedNotHidden() async {
         let transport = loginTransport()
-        transport.startError = HelperUnavailable("特权服务尚未启用，请先在设置中启用")
+        transport.startError = HelperUnavailable("后台服务尚未启用，请先按提示启用")
         let controller = makeController(transport)
         await controller.launch()
         XCTAssertEqual(controller.phase, .signedOut)
-        XCTAssertEqual(controller.serviceProblem, "特权服务尚未启用，请先在设置中启用")
+        XCTAssertEqual(controller.serviceProblem, "后台服务尚未启用，请先按提示启用")
         await controller.signIn(email: "a@b.cd", password: "pw", remember: false)
-        XCTAssertEqual(controller.message, "特权服务尚未启用，请先在设置中启用")
+        XCTAssertEqual(controller.message, "后台服务尚未启用，请先按提示启用")
         XCTAssertFalse(transport.commands.contains("login"), "no credentials are sent when the Core is unreachable")
     }
 
@@ -507,7 +507,7 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(lost.logins, 1)
         XCTAssertEqual(controller.phase, .signedOut)
         XCTAssertEqual(controller.snapshot.state, .signedOut)
-        XCTAssertEqual(controller.message, "内核已意外退出，连接已停止，请重新登录")
+        XCTAssertEqual(controller.message, "连接已中断，请重新登录")
         // A dead Core is never driven again: no further command until the user signs in.
         let sent = transport.commands.count
         await controller.connect()

@@ -15,8 +15,8 @@ public enum HelperUpgradePolicy {
     }
 
     public static func userMessage(for verdict: Verdict) -> String? {
-        guard case let .mismatch(helper, app) = verdict else { return nil }
-        return "特权服务版本（\(helper)）与应用（\(app)）不一致，请在“设置”中点击“重新安装特权服务”后再连接"
+        guard case .mismatch = verdict else { return nil }
+        return "后台服务需要更新，请在“账户”页点击“重新安装”后再连接"
     }
 
     /// Removal and reinstall are refused while traffic may be flowing: the user disconnects first.

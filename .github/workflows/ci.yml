@@ -268,6 +268,16 @@ jobs:
         run: python3 scripts/test-native-macos.py --suite unit --run-id ci
       - name: Bundle suite (Debug app, ad-hoc signed; Helper -> verified Core handshake + tamper refusals)
         run: python3 scripts/test-native-macos.py --suite bundle --run-id ci
+      - name: UI suite (design preview of every screen, light and dark, plus the runtime copy guard)
+        run: python3 scripts/test-native-macos.py --suite ui --run-id ci
+      - name: Retain the macOS design preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-ui-preview
+          if-no-files-found: ignore
+          retention-days: 14
+          path: artifacts/native-macos/ci-ui/
       - name: Release suite (optimized ad-hoc DMG; signature, entitlements, secrets, manifests, licenses, uninstaller)
         run: |
           # Exit 3 = BLOCKED cases (Gatekeeper / notarization need a Developer ID). Only 0 or 3 may pass.

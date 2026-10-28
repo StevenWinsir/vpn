@@ -270,7 +270,7 @@ public final class SessionController {
         stopPolling()
         phase = .signedOut
         snapshot = .signedOut
-        message = "内核已意外退出，连接已停止，请重新登录"
+        message = "连接已中断，请重新登录"
     }
 
     private func apply(_ latest: CoreSnapshot) {
@@ -299,7 +299,7 @@ public final class SessionController {
     static func describe(_ error: Error) -> String {
         if let error = error as? CoreCommandError { return error.message }
         if let error = error as? HelperUnavailable { return error.message }
-        return "无法连接本机服务，请在设置中检查特权服务状态"
+        return "无法连接后台服务，请在“账户”页检查后台服务状态"
     }
 }
 

@@ -30,14 +30,22 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 VOLUME = 'AsterLink'
 
-INSTALL_README = """AsterLink 安装
-1. 把 AsterLink 拖到“应用程序”(Applications)。
-2. 从“应用程序”打开 AsterLink，登录后在“设置”中点击“启用”特权服务，
-   并在“系统设置 › 通用 › 登录项与扩展”里批准 AsterLink。
-3. 升级：先在 App 里断开连接，再用新版本替换旧版本，打开后如提示特权服务版本不一致，
-   在“设置”点击“重新安装特权服务”。
-4. 卸载：先在“设置”点击“移除特权服务”，再把 AsterLink 拖进废纸篓；或运行本盘中的“卸载 AsterLink.command”（先预演，加 --apply 才执行）。
-详见 docs/macos-release.md。
+# The note on the disk image is read by customers: no internals, flags or document paths (handoff 5.8).
+INSTALL_README = """AsterLink 安装说明
+
+一、安装
+把 AsterLink 拖到“应用程序”文件夹，再从“应用程序”中打开 AsterLink。请不要直接在本安装盘中运行。
+
+二、首次打开时允许后台服务
+AsterLink 需要一项后台服务来建立安全连接，只需允许一次：按窗口中的提示点击“启用”，在自动打开的
+“系统设置 › 通用 › 登录项与扩展”中，打开“允许在后台”里 AsterLink 的开关，然后回到 AsterLink 登录即可。
+关闭窗口后，AsterLink 会继续在屏幕右上角的菜单栏中运行，连接不会中断；点击菜单栏中的 AsterLink 图标
+可以重新打开窗口或退出。
+
+三、升级与卸载
+升级：先点击菜单栏中的 AsterLink 图标并选择“退出”，再把新版本拖到“应用程序”文件夹替换旧版本。
+卸载：在 AsterLink 的“账户”页，展开“后台服务”中的“故障排查”，点击“移除后台服务”；然后退出 AsterLink，
+把它从“应用程序”拖到废纸篓。也可以双击本盘中的“卸载 AsterLink.command”，按窗口中的提示操作。
 """
 
 
@@ -49,17 +57,32 @@ def run(command, **kwargs):
 def create_dmg(stage, dmg, attempts=4):
     """hdiutil create fails intermittently on CI runners ("Resource busy" while the
     system scans the fresh image), so retry a few times with a growing pause before
-    giving up with the last error. A partial image from a failed attempt is removed."""
-    command = ['hdiutil', 'create', '-volname', VOLUME, '-srcfolder', str(stage), '-ov', '-format', 'UDZO', '-fs', 'HFS+', str(dmg)]
+    giving up with the last error. A partial image from a failed attempt is removed.
+    The image is made writable first so the volume icon flag can be set on its root,
+    then converted to the compressed read-only format that ships."""
+    writable = dmg.with_name(dmg.stem + '-rw.dmg')
+    command = ['hdiutil', 'create', '-volname', VOLUME, '-srcfolder', str(stage), '-ov', '-format', 'UDRW', '-fs', 'HFS+', str(writable)]
     for attempt in range(1, attempts + 1):
         try:
-            return run(command, stdout=subprocess.DEVNULL)
+            run(command, stdout=subprocess.DEVNULL)
+            break
         except subprocess.CalledProcessError:
             if attempt == attempts:
                 raise
-            dmg.unlink(missing_ok=True)
+            writable.unlink(missing_ok=True)
             print(f'hdiutil create failed (attempt {attempt}/{attempts}); retrying', file=sys.stderr, flush=True)
             time.sleep(5 * attempt)
+    with tempfile.TemporaryDirectory(prefix='asterlink-dmg-mount-') as mount:
+        run(['hdiutil', 'attach', str(writable), '-readwrite', '-nobrowse', '-noautoopen', '-mountpoint', mount], stdout=subprocess.DEVNULL)
+        try:
+            set_custom_icon_flag(Path(mount))
+        finally:
+            for attempt in range(1, attempts + 1):
+                if subprocess.run(['hdiutil', 'detach', mount] + (['-force'] if attempt > 1 else []), capture_output=True).returncode == 0:
+                    break
+                time.sleep(2 * attempt)
+    run(['hdiutil', 'convert', str(writable), '-format', 'UDZO', '-ov', '-o', str(dmg)], stdout=subprocess.DEVNULL)
+    writable.unlink(missing_ok=True)
 
 
 def capture(command, **kwargs):
@@ -79,12 +102,22 @@ def blocked(message: str):
     sys.exit(3)
 
 
+def set_custom_icon_flag(folder: Path):
+    """Sets the "has custom icon" Finder flag on a mounted volume's root (what SetFile -a C does),
+    so the .VolumeIcon.icns in it becomes the icon of the volume."""
+    info = bytearray(32)
+    info[8] = 0x04  # kHasCustomIcon, high byte of the Finder flags
+    run(['xattr', '-wx', 'com.apple.FinderInfo', info.hex(), str(folder)])
+
+
 def make_dmg(app: Path, dmg: Path, identity: str, hardened_timestamp: bool):
     with tempfile.TemporaryDirectory(prefix='asterlink-dmg-') as stage_name:
         stage = Path(stage_name)
         run(['ditto', str(app), str(stage / app.name)])  # preserves signatures, xattrs, symlinks
         (stage / 'Applications').symlink_to('/Applications')
         (stage / '安装说明.txt').write_text(INSTALL_README, encoding='utf-8')
+        # Volume icon: the app icon, flagged on the volume root so Finder shows it for the mounted disk.
+        shutil.copy2(app / 'Contents/Resources/AppIcon.icns', stage / '.VolumeIcon.icns')
         uninstall = stage / '卸载 AsterLink.command'
         shutil.copy2(ROOT / 'scripts/uninstall-asterlink.sh', uninstall)
         uninstall.chmod(0o755)

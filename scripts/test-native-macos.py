@@ -4,6 +4,7 @@
     python3 scripts/test-native-macos.py --suite unit
     python3 scripts/test-native-macos.py --suite bundle          # builds a Debug app, no network changes
     python3 scripts/test-native-macos.py --suite release         # builds + packages the internal ad-hoc DMG and audits it
+    python3 scripts/test-native-macos.py --suite ui              # design preview: every scenario to PNG + runtime copy guard
     sudo -E python3 scripts/test-native-macos.py --suite tun --allow-network-changes
 
 Every case records case_id / expected / observed / result (pass|fail|blocked). A suite
@@ -148,6 +149,106 @@ def suite_bundle(run_id):
     record('S-PLIST', 'launchd plist uses BundleProgram + one Mach service', 'present' if ok else text[:120], 'pass' if ok else 'fail')
 
 
+# The design preview scenarios (handoff_app_standardization.md 5.10 and the round 3 list in section 10).
+UI_SCENARIOS = [
+    'login-light', 'login-dark', 'login-service-setup',
+    'connect-ready', 'connect-no-line', 'connect-connected-light', 'connect-connected-dark', 'connect-no-plan',
+    'connect-plan-expired', 'connect-quota-exhausted', 'connect-failed', 'connect-minimum-size',
+    'lines-light', 'lines-dark', 'lines-empty', 'lines-no-match', 'lines-connected', 'lines-minimum-size',
+    'account-light', 'account-dark', 'account-service-problem', 'account-service-not-allowed',
+    'menubar-signed-out-light', 'menubar-signed-out-dark', 'menubar-ready-light', 'menubar-ready-dark',
+    'menubar-connected-light', 'menubar-connected-dark',
+]
+# Words each scenario must show: proves the scripted state reached the screen, not just that a PNG exists.
+UI_EXPECT = {
+    'login-light': ['登录 AsterLink', '记住密码'], 'login-service-setup': ['首次使用：允许 AsterLink 在后台运行', '启用'],
+    'connect-ready': ['未连接', '香港专线 01'], 'connect-no-line': ['请先选择一条线路'],
+    'connect-connected-light': ['已连接', '实时速率', '本次已用'], 'connect-no-plan': ['当前账号没有有效套餐，请前往网站购买', '购买套餐'],
+    'connect-plan-expired': ['套餐已到期，请前往网站续费'], 'connect-quota-exhausted': ['套餐流量已用完，请前往网站续费或升级'],
+    'connect-failed': ['无法连接', '连接失败，请更换线路或稍后重试，或联系客服'],
+    'lines-light': ['香港 · 3', '已选'], 'lines-empty': ['暂无可用线路，请稍后刷新'], 'lines-no-match': ['没有符合条件的线路'],
+    'account-light': ['后台服务运行正常', '复制诊断信息', '退出 AsterLink'],
+    'account-service-problem': ['后台服务需要更新，请在“账户”页重新安装后台服务', '重新安装'],
+    'account-service-not-allowed': ['需要在系统设置中允许 AsterLink 在后台运行'],
+    'menubar-signed-out-light': ['未登录', '打开 AsterLink 登录'], 'menubar-ready-light': ['连接', '当前线路', '剩余流量'],
+    'menubar-connected-light': ['已连接', '断开'],
+}
+
+
+def copy_guard_words():
+    """The word lists of scripts/test-app-copy.py (one source for the static and the runtime guard)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('app_copy', ROOT / 'scripts/test-app-copy.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.FORBIDDEN_ZH, module.FORBIDDEN_EN + module.FORBIDDEN_DESKTOP_EN
+
+
+def suite_ui(run_id):
+    """Builds the Debug app with SwiftPM and runs its design preview (`AsterLink --preview DIR`): every
+    scenario rendered to PNG plus the text of its accessibility tree, which the copy guard checks."""
+    macos = ROOT / 'apps/macos'
+    build = sh(['swift', 'build', '--product', 'AsterLink'], cwd=macos)
+    if build.returncode != 0:
+        record('UI-BUILD', 'Debug app builds', 'build failed', 'fail', (build.stdout + build.stderr)[-800:])
+        return
+    binary = Path(sh(['swift', 'build', '--show-bin-path'], cwd=macos).stdout.strip()) / 'AsterLink'
+    out = ROOT / 'artifacts/native-macos' / (run_id + '-ui')
+    shutil.rmtree(out, ignore_errors=True)
+    try:
+        result = subprocess.run([str(binary), '--preview', str(out)], capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        record('UI-RENDER', 'preview renders every scenario', 'timed out after 600 s', 'fail')
+        return
+    manifest_path = out / 'manifest.json'
+    if result.returncode != 0 or not manifest_path.is_file():
+        record('UI-RENDER', 'preview renders every scenario', 'exit %d' % result.returncode, 'fail', (result.stdout + result.stderr)[-800:])
+        return
+    manifest = json.loads(manifest_path.read_text())['scenarios']
+    texts = json.loads((out / 'texts.json').read_text())
+    rendered = [entry['scenario'] for entry in manifest]
+    missing = [name for name in UI_SCENARIOS if name not in rendered]
+    extra = [name for name in rendered if name not in UI_SCENARIOS]
+    bad_png = []
+    for entry in manifest:
+        data = (out / entry['file']).read_bytes() if (out / entry['file']).is_file() else b''
+        if not data.startswith(b'\x89PNG\r\n\x1a\n') or len(data) < 10_000:
+            bad_png.append(entry['scenario'])
+    ok = not missing and not extra and not bad_png
+    record('UI-RENDER', 'all %d scenarios render to a real PNG (light and dark, minimum size, menu bar panel)' % len(UI_SCENARIOS),
+           '%d rendered; missing %s; unexpected %s; bad PNG %s' % (len(rendered), missing or '-', extra or '-', bad_png or '-'),
+           'pass' if ok else 'fail', str(out))
+
+    sizes = {entry['scenario']: (entry['width'], entry['height']) for entry in manifest}
+    # 820 x 560 of content; the window frame adds the title bar on top.
+    small = [name for name in rendered if 'minimum-size' in name
+             and not (sizes[name][0] == 820 and 560 <= sizes[name][1] <= 600)]
+    record('UI-SIZE', 'minimum-size scenarios are drawn at the 820 x 560 minimum', 'ok' if not small else 'wrong size: %s' % small,
+           'fail' if small else 'pass')
+
+    absent = []
+    for name, words in UI_EXPECT.items():
+        seen = '\n'.join(texts.get(name, []))
+        absent += ['%s: %s' % (name, word) for word in words if word not in seen]
+    empty = [name for name in rendered if len(texts.get(name, [])) < 3]
+    record('UI-TEXT', 'each scenario exposes its text to the accessibility tree, with the expected words',
+           'missing: %s; empty: %s' % (absent or '-', empty or '-'), 'fail' if absent or empty else 'pass')
+
+    zh, en = copy_guard_words()
+    hits = []
+    for name, strings in sorted(texts.items()):
+        for text in strings:
+            for word in zh:
+                if re.search(word, text):
+                    hits.append('%s: "%s" in %r' % (name, word, text))
+            for word in en:
+                if re.search(r'(?<![A-Za-z])%s(?![a-z])' % re.escape(word), text):
+                    hits.append('%s: "%s" in %r' % (name, word, text))
+    total = sum(len(v) for v in texts.values())
+    record('UI-COPY', 'no forbidden word in any visible text (runtime copy guard, same lists as test-app-copy.py)',
+           '%d strings, %d hit(s)%s' % (total, len(hits), (': ' + '; '.join(hits[:8])) if hits else ''), 'fail' if hits else 'pass')
+
+
 def suite_tun(allow):
     """Privileged acceptance of the production engine on a controlled node (stage 3).
 
@@ -193,7 +294,7 @@ def suite_tun(allow):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--suite', choices=['unit', 'bundle', 'release', 'soak', 'tun'], required=True)
+    parser.add_argument('--suite', choices=['unit', 'bundle', 'release', 'soak', 'tun', 'ui'], required=True)
     parser.add_argument('--allow-network-changes', action='store_true')
     parser.add_argument('--build-run-id', help='release suite: audit an existing build/package instead of building one')
     parser.add_argument('--soak-minutes', type=float, default=30.0)
@@ -201,8 +302,9 @@ def main():
     parser.add_argument('--max-rss-growth-pct', type=float, default=20.0, help='soak: fail if resident memory grows more than this')
     parser.add_argument('--run-id', default=time.strftime('%Y%m%d-%H%M%S'))
     args = parser.parse_args()
-    import prepare_mihomo
-    prepare_mihomo.prepare()
+    if args.suite != 'ui':  # the preview builds only the Swift app; it needs no Mihomo tree
+        import prepare_mihomo
+        prepare_mihomo.prepare()
     if args.suite == 'unit':
         suite_unit()
     elif args.suite == 'soak':
@@ -214,6 +316,8 @@ def main():
         release_suite.run({'record': record, 'sh': sh, 'ROOT': ROOT}, args.run_id, args.build_run_id)
     elif args.suite == 'bundle':
         suite_bundle(args.run_id)
+    elif args.suite == 'ui':
+        suite_ui(args.run_id)
     else:
         suite_tun(args.allow_network_changes)
     report_dir = ROOT / 'artifacts/native-macos' / (args.run_id + '-report-' + args.suite)
