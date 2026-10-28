@@ -1,8 +1,7 @@
 import {
   IconBolt,
   IconCheck,
-  IconDeviceDesktop,
-  IconDeviceMobile,
+  IconHomeSignal,
   IconRoute,
   IconShieldCheck,
 } from '@tabler/icons-react';
@@ -44,7 +43,10 @@ export function ProductVisual() {
                 <span className="mock-dot" />
                 已连接
               </strong>
-              <span>智能线路 · 已自动分配服务器</span>
+              <span className="mock-ip">
+                <IconHomeSignal size={14} stroke={1.8} />
+                住宅原生 IP · 专线
+              </span>
               <em>剩余流量</em>
               <div className="mock-meter">
                 <span />
@@ -53,20 +55,20 @@ export function ProductVisual() {
           </div>
           <div className="mock-lines">
             <div className="mock-line active">
-              <IconRoute size={16} stroke={1.7} />
-              <span>智能线路 A</span>
-              <b>普通</b>
+              <IconBolt size={16} stroke={1.7} />
+              <span>专属线路 · 住宅 IP</span>
+              <b className="dedicated">专线</b>
               <IconCheck size={15} className="mock-check" />
             </div>
             <div className="mock-line">
               <IconRoute size={16} stroke={1.7} />
-              <span>智能线路 B</span>
+              <span>住宅线路 A</span>
               <b>普通</b>
             </div>
             <div className="mock-line">
-              <IconBolt size={16} stroke={1.7} />
-              <span>专属线路</span>
-              <b className="dedicated">专线</b>
+              <IconRoute size={16} stroke={1.7} />
+              <span>住宅线路 B</span>
+              <b>普通</b>
             </div>
           </div>
           <div className="mock-usage">
@@ -90,15 +92,12 @@ export function ProductVisual() {
         </div>
       </div>
       <div className="mock-chip mock-chip-devices">
-        <span className="mock-chip-icons">
-          <IconDeviceMobile size={16} stroke={1.7} />
-          <IconDeviceDesktop size={16} stroke={1.7} />
-        </span>
-        多设备同时在线
+        <IconHomeSignal size={16} stroke={1.8} />
+        住宅原生 IP
       </div>
       <div className="mock-chip mock-chip-rate">
-        <IconCheck size={15} stroke={2} />
-        线路倍率公开透明
+        <IconBolt size={16} stroke={1.8} />
+        专线稳定连接
       </div>
     </div>
   );
