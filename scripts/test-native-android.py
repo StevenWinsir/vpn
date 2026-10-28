@@ -308,6 +308,16 @@ def check_release_config():
 
 # ---------------------------------------------------------------- unit
 
+def failure_excerpt(output):
+    """The failed tests and their assertion messages from a Gradle log, else its tail."""
+    lines = output.splitlines()
+    picked = []
+    for index, line in enumerate(lines):
+        if ' FAILED' in line or 'AssertionError' in line or 'Exception' in line or line.startswith('e: '):
+            picked += lines[index:index + 2]
+    return ' | '.join(picked)[:1500] if picked else output[-600:]
+
+
 def count_go_tests(packages):
     process = subprocess.run(['go', 'test', '-count=1', '-json', *packages], cwd=CORE, capture_output=True, text=True, env=go_env())
     passed, failed = 0, []
@@ -370,7 +380,7 @@ def run_unit_suite():
     app = gradle([':app:testDebugUnitTest'], capture_output=True, text=True)
     tests, failures = junit_counts(ANDROID / 'app' / 'build' / 'test-results' / 'testDebugUnitTest')
     record('gradle.app_unit', app.returncode == 0 and tests > 0 and failures == 0,
-           '%d app JVM tests passed' % tests if app.returncode == 0 else app.stdout[-600:])
+           '%d app JVM tests passed' % tests if app.returncode == 0 else failure_excerpt(app.stdout))
 
 
 # ---------------------------------------------------------------- emulator
