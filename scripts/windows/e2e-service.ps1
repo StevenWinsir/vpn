@@ -101,7 +101,9 @@ try {
 
     # -- fakes ------------------------------------------------------------------------------------------
     $fake = Probe 'hello'
-    Case 'S01-fake-gui-refused' ($fake.answered -and -not $fake.ok -and $fake.code -eq 'peer_rejected') "answered=$($fake.answered) code=$($fake.code) raw=$($fake.raw)" $null
+    # The service refuses a fake peer either with peer_rejected or by closing the pipe at once; on a loaded runner the
+    # close can win the race against the reply (seen on three CI runs), and both mean the peer got nothing.
+    Case 'S01-fake-gui-refused' (($fake.answered -and -not $fake.ok -and $fake.code -eq 'peer_rejected') -or ((-not $fake.answered) -and $fake.closed)) "answered=$($fake.answered) closed=$($fake.closed) code=$($fake.code) raw=$($fake.raw)" $null
     Case 'S01-fake-gui-starts-no-core' ((CoreCount) -eq 0) "asterlink-core processes after a fake GUI: $(CoreCount)" $null
     $gb = Probe 'garbage'
     Case 'S03-garbage-frame' ($gb.answered -and $gb.code -eq 'invalid_request') "answered=$($gb.answered) code=$($gb.code) raw=$($gb.raw)" $null
