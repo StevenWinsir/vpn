@@ -69,6 +69,7 @@ public partial class App : Application
             // CI mode: prove the window really rendered, write a report, and exit. The report
             // says what was observed (actual size, rendered flag), not what was intended.
             window.ContentRendered += (_, _) => FinishSelfTest(window, selfTest);
+            window.Closing += OnWindowClosing;
             window.Show();
             return;
         }
@@ -134,7 +135,8 @@ public partial class App : Application
         if (exiting) return;
         e.Cancel = true;
         window!.Hide();
-        if (!model!.TrayNoticeShown)
+        // No tray in the self-test: nothing to point at, and the user's "already told" flag is left alone.
+        if (tray is not null && !model!.TrayNoticeShown)
         {
             model.TrayNoticeShown = true;
             // Windows 11 puts a new tray icon in the overflow area, so say where to look (D6: once, never a dialog).
@@ -290,6 +292,9 @@ public partial class App : Application
         Shutdown(code);
     }
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
+
     private static string? SelfTestOutputPath(string[] args)
     {
         var index = Array.IndexOf(args, "--self-test");
@@ -317,10 +322,20 @@ public partial class App : Application
             }
             catch (Exception) { pages[name] = false; }
         }
-        var passed = model!.CheckResults.All(c => c.Passed) && pages.Values.All(ok => ok);
+        var rendered = window.IsLoaded && window.IsVisible;
+        var width = window.ActualWidth;
+        var height = window.ActualHeight;
+
+        // "×", Alt+F4 and the taskbar's "关闭窗口" all arrive as WM_CLOSE: the window must hide, not close (handoff 6.4).
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+        SendMessage(new System.Windows.Interop.WindowInteropHelper(window).Handle, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+        var hidesOnClose = !closed && !window.IsVisible;
+
+        var passed = model!.CheckResults.All(c => c.Passed) && pages.Values.All(ok => ok) && hidesOnClose;
         var report = new
         {
-            window = new { rendered = window.IsLoaded && window.IsVisible, width = window.ActualWidth, height = window.ActualHeight, backdrop = WindowBackdrop.Describe(window) },
+            window = new { rendered, width, height, backdrop = WindowBackdrop.Describe(window), hides_on_close = hidesOnClose },
             platform = model.Report,
             checks = model.CheckResults,
             pages,
@@ -331,6 +346,7 @@ public partial class App : Application
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
             WriteIndented = true,
         }));
-        Shutdown(passed && window.IsVisible ? 0 : 1);
+        exiting = true;
+        Shutdown(passed && rendered ? 0 : 1);
     }
 }

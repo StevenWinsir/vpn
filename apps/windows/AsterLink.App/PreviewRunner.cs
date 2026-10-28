@@ -99,6 +99,9 @@ public static class PreviewRunner
             Tweak: m => m.PreviewServiceState(ServiceProbe(ScmState.Running, ServiceErrors.WorkerUnavailable))),
     ];
 
+    private const double FrameWidth = 16;
+    private const double FrameHeight = 39;
+
     public static async Task<int> RunAsync(string directory)
     {
         Directory.CreateDirectory(directory);
@@ -135,29 +138,20 @@ public static class PreviewRunner
         {
             var (model, _) = await Prepare(theme, scene.Snapshot, scene.Tweak);
             model.PreviewPage(scene.Page);
+            // Borderless, at the client size a framed window of scene.Width x scene.Height has (8 DIP borders, 31 DIP caption):
+            // Windows clamps a framed window to the screen, which would cut the tall account page on a small CI screen.
             var window = new MainWindow(model)
             {
-                Width = scene.Width, Height = scene.Height, WindowStartupLocation = WindowStartupLocation.Manual, Left = 0, Top = 0, ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, MinWidth = 0, MinHeight = 0,
+                Width = scene.Width - FrameWidth, Height = scene.Height - FrameHeight,
+                WindowStartupLocation = WindowStartupLocation.Manual, Left = 0, Top = 0, ShowInTaskbar = false,
             };
             window.Show();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             window.UpdateLayout();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
 
-            // Lay the window's content out again on its own at the full client size: a tall page (the account page) is
-            // taller than the CI screen, and a shown window is clamped to the screen.
             var content = (FrameworkElement)window.Content;
-            var client = new Size(content.ActualWidth, scene.Height - (window.ActualHeight - content.ActualHeight));
-            window.Content = null;
-            content.DataContext = model;
-            content.SetValue(TextElement.FontFamilyProperty, window.FontFamily);
-            content.SetValue(TextElement.FontSizeProperty, window.FontSize);
-            content.SetValue(TextElement.ForegroundProperty, window.Foreground);
-            TextOptions.SetTextFormattingMode(content, TextOptions.GetTextFormattingMode(window));
-            content.Measure(client);
-            content.Arrange(new Rect(client));
-            content.UpdateLayout();
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var pixelsWide = (int)Math.Ceiling(content.ActualWidth * scale);
             var pixelsHigh = (int)Math.Ceiling(content.ActualHeight * scale);
             var bitmap = new RenderTargetBitmap(pixelsWide, pixelsHigh, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
@@ -246,7 +240,7 @@ public static class PreviewRunner
         }
         void Walk(DependencyObject node)
         {
-            if (node is UIElement { Visibility: not Visibility.Visible }) return;
+            if (node is UIElement { IsVisible: false }) return;
             if (node is FrameworkElement element)
             {
                 Add(System.Windows.Automation.AutomationProperties.GetName(element));

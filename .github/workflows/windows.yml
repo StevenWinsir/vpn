@@ -136,6 +136,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "GUI self-test failed with exit code $($p.ExitCode)" }
           $json = Get-Content $report -Raw | ConvertFrom-Json
           if (-not $json.window.rendered) { throw 'window was not rendered' }
+          if (-not $json.window.hides_on_close) { throw 'closing the window (WM_CLOSE) did not hide it to the tray' }
           if (-not $json.platform.is_native_windows_x64) { throw 'GUI did not run as native Windows x64' }
           foreach ($page in 'login', 'connect', 'lines', 'account') {
             if (-not $json.pages.$page) { throw "page '$page' did not load and lay out" }
