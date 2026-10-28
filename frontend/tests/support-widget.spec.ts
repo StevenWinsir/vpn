@@ -188,19 +188,22 @@ test('signed in: launcher at once, Crisp after the page settles, one script, cha
   expect(requested - entered).toBeGreaterThanOrEqual(3500);
   const running = api.filter((e) => e.start <= requested && (e.end === null || e.end > requested));
   expect(running.map((e) => e.url)).toEqual([]);
-  await expect.poll(() => calls(page)).toContain('do chat:hide');
-  expect(await calls(page)).toEqual([
-    `loaded ${defaultWebsite} {"locale":"zh"}`,
-    'safe true',
-    'do chat:hide',
-    'on chat:opened',
-    'on chat:closed',
-    'on message:received',
-    `set user:email ${fixture.emails.supporta}`,
-    'set user:nickname Pay supporta',
-    'do chat:close',
-    'do chat:hide',
-  ]);
+  // The first 'do chat:hide' comes early; the identification and the closing pair follow once the widget
+  // is ready, so wait for the whole sequence instead of asserting it the moment the first hide appears.
+  await expect
+    .poll(() => calls(page), { timeout: 15000 })
+    .toEqual([
+      `loaded ${defaultWebsite} {"locale":"zh"}`,
+      'safe true',
+      'do chat:hide',
+      'on chat:opened',
+      'on chat:closed',
+      'on message:received',
+      `set user:email ${fixture.emails.supporta}`,
+      'set user:nickname Pay supporta',
+      'do chat:close',
+      'do chat:hide',
+    ]);
   await expect(page.locator('[data-testid="support-launcher"]')).toHaveAttribute(
     'data-status',
     'ready',
