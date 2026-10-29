@@ -18,8 +18,8 @@ Round 8 adds, on top of the stage:
                                       it is trusted by nobody. thumbprint/pfx need the secrets from the environment
                                       (scripts/windows/sign-files.ps1); signing needs Windows.
     --installer                       build AsterLink-Setup-x64-<version>.exe with Inno Setup (apps/windows/Packaging/setup.iss)
-    --release-dir <dir>               collect Setup.exe, SHA256SUMS, release-info.json, dependency inventory, third-party
-                                      notices, SOURCE.txt and the GPL source archives
+    --release-dir <dir>               the public folder: Setup.exe and its SHA256SUMS only. Beside it, <dir>-private (internal,
+                                      never published) keeps release-info.json, the inventory, notices, SOURCE.txt and the source archives
 
 The channel is always "internal": the service refuses a "release" manifest until it verifies Authenticode itself, and a
 test signature must never be mistaken for one. `--channel release` is therefore still refused.
@@ -40,6 +40,7 @@ WINDOWS = ROOT / 'apps' / 'windows'
 CORE = ROOT / 'native' / 'core'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_env  # noqa: E402
+import release_scrub  # noqa: E402
 import windows_release  # noqa: E402
 
 PROTOCOL_VERSION = 1
@@ -68,9 +69,13 @@ def publish_dotnet(stage):
     dotnet = shutil.which('dotnet')
     if not dotnet:
         sys.exit('dotnet SDK not found')
+    # Release publish without version-control information (handoff_app_standardization.md 8.2): no PDBs (their Source
+    # Link map names the repository, the engine submodule and both commits), and no "+<commit>" suffix on the product
+    # version Explorer shows. Neither changes the compiled code.
     for project, target in (('AsterLink.App', 'app'), ('AsterLink.Service', 'service')):
         run([dotnet, 'publish', str(WINDOWS / project), '-c', 'Release', '--self-contained', 'true',
-             '-p:RestoreLockedMode=true', '-o', str(stage / target)])
+             '-p:RestoreLockedMode=true', '-p:DebugType=none', '-p:DebugSymbols=false', '-p:EnableSourceLink=false',
+             '-p:IncludeSourceRevisionInInformationalVersion=false', '-o', str(stage / target)])
 
 
 def build_core(stage, ver):
@@ -79,8 +84,9 @@ def build_core(stage, ver):
     target = stage / 'core'
     target.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, GOOS='windows', GOARCH='amd64', GOAMD64='v1', CGO_ENABLED='0')
-    # The Core reports this version in hello; the service refuses a Core that differs from the manifest.
-    run(['go', 'build', '-trimpath', '-ldflags', '-X main.version=' + ver,
+    # The Core reports this version in hello; the service refuses a Core that differs from the manifest. Every Windows
+    # stage is a release build: no debug symbols, no VCS stamp and no engine revision (handoff_app_standardization.md 8.2).
+    run(['go', 'build', '-trimpath', '-buildvcs=false', '-ldflags', '-s -w -X main.version=' + ver,
          '-o', str(target / 'asterlink-core.exe'), './cmd/asterlink-core'], cwd=CORE, env=env)
 
 
@@ -151,20 +157,24 @@ def main():
 
 
 def release(args, stage, ver):
+    # The public folder is what customers get: the installer and its SHA256SUMS. Everything else (installed-files
+    # manifest copy, notices, inventory, source, release info) goes to the internal <folder>-private (handoff 8.2, D15).
     out = Path(args.release_dir).resolve() if args.release_dir else stage.parent / 'installer'
-    shutil.rmtree(out, ignore_errors=True)
-    out.mkdir(parents=True)
+    private = release_scrub.private_dir(out)
+    for folder in (out, private):
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True)
     setup = windows_release.build_installer(stage, out, ver, args.sign)
     commit, dirty = windows_release.source_state()
-    shutil.copy2(stage / 'manifest.json', out / 'manifest.json')
-    missing, modules = windows_release.write_notices(out)
+    shutil.copy2(stage / 'manifest.json', private / 'manifest.json')
+    missing, modules = windows_release.write_notices(private)
     inventory = windows_release.dependency_inventory(stage, ver, commit)
-    (out / 'dependencies.cdx.json').write_text(json.dumps(inventory, indent=2) + '\n')
+    (private / 'dependencies.cdx.json').write_text(json.dumps(inventory, indent=2) + '\n')
     archives = []
     mihomo_commit = 'not archived (--skip-source-archives)'
     if not args.skip_source_archives:
-        archives, mihomo_commit = windows_release.source_archives(out, commit)
-    windows_release.write_source_notice(out, commit, mihomo_commit, dirty)
+        archives, mihomo_commit = windows_release.source_archives(private, commit)
+    windows_release.write_source_notice(private, commit, mihomo_commit, dirty)
     info = {
         'format_version': 1, 'version': ver, 'channel': 'internal', 'installer': setup.name,
         'signing': args.sign,
@@ -173,15 +183,19 @@ def release(args, stage, ver):
         'source_commit': commit, 'source_dirty': dirty, 'mihomo_commit': mihomo_commit,
         'third_party_modules': modules, 'modules_without_license_file': missing,
         'source_archives': [a.name for a in archives],
+        'installer_sha256': windows_release.sha256(setup), 'core_revision_stamped': False,
         'open_gates': ['trusted code-signing certificate and time stamp', 'clean Windows 10 and 11 machines (R01/R02)',
                        'managed node with authoritative metering (round 7)', 'Wintun redistribution legal review', 'website operations'],
     }
-    (out / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
-    lines = windows_release.write_checksums(out)
-    problems = windows_release.verify_checksums(out)
-    if problems:
-        sys.exit('SHA256SUMS does not verify: ' + '; '.join(problems))
-    print('release folder: %s (%d files, signing=%s, trusted_signature=false)' % (out, len(lines), args.sign))
+    (private / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
+    release_scrub.write_private_note(private)
+    for folder in (out, private):
+        lines = windows_release.write_checksums(folder)
+        problems = windows_release.verify_checksums(folder)
+        if problems:
+            sys.exit('SHA256SUMS of %s does not verify: %s' % (folder.name, '; '.join(problems)))
+    print('release folder: %s (installer and SHA256SUMS only, signing=%s, trusted_signature=false)' % (out, args.sign))
+    print('internal, do not publish: %s (%d files)' % (private, len(lines)))
 
 
 if __name__ == '__main__':

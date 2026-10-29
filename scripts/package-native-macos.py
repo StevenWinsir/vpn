@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Turn a built AsterLink.app into a release folder: DMG, checksums, manifest, source archives.
+"""Turn a built AsterLink.app into release/ (the DMG and its SHA256SUMS, what customers get) and release-private/
+(licences, source notice and archives, release manifest: internal only, never published).
 
     python3 scripts/build-native-macos.py --configuration Release --internal --run-id R
     python3 scripts/package-native-macos.py --build-run-id R                 # internal ad-hoc DMG
@@ -28,6 +29,8 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+import release_scrub  # noqa: E402
 VOLUME = 'AsterLink'
 
 # The note on the disk image is read by customers: no internals, flags or document paths (handoff 5.8).
@@ -188,10 +191,14 @@ def main():
     if args.notarize and not profile:
         blocked('ASTERLINK_NOTARY_PROFILE (a notarytool keychain profile) is not set')
 
+    # Public: the DMG and a SHA256SUMS of it, nothing else. Private (never published): licences, source notice and
+    # archives, the release manifest (handoff_app_standardization.md 8.2, D15).
     out = build / 'release'
-    if out.exists():
+    private = release_scrub.private_dir(out)
+    if out.exists() or private.exists():
         sys.exit('Release folder exists; use a new build run id: ' + str(out))
     out.mkdir()
+    private.mkdir()
     version = built['app_version']
     suffix = '' if developer_id else '-INTERNAL-adhoc'
     dmg = out / ('AsterLink-%s%s-arm64.dmg' % (version, suffix))
@@ -201,16 +208,15 @@ def main():
 
     notary_id = ''
     if args.notarize:
-        notary_id = notarize(dmg, profile, out)
+        notary_id = notarize(dmg, profile, private)
 
+    (out / 'SHA256SUMS').write_text('%s  %s\n' % (sha256(dmg), dmg.name))
     files = [dmg]
     for name in ('THIRD_PARTY_LICENSES.txt', 'SOURCE.txt'):
-        shutil.copy2(app / 'Contents/Resources' / name, out / name)
-        files.append(out / name)
+        shutil.copy2(build / 'legal' / name, private / name)
+        files.append(private / name)
     if not args.skip_source_archives:
-        files += source_archives(out, built['source_commit'])
-
-    (out / 'SHA256SUMS').write_text(''.join('%s  %s\n' % (sha256(f), f.name) for f in files))
+        files += source_archives(private, built['source_commit'])
     release = {
         'name': 'AsterLink', 'version': version, 'distribution': distribution, 'channel': built['channel'],
         'dmg': dmg.name, 'dmg_sha256': sha256(dmg), 'dmg_bytes': dmg.stat().st_size,
@@ -227,8 +233,12 @@ def main():
             'Internal ad-hoc packages are not notarized and are rejected by Gatekeeper by design.' if not developer_id else 'See docs/macos-release.md section 10.',
         ],
     }
-    (out / 'release-manifest.json').write_text(json.dumps(release, indent=2) + '\n')
+    (private / 'release-manifest.json').write_text(json.dumps(release, indent=2) + '\n')
+    release_scrub.write_private_note(private)
+    # Integrity of the internal copy (the DMG is listed in the public SHA256SUMS and in the manifest).
+    (private / 'SHA256SUMS').write_text(''.join('%s  %s\n' % (sha256(f), f.name) for f in files[1:] + [private / 'release-manifest.json']))
     print('PACKAGED', out)
+    print('internal, do not publish:', private)
     print(json.dumps({k: release[k] for k in ('dmg', 'dmg_sha256', 'distribution', 'notarized')}, indent=2))
 
 

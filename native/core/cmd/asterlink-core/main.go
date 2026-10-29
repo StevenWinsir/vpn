@@ -22,10 +22,12 @@ import (
 // 12-second wait and the few seconds a system shutdown leaves a process.
 const signalShutdownBudget = 4 * time.Second
 
-// Set with -ldflags "-X main.version=... -X main.mihomoRevision=...".
+// Set with -ldflags "-X main.version=... -X main.mihomoRevision=...". Only development
+// builds stamp the revision; release builds leave it empty (handoff_app_standardization.md 8.2),
+// so no default may carry one: an overridden default string would still be linked in.
 var (
 	version        = "0.0.0-dev"
-	mihomoRevision = "70f0570405c3c2c47bb113b88db95006d239b346"
+	mihomoRevision = ""
 )
 
 func main() {

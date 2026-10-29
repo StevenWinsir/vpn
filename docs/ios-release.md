@@ -8,18 +8,25 @@
 python3 scripts/package-native-ios.py --channel internal
 ```
 
-输出到 `artifacts/native-ios/release/`（不提交，CI 会作为工件保存）：
+> 2026-10-28（handoff_app_standardization.md 第 5 轮，D15）：公开目录只放安装包与只列安装包的 `SHA256SUMS`；许可、源码说明、源码归档、组件清单与发布信息内容不变，移入同级的 `release-private/`（内部资料，不得发布）。发布构建的 Core 不再写入内核提交号。
+
+输出到 `artifacts/native-ios/release/`（公开目录，不提交，CI 工件 `ios-unsigned-ipa`）：
 
 | 文件 | 说明 |
 | --- | --- |
-| `AsterLink-<版本>-ios-unsigned.ipa` | 真机用 arm64、Release、已剥离符号、**未签名**；内含 App 与 Packet Tunnel 扩展 |
-| `THIRD_PARTY_LICENSES.txt` | 链进 Core 的 Go 模块许可（含 Mihomo GPL-3.0 全文） |
-| `dependencies.cdx.json` | CycloneDX 风格的依赖清单 |
-| `SOURCE.txt` + 两个 `.tar.gz` | GPL 对应源码：Mihomo 与本仓库的 `git archive`，附重建说明 |
-| `release-info.json` | 版本、构建号、包 ID、IPA 哈希、Core 与 Mihomo 身份、`signed:false`、`trusted_release:false`、未关闭的门槛 |
-| `SHA256SUMS` | 以上全部文件的哈希 |
+| `AsterLink-<版本>-ios-unsigned.ipa` | 真机用 arm64、Release、已剥离符号、**未签名**；内含 App 与 Packet Tunnel 扩展；Core 不含内核提交号 |
+| `SHA256SUMS` | 只列 IPA |
 
-`artifacts/native-ios/release-private/` 里是 dSYM（崩溃符号化用），**不要公开**。
+`artifacts/native-ios/release-private/`（**内部资料，不要公开**，CI 工件 `ios-release-private-INTERNAL`，不含源码归档）：
+
+| 文件 | 说明 |
+| --- | --- |
+| `THIRD_PARTY_LICENSES.txt` | 链进 Core 的 Go 模块许可 |
+| `dependencies.cdx.json` | CycloneDX 风格的依赖清单 |
+| `SOURCE.txt` + 两个 `.tar.gz` | 本仓库与内核的 `git archive`，附重建说明 |
+| `release-info.json` | 版本、构建号、包 ID、IPA 哈希、Core 身份（含内核提交号与 `revision_stamped:false`）、`signed:false`、`trusted_release:false`、未关闭的门槛 |
+| `dSYMs-<版本>.zip` | 崩溃符号化 |
+| `SHA256SUMS`、`README-内部资料.txt` | 内部目录自身的哈希与“不得发布”说明 |
 
 * 通道永远是 `internal`；`--channel release` 会被拒绝，直到 `release-info.json` 里的门槛全部关闭。
 * 用 `apps/ios/.env.release.example`（`APP_ENV=release`，只允许 HTTPS）。想换后端地址：复制一份改好，用 `--env-file` 指定。
@@ -36,14 +43,15 @@ python3 scripts/test-native-ios.py --suite release
 
 | 项 | 检查内容 |
 | --- | --- |
-| R03.files | 文件齐全、`SHA256SUMS` 能验过、IPA 与 `release-info.json` 一致、源码包可读、声明为未签名/internal/未受信 |
+| R03.files | 公开目录只有 IPA 与 `SHA256SUMS`；`release-private/` 齐全；两个 `SHA256SUMS` 能验过、IPA 与 `release-info.json` 一致、源码包可读、声明为未签名/internal/未受信 |
 | R03.structure | `Payload` 在前、扩展 ID 以 App ID 开头、最低 iOS 17.0、平台 iphoneos、仅 arm64、扩展是 packet-tunnel |
 | R03.config | 两个 Info.plist：`release`、只有公网 HTTPS、**无 ATS 例外**、无后台模式、声明了出口合规键 |
 | R03.entitlements | 两个 target 的 entitlements 恰好是 `packet-tunnel-provider`，二进制里没有 `get-task-allow` |
 | R03.no_debug_code | 二进制里没有 UI 夹具、调试页、外观覆盖、计费线束等调试符号 |
 | R03.privacy | 两个隐私清单存在、不追踪，并且二进制实际导入的“必须说明原因”的 API（文件时间戳、系统启动时间、UserDefaults、磁盘空间）全部已声明 |
 | R03.secrets | 扫描整个 IPA 的数据库地址、私钥、云密钥、令牌、口令赋值；并自检（植入后必须能扫出来） |
-| R03.core_identity | 两个二进制都内嵌与 `release-info.json` 相同的 Mihomo 提交，补丁已记录 |
+| R03.core_identity | 两个二进制都**不含**内核提交号（发布绑定），`release-info.json` 记录了提交号与补丁 |
+| R03.scrub / R03.scrub_self | 展开 IPA：无许可/源码/发布信息文件；文本与 plist 无内核标记；二进制命中不超出 `scripts/release-scrub-baseline.json`（D16）；无构建机路径；扫描器能发现植入样本 |
 | R03.licenses | Mihomo GPL 文本、所有模块有许可文件、源码包与 `SOURCE.txt` 提交一致 |
 | R03.profile_checks | 描述文件校验器：对的通过；包 ID 不符、没有 Network Extension、已过期的被拒；通配符可用 |
 | R03.resign | 用伪造的描述文件 + 临时 ad hoc 身份走完整个重签：换包 ID 前缀、描述文件里的 entitlements、先签扩展、`codesign --verify --deep --strict`、重新打包；没有描述文件的真实身份被拒 |

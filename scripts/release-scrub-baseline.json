@@ -1,0 +1,25 @@
+{
+  "format_version": 1,
+  "note": "Known binary residue accepted by D16 (handoff_app_standardization.md): the Go runtime's function table and module information keep package paths (github.com/metacubex/mihomo, sing-tun) inside the Core, and the clients decode the IPC field mihomo_revision. Paths are relative to the scanned tree (the .app, the DMG, the Windows stage, the IPA, the APK; '!' separates an archive from its entry). Only the markers listed may appear in the binaries named; text files may contain none, and the engine revision is allowed nowhere. Changing this file is a review decision.",
+  "platforms": {
+    "macos": {
+      "*Contents/Resources/asterlink-core": ["mihomo", "Mihomo", "MIHOMO", "clash", "Clash", "metacubex", "sing-tun"],
+      "*Contents/MacOS/AsterLink": ["mihomo"],
+      "*Contents/MacOS/AsterLinkHelper": ["mihomo"]
+    },
+    "windows": {
+      "core/asterlink-core.exe": ["mihomo", "Mihomo", "MIHOMO", "clash", "Clash", "metacubex", "sing-tun"],
+      "app/AsterLink.Shared.dll": ["mihomo", "Mihomo"],
+      "service/AsterLink.Shared.dll": ["mihomo", "Mihomo"],
+      "service/AsterLink.Service.dll": ["mihomo", "Mihomo"]
+    },
+    "ios": {
+      "*Payload/AsterLink.app/AsterLink": ["mihomo", "Mihomo", "MIHOMO", "clash", "Clash", "metacubex", "sing-tun"],
+      "*Payload/AsterLink.app/PlugIns/AsterLinkTunnel.appex/AsterLinkTunnel": ["mihomo", "Mihomo", "MIHOMO", "clash", "Clash", "metacubex", "sing-tun"]
+    },
+    "android": {
+      "*!lib/*/libgojni.so": ["mihomo", "Mihomo", "MIHOMO", "clash", "Clash", "metacubex", "sing-tun"],
+      "*!classes*.dex": ["mihomo"]
+    }
+  }
+}

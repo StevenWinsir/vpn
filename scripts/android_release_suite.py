@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ANDROID = ROOT / 'apps' / 'android'
 PACKAGE = 'com.asterlink.vpn'
 sys.path.insert(0, str(ROOT / 'scripts'))
+import release_scrub  # noqa: E402  (handoff_app_standardization.md 8: public folder and package scrub)
 import release_suite  # noqa: E402  (secret patterns and local .env values, shared with macOS)
 import windows_release  # noqa: E402  (SHA256SUMS verification)
 
@@ -87,13 +88,19 @@ def sh(cmd):
 
 def audit(ctx, out: Path):
     record = ctx.record
-    info_file = out / 'release-info.json'
+    private = release_scrub.private_dir(out)
+    info_file = private / 'release-info.json'
     if not info_file.is_file():
-        record('release.R03-folder', False, 'no release-info.json in %s: python3 scripts/package-native-android.py --channel internal' % out, status='BLOCKED')
+        record('release.R03-folder', False, 'no release-info.json in %s: python3 scripts/package-native-android.py --channel internal' % private, status='BLOCKED')
         return None
     info = json.loads(info_file.read_text())
-    problems = windows_release.verify_checksums(out)
-    record('release.R03-checksums', not problems, 'SHA256SUMS lists and matches every file (%d)' % len(list(out.iterdir())) if not problems else '; '.join(problems[:5]))
+    problems = windows_release.verify_checksums(out) + ['private: ' + p for p in windows_release.verify_checksums(private)]
+    record('release.R03-checksums', not problems, 'SHA256SUMS of both folders list and match every file (%d public, %d private)'
+           % (len(list(out.iterdir())), len(list(private.iterdir()))) if not problems else '; '.join(problems[:5]))
+    # Handoff_app_standardization.md 8.2: customers get the APKs and their checksum; everything else is internal.
+    problems = release_scrub.public_problems(out, [a['file'] for a in info['apks']])
+    record('release.R03-public', not problems, 'the public folder holds only %s and SHA256SUMS' % ', '.join(a['file'] for a in info['apks'])
+           if not problems else '; '.join(problems))
 
     honest = info.get('trusted_release') is False and info.get('channel') == 'internal' and bool(info.get('open_gates'))
     record('release.R03-not-trusted', honest, 'trusted_release=false, channel internal, %d open gates listed' % len(info.get('open_gates', [])))
@@ -124,7 +131,7 @@ def audit(ctx, out: Path):
         shutil.rmtree(probe, ignore_errors=True)
     record('release.R03-secret-self', detected, 'the secret scanner finds a planted connection string' if detected else 'the scanner MISSED a planted secret')
 
-    notices = (out / 'THIRD_PARTY_LICENSES.txt').read_text(encoding='utf-8') if (out / 'THIRD_PARTY_LICENSES.txt').is_file() else ''
+    notices = (private / 'THIRD_PARTY_LICENSES.txt').read_text(encoding='utf-8') if (private / 'THIRD_PARTY_LICENSES.txt').is_file() else ''
     maven = json.loads((ANDROID / 'app' / 'build' / 'outputs' / 'release-dependencies.json').read_text()) \
         if (ANDROID / 'app' / 'build' / 'outputs' / 'release-dependencies.json').is_file() else []
     gaps = [m for m in ('GNU GENERAL PUBLIC LICENSE', 'Apache License', 'github.com/metacubex/mihomo') if m not in notices]
@@ -132,18 +139,30 @@ def audit(ctx, out: Path):
     gaps += [m for m in maven if m not in notices][:5]
     if info.get('go_modules_without_license_file'):
         gaps.append('Go modules without a licence file: %s' % info['go_modules_without_license_file'])
-    for name in ('SOURCE.txt', 'dependencies.cdx.json'):
-        if not (out / name).is_file():
-            gaps.append(name + ' missing')
-    record('release.R03-licenses', not gaps, 'notices: Mihomo GPL-3.0, %d Go modules, %d Maven artifacts (Apache-2.0); SOURCE.txt, CycloneDX inventory'
-           % (info.get('third_party_go_modules', 0), len(maven)) if not gaps else 'missing: %s' % gaps)
-    archives = [a for a in info.get('source_archives', []) if (out / a).is_file()]
+    gaps += release_scrub.private_problems(private, ('SOURCE.txt', 'dependencies.cdx.json'))
+    record('release.R03-licenses', not gaps, '%s: notices (engine GPL-3.0, %d Go modules, %d Maven artifacts, Apache-2.0), SOURCE.txt, CycloneDX inventory'
+           % (private.name, info.get('third_party_go_modules', 0), len(maven)) if not gaps else 'missing: %s' % gaps)
+    archives = [a for a in info.get('source_archives', []) if (private / a).is_file()]
     record('release.R03-source-archives', len(archives) == 2, 'GPL corresponding source: %s' % ', '.join(archives) if archives
            else 'packaged with --skip-source-archives: not publishable', status=None if len(archives) == 2 else 'BLOCKED')
-    private = out.parent / (out.name + '-private')
     leaked = sorted(p.name for p in out.iterdir() if 'mapping' in p.name.lower() or p.suffix in ('.p12', '.jks', '.keystore', '.pass'))
     record('release.R03-private-kept-out', not leaked and any(private.glob('mapping-*.txt')),
            'the R8 mapping is in %s/, not in the published folder; no key file published' % private.name if not leaked else 'published: %s' % leaked)
+
+    # Inside every APK: no licence, source or release file, no engine marker in a text entry, binaries within the D16
+    # baseline, and a Core built without the engine revision.
+    rules = release_scrub.load_baseline('android')
+    revision = info['core'].get('mihomo_revision')
+    for apk_info in info['apks']:
+        found = release_scrub.scan_zip(out / apk_info['file'], revision, apk_info['file'] + '!')
+        leaks, residue = release_scrub.judge(found, rules)
+        leaks += ['private-only file: ' + n for n in release_scrub.named_leaks(found)]
+        if info['core'].get('revision_stamped') is not False:
+            leaks.append('the Core AAR was built with the engine revision')
+        record('release.R03-%s-scrub' % apk_info['abi'], not leaks, '%d entries clean; accepted residue: %s' % (len(found), release_scrub.summary(residue))
+               if not leaks else '; '.join(leaks[:8]))
+    failures = release_scrub.self_test('android')
+    record('release.R03-scrub-self', not failures, 'the audit catches every planted leak' if not failures else '; '.join(failures))
     return info
 
 

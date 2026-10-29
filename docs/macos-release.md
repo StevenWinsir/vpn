@@ -27,7 +27,9 @@ python3 scripts/test-native-macos.py --suite release --build-run-id my-run
 python3 scripts/test-native-macos.py --suite release
 ```
 
-产物在 `artifacts/native-macos/<run-id>/`（不入库）：`AsterLink.app`、`build-manifest.json`、`release/`（DMG、`SHA256SUMS`、`release-manifest.json`、`THIRD_PARTY_LICENSES.txt`、`SOURCE.txt`、两个源码归档）。
+产物在 `artifacts/native-macos/<run-id>/`（不入库）：`AsterLink.app`、`build-manifest.json`、`release/`（公开：只有 DMG 与只列 DMG 的 `SHA256SUMS`）、`release-private/`（**内部资料，不得发布**：`release-manifest.json`、`THIRD_PARTY_LICENSES.txt`、`SOURCE.txt`、两个源码归档、`SHA256SUMS`、`README-内部资料.txt`）。
+
+> 2026-10-28（handoff_app_standardization.md 第 5 轮，D15）：公开目录只放安装包与只列安装包的 `SHA256SUMS`；许可、源码说明、源码归档、组件清单与发布信息内容不变，移入同级的 `release-private/`（内部资料，不得发布）。发布构建的 Core 不再写入内核提交号。 App 包内不再有许可与源码文本，Info.plist 不再有 `AsterLinkMihomoRevision`；Release 构建的 App 与 Helper 在签名前 `strip -S -x`（去掉构建机路径）。
 
 `--suite release` 的用例（退出码：0 全过，1 有失败，3 有 BLOCKED）：
 
@@ -39,7 +41,10 @@ python3 scripts/test-native-macos.py --suite release
 | R-SECRET / R-SECRET-SELF | 包内无 `postgres://`、`DATABASE_URL`、完整 PEM 私钥，且不含本机 `.env` 中任何密钥类取值（只比对，不打印）；扫描器自带"植入样本必须被发现"的自检 |
 | R-PLIST | API/网站为 HTTPS、无 ATS 例外、最低 macOS 15、Helper 内嵌版本 = App 版本 |
 | R-MANIFEST | 构建清单、`worker-manifest.json`、DMG 哈希、`SHA256SUMS`、固定的 Mihomo 提交全部与实际字节一致 |
-| R-LICENSE | Mihomo GPL 文本、`SOURCE.txt`、两个源码归档存在且可读；列出无许可证文件的模块 |
+| R-PUBLIC | `release/` 只有 DMG 与只列 DMG 的 `SHA256SUMS` |
+| R-PRIVATE | `release-private/` 中许可文本、`SOURCE.txt`、两个源码归档、发布清单与内部说明齐全；列出无许可证文件的模块 |
+| R-UNSTAMPED | 发布构建的 Core `--version` 不带内核提交号 |
+| R-SCRUB-BUNDLE / R-SCRUB-SELF | App 包内无许可/源码/发布信息文件，文本与 plist 无内核标记，二进制命中不超出 `scripts/release-scrub-baseline.json`（D16），无构建机路径；扫描器能发现植入样本 |
 | R-DMG | `hdiutil verify`；只读挂载；`Applications` 链接；DMG 内 App 签名有效且与构建产物逐字节一致；含卸载脚本 |
 | R02-UNINSTALL | 卸载脚本在沙箱中：预演不改动；`--apply` 只删 AsterLink 资源，不动其他 VPN |
 | R01-GATEKEEPER / R01-STAPLE | 仅 Developer ID + 已公证包才可能 PASS；临时签名包报 **BLOCKED**（Gatekeeper 拒绝是预期结果） |
@@ -110,8 +115,7 @@ python3 scripts/test-native-macos.py --suite release
 
 ## 8. 许可证与对应源码（Mihomo 是 GPL-3.0）
 
-- App 包内 `Resources/THIRD_PARTY_LICENSES.txt`（由 `go list -deps` 生成，Mihomo 文本置顶）和 `SOURCE.txt`（仓库、提交、Mihomo 提交、重建命令）。
-- 发布目录随 DMG 提供 `asterlink-source-<提交>.tar.gz` 与 `mihomo-source-<提交>.tar.gz`（`git archive` 的已提交内容）。**发布时两者必须一起提供**。
+- 2026-10-28 起（D15）：`THIRD_PARTY_LICENSES.txt`（由 `go list -deps` 生成）、`SOURCE.txt`（仓库、提交、内核提交、重建命令）与 `asterlink-source-<提交>.tar.gz`、`mihomo-source-<提交>.tar.gz` 只在 `release-private/` 中，不进 App 包、不进 DMG、不进公开目录；由需求方据此编写纸质材料。
 - 100 个链接模块现在都有许可证文本（`build-manifest.json` 的 `licenses_without_file` 应为空）。曾缺的两个：`github.com/rasky/go-lzo` 的文件名是 `LICENSE.gpl`（收集脚本现在也认 `LICENSE*`/`COPYING*` 变体），其内容是 **GPL-2.0**，与 GPL-3.0 的 Mihomo 组合是否可行需法律确认；`github.com/metacubex/chacha` v0.1.5 的模块包里没有许可证（上游 2025-08-12 才补上 MIT），用 `scripts/third_party_licenses/` 里注明来源的上游副本。
 - 把闭源/收费 App 与 GPL 内核放在同一安装包里是否合规，**取决于进程拆分之外的法律判断**，本文不给结论，发布前请让法务/律师确认。
 

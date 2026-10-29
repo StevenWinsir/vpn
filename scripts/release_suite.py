@@ -15,6 +15,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import release_scrub  # noqa: E402
+
 SECRET_PATTERNS = (b'postgres://', b'postgresql://', b'DATABASE_URL', b'DB_PASSWORD',
                    b'-----BEGIN RSA PRIVATE KEY-----\n', b'-----BEGIN OPENSSH PRIVATE KEY-----\n',
                    b'-----BEGIN EC PRIVATE KEY-----\n', b'-----BEGIN PRIVATE KEY-----\n')
@@ -80,9 +83,10 @@ def run(ctx, run_id, build_run_id):
     base = root / 'artifacts/native-macos' / build_id
     app = base / 'AsterLink.app'
     release = base / 'release'
+    private = release_scrub.private_dir(release)
     try:
         built = json.loads((base / 'build-manifest.json').read_text())
-        manifest = json.loads((release / 'release-manifest.json').read_text())
+        manifest = json.loads((private / 'release-manifest.json').read_text())
     except (OSError, ValueError):
         record('R-BUILD', 'build and release manifests exist', 'missing under ' + str(base), 'fail')
         return
@@ -146,10 +150,12 @@ def run(ctx, run_id, build_run_id):
         problems.append('system menus not declared Chinese')
     if info.get('AsterLinkChannel') != built['channel'] or (developer_id and not info.get('AsterLinkTeamID')):
         problems.append('channel/team')
+    if any('mihomo' in key.lower() or 'revision' in key.lower() for key in info):
+        problems.append('engine revision key in Info.plist')
     helper_info = sh(['launchctl', 'plist', '__TEXT,__info_plist', str(binaries['AsterLinkHelper'][0])]).stdout
     if '"CFBundleShortVersionString" = "%s"' % built['app_version'] not in helper_info:
         problems.append('Helper embedded version != app version')
-    record('R-PLIST', 'https-only endpoints, no ATS exceptions, macOS 15, Chinese system menus, Helper/App versions equal', '; '.join(problems) or 'ok',
+    record('R-PLIST', 'https-only endpoints, no ATS exceptions, macOS 15, Chinese system menus, Helper/App versions equal, no engine revision key', '; '.join(problems) or 'ok',
            'fail' if problems else 'pass')
 
     # The app icon is part of the sealed bundle: the plist names it, it is a valid ICNS and it reaches 1024 px.
@@ -185,29 +191,54 @@ def run(ctx, run_id, build_run_id):
         problems.append('worker-manifest')
     if manifest['dmg_sha256'] != sha256_file(release / manifest['dmg']):
         problems.append('dmg hash')
-    if sh(['shasum', '-a', '256', '-c', 'SHA256SUMS'], cwd=release).returncode != 0:
-        problems.append('SHA256SUMS')
+    for folder in (release, private):
+        if sh(['shasum', '-a', '256', '-c', 'SHA256SUMS'], cwd=folder).returncode != 0:
+            problems.append('SHA256SUMS of ' + folder.name)
     pin = sh(['git', 'ls-files', '-s', 'native/third_party/Clash.Meta']).stdout.split()
     if not pin or manifest['mihomo_revision'] != pin[1]:
         problems.append('mihomo revision != pinned submodule')
-    record('R-MANIFEST', 'manifests, worker hash, SHA256SUMS and the pinned Mihomo revision match the bytes shipped',
+    record('R-MANIFEST', 'manifests, worker hash, both SHA256SUMS and the pinned engine revision (kept in release-private) match the bytes shipped',
            '; '.join(problems) or 'consistent', 'fail' if problems else 'pass')
 
-    problems = []
-    licenses = (release / 'THIRD_PARTY_LICENSES.txt').read_text(errors='replace')
+    # Handoff_app_standardization.md 8.2: the public folder is the DMG and its checksum; everything else is internal.
+    problems = release_scrub.public_problems(release, [manifest['dmg']])
+    record('R-PUBLIC', 'release/ holds only the DMG and a SHA256SUMS that lists only it',
+           '; '.join(problems) or 'only %s and SHA256SUMS' % manifest['dmg'], 'fail' if problems else 'pass')
+
+    problems = release_scrub.private_problems(private, ('THIRD_PARTY_LICENSES.txt', 'SOURCE.txt', 'release-manifest.json'))
+    licenses = (private / 'THIRD_PARTY_LICENSES.txt').read_text(errors='replace') if (private / 'THIRD_PARTY_LICENSES.txt').is_file() else ''
     if 'GNU GENERAL PUBLIC LICENSE' not in licenses or 'metacubex/mihomo' not in licenses:
-        problems.append('Mihomo GPL text missing')
-    source_text = (release / 'SOURCE.txt').read_text()
+        problems.append('engine licence text missing')
+    source_text = (private / 'SOURCE.txt').read_text() if (private / 'SOURCE.txt').is_file() else ''
     if built['source_commit'] not in source_text or built['mihomo_revision'] not in source_text:
         problems.append('SOURCE.txt commits')
-    archives = sorted(release.glob('*-source-*.tar.gz'))
+    archives = sorted(private.glob('*-source-*.tar.gz'))
     if len(archives) != 2:
         problems.append('source archives: %d' % len(archives))
     problems += [a.name + ' unreadable' for a in archives if sh(['tar', '-tzf', str(a)]).returncode != 0]
     missing = built.get('licenses_without_file', [])
-    record('R-LICENSE', 'GPL text, SOURCE.txt and both source archives ship; modules without a license file are listed',
+    record('R-PRIVATE', 'release-private/ keeps the licence texts, SOURCE.txt, both source archives, the release manifest and the internal note',
            '; '.join(problems) or 'ok; %d module(s) without a license file: %s' % (len(missing), ','.join(missing) or '-'),
            'fail' if problems else 'pass')
+
+    # The shipped Core answers with an empty engine revision; Debug builds still stamp it.
+    version = sh([str(binaries['asterlink-core'][0]), '--version']).stdout.split()
+    stamped = built.get('core_revision_stamped', True)
+    record('R-UNSTAMPED', 'the optimized Core reports no engine revision (Debug builds keep it)',
+           'asterlink-core --version: %s' % ' '.join(version), 'pass' if version == [built['app_version']] and not stamped else 'fail')
+
+    # Nothing inside the bundle: no private-only file, no marker in any text file or plist, binaries within the D16 baseline.
+    rules = release_scrub.load_baseline('macos')
+    revision = built['mihomo_revision']
+    found = release_scrub.scan_tree(app, revision, 'AsterLink.app/')
+    problems, residue = release_scrub.judge(found, rules)
+    problems += ['private-only file: ' + n for n in release_scrub.named_leaks(found)]
+    record('R-SCRUB-BUNDLE', 'the app bundle carries no licence, source notice, release info or engine revision; binary residue within the D16 baseline',
+           '; '.join(problems[:8]) or '%d files clean; accepted residue: %s' % (len(found), release_scrub.summary(residue)), 'fail' if problems else 'pass')
+
+    failures = release_scrub.self_test('macos')
+    record('R-SCRUB-SELF', 'the scrub audit catches a planted licence file, plist key, text and binary marker and the engine revision',
+           '; '.join(failures) or 'every plant detected', 'fail' if failures else 'pass')
 
     dmg = release / manifest['dmg']
     problems = [] if sh(['hdiutil', 'verify', str(dmg)]).returncode == 0 else ['hdiutil verify']
@@ -235,10 +266,17 @@ def run(ctx, run_id, build_run_id):
             readme = (mount / '安装说明.txt').read_text(encoding='utf-8') if (mount / '安装说明.txt').is_file() else ''
             if not readme or any(word in readme for word in ('特权服务', '--apply', 'docs/', '预演', 'Helper')):
                 problems.append('install note missing or not customer copy')
+            found = release_scrub.scan_tree(mount, revision)
+            leaks, _ = release_scrub.judge(found, rules)
+            leaks += ['private-only file: ' + n for n in release_scrub.named_leaks(found)]
+            uninstaller = (mount / '卸载 AsterLink.command').read_text(encoding='utf-8') if (mount / '卸载 AsterLink.command').is_file() else ''
+            if any(word in uninstaller for word in ('handoff', 'native/', 'docs/', 'Test hook', 'worker', 'privileged')):
+                leaks.append('developer notes in the uninstaller')
+            problems += ['scrub: ' + leak for leak in leaks[:6]]
         finally:
             sh(['hdiutil', 'detach', str(mount), '-force'])
             shutil.rmtree(mount, ignore_errors=True)
-    record('R-DMG', 'DMG verifies, mounts read-only, carries the byte-identical signed app, Applications link, uninstaller, volume icon and customer install note',
+    record('R-DMG', 'DMG verifies, mounts read-only, carries the byte-identical signed app, Applications link, uninstaller, volume icon and customer install note; nothing in it carries licence, engine or developer notes',
            '; '.join(problems) or 'ok', 'fail' if problems else 'pass')
 
     sandbox = Path(tempfile.mkdtemp(prefix='asterlink-uninstall-'))

@@ -95,10 +95,17 @@ jobs:
       - name: Release audit (Gatekeeper and staple must PASS, not BLOCKED)
         run: |
           python3 scripts/test-native-macos.py --suite release --build-run-id release --run-id release
-      - uses: actions/upload-artifact@v4
+      - name: Retain the public release (the DMG and its SHA256SUMS - the only files to publish)
+        uses: actions/upload-artifact@v4
         with:
           name: asterlink-${{ inputs.app_version }}
           retention-days: 30
+          path: artifacts/native-macos/release/release/*
+      - name: Retain the INTERNAL release-private folder and the audit (never publish)
+        uses: actions/upload-artifact@v4
+        with:
+          name: asterlink-${{ inputs.app_version }}-release-private-INTERNAL
+          retention-days: 30
           path: |
-            artifacts/native-macos/release/release/*
+            artifacts/native-macos/release/release-private/
             artifacts/native-macos/release-report-release/test-report.json

@@ -30,10 +30,12 @@ import (
 	"asterlink/core/internal/service"
 )
 
-// Set with -ldflags "-X asterlink/core/mobile.version=... -X asterlink/core/mobile.mihomoRevision=...".
+// Set with -ldflags "-X asterlink/core/mobile.version=... -X asterlink/core/mobile.mihomoRevision=...". Only development
+// builds stamp the revision; release builds leave it empty (handoff_app_standardization.md 8.2),
+// so no default may carry one: an overridden default string would still be linked in.
 var (
 	version        = "0.0.0-dev"
-	mihomoRevision = "70f0570405c3c2c47bb113b88db95006d239b346"
+	mihomoRevision = ""
 )
 
 // CodeNotStarted answers every session command sent before Start or after Stop. hello

@@ -106,11 +106,20 @@ jobs:
           python3 scripts/test-native-ios.py --suite release
           code=$?
           test $code -eq 0 -o $code -eq 3
-      - name: Retain the unsigned IPA and its release folder
+      - name: Retain the unsigned IPA (public folder - the IPA and its SHA256SUMS only)
         uses: actions/upload-artifact@v4
         with:
           name: ios-unsigned-ipa
           path: artifacts/native-ios/release/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Retain the INTERNAL release-private folder (licences, source notice, inventory, release info, dSYMs; never publish)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release-private-INTERNAL
+          path: |
+            artifacts/native-ios/release-private/
+            !artifacts/native-ios/release-private/*-source-*.tar.gz
           retention-days: 30
           if-no-files-found: error
       - name: Retain reports

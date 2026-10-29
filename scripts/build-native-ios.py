@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_env  # noqa: E402
 import prepare_mihomo  # noqa: E402
+import release_scrub  # noqa: E402
 
 IOS = ROOT / 'apps/ios'
 CORE = ROOT / 'native/core'
@@ -91,7 +92,9 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def bind(app_version: str, harness: bool = False) -> dict:
+def bind(app_version: str, harness: bool = False, release: bool = False) -> dict:
+    """release=True: the framework the IPA ships. It carries no engine revision (hello answers an empty
+    mihomo_revision); development and harness frameworks keep it (handoff_app_standardization.md 8.2)."""
     framework = HARNESS_FRAMEWORK if harness else FRAMEWORK
     slices = ('ios-arm64_x86_64-simulator',) if harness else SLICES
     patch = prepare_mihomo.prepare()
@@ -101,12 +104,17 @@ def bind(app_version: str, harness: bool = False) -> dict:
     if framework.exists():
         shutil.rmtree(framework)
     framework.parent.mkdir(parents=True, exist_ok=True)
-    ldflags = '-s -w -X asterlink/core/mobile.version=%s -X asterlink/core/mobile.mihomoRevision=%s' % (app_version, revision)
+    ldflags = '-s -w -X asterlink/core/mobile.version=%s' % app_version
+    if not release:
+        ldflags += ' -X asterlink/core/mobile.mihomoRevision=%s' % revision
     bind_lock = LOCK['x_mobile']['ios_bind']
-    env = dict(os.environ, PATH=str(TOOLS) + os.pathsep + os.environ.get('PATH', ''))
+    # No VCS stamp, and the checkout is seen through a neutral path so the module information carries no build
+    # machine directory (-trimpath covers the file names only).
+    core_dir, neutral = release_scrub.neutral_checkout()
+    env = dict(os.environ, PATH=str(TOOLS) + os.pathsep + os.environ.get('PATH', ''), GOFLAGS='-buildvcs=false', **neutral)
     run([TOOLS / 'gomobile', 'bind', '-target=' + ('iossimulator' if harness else bind_lock['targets']), '-iosversion', bind_lock['iosversion']]
         + (['-tags', 'asterlink_harness'] if harness else [])
-        + ['-trimpath', '-ldflags', ldflags, '-o', framework, './mobile'], cwd=CORE, env=env)
+        + ['-trimpath', '-ldflags', ldflags, '-o', framework, './mobile'], cwd=core_dir, env=env)
     found = sorted(p.name for p in framework.iterdir() if p.is_dir())
     if found != sorted(slices):
         raise RuntimeError('unexpected xcframework slices %s, want %s' % (found, sorted(slices)))
@@ -116,6 +124,7 @@ def bind(app_version: str, harness: bool = False) -> dict:
         'mihomo_patch': patch,
         'x_mobile': LOCK['x_mobile']['version'],
         'harness': harness,
+        'revision_stamped': not release,
         'slices': {name: {'sha256': sha256(framework / name / 'AsterCore.framework/AsterCore'),
                           'bytes': (framework / name / 'AsterCore.framework/AsterCore').stat().st_size} for name in slices},
     }
@@ -143,7 +152,9 @@ def main():
         return
     if args.target in ('xcconfig', 'app'):
         write_xcconfig()
-    if args.target == 'xcframework' or (args.target == 'app' and not (args.reuse_framework and (FRAMEWORK.parent / 'core-build.json').exists())):
+    record = FRAMEWORK.parent / 'core-build.json'
+    reusable = record.exists() and json.loads(record.read_text()).get('revision_stamped', True)
+    if args.target == 'xcframework' or (args.target == 'app' and not (args.reuse_framework and reusable)):
         bind(args.app_version)
     if args.target == 'app':
         build_app(args.configuration)

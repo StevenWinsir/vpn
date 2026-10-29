@@ -181,7 +181,7 @@ def write_source_notice(out, commit, mihomo_commit, dirty):
         'To rebuild: unpack both, place the mihomo tree at native/third_party/Clash.Meta, then at repository root run\n'
         '  python3 scripts/prepare_mihomo.py\n'
         'Then in native/core run\n'
-        '  GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=<version>" ./cmd/asterlink-core\n'
+        '  GOOS=windows GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=<version>" ./cmd/asterlink-core\n'
         'The Go toolchain and dependency versions are pinned in apps/windows/toolchain.lock.json and native/core/go.sum.\n'
         % (commit, ' (WORKING TREE HAD UNCOMMITTED CHANGES)' if dirty else '', mihomo_commit, patch['id'], patch['patch_sha256']), encoding='utf-8')
 

@@ -1,20 +1,14 @@
 #!/bin/bash
-# Remove AsterLink (and only AsterLink) from this Mac.
+# 卸载 AsterLink：只删除 AsterLink 自己的应用、设置与后台服务，不影响其他应用。
 #
-#   ./uninstall-asterlink.sh            # dry run: prints what would be removed
-#   ./uninstall-asterlink.sh --apply    # removes it; asks for sudo only for the system-level items
+#   直接打开：只列出将要删除的内容，不做任何改动
+#   加 --apply 运行：执行卸载（删除系统级内容时需要输入本机登录密码）
 #
-# Never touches other VPNs, routes, DNS, or network settings; the only network change it can
-# make is undoing AsterLink's own system DNS capture left by a killed worker
-# (dns-override.json, see native/core/internal/engine/sysdns.go). Quit AsterLink first (the app's
-# 账户 page -> 后台服务 -> 故障排查 -> "移除后台服务" is the cleanest way to unregister the privileged service).
-# Everything it prints is user-facing copy (handoff_app_standardization.md 5.8); the flags and the
-# behaviour are unchanged.
+# 卸载前请先从菜单栏退出 AsterLink。
 set -euo pipefail
 
 APPLY=0
 [[ "${1:-}" == "--apply" ]] && APPLY=1
-# Test hook: prefix for the absolute system paths so the script can be exercised in a sandbox.
 SYSROOT="${ASTERLINK_UNINSTALL_ROOT:-}"
 APP_ID="com.asterlink.vpn"
 HELPER_LABEL="com.asterlink.vpn.helper"
@@ -60,7 +54,6 @@ if [[ -z "$SYSROOT" ]] && launchctl print "system/${HELPER_LABEL}" >/dev/null 2>
   sudo launchctl bootout "system/${HELPER_LABEL}" || echo "  未能移除后台服务。请在“系统设置 › 通用 › 登录项与扩展”中关闭 AsterLink。" >&2
 fi
 
-# Before the record and the binary that understands it are deleted.
 if [[ -z "$SYSROOT" && -e "$dns_record" ]]; then
   echo "正在恢复系统 DNS 设置（需要输入本机登录密码）"
   if [[ -x "$core_bin" ]]; then

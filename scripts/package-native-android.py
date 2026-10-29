@@ -19,15 +19,18 @@ The release run
      ASTERLINK_ANDROID_KEY_ALIAS or, by default, the file and Keychain entry above; the password only
      travels in the environment of apksigner, never on a command line,
   3. verifies the signature, the certificate, zipalign -P 16 and the stored, 16 KB aligned .so again,
-  4. writes artifacts/native-android/release/ (or --release-dir):
+  4. writes artifacts/native-android/release/ (or --release-dir), what customers get:
        AsterLink-<version>-android-<abi>.apk   the files the website offers
+       SHA256SUMS                              of the APKs only
+     and, beside it in release-private/ (internal, NEVER published; handoff_app_standardization.md 8.2):
        THIRD_PARTY_LICENSES.txt                Go modules of libgojni.so per ABI + AndroidX/Kotlin (Apache-2.0)
-       dependencies.cdx.json                   CycloneDX-shaped inventory (Go modules, Maven artifacts, Mihomo)
-       SOURCE.txt + two source archives        the GPL corresponding source (Mihomo + this repository)
+       dependencies.cdx.json                   CycloneDX-shaped inventory (Go modules, Maven artifacts, engine)
+       SOURCE.txt + two source archives        the corresponding source (engine + this repository)
        release-info.json                       version, versionCode, per-APK hashes, certificate, open gates
-       SHA256SUMS                              of every file above
-     and, beside it in release-private/ (NOT for publishing): the R8 mapping.txt for crash stack traces
-     and website-env.txt, the lines for frontend/.env that make the website's /download page offer the APK.
+       mapping-<version>.txt                   the R8 mapping for crash stack traces
+       website-env.txt                         the lines for frontend/.env that make /download offer the APK
+       SHA256SUMS, README-内部资料.txt
+     The release Core AAR carries no engine revision.
 
 --key ephemeral signs with a throwaway key made in a temporary directory (CI and the release
 rehearsal); release-info then says so. The channel is always "internal" and trusted_release stays
@@ -54,6 +57,7 @@ ANDROID = ROOT / 'apps' / 'android'
 CORE = ROOT / 'native' / 'core'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_env  # noqa: E402
+import release_scrub  # noqa: E402
 import windows_release  # noqa: E402  (platform-neutral helpers: source archives, SHA256SUMS)
 
 EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 3
@@ -361,7 +365,7 @@ def package(args) -> int:
             raise RuntimeError('release-build-report.json describes %s %s, not %s %s; build again' % (report['app_version'], sorted(report['apks']), version, args.abi))
 
         out = Path(args.release_dir).resolve() if args.release_dir else ROOT / 'artifacts' / 'native-android' / 'release'
-        private = out.parent / (out.name + '-private')
+        private = release_scrub.private_dir(out)
         for directory in (out, private):
             shutil.rmtree(directory, ignore_errors=True)
             directory.mkdir(parents=True)
@@ -391,15 +395,16 @@ def package(args) -> int:
             print('signed %s (%.1f MiB) v2=%s v3=%s cert %s' % (signed.name, signed.stat().st_size / 2 ** 20, verdict['v2'], verdict['v3'], key.certificate[:16]))
 
         maven = json.loads((ANDROID / 'app' / 'build' / 'outputs' / 'release-dependencies.json').read_text())
-        missing, modules, unknown = write_notices(out, args.abi, maven)
+        # Notices, inventory, source and release info: same content, internal folder only (handoff 8.2, D15).
+        missing, modules, unknown = write_notices(private, args.abi, maven)
         if unknown:
             raise RuntimeError('Maven artifacts with an unverified license (add the group to MAVEN_LICENSES after checking it): %s' % unknown)
         commit, dirty = windows_release.source_state()
         archives, mihomo_commit = ([], report['core']['mihomo_revision'])
         if not args.skip_source_archives:
-            archives, mihomo_commit = windows_release.source_archives(out, commit)
-        write_inventory(out, version, commit, args.abi, maven, mihomo_commit)
-        write_source_notice(out, commit, mihomo_commit, dirty, version)
+            archives, mihomo_commit = windows_release.source_archives(private, commit)
+        write_inventory(private, version, commit, args.abi, maven, mihomo_commit)
+        write_source_notice(private, commit, mihomo_commit, dirty, version)
         info = {
             'format_version': 1, 'product': 'AsterLink for Android', 'package': PACKAGE, 'version': version,
             'version_code': apks[0]['version_code'], 'channel': 'internal', 'api_base': env_values['API_BASE_URL'],
@@ -410,17 +415,13 @@ def package(args) -> int:
                         'self_signed': True, 'note': 'Android trusts the key, not a certificate authority: every later version must use this same key.'},
             # Only true when every gate below is closed; an ephemeral key never makes a trusted release.
             'trusted_release': False,
-            'core': {k: report['core'].get(k) for k in ('core_version', 'mihomo_revision', 'go', 'x_mobile', 'ndk', 'androidapi')},
+            'core': {k: report['core'].get(k) for k in ('core_version', 'mihomo_revision', 'revision_stamped', 'go', 'x_mobile', 'ndk', 'androidapi')},
             'mihomo_patch': report['core'].get('mihomo_patch'),
             'source_commit': commit, 'source_dirty': dirty, 'mihomo_commit': mihomo_commit,
             'third_party_go_modules': modules, 'go_modules_without_license_file': missing, 'maven_artifacts': len(maven),
             'source_archives': [a.name for a in archives], 'open_gates': OPEN_GATES,
         }
-        (out / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
-        windows_release.write_checksums(out)
-        problems = windows_release.verify_checksums(out)
-        if problems:
-            raise RuntimeError('SHA256SUMS does not verify: ' + '; '.join(problems))
+        (private / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
         mapping = ANDROID / 'app' / 'build' / 'outputs' / 'mapping' / 'release' / 'mapping.txt'
         if mapping.is_file():
             shutil.copy2(mapping, private / ('mapping-%s.txt' % version))
@@ -429,6 +430,12 @@ def package(args) -> int:
                    'ANDROID_APK_URL=%s/downloads/%s\nANDROID_APK_VERSION=%s\nANDROID_APK_SHA256=%s\nANDROID_APK_SIZE_BYTES=%d\nANDROID_CERT_SHA256=%s\n'
                    % (env_values['WEBSITE_BASE_URL'].rstrip('/'), main_apk['file'], version, main_apk['sha256'], main_apk['bytes'], key.certificate))
         (private / 'website-env.txt').write_text(website)
+        release_scrub.write_private_note(private)
+        for folder in (out, private):
+            windows_release.write_checksums(folder)
+            problems = windows_release.verify_checksums(folder)
+            if problems:
+                raise RuntimeError('SHA256SUMS of %s does not verify: %s' % (folder.name, '; '.join(problems)))
         print('\nrelease folder: %s (%d APK, signing=%s, trusted_release=false)\nprivate (do not publish): %s\n\n%s'
               % (out, len(apks), key.mode, private, website))
         return EXIT_OK

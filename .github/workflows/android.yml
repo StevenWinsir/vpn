@@ -33,6 +33,8 @@ on:
       - 'scripts/build-native-android.py'
       - 'scripts/package-native-android.py'
       - 'scripts/android_release_suite.py'
+      - 'scripts/release_scrub.py'
+      - 'scripts/release-scrub-baseline.json'
       - 'scripts/collect_licenses.py'
       - 'scripts/third_party_licenses/**'
       - 'scripts/test-native-android.py'
@@ -53,6 +55,8 @@ on:
       - 'scripts/build-native-android.py'
       - 'scripts/package-native-android.py'
       - 'scripts/android_release_suite.py'
+      - 'scripts/release_scrub.py'
+      - 'scripts/release-scrub-baseline.json'
       - 'scripts/collect_licenses.py'
       - 'scripts/third_party_licenses/**'
       - 'scripts/test-native-android.py'
@@ -404,15 +408,23 @@ jobs:
         run: echo "$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)" >> "$GITHUB_PATH"
       - name: Release suite (R03 audit, R01 install/start, R01/R02 rehearsal through the UI)
         run: python3 scripts/test-native-android.py --suite release --allow-network-changes --avds api36 --abi x86_64 --expect-blocked release.R03-release-key,release.R04-device --report artifacts/native-android/release-suite/report.json
-      - name: Retain release evidence (report, release-info, notices; the throwaway-signed APKs are not kept)
+      - name: Retain release evidence (report and the public SHA256SUMS; the throwaway-signed APKs are not kept)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-release-evidence
           path: |
             artifacts/native-android/release-suite/
-            artifacts/native-android/release/release-info.json
             artifacts/native-android/release/SHA256SUMS
-            artifacts/native-android/release/THIRD_PARTY_LICENSES.txt
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Retain the INTERNAL release-private folder (licences, source notice, inventory, release info, R8 mapping; never publish)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-private-INTERNAL
+          path: |
+            artifacts/native-android/release-private/
+            !artifacts/native-android/release-private/*-source-*.tar.gz
           retention-days: 14
           if-no-files-found: ignore

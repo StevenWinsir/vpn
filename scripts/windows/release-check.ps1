@@ -19,10 +19,14 @@ param(
     [Parameter(Mandatory)][string]$ReleaseDir,
     [Parameter(Mandatory)][ValidateSet('none', 'test', 'release')][string]$ExpectSignature,
     [Parameter(Mandatory)][string]$Report,
+    # The internal folder beside the public one (handoff_app_standardization.md 8.2): release-info, manifest, notices, source.
+    [string]$PrivateDir,
     [switch]$Install
 )
 $ErrorActionPreference = 'Stop'
 $ReleaseDir = (Resolve-Path $ReleaseDir).Path
+if (-not $PrivateDir) { $PrivateDir = "$ReleaseDir-private" }
+$PrivateDir = (Resolve-Path $PrivateDir).Path
 $Cases = New-Object System.Collections.Generic.List[object]
 $Work = Join-Path ([IO.Path]::GetTempPath()) ('asterlink-release-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory $Work | Out-Null
@@ -44,40 +48,52 @@ function Wait-Until([scriptblock]$Condition, [int]$Seconds) {
     return [bool](& $Condition)
 }
 
-$info = Get-Content (Join-Path $ReleaseDir 'release-info.json') -Raw | ConvertFrom-Json
+$info = Get-Content (Join-Path $PrivateDir 'release-info.json') -Raw | ConvertFrom-Json
 $Version = $info.version
 $Setup = Join-Path $ReleaseDir $info.installer
 
 # ---- Part 1: the files ------------------------------------------------------------------------------------------
-$sumLines = Get-Content (Join-Path $ReleaseDir 'SHA256SUMS')
-$sumProblems = @()
-$listed = @()
-foreach ($line in $sumLines) {
-    if ($line -notmatch '^([0-9a-f]{64}) \*(.+)$') { $sumProblems += "malformed: $line"; continue }
-    $listed += $Matches[2]
-    $file = Join-Path $ReleaseDir $Matches[2]
-    if (-not (Test-Path $file)) { $sumProblems += "missing: $($Matches[2])"; continue }
-    if ((Get-FileHash $file -Algorithm SHA256).Hash.ToLower() -ne $Matches[1]) { $sumProblems += "mismatch: $($Matches[2])" }
+function Check-Sums([string]$Dir) {
+    $problems = @()
+    $listed = @()
+    foreach ($line in Get-Content (Join-Path $Dir 'SHA256SUMS')) {
+        if ($line -notmatch '^([0-9a-f]{64}) \*(.+)$') { $problems += "malformed: $line"; continue }
+        $listed += $Matches[2]
+        $file = Join-Path $Dir $Matches[2]
+        if (-not (Test-Path $file)) { $problems += "missing: $($Matches[2])"; continue }
+        if ((Get-FileHash $file -Algorithm SHA256).Hash.ToLower() -ne $Matches[1]) { $problems += "mismatch: $($Matches[2])" }
+    }
+    foreach ($f in Get-ChildItem $Dir -File) { if ($f.Name -ne 'SHA256SUMS' -and $listed -notcontains $f.Name) { $problems += "not listed: $($f.Name)" } }
+    return @{ Listed = $listed; Problems = $problems }
 }
-foreach ($f in Get-ChildItem $ReleaseDir -File) { if ($f.Name -ne 'SHA256SUMS' -and $listed -notcontains $f.Name) { $sumProblems += "not listed: $($f.Name)" } }
-Case 'R04-sha256sums' ($sumProblems.Count -eq 0) ("{0} files listed; problems: {1}" -f $listed.Count, ($sumProblems -join '; ')) $null
+$publicSums = Check-Sums $ReleaseDir
+$privateSums = Check-Sums $PrivateDir
+$sumProblems = @($publicSums.Problems) + @($privateSums.Problems | ForEach-Object { "private: $_" })
+Case 'R04-sha256sums' ($sumProblems.Count -eq 0) ("public {0} / private {1} files listed; problems: {2}" -f @($publicSums.Listed).Count, @($privateSums.Listed).Count, ($sumProblems -join '; ')) $null
 
-$required = @('release-info.json', 'manifest.json', 'dependencies.cdx.json', 'THIRD_PARTY_LICENSES.txt', 'SOURCE.txt', $info.installer)
-$absent = @($required | Where-Object { -not (Test-Path (Join-Path $ReleaseDir $_)) })
-Case 'R04-required-files' ($absent.Count -eq 0) ("absent: " + ($absent -join ', ')) $null
-Case 'R04-source-archives' (@($info.source_archives).Count -eq 2 -or $info.mihomo_commit -like 'not archived*') ("archives: " + (@($info.source_archives) -join ', ') + "; Mihomo $($info.mihomo_commit)") $null
+# Customers get the installer and its checksum, nothing else; the internal material stays complete beside it.
+$publicFiles = @(Get-ChildItem $ReleaseDir -Force | ForEach-Object { $_.Name } | Sort-Object)
+$publicOk = ($publicFiles -join '|') -eq ((@($info.installer, 'SHA256SUMS') | Sort-Object) -join '|') -and (@($publicSums.Listed) -join '|') -eq $info.installer
+Case 'R04-public-installer-only' $publicOk ("public folder: " + ($publicFiles -join ', ') + "; SHA256SUMS lists: " + (@($publicSums.Listed) -join ', ')) $null
+$required = @('release-info.json', 'manifest.json', 'dependencies.cdx.json', 'THIRD_PARTY_LICENSES.txt', 'SOURCE.txt')
+$absent = @($required | Where-Object { -not (Test-Path (Join-Path $PrivateDir $_)) })
+# The "internal, do not publish" note (its name is Chinese; matched by pattern so this file stays ASCII for Windows PowerShell).
+if (@(Get-ChildItem $PrivateDir -Filter 'README-*.txt').Count -ne 1) { $absent += 'README note' }
+Case 'R04-private-complete' ($absent.Count -eq 0 -and (Test-Path (Join-Path $ReleaseDir $info.installer))) ("absent from the private folder: " + ($absent -join ', ')) $null
+$archivesPresent = @(@($info.source_archives) | Where-Object { Test-Path (Join-Path $PrivateDir $_) })
+Case 'R04-source-archives' ($archivesPresent.Count -eq 2 -or $info.mihomo_commit -like 'not archived*') ("private archives: " + ($archivesPresent -join ', ') + "; engine $($info.mihomo_commit)") $null
 Case 'R04-licenses-complete' (@($info.modules_without_license_file).Count -eq 0 -and $info.third_party_modules -gt 0) ("{0} modules, without license file: {1}" -f $info.third_party_modules, (@($info.modules_without_license_file) -join ', ')) $null
 Case 'R04-trusted-flag-honest' ($info.trusted_signature -eq $false -and $info.channel -eq 'internal') "trusted_signature=$($info.trusted_signature) channel=$($info.channel); open gates: $(@($info.open_gates).Count)" $null
 
 $secretHits = @()
-foreach ($f in Get-ChildItem $ReleaseDir -File | Where-Object { $_.Extension -in '.txt', '.json' }) {
+foreach ($f in @(Get-ChildItem $ReleaseDir, $PrivateDir -File) | Where-Object { $_.Extension -in '.txt', '.json' }) {
     $text = Get-Content $f.FullName -Raw
     if ($text -match '(?i)postgres(ql)?://[^\s"]*:[^\s"@]+@' -or $text -match 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' -or $text -match '(?i)"(password|token|secret)"\s*:\s*"[^"]{6,}"') { $secretHits += $f.Name }
 }
 Case 'R04-no-secrets-in-text' ($secretHits.Count -eq 0) ("files with secret-looking content: " + ($secretHits -join ', ')) $null
 
 # Signatures: the installer and every one of our own binaries inside the stage tree (read back from the manifest roles).
-$manifest = Get-Content (Join-Path $ReleaseDir 'manifest.json') -Raw | ConvertFrom-Json
+$manifest = Get-Content (Join-Path $PrivateDir 'manifest.json') -Raw | ConvertFrom-Json
 $ownPaths = @($manifest.files | Where-Object { $_.role -in 'gui', 'service', 'core' } | ForEach-Object { $_.path })
 Case 'R04-manifest-roles' ($ownPaths.Count -eq 3) ("roles in manifest: " + ($ownPaths -join ', ')) $null
 $sigSetup = Get-AuthenticodeSignature $Setup
