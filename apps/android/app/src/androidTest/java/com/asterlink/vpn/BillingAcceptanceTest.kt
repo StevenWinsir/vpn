@@ -283,13 +283,28 @@ class BillingAcceptanceTest {
         }
     }
 
-    /** The ongoing notification's text sampled while a download runs (live rates are non-zero then). */
+    /**
+     * The ongoing notification's text sampled while a download runs (live rates are non-zero then).
+     *
+     * The Core refreshes its rates about once a second, and a single 16 MiB transfer over the
+     * loopback can be over before a loaded CI emulator posts a non-zero sample (the rate falls
+     * back to 0 at the next one), so downloads keep running back to back until a live rate was
+     * read. A download that aborts on that emulator ("Software caused connection abort") only
+     * ends its own round; the next one starts at once.
+     */
     private suspend fun notificationWhileDownloading(): String {
-        val worker = Thread { runCatching { download(sink.str("name"), 16L shl 20) } }.apply { start() }
+        val sampled = AtomicBoolean(false)
+        val worker = Thread {
+            while (!sampled.get()) runCatching { download(sink.str("name"), 16L shl 20) }.onFailure { Thread.sleep(200) }
+        }.apply { start() }
         var text = ""
-        waitUntil(8_000) {
-            text = notification(VpnNotifications.ID)?.text().orEmpty()
-            Regex("↓([1-9][0-9.]*) ").containsMatchIn("$text ")
+        try {
+            waitUntil(20_000) {
+                text = notification(VpnNotifications.ID)?.text().orEmpty()
+                Regex("↓([1-9][0-9.]*) ").containsMatchIn("$text ").also { if (it) sampled.set(true) }
+            }
+        } finally {
+            sampled.set(true)
         }
         worker.join(60_000)
         return text
