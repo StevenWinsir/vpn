@@ -65,7 +65,7 @@ public static class PreviewRunner
 
     /// <summary>One screen to draw: a page in a state. Every scenario is drawn in the light and the dark scheme.</summary>
     private sealed record Scene(string Name, Func<CoreSnapshot?> Snapshot, AppPage Page = AppPage.Connect, double Width = 1000, double Height = 680,
-        Action<AppViewModel>? Tweak = null, bool Wide = false);
+        Action<AppViewModel>? Tweak = null, bool Wide = false, bool ScrollToEnd = false);
 
     /// <summary>The scenarios (aligned with the macOS preview, handoff section 10 round 3), drawn light and dark.</summary>
     private static IReadOnlyList<Scene> Scenes() =>
@@ -93,10 +93,12 @@ public static class PreviewRunner
         new("24-lines-connected", () => Demo("connected", selected: NodeTokyo, configReady: true, metering: true), AppPage.Nodes),
         new("25-lines-minimum-size", () => Demo("ready", selected: NodeLosAngeles, configReady: true), AppPage.Nodes, Width: 820, Height: 560),
 
-        new("30-account", () => Demo("ready", selected: NodeTokyo, configReady: true), AppPage.Settings, Height: 1180, Wide: true),
-        new("31-account-admin-no-plan", () => Demo("blocked", authorized: false, role: "admin", reason: "paid_vip_required"), AppPage.Settings, Height: 1180),
-        new("32-account-service-problem", () => Demo("ready", selected: NodeTokyo, configReady: true), AppPage.Settings, Height: 1260,
-            Tweak: m => m.PreviewServiceState(ServiceProbe(ScmState.Running, ServiceErrors.WorkerUnavailable))),
+        // The account page is taller than the window (and than a small CI screen): drawn at the top and scrolled to the end.
+        new("30-account", () => Demo("ready", selected: NodeTokyo, configReady: true), AppPage.Settings, Wide: true),
+        new("31-account-admin-no-plan", () => Demo("blocked", authorized: false, role: "admin", reason: "paid_vip_required"), AppPage.Settings),
+        new("32-account-service-problem", () => Demo("ready", selected: NodeTokyo, configReady: true), AppPage.Settings,
+            Tweak: m => m.PreviewServiceState(ServiceProbe(ScmState.Running, ServiceErrors.WorkerUnavailable)), ScrollToEnd: true),
+        new("33-account-lower", () => Demo("ready", selected: NodeTokyo, configReady: true), AppPage.Settings, ScrollToEnd: true),
     ];
 
     private const double FrameWidth = 16;
@@ -149,6 +151,11 @@ public static class PreviewRunner
             window.Show();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             window.UpdateLayout();
+            if (scene.ScrollToEnd)
+            {
+                window.PageScroll.ScrollToEnd();
+                window.UpdateLayout();
+            }
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
 
             var content = (FrameworkElement)window.Content;

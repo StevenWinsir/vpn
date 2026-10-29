@@ -556,7 +556,7 @@ UI_BASE = [
     '10-connect-ready', '11-connect-no-line-selected', '12-connect-connected', '13-connect-connecting', '14-connect-admin-no-plan',
     '15-connect-expired', '16-connect-quota-exhausted', '17-connect-error', '18-connect-minimum-size',
     '20-lines', '21-lines-empty-no-plan', '22-lines-empty-none', '23-lines-search-no-match', '24-lines-connected', '25-lines-minimum-size',
-    '30-account', '31-account-admin-no-plan', '32-account-service-problem',
+    '30-account', '31-account-admin-no-plan', '32-account-service-problem', '33-account-lower',
 ]
 UI_WIDE = ['12-connect-connected', '20-lines', '30-account']
 UI_TRAY = ['40-tray-signed-out', '41-tray-ready', '42-tray-connected']
