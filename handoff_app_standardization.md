@@ -630,7 +630,7 @@ AsterLink.Service、AsterLink.Platform、AsterLink.Shared 中除展示文字之�
 
 ### 第 5 轮：发布包去敏
 
-- 日期：2026-10-28。分支 `worktree-appstd-round5-release-scrub`，PR（待填）。
+- 日期：2026-10-28。分支 `worktree-appstd-round5-release-scrub`，PR [#93](https://github.com/StevenWinsir/vpn/pull/93)。
 - 完成内容：
   - 共享审计 `scripts/release_scrub.py`（只用标准库）：公开目录检查（只允许安装包与只列安装包的 `SHA256SUMS`）、内部目录完整性检查、展开后的应用包扫描与自检。文本类文件（含二进制 plist，解码后扫描）不得出现 mihomo、clash、metacubex、sing-tun、GNU General Public（不区分大小写）与整词 GPL；二进制按 ASCII 与 UTF-16LE 统计 mihomo、Mihomo、MIHOMO、clash、Clash、metacubex、sing-tun、GNU GENERAL PUBLIC（标记前不能紧跟字母，避免把 .NET 运行时自带的 `…ExtensionClash` 这类标识符算进去）；固定的内核提交号和构建机路径（本检出目录与用户主目录）在任何文件中都不允许出现。`--self-test` 逐项植入（公开目录中的许可文件、plist 提交号键、许可文字、基线外二进制标记、UTF-16 标记、提交号、构建路径、zip 内的许可）并要求都被发现，已加入 ci.yml native-core job，各平台审计也各跑一次。
   - D16 基线 `scripts/release-scrub-baseline.json`：按平台与路径列出允许的残留。Core 二进制（macOS `asterlink-core`、Windows `core/asterlink-core.exe`、iOS 两个可执行文件、Android `libgojni.so`）允许 Go 包路径类标记；客户端二进制（macOS App 与 Helper、Windows 的 `AsterLink.Shared.dll`/`AsterLink.Service.dll`、Android `classes*.dex`）只允许 mihomo/Mihomo，来自 IPC 字段名 `mihomo_revision`。基线外的文件或标记一律失败；提交号与构建路径不能写进基线。
@@ -652,7 +652,7 @@ AsterLink.Service、AsterLink.Platform、AsterLink.Shared 中除展示文字之�
   - PASS（本机）：`package-native-ios.py` + `test-native-ios.py --suite release`，R03 全部 13 项通过，4 项 BLOCKED（需付费 Apple 账号与真机，与以往相同）；首次运行时 `R03.scrub` 发现两个可执行文件中各有 12 处构建机路径（gomobile 模块信息），改为中性路径绑定后通过。
   - PASS（本机，.NET SDK 10.0.401 交叉发布 win-x64 的 stage）：扫描 708 个安装文件无问题；首次扫描发现 3 个 PDB 中的 Source Link 映射（含提交号）与 Microsoft 资源文件中的 `…Clash` 标识符，前者通过不生成 PDB 解决，后者通过“标记前不能紧跟字母”排除。`scrub_release` 用模拟的公开/内部目录跑通，在公开目录放回 `SOURCE.txt` 后 `scrub_public` 与 `scrub_stage` 失败。
   - PASS（本机）：Go `cmd/...`、`mobile`、`internal/ipc` 测试；`test-app-copy.py`（1,344 条，0 问题）；全部工作流 YAML 可解析。
-  - CI：见 PR（待填）。
+  - CI：见 PR [#93](https://github.com/StevenWinsir/vpn/pull/93) 的检查列表（合并时补记结果）。
   - NOT RUN（本机）：Android 打包与审计（本机无 JDK/Android SDK，由 CI 验证）；Windows 安装程序构建与 `release-check.ps1`（需要 Windows，由 CI 验证）。
   - BLOCKED：Windows 正式签名、iOS 签名与真机安装、macOS Developer ID 与公证，与以往相同。
 - 遗留问题：
