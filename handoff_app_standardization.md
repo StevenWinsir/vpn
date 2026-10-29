@@ -506,6 +506,9 @@ AsterLink.Service、AsterLink.Platform、AsterLink.Shared 中除展示文字之�
 | U-30 | 通读四个客户端的全部页面与常见错误提示（断网、套餐到期、流量用尽、线路已满），确认没有任何开发或技术表述、符合运营口径（这是需求方的最终确认） |
 | U-31 | 在纸质说明书中提供开源组件许可声明与源码获取方式（需求方自行负责，D10、D15，资料取自各平台 release-private 目录）；确认四个客户端内任何位置都找不到许可、组件名称或源码相关内容 |
 | U-32 | 拿到四个平台对外发布的安装包后，确认发布目录中只有安装包与校验文件；只把公开目录上传到官网，release-private 目录不对外提供 |
+| U-33 | Windows：安装后在“服务”（services.msc）和任务管理器里，服务显示为“AsterLink 后台服务”，说明为中文，不出现英文技术描述（第 6 轮新增；此前的升级安装不会改写旧的服务名称，需先卸载再装） |
+| U-34 | iPhone：“设置 › VPN”中的配置名称为“AsterLink”；macOS：“系统设置 › 通用 › 登录项与扩展”里的 AsterLink 条目名称可接受（后台服务的文件名 AsterLinkHelper 按 D17 未改，如需改名请单独立项） |
+| U-35 | 通读网站与客户端的术语对照（第 14 节第 6 轮记录“术语评审”）：网站“节点列表/账号设置/流量倍率”与客户端“线路/账户/线路倍率”是否按你的意愿保留 |
 
 ## 13. 完成定义
 
@@ -652,10 +655,38 @@ AsterLink.Service、AsterLink.Platform、AsterLink.Shared 中除展示文字之�
   - PASS（本机）：`package-native-ios.py` + `test-native-ios.py --suite release`，R03 全部 13 项通过，4 项 BLOCKED（需付费 Apple 账号与真机，与以往相同）；首次运行时 `R03.scrub` 发现两个可执行文件中各有 12 处构建机路径（gomobile 模块信息），改为中性路径绑定后通过。
   - PASS（本机，.NET SDK 10.0.401 交叉发布 win-x64 的 stage）：扫描 708 个安装文件无问题；首次扫描发现 3 个 PDB 中的 Source Link 映射（含提交号）与 Microsoft 资源文件中的 `…Clash` 标识符，前者通过不生成 PDB 解决，后者通过“标记前不能紧跟字母”排除。`scrub_release` 用模拟的公开/内部目录跑通，在公开目录放回 `SOURCE.txt` 后 `scrub_public` 与 `scrub_stage` 失败。
   - PASS（本机）：Go `cmd/...`、`mobile`、`internal/ipc` 测试；`test-app-copy.py`（1,344 条，0 问题）；全部工作流 YAML 可解析。
-  - CI：见 PR [#93](https://github.com/StevenWinsir/vpn/pull/93) 的检查列表（合并时补记结果）。
+  - PASS（CI）：PR [#93](https://github.com/StevenWinsir/vpn/pull/93) 最后一次运行（c613870）18 项检查全部通过；合并后 main 上 88bb61f 的六个工作流（VPN CI、Windows、Android、iOS、受管节点协议、独立后端部署）全部成功（第 6 轮开工时核对）。
   - NOT RUN（本机）：Android 打包与审计（本机无 JDK/Android SDK，由 CI 验证）；Windows 安装程序构建与 `release-check.ps1`（需要 Windows，由 CI 验证）。
   - BLOCKED：Windows 正式签名、iOS 签名与真机安装、macOS Developer ID 与公证，与以往相同。
 - 遗留问题：
   - D16 残留（已记入基线）：Core 二进制中的 Go 包路径（含 `github.com/metacubex/mihomo`、`sing-tun`、子模块目录名 `Clash.Meta`）与模块信息；客户端二进制中的 IPC 字段名 `mihomo_revision`。需求方需要时另行评估混淆方案。
   - 网站下载页（frontend `download-view.tsx`）的“开源许可与源代码”段仍写有内核名称与许可，并说许可与源码“随安装包一同发布”，与 D15 不再一致；网站不在本计划范围内，是否修改由需求方决定。
   - 发布文档全文校对按计划在第 6 轮完成。
+
+### 第 6 轮：全平台回归、守卫全覆盖与发布准备
+
+- 日期：2026-10-28。分支 `worktree-appstd-round6-regression`，PR 见合并记录。
+- 完成内容：
+  - 文案守卫全覆盖（`scripts/test-app-copy.py`）：新增 DMG“安装说明.txt”（读自 `package-native-macos.py` 的 `INSTALL_README`）与“卸载 AsterLink.command”（含 `echo` 的英文句子检查）；系统可见的元数据——iOS 主程序与隧道扩展的显示名与用途说明、macOS 应用与 Helper 的包名与用途说明（Helper 文件名按 D17 放行）、Windows 服务显示名与说明、安装程序的产品名与发布者及 `[Code]` 中的字幕、.NET 程序集的公司与产品；公开发布目录的文件名（`hits_in_name`，`release_scrub.public_problems` 对 macOS、Windows、iOS、Android 四个发布套件统一调用，`--self-test` 增加“安装包名含技术词”的植入）；命令行可附加发布目录路径直接检查文件名。`release_suite.py` 的 R-DMG 在挂载后的 DMG 上用同一词表再检查安装说明与卸载脚本。全部 1,388 条、6 条豁免、0 问题。
+  - 复核四个平台后发现并修正两处真实残留：Windows 服务说明原为英文“Supervises the AsterLink tunnel worker…”（在 services.msc 与任务管理器可见，含“tunnel”），服务显示名为英文“AsterLink Service”，改为“AsterLink 后台服务”与“为 AsterLink 提供安全连接所需的后台支持。”；iOS 隧道扩展的显示名“AsterLink Tunnel”改为“AsterLink”。均只是展示字符串，服务名（AsterLinkService）、管道、安装布局与校验未动。
+  - 豁免清单终审：仅 D8 的“开发版”标记（macOS 2 处、iOS 1 处、Windows 1 处、Android 中英各 1 处）与 D13 的账号角色标记（Android 中英各 1 处）；无任何开源/许可相关豁免；整文件豁免只有四个 DEBUG 专用文件。
+  - 文档：新增 `docs/brand-and-copy.md`（品牌管线与重新生成步骤、色板一致性、文案守卫与豁免、发布去敏、对照评审）与 `docs/macos-ui.md`（macOS 界面、菜单栏常驻、预览与验收）；`docs/windows-client-ui.md` 按第 4 轮实现改写页面、关闭与托盘、预览；`docs/ios-ui.md`、`docs/android-ui.md` 更新页面表、令牌与图标、忘记密码入口；`docs/macos-release.md`、`docs/windows-release.md` 增加界面更新说明，升级/卸载描述改为“后台服务”与菜单栏/托盘退出。对照图放在 `docs/images/`（`.gitignore` 增加 `!docs/images/`）。
+  - 需求方实测清单（第 12 节）新增 U-33（Windows 服务名称）、U-34（iOS VPN 配置名称与 macOS 登录项名称）、U-35（术语对照确认）。
+- 跨平台视觉与术语评审（对照图 `docs/images/cross-platform-light.png`、`cross-platform-dark.png`：网站、macOS、Windows、iOS、Android 的登录、连接/总览（已连接）、线路、账户各一格；macOS 为本轮本机预览，Windows 与 iOS、Android 为 main 88bb61f 上 CI 的 `windows-ui-preview`、`ios-reports`、`android-debug` 工件，网站为本地 Next 页面加固定的虚构接口应答，Android 缺深色账户页截图）：
+  - 一致：品牌标识（同一 `mark.svg`）、品牌绿与深色底、已连接/警示/错误状态色（色板由测试逐项比对）、“专线/普通线路”、GB 与数字格式、“线路倍率 N×”、“已用/剩余流量”。脚本核对 macOS 593 条、Windows 1,354 条可见文字：无“GiB”“节点”“隧道”“内核”，“线路倍率”分别 36、70 处，无“流量倍率”。
+  - 差异与结论（均为展示取舍，未改代码）：
+    1. 导航名称：网站为“总览/节点列表/套餐与订阅/订单记录/下载客户端/账号设置”，客户端为“连接/线路/账户”（D7）。结论：保留；客户端不含订单与下载页，名称按平台功能定。
+    2. 网站用户节点页有两处写“流量倍率”（`nodes-view.tsx` 第 120、306 行，管理端 `admin-nodes-view.tsx` 第 654 行另有一处），网站其余处与全部客户端写“线路倍率”（D7）。结论：网站不在本计划范围，建议下一次改网站时统一为“线路倍率”，已列入 U-35。
+    3. 登录页左栏：桌面端沿用首页首屏的“住宅原生 IP · 专线加持，稳定在线”，网站 `/login` 左栏仍是“你的连接。你的掌控。”（首页改版 #86 时登录页未动）。结论：登记，是否统一由需求方定。
+    4. 连接按钮中心图形：桌面端为品牌盾牌，iOS 与 Android 保持电源键（移动端页面结构本期不改，只换图标、色板与文案）。结论：接受并登记。
+    5. macOS 预览中的 AX 文字“Sidebar”是系统在无本地化包的 SwiftPM 调试二进制里读到的英文说明；打包后的应用声明了 zh_CN，不在界面上显示，只影响读屏。未处理。
+  - 逐页通读：用各平台导出的可见文字代替手工安装通读（macOS 593 条、Windows 1,354 条，iOS 与 Android 由 UI 与截图测试逐屏检查），人工看了上述对照图；未发现开发或技术表述。
+- 测试结果：
+  - PASS（本机）：`test-app-copy.py`（改入禁用词于卸载脚本、安装说明、公开目录文件名后各自失败，还原后通过）、`test-brand-assets.py`、`release_scrub.py --self-test`（含新植入）；`test-native-macos.py --suite ui`（28 个场景，593 条文字，0 命中）与 `--suite release`（18 项：16 通过、2 项 BLOCKED，Gatekeeper 与公证需要 Developer ID，与以往相同；R-DMG 含新增文案检查）；.NET SDK 10.0.401 下 `AsterLink.Tests` 341 项（警告即错误的 Release 构建）；`plutil -lint` 隧道扩展 plist。
+  - CI：见 PR 的检查列表（合并时补记）。
+  - NOT RUN / BLOCKED：Windows 安装包实际安装并在服务列表中核对名称（需要 Windows，CI 的发布套件安装中文安装包，服务名称人工核对留给 U-33）；各平台 Release/内部发布包的真机安装通读（macOS 只在本机跑了发布套件与预览，没有装进“应用程序”；Windows、iOS 真机、Android 真机无环境）；Windows 10 外观、托盘与关机场景、macOS 26 图标显示、VoiceOver/讲述人朗读（同前几轮，对应 U-24–U-29）。
+- 遗留问题：
+  - 既有安装的 Windows 服务不会被升级改写显示名与说明（服务升级动作 `sc config` 不含这两项，只在创建时设置）；尚未对外发布，只影响内部测试机，需先卸载再装才看到新名称。如需覆盖升级，需改服务安装动作，属底层变更，未做。
+  - macOS 后台服务文件名 `AsterLinkHelper`、各平台二进制与组件文件名（D17）、Core 中的 Go 包路径（D16）仍是已记录残留。
+  - 网站下载页“开源许可与源代码”段与 D15 不一致，仍待需求方决定（第 5 轮遗留）。
+  - 六轮全部完成后的整体验收（第 13 节）还差需求方的 U-24–U-35 实测。

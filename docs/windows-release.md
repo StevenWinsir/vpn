@@ -4,6 +4,14 @@ Status: **code and CI-tested installer pipeline; release is NOT approved.** Ther
 Windows 10/11 machine run, and no managed node (round 7), so the output is the **internal channel**. A self-signed *test*
 certificate proves the signing pipeline only; it is trusted by nobody and gives no SmartScreen reputation.
 
+> 2026-10-28 (handoff_app_standardization.md rounds 4-6): the wizard and every message are Simplified Chinese
+> (`Packaging/Languages/ChineseSimplified.isl`, reworded from the vendor's community translation); the installer, the exe, the
+> Start-menu shortcut, the tray and the wizard images all carry the brand icon generated from `frontend/brand/mark.svg`
+> (`docs/brand-and-copy.md`); the service shows as "AsterLink 后台服务" in the Services list (`ServiceConstants`); closing the
+> window always hides the app to the tray (`docs/windows-client-ui.md`). Upgrade over a running copy now says, in Chinese, to quit
+> from the tray icon ("^" if hidden). Customer-visible text (installer messages, service name and description, product and
+> publisher fields) is guarded by `scripts/test-app-copy.py`; the public folder holds only the installer and `SHA256SUMS`.
+
 ## 1. What the installer is
 
 `AsterLink-Setup-x64-<version>.exe` (Inno Setup 6.7.1, `apps/windows/Packaging/setup.iss`) is a carrier and a user interface. It

@@ -52,17 +52,20 @@ SessionController (app-scoped, main thread)          ← port of the Windows Ses
 
 | Page | Content |
 | --- | --- |
-| Login | brand mark, email (autofill hints), password with visibility toggle, remember switch with a one-line explanation, full-width sign-in with progress, register / website links (Custom Tabs), version · Core · Mihomo footer, core-start problem banner |
-| Connect | brand + plan chip; 168 dp ring button (sweeping while busy, green when connected, grey when blocked); status in the fixed words 未连接 / 正在准备 / 正在连接 / 已连接 · hh:mm:ss / 正在断开并结算 / 无法连接 (live region); the Core's reason or failure; buy/renew when the plan is the problem; cancel while connecting; current line card (hidden without a plan); rates, sparkline and session/billed bytes only while connected; plan card with expiry, remaining-balance bar, estimate on its own line, GiB note |
-| Lines | search (name, region, line label), 全部/专线/普通 filter, groups by region in server order, rate and metering source per line, pull-to-refresh; empty states keep "no plan", "syncing", "none configured" and "no match" apart; switching while connected asks first, settles, and stays disconnected |
-| Me | avatar/name/email/admin chip; plan with renew and orders (website); appearance (system/light/dark); background & battery and system VPN settings (always-on is not supported); website dashboard; about (app, Core, Mihomo, server, channel); copy redacted diagnostics; sign-out with confirmation |
+| Login | brand mark, email (autofill hints), password with visibility toggle, remember switch with a one-line explanation, full-width sign-in with progress, register / website links (Custom Tabs), a footer that shows only "版本 x.y.z" (development builds add a neutral "开发版" marker), start-problem banner |
+| Connect | brand + plan chip; 168 dp ring button (sweeping while busy, brand green when connected, grey when blocked); status in the fixed words 未连接 / 正在准备 / 正在连接 / 已连接 · hh:mm:ss / 正在断开 / 无法连接 (live region); the Core's reason or failure; buy/renew when the plan is the problem; cancel while connecting; current line card (hidden without a plan) with 专线/普通线路 and 线路倍率 N×; rates, sparkline and "本次已用 X · 按倍率计 Y" only while connected; plan card with expiry, remaining-traffic bar and "正在同步用量" on its own line |
+| Lines | search (name, region, line label), 全部/专线/普通 filter, groups by region in server order, line rate, pull-to-refresh; empty states keep "no plan", "syncing", "none configured" and "no match" apart; switching while connected asks first ("将断开当前连接") and stays disconnected |
+| Me | avatar/name/email; plan with renew and orders (website); appearance (system/light/dark); background & battery and system VPN settings (always-on is not supported); website dashboard; about (app version only); copy diagnostics (six lines: app version, OS version, state, error code, time); sign-out with confirmation. No open-source entry (D10) |
 
-Design tokens follow handoff 9.2 (brand `#2F6FEB`, Material You off, 16 dp cards, 56 dp pill buttons,
-tabular figures for numbers). Icons are Material Icons vectors, only the 22 used. The launcher and splash use
-the placeholder star until the official logo is supplied.
+Design tokens (2026-10, `handoff_app_standardization.md` 4.2): `ui/theme/Theme.kt` holds `LightTokens` and `DarkTokens`, one field per website `--al-*` role,
+and `res/values(-night)/colors.xml` the launcher/splash colours; `scripts/test-brand-assets.py` compares every value with
+`frontend/src/app/globals.css`. Material You is off; 16 dp cards, 56 dp pill buttons, tabular figures. The brand blue is retired.
+Icons: Material Icons vectors (only those used); the adaptive launcher icon (background `#0D7B61`, shield foreground, monochrome layer),
+`ic_notification` (notification and quick-settings tile) and the splash are generated from `frontend/brand/mark.svg`
+(`docs/brand-and-copy.md`). Strings (Chinese and English) are guarded by `scripts/test-app-copy.py` and, per screenshot, by `ui/CopyGuard.kt`.
 
-**Not built (no website page exists):** "忘记密码", privacy policy and terms links. Add them when the website has
-those pages (the `WebPage` enum is the only place to touch).
+**Not built (the website has no such pages):** privacy policy and terms links. "忘记密码" opens the website's `/forgot-password`
+(the `WebPage` enum is the only place to touch).
 
 ## Tests and evidence
 

@@ -14,6 +14,7 @@ backend/bin/
 artifacts/
 docs/*
 !docs/*.md
+!docs/images/
 scripts/*
 !scripts/*.sh
 !scripts/*.py

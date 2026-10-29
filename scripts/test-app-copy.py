@@ -13,7 +13,11 @@ macOS app and its shared module (round 3), where "VPN" is forbidden as well (7.1
 app (round 4): the user-visible attributes of its XAML (Text, Content, Header, ToolTip, the accessible
 name and help text, the empty-box hint) and the Chinese C# literals of the app and of the display text
 in AsterLink.Shared, plus the installer's messages (setup.iss [CustomMessages] and the language file
-named there). The macOS and Windows design previews check the text of every rendered screen against these
+named there. Round 6 adds the delivered text that is not application code: the note and the uninstall script on
+the macOS disk image, the properties the operating system itself shows (bundle and extension display names,
+the Windows service name and description, the installer's product and publisher, the company and product of the .NET
+assemblies) and, through hits_in_name(), the file names of the public release folders (scripts/release_scrub.py
+calls it for every platform). The macOS and Windows design previews check the text of every rendered screen against these
 same lists at run time (scripts/test-native-macos.py and scripts/test-native-windows.py --suite ui import
 them from this file).
 
@@ -76,14 +80,26 @@ def report(path, line, word, literal):
     failures.append('%s:%d  "%s" in %r' % (path, line, word, literal))
 
 
+def hits_in(literal, extra_en=()):
+    """The forbidden words found in one user-visible string."""
+    hits = [w for w in FORBIDDEN_ZH if re.search(w, literal)]
+    hits += [w for w in FORBIDDEN_EN + list(extra_en) if re.search(r'(?<![A-Za-z])%s(?![a-z])' % re.escape(w), literal)]
+    return hits
+
+
+def hits_in_name(name):
+    """The forbidden words in a file name a customer sees (an installer in a public release folder); the desktop
+    clients may not say VPN either. Separators count as word edges."""
+    return hits_in(re.sub(r'[-_.]', ' ', name), FORBIDDEN_DESKTOP_EN)
+
+
 def scan_literal(path, line_no, literal, lines, extra_en=()):
     """Check one user-visible string; lines is the source so the exemption marker can be found."""
     global scanned, exempted
     scanned += 1
     here = lines[line_no - 1]
     above = lines[line_no - 2] if line_no > 1 else ''
-    hits = [w for w in FORBIDDEN_ZH if re.search(w, literal)]
-    hits += [w for w in FORBIDDEN_EN + list(extra_en) if re.search(r'(?<![A-Za-z])%s(?![a-z])' % re.escape(w), literal)]
+    hits = hits_in(literal, extra_en)
     if not hits:
         return
     if MARKER in here or MARKER in above:
@@ -287,6 +303,87 @@ def scan_installer():
                 scan_literal(isl, number, stripped.split('=', 1)[1].replace('%n', ' '), isl_lines, FORBIDDEN_DESKTOP_EN)
 
 
+def scan_plain(path, content, extra_en=FORBIDDEN_DESKTOP_EN, every_line=False):
+    """Delivered prose that a customer can open: every line with Chinese text in it (every line when every_line is
+    set). Shell comments and echo lines count; they can be read by opening the file."""
+    lines = content.splitlines()
+    for number, line in enumerate(lines, 1):
+        if every_line or CJK.search(line):
+            scan_literal(path, number, line.strip(), lines, extra_en)
+
+
+def python_constant(path, name):
+    """The value of a module-level string constant, read without importing the module."""
+    import ast
+    for node in ast.parse(text(path)).body:
+        if isinstance(node, ast.Assign) and any(getattr(t, 'id', None) == name for t in node.targets):
+            return ast.literal_eval(node.value)
+    failures.append('%s: constant %s not found' % (path, name))
+    return ''
+
+
+def scan_dmg_text():
+    """The note and the uninstall script on the macOS disk image (round 5 cleaned them, round 6 guards them)."""
+    scan_plain('scripts/package-native-macos.py (INSTALL_README)', python_constant('scripts/package-native-macos.py', 'INSTALL_README'),
+               every_line=True)
+    scan_plain('scripts/uninstall-asterlink.sh', text('scripts/uninstall-asterlink.sh'))
+    # Messages printed by the script must be Chinese sentences; an English echo would slip past the line filter above.
+    for number, line in enumerate(text('scripts/uninstall-asterlink.sh').splitlines(), 1):
+        if re.search(r'\becho\b', line) and re.search('[A-Za-z]{4,} [A-Za-z]{4,}', re.sub(r'\$\{?\w+\}?|AsterLink', '', line.split('echo', 1)[1])):
+            failures.append('scripts/uninstall-asterlink.sh:%d  English message %r' % (number, line.strip()))
+
+
+def scan_metadata():
+    """What the operating system shows about the product without the app running: display names of bundles and
+    extensions, usage descriptions, the Windows service entry, the installer's publisher, assembly company and product."""
+    import plistlib
+    key = re.compile(r'^(CFBundleDisplayName|CFBundleName|NS\w*UsageDescription|NSHumanReadableCopyright)$')
+    for path in ('apps/ios/Config/App-Info.plist', 'apps/ios/Config/Tunnel-Info.plist'):
+        lines = text(path).splitlines()
+        for name, value in plistlib.loads(text(path).encode('utf-8')).items():
+            if key.match(name) and isinstance(value, str) and not value.startswith('$('):
+                number = next((i for i, l in enumerate(lines, 1) if name in l), 1)
+                scan_literal(path, number, value, lines)
+    source = text('scripts/build-native-macos.py')
+    lines = source.splitlines()
+    for number, line in enumerate(lines, 1):
+        for name, value in re.findall(r"'(CFBundleDisplayName|CFBundleName|NS\w*UsageDescription|NSHumanReadableCopyright)':\s*'([^']*)'", line):
+            if not name == 'CFBundleName' or value != 'AsterLinkHelper':  # D17: the Helper keeps its file name
+                scan_literal('scripts/build-native-macos.py', number, value, lines, FORBIDDEN_DESKTOP_EN)
+    path = 'apps/windows/AsterLink.Shared/Service/ServiceConstants.cs'
+    lines = text(path).splitlines()
+    for number, line in enumerate(lines, 1):
+        match = re.search(r'\b(DisplayName|Description)\s*=\s*"([^"]*)"', line)
+        if match:
+            scan_literal(path, number, match.group(2), lines, FORBIDDEN_DESKTOP_EN)
+    path = 'apps/windows/Directory.Build.props'
+    lines = text(path).splitlines()
+    for number, line in enumerate(lines, 1):
+        match = re.search(r'<(Company|Product|Description|Copyright)>([^<]*)<', line)
+        if match:
+            scan_literal(path, number, match.group(2), lines, FORBIDDEN_DESKTOP_EN)
+    path = 'apps/windows/Packaging/setup.iss'
+    lines = text(path).splitlines()
+    section = ''
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith('['):
+            section = stripped
+        elif section == '[Setup]' and re.match(r'(AppName|AppPublisher|AppComments|AppCopyright|UninstallDisplayName)=', stripped):
+            scan_literal(path, number, stripped.split('=', 1)[1], lines, FORBIDDEN_DESKTOP_EN)
+        elif section == '[Code]' and re.search(r'(Caption|Msg(Box)?)\s*:?=?\s*\(?\'', stripped):
+            for literal in re.findall(r"'([^']{3,})'", stripped):
+                if 'AsterLink' in literal or CJK.search(literal):
+                    scan_literal(path, number, literal, lines, FORBIDDEN_DESKTOP_EN)
+
+
+def scan_public(directory):
+    """File names (and SHA256SUMS) of a public release folder given on the command line."""
+    for item in sorted(Path(directory).iterdir()):
+        for word in hits_in_name(item.name):
+            failures.append('%s: file name contains "%s"' % (item, word))
+
+
 WINDOWS_CODE = ['apps/windows/AsterLink.App', 'apps/windows/AsterLink.Shared/Client', 'apps/windows/AsterLink.Shared/Service/ServiceHealth.cs']
 
 
@@ -335,6 +432,10 @@ def main():
             elif path.suffix == '.cs':
                 scan_csharp(relative)
     scan_installer()
+    scan_dmg_text()
+    scan_metadata()
+    for directory in sys.argv[1:]:
+        scan_public(directory)
     check_runtime_lists()
 
     for failure in failures:
