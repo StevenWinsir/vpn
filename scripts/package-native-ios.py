@@ -9,14 +9,17 @@ There is no Apple Developer team yet, and nothing here needs one. The run
   3. archives the app and its packet tunnel extension for a real iPhone (generic/platform=iOS, Release,
      CODE_SIGNING_ALLOWED=NO: stripped, optimised, no debug code, no signature),
   4. zips Payload/AsterLink.app into AsterLink-<version>-ios-unsigned.ipa,
-  5. writes artifacts/native-ios/release/ (or --release-dir):
+  5. writes artifacts/native-ios/release/ (or --release-dir), what customers get:
        AsterLink-<version>-ios-unsigned.ipa   what scripts/ios/resign-ipa.py signs once you have a team
+       SHA256SUMS                             of the IPA only
+     and, beside it in release-private/ (internal, NEVER published; handoff_app_standardization.md 8.2):
        THIRD_PARTY_LICENSES.txt               Go modules linked into the Core
-       dependencies.cdx.json                  CycloneDX-shaped inventory (Go modules, Mihomo, Apple frameworks)
-       SOURCE.txt + two source archives       the GPL corresponding source (Mihomo + this repository)
+       dependencies.cdx.json                  CycloneDX-shaped inventory (Go modules, engine, Apple frameworks)
+       SOURCE.txt + two source archives       the corresponding source (engine + this repository)
        release-info.json                      version, hashes, bundle ids, Core identity, open gates
-       SHA256SUMS                             of every file above
-     and, beside it in release-private/ (NOT for publishing): the dSYMs (crash symbolication).
+       dSYMs-<version>.zip                    crash symbolication
+       SHA256SUMS, README-内部资料.txt
+  The shipped AsterCore is a release bind: it carries no engine revision.
 
 The package is always channel "internal" with trusted_release=false and signed=false; --channel release is
 refused until the open gates in release-info.json are closed. Then run
@@ -41,6 +44,7 @@ IOS = ROOT / 'apps' / 'ios'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import ios_release  # noqa: E402
 import native_env  # noqa: E402
+import release_scrub  # noqa: E402
 import windows_release  # noqa: E402  (platform-neutral helpers: source archives, SHA256SUMS)
 
 EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 3
@@ -141,12 +145,15 @@ def package(args) -> int:
     os.environ['ASTERLINK_IOS_ENV_FILE'] = str(env_path)
     build = build_module()
     build.write_xcconfig()
+    # The shipped framework is a release bind: no engine revision. A development framework (the simulator and UI
+    # suites build one) or one for another version is bound again, never reused.
     framework_info = IOS / 'Frameworks' / 'core-build.json'
-    if not framework_info.is_file():
-        build.bind(version)
+    existing = json.loads(framework_info.read_text()) if framework_info.is_file() else {}
+    if existing.get('revision_stamped', True) or existing.get('core_version') != version or existing.get('harness'):
+        build.bind(version, release=True)
     core = json.loads(framework_info.read_text())
-    if core.get('harness'):
-        raise RuntimeError('Frameworks/core-build.json belongs to the test harness build; rebuild the production Core')
+    if core.get('harness') or core.get('revision_stamped', True):
+        raise RuntimeError('Frameworks/core-build.json is not a release bind of the production Core')
 
     archive = RUNTIME / 'release' / 'AsterLink.xcarchive'
     shutil.rmtree(archive.parent, ignore_errors=True)
@@ -160,7 +167,7 @@ def package(args) -> int:
         raise RuntimeError('the archive holds no AsterLink.app')
 
     out = Path(args.release_dir).resolve() if args.release_dir else ROOT / 'artifacts' / 'native-ios' / 'release'
-    private = out.parent / (out.name + '-private')
+    private = release_scrub.private_dir(out)
     for directory in (out, private):
         shutil.rmtree(directory, ignore_errors=True)
         directory.mkdir(parents=True)
@@ -176,14 +183,15 @@ def package(args) -> int:
         subprocess.run(['ditto', '-c', '-k', '--keepParent', str(dsyms), str(private / ('dSYMs-%s.zip' % version))], check=True)
 
     import collect_licenses
+    # Licences, inventory, source and release info: same content, internal folder only (handoff 8.2, D15).
     text, missing, modules = collect_licenses.collect('ios', 'arm64')
-    (out / 'THIRD_PARTY_LICENSES.txt').write_text(text, encoding='utf-8')
+    (private / 'THIRD_PARTY_LICENSES.txt').write_text(text, encoding='utf-8')
     commit, dirty = windows_release.source_state()
     archives, mihomo_commit = ([], core['mihomo_revision'])
     if not args.skip_source_archives:
-        archives, mihomo_commit = windows_release.source_archives(out, commit)
-    (out / 'dependencies.cdx.json').write_text(json.dumps(dependency_inventory(version, commit, mihomo_commit), indent=2) + '\n')
-    write_source_notice(out, commit, mihomo_commit, dirty, version)
+        archives, mihomo_commit = windows_release.source_archives(private, commit)
+    (private / 'dependencies.cdx.json').write_text(json.dumps(dependency_inventory(version, commit, mihomo_commit), indent=2) + '\n')
+    write_source_notice(private, commit, mihomo_commit, dirty, version)
     info = {
         'format_version': 1, 'product': 'AsterLink for iOS', 'version': version, 'build': int(args.build_number), 'channel': 'internal',
         'app_env': values['APP_ENV'], 'api_base': values['API_BASE_URL'], 'website': values['WEBSITE_BASE_URL'],
@@ -194,17 +202,19 @@ def package(args) -> int:
         'signing': {'state': 'unsigned', 'how': 'python3 scripts/ios/resign-ipa.py <this ipa> --identity ... --app-profile ... --tunnel-profile ... (docs/ios-release.md)'},
         'trusted_release': False,
         'minimum_ios': LOCK['ios']['deployment_target'], 'toolchain': xcode_facts(),
-        'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'x_mobile')}, 'mihomo_patch': core.get('mihomo_patch'),
+        'core': {k: core.get(k) for k in ('core_version', 'mihomo_revision', 'x_mobile', 'revision_stamped')}, 'mihomo_patch': core.get('mihomo_patch'),
         'core_slices': core.get('slices'),
         'source_commit': commit, 'source_dirty': dirty, 'mihomo_commit': mihomo_commit,
         'third_party_go_modules': modules, 'go_modules_without_license_file': missing,
         'source_archives': [a.name for a in archives], 'open_gates': OPEN_GATES,
     }
-    (out / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
-    windows_release.write_checksums(out)
-    problems = windows_release.verify_checksums(out)
-    if problems:
-        raise RuntimeError('SHA256SUMS does not verify: ' + '; '.join(problems))
+    (private / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
+    release_scrub.write_private_note(private)
+    for folder in (out, private):
+        windows_release.write_checksums(folder)
+        problems = windows_release.verify_checksums(folder)
+        if problems:
+            raise RuntimeError('SHA256SUMS of %s does not verify: %s' % (folder.name, '; '.join(problems)))
     print('\nrelease folder: %s (unsigned, trusted_release=false)\nprivate (do not publish): %s' % (out, private))
     return EXIT_OK
 

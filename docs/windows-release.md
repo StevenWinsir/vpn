@@ -86,13 +86,22 @@ the real certificate.
 
 ## 5. What ships (`--release-dir`)
 
-`AsterLink-Setup-x64-<v>.exe`, `SHA256SUMS`, `release-info.json` (version, channel, signing mode, `trusted_signature: false`, source
-commits, open gates), `manifest.json`, `dependencies.cdx.json` (CycloneDX-shaped inventory: Go modules linked into the Core for
+Since 2026-10-28 (handoff_app_standardization.md round 5, D15) the release folder is public and holds only
+`AsterLink-Setup-x64-<v>.exe` and a `SHA256SUMS` that lists only it. Everything below lives in `<release-dir>-private`
+(CI: `artifacts/windows/release/installer-private`, artifact `windows-release-private-INTERNAL`), is internal and is never
+published; the files keep their content. The stage is published without PDBs, Source Link or the commit suffix on the product
+version, and the Core is built with `-s -w -buildvcs=false` and no engine revision.
+
+Internal: `release-info.json` (version, channel, signing mode, `trusted_signature: false`, source
+commits, installer hash, open gates), `manifest.json` (a copy; the installed one stays in the stage), `dependencies.cdx.json` (CycloneDX-shaped inventory: Go modules linked into the Core for
 windows/amd64, the .NET runtime version, Wintun, Mihomo; there are no third-party NuGet packages), `THIRD_PARTY_LICENSES.txt` (the same
 windows/amd64 module set; a module whose published archive has no license file uses the reviewed upstream copy in
 `scripts/third_party_licenses/`, which names its source),
 `SOURCE.txt` and the two GPL source archives (`git archive` of this repository and of the pinned Mihomo commit, with rebuild
-instructions). `release-check.ps1` re-reads `SHA256SUMS` independently and scans the text files for secret-looking content.
+instructions), `README-内部资料.txt` and a `SHA256SUMS` of the folder. `release-check.ps1` (`-PrivateDir`, default `<ReleaseDir>-private`)
+re-reads both `SHA256SUMS` independently, requires the public folder to hold only the installer, and scans the text files for
+secret-looking content; `test-native-windows.py --suite release` additionally scans the stage the installer carries
+(`release.scrub_*`: no private-only file, no engine marker in a text file, binaries within `scripts/release-scrub-baseline.json`).
 
 Build and test:
 

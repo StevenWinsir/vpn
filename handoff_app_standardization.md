@@ -604,7 +604,7 @@ AsterLink.Service、AsterLink.Platform、AsterLink.Shared 中除展示文字之�
 
 ### 第 4 轮：Windows 界面重设计与托盘常驻
 
-- 日期：2026-10-28。分支 `worktree-appstd-round4-windows`，PR [#92](https://github.com/StevenWinsir/vpn/pull/92)。
+- 日期：2026-10-28。分支 `worktree-appstd-round4-windows`（已删除），PR [#92](https://github.com/StevenWinsir/vpn/pull/92)，squash 合并为 f1c3d23，合并前 12 项检查全部通过。
 - 完成内容：
   - 令牌与样式：`Theme/Light.xaml`、`Dark.xaml` 按第 4.2 节每个角色一个画刷（角色名与 macOS 相同，另加网站的分段选中色 `seg-active-*` 与登录品牌区 `story-*`），蓝色系退役；`Styles.xaml` 重建全部控件模板（卡片含独立阴影层、主/次/文字/危险/图标按钮、导航项、分段控件、输入框含占位提示、复选框、折叠区、进度条、细滚动条、提示框），统一 8 DIP 栅格、卡片 12 与控件 8 圆角、键盘焦点为品牌焦点色描边。`Icons.xaml` 由网站同一 npm 包（Tabler Icons 3.48.0，MIT）的轮廓图形生成 26 个几何资源；`Brand.xaml` 用 `mark.svg` 的原始路径绘制品牌标识与连接按钮中心的盾牌。`test-brand-assets.py` 新增 Windows 色板（浅/深各 24 个角色）、品牌几何与“主题文件以外无颜色字面量”检查。
   - 外壳与页面（与第 3 轮 macOS 同一布局与文案）：侧栏（品牌标识与字标、连接/线路/账户、状态胶囊、邮箱、管理员账号标记）+ 内容区（页标题、横幅提示）。连接页：顶部至多一条提示（购买套餐/选择线路/刷新三选一），164 DIP 圆形连接按钮（未连接中性圆环、连接中品牌色圆弧转动且遵守系统“动画效果”开关、已连接品牌色实心加光晕、出错危险色），状态与说明，三张信息卡（当前线路、套餐、实时速率与 60 秒曲线），卡片由 `CardGrid` 自适应排列（默认窗口三列，最小窗口两行，不出现横向滚动）。线路页：搜索、全部/专线/普通线路、按地区分组（组内保持服务器顺序，`NodeList.Group`）、选中标记加“已选”文字、各种空状态各给一个下一步。账户页：账户卡与网站入口、外观三档、通用（后台运行说明）、后台服务（正常一行；异常为引导卡；“故障排查”折叠区）、关于（版本、复制诊断信息、访问官网）、退出登录与退出 AsterLink。登录页：双栏（网站深色品牌叙述 + 登录卡，含显示密码按钮），后台服务未就绪时在登录卡上方显示引导卡（第 6.5 节：一句原因、一个主按钮、“重新检测”）。
@@ -627,3 +627,35 @@ AsterLink.Service、AsterLink.Platform、AsterLink.Shared 中除展示文字之�
 - 遗留问题：
   - docs/windows-client-ui.md 只在开头加了更新说明，全文按第 6 轮统一改写。
   - 安装程序语言文件如升级 Inno Setup 需重新对齐消息并复核措辞。
+
+### 第 5 轮：发布包去敏
+
+- 日期：2026-10-28。分支 `worktree-appstd-round5-release-scrub`，PR [#93](https://github.com/StevenWinsir/vpn/pull/93)。
+- 完成内容：
+  - 共享审计 `scripts/release_scrub.py`（只用标准库）：公开目录检查（只允许安装包与只列安装包的 `SHA256SUMS`）、内部目录完整性检查、展开后的应用包扫描与自检。文本类文件（含二进制 plist，解码后扫描）不得出现 mihomo、clash、metacubex、sing-tun、GNU General Public（不区分大小写）与整词 GPL；二进制按 ASCII 与 UTF-16LE 统计 mihomo、Mihomo、MIHOMO、clash、Clash、metacubex、sing-tun、GNU GENERAL PUBLIC（标记前不能紧跟字母，避免把 .NET 运行时自带的 `…ExtensionClash` 这类标识符算进去）；固定的内核提交号和构建机路径（本检出目录与用户主目录）在任何文件中都不允许出现。`--self-test` 逐项植入（公开目录中的许可文件、plist 提交号键、许可文字、基线外二进制标记、UTF-16 标记、提交号、构建路径、zip 内的许可）并要求都被发现，已加入 ci.yml native-core job，各平台审计也各跑一次。
+  - D16 基线 `scripts/release-scrub-baseline.json`：按平台与路径列出允许的残留。Core 二进制（macOS `asterlink-core`、Windows `core/asterlink-core.exe`、iOS 两个可执行文件、Android `libgojni.so`）允许 Go 包路径类标记；客户端二进制（macOS App 与 Helper、Windows 的 `AsterLink.Shared.dll`/`AsterLink.Service.dll`、Android `classes*.dex`）只允许 mihomo/Mihomo，来自 IPC 字段名 `mihomo_revision`。基线外的文件或标记一律失败；提交号与构建路径不能写进基线。
+  - 目录拆分（第 8.2 节）：四个平台的公开目录（macOS `release/`、Windows `--release-dir`、iOS 与 Android `release/`）只剩安装包与 `SHA256SUMS`；许可、`SOURCE.txt`、两个源码归档、组件清单、`release-info.json` / `release-manifest.json`、Windows 的 `manifest.json` 副本移入同级 `<目录>-private`（macOS、iOS、Android 为 `release-private/`，Windows 为 `installer-private/`），文件内容与生成方式不变，另有 `README-内部资料.txt`（“内部资料，不得发布”）与内部目录自身的 `SHA256SUMS`。macOS 的公证回执也写入内部目录。原 iOS 的 dSYM、Android 的 R8 映射与 `website-env.txt` 位置不变。
+  - 应用包内：macOS 构建不再把许可与源码说明放进 Resources（改写到构建目录的 `legal/`，由打包脚本移入内部目录），Info.plist 删除 `AsterLinkMihomoRevision`。
+  - 内核提交号：Release 构建（macOS Release 与 `--internal`、Windows 全部 stage、iOS 打包、Android Release APK）不再写入；Debug 与测试构建照常写入。记录文件增加 `core_revision_stamped` / `revision_stamped`，iOS 与 Android 的打包和构建脚本据此判断能否复用已有框架/AAR（发布包不会用到开发版 Core，开发构建也不会复用发布版）。提交号仍记录在内部目录的发布信息中。
+  - 构建选项：Go Core 统一 `-trimpath -buildvcs=false -ldflags "-s -w …"`（Windows 补上 `-s -w`）；gomobile 通过固定的中性路径 `/tmp/asterlink-src`（指向检出目录的符号链接）绑定，模块信息里不再出现构建机目录；macOS Release 的 App 与 Helper 在签名前 `strip -S -x`（与 Xcode Release 的“剥离产品”一致）；Windows 发布时 `DebugType=none`、关闭 Source Link、产品版本不再带“+提交号”。
+  - DMG 卸载脚本：注释改为面向用户的三行说明，删除开发说明、文档与源码路径引用；参数与行为不变（R02-UNINSTALL 通过）。
+  - 审计翻转：macOS `release_suite` 删除 R-LICENSE，新增 R-PUBLIC、R-PRIVATE、R-UNSTAMPED、R-SCRUB-BUNDLE、R-SCRUB-SELF，R-PLIST 检查无提交号键，R-MANIFEST 读取内部目录并校验两个 `SHA256SUMS`，R-DMG 扫描挂载后的整个 DMG 与卸载脚本；iOS `R03.files` 与 `R03.licenses` 改读内部目录，`R03.core_identity` 改为“两个二进制都不含提交号”，新增 `R03.scrub` 与 `R03.scrub_self`；Android 新增 `release.R03-public`、每个 APK 的 `release.R03-<abi>-scrub` 与 `release.R03-scrub-self`，许可与源码检查改读内部目录；Windows `release-check.ps1` 增加 `-PrivateDir`（默认 `<ReleaseDir>-private`），新增 R04-public-installer-only 与 R04-private-complete，`test-native-windows.py --suite release` 新增 `release.scrub_public/private/stage/self`（扫描安装包携带的整个 stage，即装进 Program Files 的全部文件）。
+  - CI 工件：公开工件只含安装包与 `SHA256SUMS`（`asterlink-internal-adhoc-dmg`、`ios-unsigned-ipa`、`windows-installer-test-signed`；Android 的测试签名 APK 本来就不保留）；内部资料另传名字带 `INTERNAL` 的工件（`macos-release-private-INTERNAL`、`ios-release-private-INTERNAL`、`android-release-private-INTERNAL`、`windows-release-private-INTERNAL`；CI 中不含源码归档以节省空间）；`release-macos.yml` 把正式发布的公开与内部资料分成两个工件。
+  - 文档：四份发布文档中描述目录结构的段落与用例表已同步，全文校对留到第 6 轮。
+- 偏离本文之处：
+  - 第 8.2 节第 4 条原想只改链接参数：Go 会把被 `-X` 覆盖的默认字符串仍留在二进制里（实测去掉链接参数后 Core 中仍有一处提交号），所以 `main.go` 与 `mobile.go` 中 `mihomoRevision` 的默认值改为空字符串，开发构建由脚本写入。这是构建参数默认值，不是逻辑改动；握手字段与 IPC 协议不变。
+  - 本文未列出、实测发现后一并处理的三处：Windows 自带 PDB 中的 Source Link 映射写有仓库地址、内核子模块地址与两个提交号，.NET 程序集的产品版本带“+提交号”；macOS Release 的 Swift 二进制带构建机源码路径；gomobile 的模块信息带构建机目录。处理方式见上文“构建选项”。
+  - Windows 的内部目录名为 `installer-private`（跟随现有 `--release-dir` 目录名加 `-private`），不叫 `release-private`。
+  - 卸载脚本里供沙箱测试用的两个环境变量（`ASTERLINK_UNINSTALL_ROOT`、`ASTERLINK_UNINSTALL_SKIP_KEYCHAIN`）属于脚本行为，保留。
+- 测试结果：
+  - PASS（本机）：`release_scrub.py --self-test`；`test-native-macos.py --suite release` 16 项通过、2 项 BLOCKED（Gatekeeper 与公证需要 Developer ID，与以往相同），含新增 R-PUBLIC、R-PRIVATE、R-UNSTAMPED（Core `--version` 只输出 `0.1.0`）、R-SCRUB-BUNDLE、R-SCRUB-SELF；在公开目录放回一份许可文件后 R-PUBLIC 失败。用改动前（f1c3d23）的构建与打包脚本在同一检出上再打一次包，内部目录中的 `THIRD_PARTY_LICENSES.txt`、`SOURCE.txt`、两个源码归档与旧公开目录中的同名文件逐字节相同，发布清单的键与值相同（DMG 与二进制哈希除外）；用新扫描器扫描旧应用包报 4 处（Info.plist 提交号键、两份文本、Core 中的提交号）。剥离后的 Release 应用能正常启动。`--suite bundle` 6 项通过（Debug 的 Core 仍报告提交号，后台服务握手与篡改拒绝不受影响）。
+  - PASS（本机）：`package-native-ios.py` + `test-native-ios.py --suite release`，R03 全部 13 项通过，4 项 BLOCKED（需付费 Apple 账号与真机，与以往相同）；首次运行时 `R03.scrub` 发现两个可执行文件中各有 12 处构建机路径（gomobile 模块信息），改为中性路径绑定后通过。
+  - PASS（本机，.NET SDK 10.0.401 交叉发布 win-x64 的 stage）：扫描 708 个安装文件无问题；首次扫描发现 3 个 PDB 中的 Source Link 映射（含提交号）与 Microsoft 资源文件中的 `…Clash` 标识符，前者通过不生成 PDB 解决，后者通过“标记前不能紧跟字母”排除。`scrub_release` 用模拟的公开/内部目录跑通，在公开目录放回 `SOURCE.txt` 后 `scrub_public` 与 `scrub_stage` 失败。
+  - PASS（本机）：Go `cmd/...`、`mobile`、`internal/ipc` 测试；`test-app-copy.py`（1,344 条，0 问题）；全部工作流 YAML 可解析。
+  - CI：见 PR [#93](https://github.com/StevenWinsir/vpn/pull/93) 的检查列表（合并时补记结果）。
+  - NOT RUN（本机）：Android 打包与审计（本机无 JDK/Android SDK，由 CI 验证）；Windows 安装程序构建与 `release-check.ps1`（需要 Windows，由 CI 验证）。
+  - BLOCKED：Windows 正式签名、iOS 签名与真机安装、macOS Developer ID 与公证，与以往相同。
+- 遗留问题：
+  - D16 残留（已记入基线）：Core 二进制中的 Go 包路径（含 `github.com/metacubex/mihomo`、`sing-tun`、子模块目录名 `Clash.Meta`）与模块信息；客户端二进制中的 IPC 字段名 `mihomo_revision`。需求方需要时另行评估混淆方案。
+  - 网站下载页（frontend `download-view.tsx`）的“开源许可与源代码”段仍写有内核名称与许可，并说许可与源码“随安装包一同发布”，与 D15 不再一致；网站不在本计划范围内，是否修改由需求方决定。
+  - 发布文档全文校对按计划在第 6 轮完成。

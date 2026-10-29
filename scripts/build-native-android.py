@@ -44,6 +44,7 @@ import zipfile
 from pathlib import Path
 
 import prepare_mihomo
+import release_scrub
 
 ROOT = Path(__file__).resolve().parent.parent
 ANDROID = ROOT / 'apps' / 'android'
@@ -176,18 +177,25 @@ def check_so(so: Path, abi: str) -> dict:
             'load_segments': len(aligns), 'min_load_align': min(aligns)}
 
 
-def bind(abis, app_version, out_dir: Path, hooks=False) -> dict:
+def bind(abis, app_version, out_dir: Path, hooks=False, release=False) -> dict:
+    """release=True: the AAR a release APK ships. It carries no engine revision (hello answers an empty
+    mihomo_revision); Debug AARs keep it (handoff_app_standardization.md 8.2)."""
     patch = prepare_mihomo.prepare()
     ndk = ndk_dir()
     revision = mihomo_revision()
     out_dir.mkdir(parents=True, exist_ok=True)
     aar = out_dir / 'asterlink-core.aar'
-    ldflags = '-s -w -X asterlink/core/mobile.version=%s -X asterlink/core/mobile.mihomoRevision=%s' % (app_version, revision)
+    ldflags = '-s -w -X asterlink/core/mobile.version=%s' % app_version
+    if not release:
+        ldflags += ' -X asterlink/core/mobile.mihomoRevision=%s' % revision
+    # The checkout is seen through a neutral path so the module information carries no build machine directory
+    # (-trimpath covers the file names only; handoff_app_standardization.md 8.2).
+    core_dir, neutral = release_scrub.neutral_checkout()
     env = go_env(ANDROID_HOME=str(sdk_root()), ANDROID_NDK_HOME=str(ndk),
-                 PATH=str(TOOLS) + os.pathsep + os.environ.get('PATH', ''))
+                 PATH=str(TOOLS) + os.pathsep + os.environ.get('PATH', ''), **neutral)
     run_with_network_retry([TOOLS / 'gomobile', 'bind', '-target=' + ','.join(ABIS[a][0] for a in abis),
          '-androidapi', str(LOCK['android']['min_sdk']), '-javapkg', 'com.asterlink.core',
-         '-trimpath', *(['-tags', 'asterlink_tuntest'] if hooks else []), '-ldflags', ldflags, '-o', aar, './mobile'], cwd=CORE, env=env)
+         '-trimpath', *(['-tags', 'asterlink_tuntest'] if hooks else []), '-ldflags', ldflags, '-o', aar, './mobile'], cwd=core_dir, env=env)
     libraries = {}
     with tempfile.TemporaryDirectory() as scratch, zipfile.ZipFile(aar) as archive:
         names = archive.namelist()
@@ -208,6 +216,7 @@ def bind(abis, app_version, out_dir: Path, hooks=False) -> dict:
         # Debug-only TUN acceptance hooks (native/core/mobile/tuntest.go). The app build
         # refuses an AAR whose hooks do not match what it was asked to build.
         'tuntest_hooks': hooks,
+        'revision_stamped': not release,
     }
 
 
@@ -215,14 +224,15 @@ def build_aar(args) -> dict:
     prepare_mihomo.prepare()
     check_go()
     build_gomobile()
-    record = bind(args.abi, args.app_version, OUT, args.tun_test_hooks)
+    release = args.configuration == 'Release'
+    record = bind(args.abi, args.app_version, OUT, args.tun_test_hooks, release)
     (OUT / 'core-build.json').write_text(json.dumps(record, indent=2) + '\n')
     for abi, lib in record['abis'].items():
         print('libgojni.so %-12s %6.1f MiB  min LOAD align 0x%x  %s' % (abi, lib['bytes'] / 2 ** 20, lib['min_load_align'], lib['machine']))
     print('AAR %s (%.1f MiB) sha256 %s' % (OUT / 'asterlink-core.aar', record['aar_bytes'] / 2 ** 20, record['aar_sha256']))
     if args.check_reproducible:
         with tempfile.TemporaryDirectory() as again:
-            second = bind(args.abi, args.app_version, Path(again), args.tun_test_hooks)
+            second = bind(args.abi, args.app_version, Path(again), args.tun_test_hooks, release)
         differ = [abi for abi in args.abi if second['abis'][abi]['sha256'] != record['abis'][abi]['sha256']]
         if differ:
             raise RuntimeError('libgojni.so is not reproducible for %s' % differ)
@@ -249,7 +259,8 @@ def build_apk(args) -> dict:
     record_file = OUT / 'core-build.json'
     old = json.loads(record_file.read_text()) if record_file.is_file() else {}
     # A different version (e.g. left by the release rehearsal) or binding is rebuilt, never reused.
-    stale = old.get('tuntest_hooks', False) != args.tun_test_hooks or old.get('mihomo_patch') != patch or old.get('app_version') != args.app_version
+    stale = (old.get('tuntest_hooks', False) != args.tun_test_hooks or old.get('mihomo_patch') != patch or old.get('app_version') != args.app_version
+             or not old.get('revision_stamped', True))
     if args.rebuild_core or stale or not record_file.is_file() or not (OUT / 'asterlink-core.aar').is_file():
         build_aar(args)
     record = json.loads(record_file.read_text())
@@ -307,12 +318,14 @@ def build_release(args) -> dict:
     record_file = OUT / 'core-build.json'
     old = json.loads(record_file.read_text()) if record_file.is_file() else {}
     stale = (old.get('tuntest_hooks', False) or old.get('mihomo_patch') != patch or old.get('app_version') != args.app_version
-             or sorted(old.get('abis', {})) != sorted(args.abi))
+             or sorted(old.get('abis', {})) != sorted(args.abi) or old.get('revision_stamped', True))
     if args.tun_test_hooks:
         raise RuntimeError('a release APK never carries the TUN acceptance hooks')
     if args.rebuild_core or stale or not (OUT / 'asterlink-core.aar').is_file():
         build_aar(args)
     record = json.loads(record_file.read_text())
+    if record.get('revision_stamped', True):
+        raise RuntimeError('the Core AAR carries the engine revision; a release APK needs a release bind')
     env = java_env()
     tasks = [':app:assembleRelease', ':app:writeReleaseDependencies', '-Pasterlink.abiSplits=' + ','.join(args.abi)]
     if args.env_file:

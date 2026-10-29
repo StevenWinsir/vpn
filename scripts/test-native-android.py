@@ -94,7 +94,9 @@ Round 6:
       stored, ELF for its ABI with 16 KB LOAD alignment; no test classes, TUN hooks or debug tooling in
       the dex or libgojni.so; no secret (local .env values, private keys, connection strings, the key
       password) anywhere in the APK, with a planted-secret self check; the HTTPS API base baked in;
-      notices, inventory, SOURCE.txt, source archives and SHA256SUMS; the R8 mapping kept out of it
+      the public folder holds only the APKs and their SHA256SUMS; notices, inventory, SOURCE.txt, source archives,
+      release-info and the R8 mapping are complete in release-private/ (handoff_app_standardization.md 8.2); inside
+      every APK no licence or release file, no engine marker in a text entry, binaries within the D16 baseline
     * R01/R02 rehearsal (--allow-network-changes, an emulator): the same release pipeline (R8, splits,
       apksigner) built twice (version and version+0.0.1) against TestAndroidBillingWorld on a loopback
       port and signed with one throwaway key; through the real UI: fresh install, sign in with

@@ -27,6 +27,8 @@ on:
       - 'scripts/test-app-copy.py'
       - 'scripts/package-native-windows.py'
       - 'scripts/windows_release.py'
+      - 'scripts/release_scrub.py'
+      - 'scripts/release-scrub-baseline.json'
       - 'scripts/windows/**'
       - '.github/workflows/windows.yml'
   push:
@@ -43,6 +45,8 @@ on:
       - 'scripts/test-app-copy.py'
       - 'scripts/package-native-windows.py'
       - 'scripts/windows_release.py'
+      - 'scripts/release_scrub.py'
+      - 'scripts/release-scrub-baseline.json'
       - 'scripts/windows/**'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
@@ -323,6 +327,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: artifacts/windows/release/installer
+
+      - name: Retain the INTERNAL installer-private folder (release info, manifest, licences, source notice; never publish)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-private-INTERNAL
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/windows/release/installer-private
+            !artifacts/windows/release/installer-private/*-source-*.tar.gz
 
       - name: Retain the TUN harness build for the authorised test machine
         if: always()

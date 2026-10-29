@@ -504,28 +504,34 @@ def check_release(release_dir):
     sys.path.insert(0, str(ROOT / 'scripts'))
     import ios_release
     import windows_release
+    import release_scrub
     rel = Path(release_dir).resolve() if release_dir else ARTIFACTS / 'release'
-    info_path = rel / 'release-info.json'
+    private = release_scrub.private_dir(rel)
+    info_path = private / 'release-info.json'
     if not info_path.is_file():
-        record('R03.package', False, 'no package at %s: run python3 scripts/package-native-ios.py --channel internal first' % rel, status='BLOCKED')
+        record('R03.package', False, 'no package at %s: run python3 scripts/package-native-ios.py --channel internal first' % private, status='BLOCKED')
         return
     info = json.loads(info_path.read_text())
     ipa = rel / info['ipa']['file']
-    problems = windows_release.verify_checksums(rel) if (rel / 'SHA256SUMS').is_file() else ['SHA256SUMS missing']
-    needed = ['THIRD_PARTY_LICENSES.txt', 'SOURCE.txt', 'dependencies.cdx.json', 'release-info.json', ipa.name]
-    problems += ['missing ' + name for name in needed if not (rel / name).is_file()]
+    problems = []
+    for folder in (rel, private):
+        problems += windows_release.verify_checksums(folder) if (folder / 'SHA256SUMS').is_file() else ['SHA256SUMS missing in ' + folder.name]
+    # Handoff_app_standardization.md 8.2: customers get the IPA and its checksum; the rest is internal.
+    problems += release_scrub.public_problems(rel, [ipa.name])
+    problems += release_scrub.private_problems(private, ['THIRD_PARTY_LICENSES.txt', 'SOURCE.txt', 'dependencies.cdx.json', 'release-info.json'])
     if ipa.is_file() and (ipa.stat().st_size != info['ipa']['bytes'] or ios_release.sha256(ipa) != info['ipa']['sha256']):
         problems.append('the IPA differs from release-info.json')
     if info.get('trusted_release') is not False or info.get('signed') is not False or info.get('channel') != 'internal' or len(info.get('open_gates', [])) < 5:
         problems.append('release-info.json must say unsigned, internal, trusted_release=false with the open gates listed')
     for name in info.get('source_archives', []):
         try:
-            with tarfile.open(rel / name) as archive:
+            with tarfile.open(private / name) as archive:
                 if not archive.getnames():
                     problems.append(name + ' is empty')
         except (OSError, tarfile.TarError) as error:
             problems.append('%s unreadable: %s' % (name, error))
-    record('R03.files', not problems, 'package files, hashes and release-info agree (%d source archives)' % len(info.get('source_archives', []))
+    record('R03.files', not problems, 'public folder: the IPA and SHA256SUMS only; %s: release-info, notices, inventory, %d source archives; hashes agree'
+           % (private.name, len(info.get('source_archives', [])))
            if not problems else '; '.join(problems))
     if not ipa.is_file():
         return
@@ -622,15 +628,25 @@ def check_release(release_dir):
                % sum(1 for p in root.rglob('*') if p.is_file()) if not found and selfcheck else
                ('scanner self-check failed' if not selfcheck else 'secret-looking strings: %s' % found))
 
-        revision = info['core']['mihomo_revision'].encode()
-        missing_core = [binary.name for binary in executables if revision not in binary.read_bytes()]
+        # The release bind carries no engine revision; release-private records which one it is built from.
+        revision = info['core']['mihomo_revision']
+        stamped = [binary.name for binary in executables if revision.encode() in binary.read_bytes()]
         patch_ok = bool(info.get('mihomo_patch'))
-        record('R03.core_identity', not missing_core and patch_ok and info['core']['mihomo_revision'] == info['mihomo_commit'][:len(info['core']['mihomo_revision'])],
-               'both binaries embed Mihomo %s; the patch %s is recorded' % (info['core']['mihomo_revision'][:12], (info.get('mihomo_patch') or {}).get('id', '?'))
-               if not missing_core and patch_ok else 'revision missing from %s, or patch not recorded' % missing_core)
+        ok = not stamped and patch_ok and info['core'].get('revision_stamped') is False and revision == info['mihomo_commit'][:len(revision)]
+        record('R03.core_identity', ok, 'neither binary carries the engine revision; release-private records %s and the patch %s'
+               % (revision[:12], (info.get('mihomo_patch') or {}).get('id', '?')) if ok else
+               'revision embedded in %s, stamped=%s, or patch not recorded' % (stamped, info['core'].get('revision_stamped')))
 
-        notices = (rel / 'THIRD_PARTY_LICENSES.txt').read_text(encoding='utf-8')
-        source = (rel / 'SOURCE.txt').read_text(encoding='utf-8')
+        found = release_scrub.scan_tree(root, revision)
+        leaks, residue = release_scrub.judge(found, release_scrub.load_baseline('ios'))
+        leaks += ['private-only file: ' + n for n in release_scrub.named_leaks(found)]
+        record('R03.scrub', not leaks, '%d files in the IPA: no licence, source or release file, no engine marker in text or plists; '
+               'binary residue within the D16 baseline: %s' % (len(found), release_scrub.summary(residue)) if not leaks else '; '.join(leaks[:8]))
+        failures = release_scrub.self_test('ios')
+        record('R03.scrub_self', not failures, 'the audit catches every planted leak' if not failures else '; '.join(failures))
+
+        notices = (private / 'THIRD_PARTY_LICENSES.txt').read_text(encoding='utf-8')
+        source = (private / 'SOURCE.txt').read_text(encoding='utf-8')
         bad = []
         if 'GNU GENERAL PUBLIC LICENSE' not in notices or 'github.com/metacubex/mihomo' not in notices:
             bad.append('Mihomo GPL text missing from THIRD_PARTY_LICENSES.txt')
@@ -640,7 +656,7 @@ def check_release(release_dir):
             bad.append('SOURCE.txt does not name the commits')
         if not info.get('source_archives'):
             bad.append('no source archives (a --skip-source-archives package is for local iteration only)')
-        record('R03.licenses', not bad, '%d Go modules licensed, GPL text and corresponding-source archives present' % info['third_party_go_modules']
+        record('R03.licenses', not bad, '%s: %d Go modules licensed, GPL text and corresponding-source archives present' % (private.name, info['third_party_go_modules'])
                if not bad else '; '.join(bad))
 
         profiles = scratch / 'profiles'

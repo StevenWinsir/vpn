@@ -433,6 +433,35 @@ def run_service_suite(args):
     record('service.e2e', e2e.returncode == 0 and bool(cases), '%d cases from the harness, exit code %d' % (len(cases), e2e.returncode))
 
 
+def scrub_release(stage, release_dir):
+    """Handoff_app_standardization.md 8.2: the public folder is the installer and its checksum; the stage the installer
+    carries (exactly what lands in Program Files) has no licence, source or release file and no engine marker in any text
+    file; its binaries stay within the D16 baseline; the internal folder is complete."""
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import release_scrub
+    private = release_scrub.private_dir(release_dir)
+    info = json.loads((private / 'release-info.json').read_text(encoding='utf-8')) if (private / 'release-info.json').is_file() else {}
+    problems = release_scrub.public_problems(release_dir, [info.get('installer', '?')])
+    record('release.scrub_public', not problems, '; '.join(problems) or 'only %s and SHA256SUMS' % info.get('installer'))
+    problems = release_scrub.private_problems(private, ('release-info.json', 'manifest.json', 'dependencies.cdx.json', 'THIRD_PARTY_LICENSES.txt', 'SOURCE.txt'))
+    notices = (private / 'THIRD_PARTY_LICENSES.txt').read_text(encoding='utf-8') if (private / 'THIRD_PARTY_LICENSES.txt').is_file() else ''
+    if 'GNU GENERAL PUBLIC LICENSE' not in notices or 'Wintun' not in notices:
+        problems.append('licence texts incomplete')
+    record('release.scrub_private', not problems, '; '.join(problems) or '%s keeps release-info, manifest, inventory, notices, SOURCE.txt, %d source archive(s)'
+           % (private.name, len(info.get('source_archives', []))))
+    revision = release_scrub.pinned_revision()
+    found = release_scrub.scan_tree(stage, revision)
+    found.update(release_scrub.scan_tree(release_dir, revision, 'public/'))
+    # manifest.json and build-config.json are installed on purpose (hashes and public addresses only); they are scanned
+    # like every other text file but are not "private-only" in the stage.
+    leaks = [n for n in release_scrub.named_leaks(found) if n not in ('manifest.json',)]
+    problems, residue = release_scrub.judge(found, release_scrub.load_baseline('windows'))
+    problems += ['private-only file: ' + n for n in leaks]
+    record('release.scrub_stage', not problems, '; '.join(problems[:8]) or '%d installed files clean; accepted residue: %s' % (len(found), release_scrub.summary(residue)))
+    failures = release_scrub.self_test('windows')
+    record('release.scrub_self', not failures, '; '.join(failures) or 'the audit catches every planted leak')
+
+
 def run_release_suite(args):
     """Round 8: the portable checks always run; the installer build and the real install/upgrade/uninstall need Windows + Inno Setup."""
     sys.path.insert(0, str(ROOT / 'scripts'))
@@ -528,6 +557,7 @@ def run_release_suite(args):
         record('release.package', False, (packaged.stdout + packaged.stderr)[-1500:])
         return
     record('release.package', True, 'installer built at %s (signing=%s)' % (release_dir, sign_mode))
+    scrub_release(stage, release_dir)
 
     report = out / 'release-check.json'
     expect = 'none' if sign_mode == 'none' else 'test' if sign_mode == 'test' else 'release'

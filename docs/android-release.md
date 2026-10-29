@@ -63,19 +63,26 @@ python3 scripts/test-native-android.py --suite release --allow-network-changes
    检查每个 `.so` 未压缩存放、ELF 架构正确、LOAD 段 ≥ 16 KB 对齐、`zipalign -P 16`，且 `libgojni.so` 与
    `core-build.json` 记录的可复现产物逐字节相同（`keepDebugSymbols` 禁止 AGP 再次 strip）。
 2. apksigner 签名并复核：v2、v3 均通过，只有一个签名者，证书指纹等于发布密钥。
-3. 输出 `artifacts/native-android/release/`（可公开）：
+3. 输出 `artifacts/native-android/release/`（公开目录）：
+
+> 2026-10-28（handoff_app_standardization.md 第 5 轮，D15）：公开目录只放安装包与只列安装包的 `SHA256SUMS`；许可、源码说明、源码归档、组件清单与发布信息内容不变，移入同级的 `release-private/`（内部资料，不得发布）。发布构建的 Core 不再写入内核提交号。
 
 | 文件 | 内容 |
 | --- | --- |
-| `AsterLink-<版本>-android-arm64-v8a.apk` | 官网提供下载的安装包 |
-| `THIRD_PARTY_LICENSES.txt` | libgojni.so 的全部 Go 模块许可（按 ABI）+ AndroidX/Kotlin 等 Maven 依赖清单与 Apache-2.0 全文 |
-| `dependencies.cdx.json` | CycloneDX 形式的依赖清单（Go 模块、Maven 构件、Mihomo） |
-| `SOURCE.txt` + `asterlink-source-*.tar.gz` + `mihomo-source-*.tar.gz` | GPL 对应源代码（Mihomo 为 GPL-3.0） |
-| `release-info.json` | 版本、versionCode、各 APK 的哈希与签名、证书指纹、Core/Mihomo/补丁身份、`trusted_release=false` 与未关闭门槛 |
-| `SHA256SUMS` | 以上全部文件 |
+| `AsterLink-<版本>-android-arm64-v8a.apk` | 官网提供下载的安装包（Core 不含内核提交号） |
+| `SHA256SUMS` | 只列 APK |
 
-   以及 `artifacts/native-android/release-private/`（**不要公开**）：R8 `mapping-<版本>.txt`（还原崩溃堆栈用，
-   每个版本都要保存）和 `website-env.txt`（下载页配置，见第 4 节）。
+   以及 `artifacts/native-android/release-private/`（**内部资料，不要公开**；CI 工件 `android-release-private-INTERNAL`，不含源码归档）：
+
+| 文件 | 内容 |
+| --- | --- |
+| `THIRD_PARTY_LICENSES.txt` | libgojni.so 的全部 Go 模块许可（按 ABI）+ AndroidX/Kotlin 等 Maven 依赖清单与 Apache-2.0 全文 |
+| `dependencies.cdx.json` | CycloneDX 形式的依赖清单 |
+| `SOURCE.txt` + `asterlink-source-*.tar.gz` + `mihomo-source-*.tar.gz` | 本仓库与内核的对应源代码 |
+| `release-info.json` | 版本、versionCode、各 APK 的哈希与签名、证书指纹、Core/补丁身份（含 `revision_stamped:false`）、`trusted_release=false` 与未关闭门槛 |
+| `mapping-<版本>.txt` | R8 映射，还原崩溃堆栈用，每个版本都要保存 |
+| `website-env.txt` | 下载页配置，见第 4 节 |
+| `SHA256SUMS`、`README-内部资料.txt` | 内部目录自身的哈希与“不得发布”说明 |
 
 ### 版本号
 
@@ -111,7 +118,9 @@ python3 scripts/test-native-android.py --suite release --allow-network-changes
 | R03-&lt;abi&gt;-no-test-code | dex 与 libgojni.so 中没有测试框架、验收测试、TUN 钩子、调试工具类 |
 | R03-&lt;abi&gt;-no-secrets / -secret-self | 所有条目中无私钥、连接串、本地 .env 秘密值、发布密钥密码；扫描器能发现植入的秘密 |
 | R03-&lt;abi&gt;-endpoint | BuildConfig 为 HTTPS 生产 API，`APP_ENV=release` |
-| R03-licenses / -source-archives / -private-kept-out | 许可、清单、SOURCE.txt、两个源码包齐全；mapping 与密钥不在公开目录 |
+| R03-public | 公开目录只有 APK 与只列 APK 的 `SHA256SUMS` |
+| R03-licenses / -source-archives / -private-kept-out | `release-private/` 中许可、清单、SOURCE.txt、两个源码包齐全；mapping 与密钥不在公开目录 |
+| R03-&lt;abi&gt;-scrub / R03-scrub-self | APK 内无许可/源码/发布信息文件，文本条目无内核标记，二进制命中不超出 `scripts/release-scrub-baseline.json`（D16），Core 不含内核提交号；扫描器能发现植入样本 |
 | R01-api36 / -api36-16k / -api26 | 发布 APK 在各镜像上干净安装、启动、登录页显示 Core 与 Mihomo 版本（R8 下 JNI 正常）、无崩溃；缺镜像记 BLOCKED |
 | R01-rehearsal-* | 同一发布流水线（R8、拆分、apksigner）以本机回环测试后端构建两个版本、同一把临时密钥签名，经真实界面：全新安装 → 登录（记住密码）→ 选线 → **系统 VPN 授权弹窗** → 已连接（真实 TUN）→ 断开 |
 | R02-upgrade / -upgrade-consent | 覆盖升级到下一版本：自动登录（记住的密码保留）、再次连接不再弹授权 |
