@@ -2,10 +2,11 @@ using System.Globalization;
 
 namespace AsterLink.Shared.Client;
 
-/// <summary>Display helpers. Traffic uses binary units (1 GiB = 2^30 bytes) and says so; integers never go through double for accounting.</summary>
+/// <summary>Display helpers. Traffic is shown in GB like the website: the base is 1024 (handoff D7), only the unit name
+/// changed. Integers never go through double for accounting.</summary>
 public static class Formatting
 {
-    private static readonly string[] Units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    private static readonly string[] Units = ["B", "KB", "MB", "GB", "TB"];
 
     public static string Bytes(long value)
     {
@@ -20,7 +21,15 @@ public static class Formatting
     public static string Speed(long bytesPerSecond) => Bytes(bytesPerSecond) + "/s";
 
     public static string Date(DateTimeOffset? value) =>
-        value is null ? "—" : value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        value is null ? "—" : value.Value.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    /// <summary>Bytes counted against the plan for <paramref name="physical"/> bytes at a line rate; the Core's formula, integers only, no overflow for any long.</summary>
+    public static long BilledBytes(long physical, long ratePermille)
+    {
+        if (physical <= 0 || ratePermille <= 0) return 0;
+        var billed = (Int128)(physical / 1000) * ratePermille + (Int128)(physical % 1000) * ratePermille / 1000;
+        return billed > long.MaxValue ? long.MaxValue : (long)billed;
+    }
 
     /// <summary>500‰ → "0.5×", 1000‰ → "1×". Pure integer arithmetic.</summary>
     public static string Rate(long permille)

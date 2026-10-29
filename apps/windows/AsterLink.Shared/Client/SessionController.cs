@@ -26,7 +26,7 @@ public static class LoginInput
     {
         if (email.Trim().Length == 0 || password.Length == 0) return "请输入邮箱和密码";
         if (email.Trim().Length > MaxEmailLength) return "邮箱过长";
-        if (Encoding.UTF8.GetByteCount(password) > MaxPasswordBytes) return "密码过长（最多 72 字节）";
+        if (Encoding.UTF8.GetByteCount(password) > MaxPasswordBytes) return "密码过长";
         return null;
     }
 }
@@ -129,7 +129,7 @@ public sealed class SessionController
         try { saved = credentials.Read(AccountFor(Email)); }
         catch (CredentialStoreException)
         {
-            Warning = "无法读取 Windows 凭据管理器，请手动输入密码";
+            Warning = "无法从 Windows 凭据管理器读取密码，请手动输入";
             Raise();
             return;
         }
@@ -258,7 +258,7 @@ public sealed class SessionController
     private void TryDelete(string key)
     {
         try { credentials.Delete(key); }
-        catch (CredentialStoreException) { Warning = "无法从 Windows 凭据管理器删除已保存的密码，请在“凭据管理器”中手动删除"; }
+        catch (CredentialStoreException) { Warning = "无法删除已保存的密码，请在 Windows“凭据管理器”中手动删除"; }
     }
 
     /// <summary>Explicit sign-out also forgets the saved password for this account.</summary>
@@ -447,7 +447,7 @@ public sealed class SessionController
         StopPolling();
         Phase = AppPhase.SignedOut;
         Snapshot = EmptySnapshot;
-        Message = "内核已意外退出，连接已停止，请重新登录";
+        Message = "连接已中断，请重新登录";
         Raise();
     }
 
@@ -456,7 +456,7 @@ public sealed class SessionController
         StopPolling();
         Phase = AppPhase.SignedOut;
         Snapshot = EmptySnapshot;
-        Message = "已取消。本次会话已结束，请重新登录";
+        Message = "已取消连接，请重新登录";
         Raise();
     }
 
@@ -512,7 +512,7 @@ public sealed class SessionController
     {
         IpcCommandException command when IsServiceCode(command.Code) => ErrorText.ForService(command.Code),
         IpcCommandException command => CleanMessage(command) is { Length: > 0 } text ? text : "操作失败，请稍后重试",
-        CoreUnavailableException unavailable => ErrorText.ForService(unavailable.Code, unavailable.Message),
+        CoreUnavailableException unavailable => ErrorText.ForService(unavailable.Code),
         _ => ErrorText.ForService(""),
     };
 }

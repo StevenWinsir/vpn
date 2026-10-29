@@ -1,0 +1,19 @@
+<UserControl x:Class="AsterLink.App.Controls.NoticeBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root" Focusable="False" IsTabStop="False">
+    <!-- One sentence (what happened / what to do) and at most one next step (handoff 5.1). Text and glyph, never colour alone. -->
+    <Border x:Name="Frame" CornerRadius="10" BorderThickness="1" Padding="14,10">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ContentControl x:Name="Glyph" Style="{StaticResource Icon}" Width="18" Height="18" VerticalAlignment="Top" Margin="0,1,10,0" />
+            <TextBlock x:Name="Message" Grid.Column="1" Text="{Binding Text, ElementName=Root}" FontSize="13" VerticalAlignment="Center" />
+            <Button x:Name="Action" Grid.Column="2" Content="{Binding ActionText, ElementName=Root}" Command="{Binding Command, ElementName=Root}"
+                    Margin="12,0,0,0" MinHeight="30" Padding="12,0" VerticalAlignment="Center" />
+        </Grid>
+    </Border>
+</UserControl>

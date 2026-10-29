@@ -1,0 +1,59 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- The brand mark, drawn from the path data of frontend/brand/mark.svg (64 x 64: a rounded brand plate, a stroked shield
+         and a dot). scripts/test-brand-assets.py checks that the paths, the corner radius, the stroke width and the dot are
+         the source's own, so the in-app mark can never drift from the website and the app icons (handoff 4.7). -->
+    <Geometry x:Key="BrandShieldGeometry">M32 14a24 24 0 0 0 17 6a24 24 0 0 1 -17 30a24 24 0 0 1 -17 -30a24 24 0 0 0 17 -6</Geometry>
+    <Geometry x:Key="BrandStemGeometry">M32 32v5</Geometry>
+    <EllipseGeometry x:Key="BrandDotGeometry" Center="32,30" RadiusX="2.8" RadiusY="2.8" />
+
+    <!-- The full mark (plate + shield). Width/Height set the size; the plate takes the brand fill in both schemes. -->
+    <Style x:Key="BrandMark" TargetType="ContentControl">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Width" Value="32" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="AutomationProperties.Name" Value="AsterLink" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContentControl">
+                    <Viewbox>
+                        <Canvas Width="64" Height="64">
+                            <Rectangle Width="64" Height="64" RadiusX="15" RadiusY="15" Fill="{DynamicResource BrandFillBrush}" />
+                            <Path Data="{StaticResource BrandShieldGeometry}" Stroke="{DynamicResource OnBrandBrush}" StrokeThickness="4.2"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                            <Path Data="{StaticResource BrandStemGeometry}" Stroke="{DynamicResource OnBrandBrush}" StrokeThickness="4.2"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                            <Path Data="{StaticResource BrandDotGeometry}" Fill="{DynamicResource OnBrandBrush}" />
+                        </Canvas>
+                    </Viewbox>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- The shield alone (no plate), stroked in the current Foreground: the centre of the connect button. -->
+    <Style x:Key="BrandGlyph" TargetType="ContentControl">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContentControl">
+                    <Viewbox>
+                        <!-- The shield spans x 15..49 and y 14..50 of the 64 canvas: crop to it so the glyph is centred. -->
+                        <Canvas Width="40" Height="42">
+                            <Canvas.RenderTransform>
+                                <TranslateTransform X="-12" Y="-11" />
+                            </Canvas.RenderTransform>
+                            <Path Data="{StaticResource BrandShieldGeometry}" Stroke="{TemplateBinding Foreground}" StrokeThickness="4.2"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                            <Path Data="{StaticResource BrandStemGeometry}" Stroke="{TemplateBinding Foreground}" StrokeThickness="4.2"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                            <Path Data="{StaticResource BrandDotGeometry}" Fill="{TemplateBinding Foreground}" />
+                        </Canvas>
+                    </Viewbox>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

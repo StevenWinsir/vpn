@@ -12,7 +12,7 @@ still belong to the committed source and are structurally valid:
   * the iOS light icon has no alpha channel; Android vectors parse and use only white;
   * each platform actually references its assets (Info.plist key in the build script, csproj,
     installer script, Android manifest);
-  * palette (handoff_app_standardization.md 4.2): every colour role of the iOS and Android themes
+  * palette (handoff_app_standardization.md 4.2): every colour role of the iOS, Android, macOS and Windows themes
     equals the website token it maps to, in the light and the dark scheme (change a token in
     frontend/src/app/globals.css and this fails until the apps follow).
 
@@ -289,6 +289,49 @@ def check_macos(tokens, svg):
     check('dot = (x: CGFloat(%s), y: CGFloat(%s), r: CGFloat(%s))' % circle in components, 'macOS BrandGeometry dot is the mark.svg circle')
 
 
+# Windows (round 4): Theme/Light.xaml and Dark.xaml hold one SolidColorBrush per role, named after the macOS role
+# (TextPrimary → TextPrimaryBrush); colours are #RRGGBB or #AARRGGBB (the website's rgba alpha rounded to /255).
+WINDOWS_EXTRA = dict(MACOS_EXTRA, **{'seg-active-bg': 'segActive', 'seg-active-text': 'segActiveText'})
+
+
+def check_windows(tokens, svg):
+    theme = ROOT / 'apps/windows/AsterLink.App/Theme'
+    wanted = {token: ios_role for token, (ios_role, _) in PALETTE.items()}
+    wanted.update(WINDOWS_EXTRA)
+    for scheme, name in (('light', 'Light.xaml'), ('dark', 'Dark.xaml')):
+        body = (theme / name).read_text(encoding='utf-8')
+        brushes = {}
+        for key, value in re.findall(r'<SolidColorBrush x:Key="(\w+)Brush" Color="#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})" />', body):
+            alpha = int(value[:2], 16) / 255 if len(value) == 8 else 1.0
+            rgb = value[-6:]
+            brushes[key] = parse_colour('#' + rgb.lower())[:3] + (alpha,)
+        for token, role in wanted.items():
+            want = tokens[scheme].get(token) or tokens['light'].get(token)
+            key = role[0].upper() + role[1:]
+            check(same_colour(brushes.get(key), want), 'Windows %s %sBrush is --al-%s' % (name, key, token))
+        check(not re.search(r'(?:2F6FEB|3B73E0|2559C4)', body, re.I), 'the retired blue is not in the Windows %s' % name)
+    # No colour literal outside the two theme files: views, controls and styles use role names only (4.2).
+    app = ROOT / 'apps/windows/AsterLink.App'
+    for path in sorted(list(app.rglob('*.xaml')) + list(app.rglob('*.cs'))):
+        if path.name in ('Light.xaml', 'Dark.xaml') or '/bin/' in str(path) or '/obj/' in str(path):
+            continue
+        body = path.read_text(encoding='utf-8')
+        literal = re.search(r'"#[0-9A-Fa-f]{6,8}"|Color\.FromRgb|Colors\.(?!Transparent)\w+|Brushes\.(?!Transparent\b|Black\b)\w+', body)
+        check(literal is None, 'Windows %s draws with theme roles only%s' % (path.relative_to(app), ' (found %r)' % literal.group(0) if literal else ''))
+
+    # The in-app mark is drawn from the SVG's own path data (Theme/Brand.xaml).
+    brand = (theme / 'Brand.xaml').read_text(encoding='utf-8')
+    paths = re.findall(r'<path d="([^"]+)"', svg)
+    xaml_paths = re.findall(r'<Geometry x:Key="Brand(?:Shield|Stem)Geometry">([^<]+)</Geometry>', brand)
+    check(paths == xaml_paths, 'Windows BrandMark paths are the mark.svg paths')
+    rx = re.search(r'<rect[^>]*rx="([0-9.]+)"', svg).group(1)
+    width = re.search(r'stroke-width="([0-9.]+)"', svg).group(1)
+    cx, cy, r = re.search(r'<circle cx="([0-9.]+)" cy="([0-9.]+)" r="([0-9.]+)"', svg).groups()
+    check('RadiusX="%s" RadiusY="%s"' % (rx, rx) in brand, 'Windows BrandMark corner radius is the mark.svg rx')
+    check(brand.count('StrokeThickness="%s"' % width) == 4, 'Windows BrandMark stroke width is the mark.svg stroke-width')
+    check('Center="%s,%s" RadiusX="%s" RadiusY="%s"' % (cx, cy, r, r) in brand, 'Windows BrandMark dot is the mark.svg circle')
+
+
 def main():
     manifest = json.loads((ROOT / 'apps/brand-manifest.json').read_text())
     source = (ROOT / manifest['source']['path']).read_bytes()
@@ -342,6 +385,7 @@ def main():
     tokens = website_tokens(text('frontend/src/app/globals.css'))
     check_palette(tokens)
     check_macos(tokens, source.decode('utf-8'))
+    check_windows(tokens, source.decode('utf-8'))
     check_contrast(tokens)
 
     print('\n%d check(s) failed' % len(failures) if failures else '\nall brand asset checks passed')

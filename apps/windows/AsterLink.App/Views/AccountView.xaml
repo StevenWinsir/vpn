@@ -1,0 +1,122 @@
+<UserControl x:Class="AsterLink.App.Views.AccountView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:AsterLink.App.Controls">
+    <!-- Account: who is signed in and the website entries, appearance, running in the background, the background service,
+         about, then sign out / quit. -->
+    <StackPanel MaxWidth="760" HorizontalAlignment="Left">
+        <ContentControl Style="{StaticResource Card}">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="48" Height="48" CornerRadius="24" Background="{DynamicResource BrandFillBrush}" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AccountInitial}" Foreground="{DynamicResource OnBrandBrush}" FontSize="20" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding UserEmail}" FontSize="16" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                       AutomationProperties.AutomationId="AccountEmail" />
+                            <Border Style="{StaticResource Pill}" Background="{DynamicResource BrandSoftBrush}" Margin="10,0,0,0"
+                                    Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="管理员账号" Style="{StaticResource PillText}" Foreground="{DynamicResource BrandBrush}" />
+                            </Border>
+                        </StackPanel>
+                        <TextBlock Text="{Binding AccountPlanSummary}" Style="{StaticResource Muted}" Margin="0,4,0,0" AutomationProperties.AutomationId="AccountSummary" />
+                    </StackPanel>
+                </Grid>
+                <Border Style="{StaticResource Divider}" Margin="0,18,0,14" />
+                <WrapPanel>
+                    <Button Content="{Binding RenewText}" Style="{StaticResource PrimaryButton}" Command="{Binding OpenPlansCommand}" Margin="0,0,8,0"
+                            ui:Ui.Icon="{StaticResource IconCrown}" AutomationProperties.AutomationId="OpenPlans" />
+                    <Button Content="订单记录" Command="{Binding OpenOrdersCommand}" Margin="0,0,8,0" ui:Ui.Icon="{StaticResource IconReceipt}"
+                            AutomationProperties.AutomationId="OpenOrders" />
+                    <Button Content="网站控制台" Command="{Binding OpenDashboardCommand}" ui:Ui.Icon="{StaticResource IconLayoutDashboard}"
+                            AutomationProperties.AutomationId="OpenDashboard" />
+                </WrapPanel>
+            </StackPanel>
+        </ContentControl>
+
+        <TextBlock Text="外观" Style="{StaticResource SectionTitle}" Margin="4,28,0,10" />
+        <ContentControl Style="{StaticResource Card}">
+            <Grid>
+                <TextBlock Text="主题" Style="{StaticResource Body}" VerticalAlignment="Center" />
+                <Border Style="{StaticResource SegmentHost}" HorizontalAlignment="Right" AutomationProperties.Name="主题">
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton Content="跟随系统" Style="{StaticResource Segment}" GroupName="theme" IsChecked="{Binding ThemeSystem}" AutomationProperties.AutomationId="ThemeSystem" />
+                        <RadioButton Content="浅色" Style="{StaticResource Segment}" GroupName="theme" IsChecked="{Binding ThemeLight}" AutomationProperties.AutomationId="ThemeLight" />
+                        <RadioButton Content="深色" Style="{StaticResource Segment}" GroupName="theme" IsChecked="{Binding ThemeDark}" AutomationProperties.AutomationId="ThemeDark" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </ContentControl>
+
+        <TextBlock Text="通用" Style="{StaticResource SectionTitle}" Margin="4,28,0,10" />
+        <ContentControl Style="{StaticResource Card}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <ContentControl Style="{StaticResource Icon}" Tag="{StaticResource IconInfoCircle}" Foreground="{DynamicResource BrandBrush}" VerticalAlignment="Top" />
+                <TextBlock Grid.Column="1" Style="{StaticResource Muted}" Margin="12,0,0,0" AutomationProperties.AutomationId="BackgroundNote"
+                           Text="关闭窗口后，AsterLink 会继续在任务栏右下角的通知区域运行，连接不会中断。点击那里的 AsterLink 图标即可重新打开窗口。" />
+            </Grid>
+        </ContentControl>
+
+        <TextBlock Text="后台服务" Style="{StaticResource SectionTitle}" Margin="4,28,0,10" />
+        <ContentControl Style="{StaticResource Card}" DataContext="{Binding Service}">
+            <StackPanel>
+                <!-- Normal: one line. A problem: the guide with its reason and the one action that helps (D11). -->
+                <StackPanel Orientation="Horizontal" Visibility="{Binding IsReady, Converter={StaticResource BoolToVisibility}}">
+                    <ContentControl Style="{StaticResource Icon}" Tag="{StaticResource IconCircleCheck}" Foreground="{DynamicResource BrandBrush}" />
+                    <TextBlock Text="{Binding State}" Style="{StaticResource Body}" Margin="10,0,0,0" VerticalAlignment="Center"
+                               AutomationProperties.AutomationId="ServiceState" />
+                </StackPanel>
+                <ui:ServiceGuide Visibility="{Binding NotReady, Converter={StaticResource BoolToVisibility}}" />
+                <Expander Header="故障排查" Margin="0,12,0,0" AutomationProperties.AutomationId="Troubleshooting">
+                    <StackPanel Margin="26,0,0,0">
+                        <TextBlock Style="{StaticResource Caption}"
+                                   Text="连接异常且无法恢复时，可以先退出登录，再回到登录页按提示修复 AsterLink。修复时 Windows 会请求管理员权限。" />
+                        <Button Content="重新检测" Command="{Binding RefreshCommand}" HorizontalAlignment="Left" Margin="0,10,0,0" MinHeight="30"
+                                ui:Ui.Icon="{StaticResource IconRefresh}" AutomationProperties.AutomationId="ServiceRecheck" />
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+        </ContentControl>
+
+        <TextBlock Text="关于" Style="{StaticResource SectionTitle}" Margin="4,28,0,10" />
+        <ContentControl Style="{StaticResource Card}">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ContentControl Style="{StaticResource BrandMark}" Width="36" Height="36" />
+                    <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="AsterLink" FontSize="15" FontWeight="SemiBold" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding VersionText}" Style="{StaticResource Caption}" AutomationProperties.AutomationId="Version" />
+                            <TextBlock Text="{Binding DevelopmentMarker}" Style="{StaticResource Caption}" Margin="6,0,0,0"
+                                       Visibility="{Binding IsDevelopmentBuild, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Content="{Binding CopyDiagnosticsText}" Command="{Binding CopyDiagnosticsCommand}" ui:Ui.Icon="{StaticResource IconCopy}" MinHeight="32"
+                            ToolTip="联系客服时可粘贴这段信息，其中只有应用版本、系统版本、连接状态和错误码"
+                            AutomationProperties.AutomationId="CopyDiagnostics" AutomationProperties.HelpText="联系客服时可粘贴这段信息，其中只有应用版本、系统版本、连接状态和错误码" />
+                    <Button Content="访问官网" Command="{Binding OpenWebsiteCommand}" ui:Ui.Icon="{StaticResource IconExternalLink}" MinHeight="32" Margin="8,0,0,0"
+                            AutomationProperties.AutomationId="OpenWebsite" />
+                </StackPanel>
+            </Grid>
+        </ContentControl>
+
+        <StackPanel Orientation="Horizontal" Margin="0,28,0,0">
+            <Button Content="退出登录" Command="{Binding SignOutCommand}" ui:Ui.Icon="{StaticResource IconLogout}" AutomationProperties.AutomationId="SignOut" />
+            <Button Content="退出 AsterLink" Style="{StaticResource DangerButton}" Command="{Binding ExitCommand}" Margin="8,0,0,0"
+                    ui:Ui.Icon="{StaticResource IconPower}" AutomationProperties.AutomationId="Exit" />
+        </StackPanel>
+        <TextBlock Text="退出 AsterLink 会先断开连接，再关闭程序。" Style="{StaticResource Faint}" Margin="2,8,0,0" />
+    </StackPanel>
+</UserControl>

@@ -1,19 +1,51 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- One accent colour, reserved for the primary action (handoff section 9.1). Status is always text as well as colour. -->
-    <SolidColorBrush x:Key="AccentBrush" Color="#2F6FEB" />
-    <SolidColorBrush x:Key="AccentHoverBrush" Color="#2559C4" />
-    <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFF" />
-    <SolidColorBrush x:Key="SurfaceBrush" Color="#F6F8FB" />
-    <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF" />
-    <SolidColorBrush x:Key="BorderBrush" Color="#DDE3EC" />
-    <SolidColorBrush x:Key="TextBrush" Color="#1B2430" />
-    <SolidColorBrush x:Key="MutedBrush" Color="#5B6675" />
-    <SolidColorBrush x:Key="PassBrush" Color="#1F7A4D" />
-    <SolidColorBrush x:Key="FailBrush" Color="#B3261E" />
-    <SolidColorBrush x:Key="WarnBrush" Color="#8A5300" />
-    <SolidColorBrush x:Key="SelectedBrush" Color="#EAF1FE" />
-    <SolidColorBrush x:Key="ButtonBrush" Color="#EEF2F8" />
-    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#E1E8F2" />
-    <SolidColorBrush x:Key="SidebarBrush" Color="#EEF2F8" />
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:system="clr-namespace:System;assembly=System.Runtime">
+    <!-- Light scheme. Every colour role is one website token (frontend/src/app/globals.css, handoff 4.2), checked by
+         scripts/test-brand-assets.py; views use the role names only (DynamicResource), never a colour literal. -->
+    <!-- brand: text, icons, the selected item -->
+    <SolidColorBrush x:Key="BrandBrush" Color="#0D7B61" />
+    <!-- brand-fill: primary buttons, the connected disc -->
+    <SolidColorBrush x:Key="BrandFillBrush" Color="#0D7B61" />
+    <SolidColorBrush x:Key="BrandFillHoverBrush" Color="#09624F" />
+    <SolidColorBrush x:Key="OnBrandBrush" Color="#FFFFFF" />
+    <!-- brand-soft: selected rows, tags, the connected glow -->
+    <SolidColorBrush x:Key="BrandSoftBrush" Color="#E8F5EF" />
+    <!-- bg / surface / surface-2: window, cards, sidebar and quiet fills -->
+    <SolidColorBrush x:Key="BackgroundBrush" Color="#F7F8FA" />
+    <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="SurfaceMutedBrush" Color="#F3F7F5" />
+    <!-- border / border-strong -->
+    <SolidColorBrush x:Key="StrokeBrush" Color="#E9EEED" />
+    <SolidColorBrush x:Key="StrokeStrongBrush" Color="#CDD9D4" />
+    <!-- text / text-2 / text-3 -->
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#172D2B" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#566A66" />
+    <SolidColorBrush x:Key="TextTertiaryBrush" Color="#66756F" />
+    <!-- warning and danger come as sets (text, background, border) -->
+    <SolidColorBrush x:Key="WarnTextBrush" Color="#7C2D12" />
+    <SolidColorBrush x:Key="WarnBackgroundBrush" Color="#FFF4EC" />
+    <SolidColorBrush x:Key="WarnBorderBrush" Color="#F3C7A8" />
+    <SolidColorBrush x:Key="DangerTextBrush" Color="#B91C1C" />
+    <SolidColorBrush x:Key="DangerBackgroundBrush" Color="#FDECEC" />
+    <!-- focus: the keyboard focus ring -->
+    <SolidColorBrush x:Key="FocusBrush" Color="#3DC89A" />
+    <!-- chart-grid: the rate chart -->
+    <SolidColorBrush x:Key="ChartGridBrush" Color="#EEF3F0" />
+    <!-- seg-active-bg / seg-active-text: the chosen segment, as on the website -->
+    <SolidColorBrush x:Key="SegActiveBrush" Color="#173F35" />
+    <SolidColorBrush x:Key="SegActiveTextBrush" Color="#FFFFFF" />
+    <!-- story-*: the brand column of the sign-in view (the website's dark story column) -->
+    <SolidColorBrush x:Key="StoryBackgroundBrush" Color="#123F34" />
+    <SolidColorBrush x:Key="StoryTextBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="StoryCopyBrush" Color="#B1C9BE" />
+    <SolidColorBrush x:Key="StoryCheckBrush" Color="#77C6A4" />
+    <!-- Not a token: light cards float on a faint shadow of the text colour; dark cards are separated by their border only. -->
+    <Color x:Key="CardShadowColor">#172D2B</Color>
+    <system:Double x:Key="CardShadowOpacity">0.07</system:Double>
+    <!-- Pointer-over wash for rows and quiet buttons: the text colour at a low alpha, so it works on any surface. -->
+    <SolidColorBrush x:Key="HoverBrush" Color="#0A172D2B" />
+    <SolidColorBrush x:Key="PressedBrush" Color="#14172D2B" />
+    <!-- The sidebar: surface-2 on Windows 10; Windows 11 replaces it with the Mica backdrop (WindowBackdrop.cs). -->
+    <SolidColorBrush x:Key="SidebarBrush" Color="#F3F7F5" />
 </ResourceDictionary>

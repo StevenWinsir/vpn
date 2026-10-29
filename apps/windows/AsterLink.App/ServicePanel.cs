@@ -9,14 +9,14 @@ using AsterLink.Shared.Service;
 namespace AsterLink.App;
 
 /// <summary>
-/// The "privileged service" card: what state the service is in, the one action that helps, and the
-/// outcome of that action. Every failure has its own wording (UAC declined, not installed, would not
-/// start, needs repair) and nothing here ever reports a tunnel as up.
+/// The background service card (users call it "后台服务", handoff D11): what state it is in, the one action that
+/// helps, and the outcome of that action. Every failure has its own wording (UAC declined, not installed, would not
+/// start, needs repair); no version, code or exception text is shown. Nothing here ever reports a connection as up.
 /// </summary>
 public sealed class ServicePanel : INotifyPropertyChanged
 {
     private readonly InstallLayout? layout = InstallLayout.FromComponentDirectory(AppContext.BaseDirectory);
-    private string state = "检测中…";
+    private string state = "正在检查后台服务…";
     private string message = "";
     private string detail = "";
     private string actionLabel = "";
@@ -41,10 +41,13 @@ public sealed class ServicePanel : INotifyPropertyChanged
     public bool IsReady { get; private set; }
 
     public string State { get => state; private set => Set(ref state, value); }
+    public bool NotReady => !IsReady;
     public string Message { get => message; private set => Set(ref message, value); }
     public string Detail { get => detail; private set => Set(ref detail, value); }
     public string ActionLabel { get => actionLabel; private set => Set(ref actionLabel, value); }
     public bool HasAction => actionLabel.Length > 0;
+    public bool HasMessage => message.Length > 0;
+    public bool HasDetail => detail.Length > 0;
     public bool Busy
     {
         get => busy;
@@ -70,8 +73,8 @@ public sealed class ServicePanel : INotifyPropertyChanged
     {
         action = RecommendedAction.None;
         SetReady(true);
-        State = "特权服务就绪";
-        Message = "服务正在为当前登录使用。修复或重新安装需要先退出登录。";
+        State = "后台服务运行正常";
+        Message = "";
         Detail = "";
         ActionLabel = "";
         Raise(nameof(HasAction));
@@ -82,7 +85,7 @@ public sealed class ServicePanel : INotifyPropertyChanged
     {
         var was = IsReady;
         IsReady = ready;
-        if (was != ready) Raise(nameof(IsReady));
+        if (was != ready) Raise(string.Empty);
         if (ready && !was) BecameReady?.Invoke();
     }
 
@@ -94,26 +97,24 @@ public sealed class ServicePanel : INotifyPropertyChanged
         SetReady(result.Connected && result.Health == ServiceHealthState.Ready);
         State = result.Health switch
         {
-            ServiceHealthState.Ready => "特权服务就绪",
-            ServiceHealthState.NotInstalled => "特权服务未安装",
-            ServiceHealthState.Stopped => "特权服务未运行",
-            ServiceHealthState.Starting => "特权服务启动中",
-            ServiceHealthState.NeedsRepair => "需要修复",
-            ServiceHealthState.GuiNotInstalled => "请从安装目录启动",
-            _ => "特权服务不可用",
+            ServiceHealthState.Ready => "后台服务运行正常",
+            ServiceHealthState.NotInstalled => "首次使用：安装后台服务",
+            ServiceHealthState.Stopped => "后台服务未运行",
+            ServiceHealthState.Starting => "后台服务正在启动",
+            ServiceHealthState.NeedsRepair => "需要修复 AsterLink",
+            ServiceHealthState.GuiNotInstalled => "请打开已安装的 AsterLink",
+            _ => "后台服务暂时不可用",
         };
-        Message = result.Message;
-        var status = result.Connected
-            ? $"服务 {result.ServiceVersion} · 内核 {result.CoreVersion} · 渠道 {result.Channel} · 内核状态 {result.SnapshotState}"
-            : result.ErrorCode is null ? "" : $"错误代码：{result.ErrorCode}" + (string.IsNullOrEmpty(result.ErrorMessage) ? "" : $"（{result.ErrorMessage}）");
-        // The outcome of the last UAC action stays visible next to the fresh status instead of being overwritten.
-        Detail = actionNote.Length == 0 ? status : status.Length == 0 ? actionNote : actionNote + "\n" + status;
+        Message = result.Health == ServiceHealthState.Ready ? "" : result.Message;
+        // The outcome of the last UAC action stays visible; versions, codes and exception text never reach the screen
+        // (the error code is in the copied diagnostics report instead, handoff D9).
+        Detail = actionNote;
         ActionLabel = result.Action switch
         {
-            RecommendedAction.InstallFromStage => "安装服务（需要管理员授权）",
-            RecommendedAction.Repair => "修复服务（需要管理员授权）",
-            RecommendedAction.StartService => "启动服务（需要管理员授权）",
-            RecommendedAction.LaunchInstalledApp => "打开安装目录中的 AsterLink",
+            RecommendedAction.InstallFromStage => "安装（需要管理员权限）",
+            RecommendedAction.Repair => "修复（需要管理员权限）",
+            RecommendedAction.StartService => "启动（需要管理员权限）",
+            RecommendedAction.LaunchInstalledApp => "打开已安装的 AsterLink",
             _ => "",
         };
         Raise(nameof(HasAction));
@@ -150,14 +151,14 @@ public sealed class ServicePanel : INotifyPropertyChanged
         var result = await Elevation.RunAsync(executable, arguments).ConfigureAwait(true);
         actionNote = result.Outcome switch
         {
-            Elevation.Outcome.Cancelled => "已取消管理员授权，没有做任何更改。需要时可以再次点击。",
-            Elevation.Outcome.CouldNotStart => "无法启动安装程序：" + result.Detail,
+            Elevation.Outcome.Cancelled => "你取消了授权，没有做任何更改。需要时可以再次点击。",
+            Elevation.Outcome.CouldNotStart => "无法开始安装，请稍后重试。",
             _ => result.ExitCode switch
             {
-                ServiceConstants.ExitCodes.Ok => "管理员操作已完成。",
-                ServiceConstants.ExitCodes.IntegrityFailed => "已安装的文件与清单不一致，不能自动修复，请重新安装。",
+                ServiceConstants.ExitCodes.Ok => "操作已完成。",
+                ServiceConstants.ExitCodes.IntegrityFailed => "应用文件不完整，无法自动修复，请从官网重新下载安装。",
                 ServiceConstants.ExitCodes.NeedsElevation => "需要管理员权限。",
-                _ => $"操作失败（退出码 {result.ExitCode}）。",
+                _ => "操作未完成，请稍后重试，或从官网重新下载安装。",
             },
         };
     }
@@ -167,6 +168,7 @@ public sealed class ServicePanel : INotifyPropertyChanged
         if (EqualityComparer<T>.Default.Equals(field, value)) return false;
         field = value;
         Raise(name);
+        Raise(string.Empty); // the derived Has*/NotReady flags follow
         return true;
     }
 
