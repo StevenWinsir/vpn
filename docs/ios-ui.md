@@ -16,7 +16,7 @@ AsterLink（App）
   LoginView / ConnectView / LinesView / AccountView
   UIFixtures.swift     仅 Debug：截图套件用的“预置状态”（Release 不编译）
 AsterLinkTests/AccountAcceptanceTests   真实 Core + Keychain + 隔离后端
-AsterLinkUITests/ScreenshotTests        44 个界面用例
+AsterLinkUITests/ScreenshotTests        界面用例
 ```
 
 UI 只渲染 Core 的快照；授权结论来自 `entitlement`，没有任何按角色放行的逻辑（管理员无套餐照样“无法连接”）。
@@ -37,20 +37,21 @@ iOS 的差异：没有 Keystore 而用 Keychain；回前台来自 `scenePhase`�
 
 | 页面 | 内容 |
 | --- | --- |
-| 登录 | 品牌、邮箱（`username`）、密码（`password`，可显隐）、记住密码（整行可点，`isToggle`）、登录、注册账号（网站 `/register`）、版本/Core/Mihomo。字段错误显示在字段下，其它错误为顶部横幅 |
-| 连接 | 168 pt 主按钮（外环＋文字＝状态，减弱动态效果时不转）、状态词、详情、当前线路卡（专线/普通＋计费倍率）、速率与 60 秒曲线（Swift Charts）、本次物理/计费用量、套餐卡（确认余额；预估另起一行、`pending` 提示） |
-| 线路 | 搜索、全部/专线/普通、按地区分组、选中对勾、节点计量小字、下拉刷新；已连接时切换先确认“将断开并结算” |
-| 我的 | 账户卡、套餐卡（到期、剩余天数、余额）、外观、通知与 VPN 配置状态、关于（版本/Core/Mihomo）、开源许可、复制脱敏诊断、退出登录（二次确认） |
+| 登录 | 品牌标识、邮箱（`username`）、密码（`password`，可显隐）、记住密码（整行可点，`isToggle`）、登录、注册账号（网站 `/register`）、页脚只显示“版本 x.y.z”（development 构建另有“开发版”标记）。字段错误显示在字段下，其它错误为顶部横幅 |
+| 连接 | 168 pt 主按钮（外环＋文字＝状态，减弱动态效果时不转）、状态词、详情、当前线路卡（专线/普通线路＋线路倍率 N×）、速率与 60 秒曲线（Swift Charts）、“本次已用 X · 按倍率计 Y”、套餐卡（剩余流量；“正在同步用量”提示） |
+| 线路 | 搜索、全部/专线/普通、按地区分组、选中对勾、下拉刷新；已连接时切换先确认“将断开当前连接” |
+| 我的 | 账户卡、套餐卡（到期、剩余天数、剩余流量）、外观、通知与 VPN 配置状态、关于（只有版本）、复制诊断信息（六行：应用版本、系统版本、连接状态、错误码与时间）、退出登录（二次确认）。没有开源许可入口（D10） |
 
 空态：无套餐（管理员也一样）、到期、额度 0、设备上限、未选线、正在同步、无线路、搜索无结果、API 离线、需要更新、被动停连原因。
-**购买入口**：按第 14 节默认 `none`——只显示“请到官网管理套餐”，没有购买/续费链接。网站目前没有 `/privacy`、`/terms`、找回密码页面，所以界面不放这些入口（第 6 轮门槛）。
-**未做（按计划留给后续）**：首次“添加 VPN 配置”引导页（第 4 轮，与连接一起）、英文本地化与正式图标/启动画面（第 6 轮；现为矢量占位）。
+**购买入口**：按第 14 节默认 `none`——只显示“请到官网管理套餐”，没有购买/续费链接。网站没有 `/privacy`、`/terms` 页面，所以界面不放这两个入口；“忘记密码”打开网站 `/forgot-password`。
+**品牌（2026-10）**：图标（浅色满版、深色、着色三外观）、LaunchMark、LaunchBackground、AccentColor 由 `frontend/brand/mark.svg` 生成（`docs/brand-and-copy.md`）；`Theme.swift` 的 18 个颜色角色与网站 `--al-*` 令牌一一对应并由 `scripts/test-brand-assets.py` 比对，蓝色 #2F6FEB 系已退役。流量单位为 GB（基数 1024³，界面不再解释“GiB”）。界面文字受 `scripts/test-app-copy.py` 与 UI 测试里的 `CopyGuard.swift` 守卫。
+**未做（按计划留给后续）**：英文本地化、iOS 26 分层图标（Icon Composer 格式）。
 
 ## 5. 如何验证
 
 ```sh
 python3 scripts/test-native-ios.py --suite unit      # Go 宿主测试 + AsterLinkKit（含 SessionController 的脚本化测试）
-python3 scripts/test-native-ios.py --suite ui        # 44 个界面用例（45 张截图），截图在 artifacts/native-ios/ui/screenshots/
+python3 scripts/test-native-ios.py --suite ui        # 界面用例（45 张截图），截图在 artifacts/native-ios/ui/screenshots/
 python3 scripts/test-native-ios.py --suite account   # 真实 Core + Keychain + 隔离 Gin/PostgreSQL（需要 go、initdb、pg_ctl）
 ```
 

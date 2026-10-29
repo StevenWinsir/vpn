@@ -266,6 +266,13 @@ def run(ctx, run_id, build_run_id):
             readme = (mount / '安装说明.txt').read_text(encoding='utf-8') if (mount / '安装说明.txt').is_file() else ''
             if not readme or any(word in readme for word in ('特权服务', '--apply', 'docs/', '预演', 'Helper')):
                 problems.append('install note missing or not customer copy')
+            copy_guard = release_scrub._copy_guard()
+            for label, content in (('install note', readme), ('uninstaller', (mount / '卸载 AsterLink.command').read_text(encoding='utf-8')
+                                                                 if (mount / '卸载 AsterLink.command').is_file() else '')):
+                words = sorted({w for line in content.splitlines() if copy_guard.CJK.search(line)
+                                for w in copy_guard.hits_in(line, copy_guard.FORBIDDEN_DESKTOP_EN)})
+                if words:
+                    problems.append('copy guard (%s): %s' % (label, ', '.join(words)))
             found = release_scrub.scan_tree(mount, revision)
             leaks, _ = release_scrub.judge(found, rules)
             leaks += ['private-only file: ' + n for n in release_scrub.named_leaks(found)]

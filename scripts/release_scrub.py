@@ -251,12 +251,23 @@ def judge(found, rules):
     return problems, residue
 
 
+def _copy_guard():
+    """scripts/test-app-copy.py, whose word lists also judge the file names a customer sees (round 6)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('app_copy', ROOT / 'scripts' / 'test-app-copy.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def public_problems(public: Path, allowed_files):
-    """The public folder holds exactly the installers and a SHA256SUMS that lists only them."""
+    """The public folder holds exactly the installers and a SHA256SUMS that lists only them; their names are customer copy."""
     if not public.is_dir():
         return ['%s does not exist' % public]
     problems = []
     names = sorted(p.name for p in public.iterdir())
+    guard = _copy_guard()
+    problems += ['file name "%s" contains "%s"' % (n, w) for n in names for w in guard.hits_in_name(n)]
     allowed = set(allowed_files) | {'SHA256SUMS'}
     extra = [n for n in names if n not in allowed]
     if extra:
@@ -307,6 +318,10 @@ def self_test(platform='macos'):
         (public / 'SHA256SUMS').write_text('%s  App.pkg\n' % ('0' * 64))
         if public_problems(public, ['App.pkg']):
             failures.append('a clean public folder was refused')
+        (public / 'Core-Debug.pkg').write_bytes(b'installer')
+        if not [p for p in public_problems(public, ['App.pkg', 'Core-Debug.pkg']) if 'file name' in p]:
+            failures.append('a technical word in an installer name was not seen')
+        (public / 'Core-Debug.pkg').unlink()
         (public / 'THIRD_PARTY_LICENSES.txt').write_text('GNU GENERAL PUBLIC LICENSE')
         if not public_problems(public, ['App.pkg']):
             failures.append('a licence file in the public folder was not seen')

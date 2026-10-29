@@ -17,6 +17,8 @@
 
 为什么 release 通道不能用临时签名：release 通道的 XPC 签名要求写死了 `anchor apple generic` 和 Team ID，临时签名没有这两项。这是安全设计，**不要**为了方便把它放宽。
 
+> 2026-10-28 界面更新（handoff_app_standardization.md 第 3–6 轮）：主界面重做（侧栏 + 内容区，见 `docs/macos-ui.md`），关闭窗口后只留菜单栏图标且不占 Dock；品牌图标 `AppIcon.icns` 与菜单栏模板图来自 `frontend/brand/mark.svg`（`docs/brand-and-copy.md`）；DMG 带卷图标与中文“安装说明.txt”；界面、安装说明与卸载脚本提示不含任何内核、许可或开发信息，由 `scripts/test-app-copy.py` 守卫，R-DMG 在挂载的 DMG 上再用同一词表检查一次。下文仍用旧称“设置页”“特权服务”“Helper”的地方指同一功能的内部名称，对应现在的账户页“后台服务”。
+
 ## 2. 构建、打包、审计（单入口）
 
 ```bash
@@ -83,13 +85,13 @@ python3 scripts/test-native-macos.py --suite release
 
 ## 5. 升级、卸载、回滚
 
-**升级**：先在 App 中断开 → 用新版本替换 `/应用程序/AsterLink.app` → 打开。App 连接前会先向 Helper 握手并比较版本：不一致就**拒绝启动内核**，提示"重新安装特权服务"（设置页按钮，等价于 注销 + 重新注册）。连接中、正在断开时这两个按钮禁用（`HelperUpgradePolicy`，有单元测试）。
+**升级**：先在 App 中断开 → 用新版本替换 `/应用程序/AsterLink.app` → 打开。App 连接前会先向 Helper 握手并比较版本：不一致就**拒绝启动内核**，提示"后台服务需要更新，请在“账户”页重新安装后台服务"（账户页“后台服务”区的“重新安装”按钮，等价于 注销 + 重新注册；用户界面只说“后台服务”，Helper 一词不出现，D11）。连接中、正在断开时这两个按钮禁用（`HelperUpgradePolicy`，有单元测试）。
 
 **卸载**：
-- 推荐：设置 → "移除特权服务" → 把 App 拖进废纸篓。
+- 推荐：账户页 → “后台服务”下的“故障排查” → “移除后台服务”（二次确认） → 退出 AsterLink（菜单栏图标 → 退出）→ 把 App 拖进废纸篓。仅菜单栏模式的旧进程必须先退出才能替换或卸载（DMG 里的“安装说明.txt”写明了）。
 - 或运行 DMG 内的 `卸载 AsterLink.command`（源码：`scripts/uninstall-asterlink.sh`）。默认**预演**，加 `--apply` 才执行；只处理 AsterLink 自己的 App、偏好、缓存、`/Library/Application Support/AsterLink`、两条钥匙串条目（记住的密码、设备 ID）和 `system/com.asterlink.vpn.helper` 这一个 launchd 标签；系统级项需要 sudo。**不动其他 VPN、路由、DNS。**
 
-**回滚客户端**：重新安装旧版 DMG（先移除特权服务）。注意服务端 `CLIENT_MIN_APP_VERSION` 会让过旧客户端收到 `426 client_upgrade_required`，回滚到低于该值的版本需先下调该配置。回滚永远不会恢复"共享配置"模式。
+**回滚客户端**：重新安装旧版 DMG（先移除后台服务）。注意服务端 `CLIENT_MIN_APP_VERSION` 会让过旧客户端收到 `426 client_upgrade_required`，回滚到低于该值的版本需先下调该配置。回滚永远不会恢复"共享配置"模式。
 
 **回滚服务端**：见 `docs/macos-stage4.md` 第 8 节。把 `NODE_AGENT_ADDR` 置空会停用节点代理接口，生产随即不再下发任何代理；**不要**用 `APP_ENV=development` 冒充来恢复交付。
 
@@ -149,5 +151,5 @@ python3 scripts/test-native-macos.py --suite release
 | S02 日志/产物无秘密 | 部分通过 | `U-LOGLINT`、`R-SECRET`；崩溃报告未检查（尚无崩溃样本） |
 | S01 XPC/Worker | 部分通过 | bundle 套件 6 项负测；真实 SMAppService 注册与 Team ID 级校验 BLOCKED |
 | R01 干净机安装 | **BLOCKED** | 需 Developer ID + 公证 |
-| R02 升级/卸载 | 部分通过 | 版本不一致拦截单测、卸载脚本沙箱测试；真实"重新安装特权服务"未手动验证 |
+| R02 升级/卸载 | 部分通过 | 版本不一致拦截单测、卸载脚本沙箱测试；真实“重新安装后台服务”未手动验证 |
 | T06/T07 睡眠、硬杀 | **未执行** | 需真机人工 |
