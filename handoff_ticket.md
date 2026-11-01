@@ -548,4 +548,6 @@
 6. 夹具的三个工单账户放在账户清单最前面创建（最早的行）。原因：管理后台用户列表首页只显示最新的 20 个账户，公告 spec 要在首页找到 kyle；放在后面会把 kyle 挤到第 22 位（第一次全量运行时公告 spec 因此超时，已修正）。
 7. test-payment-web.py 的浏览器步骤超时从默认 600 秒放宽到 1200 秒：加入工单 spec（需要等待 15 秒级的控制台刷新）后本机全量约 8 分钟，CI runner 更慢。CI 上该 job 的总上限仍是 25 分钟（上一次 main 运行该 job 用时约 13 分钟）。
 
+**CI 修复（PR #97 第一次运行）**：Browser job 中 78 passed、1 failed，失败的是既有的 admin-console.spec“the sign-in panel lists attempts and filters them”。原因是测试本身的竞态：点击“筛选”后，未筛选的旧行在新结果返回前仍留在页面上，`.all()` 取到的是旧行的 nth 定位器，较短的筛选结果到达后 nth(i) 不存在。本地两次全量运行都通过，CI runner 较慢时暴露。改为等待“不含该邮箱的行”数量为 0，再断言首行。本地 admin-console.spec 6/6 通过。该次 CI 的浏览器步骤用时 9.5 分钟，印证了偏离第 7 条放宽超时的必要。
+
 **未完成 / 留给后续轮次**：回滚演练（TICKET_ROLLBACK_REF）、新旧前后端混合部署的真实验证、APP 兼容确认、安全审查、README / DEPLOYMENT / 运维文档属于第 3 轮。用户实测 U-36..U-40 需部署后进行。
