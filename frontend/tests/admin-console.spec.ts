@@ -204,8 +204,12 @@ test('the sign-in panel lists attempts and filters them', async ({ page }) => {
   await form.getByLabel('用户邮箱').fill(fixture.emails.root);
   await form.getByRole('button', { name: '筛选' }).click();
   await expect(page).toHaveURL(/email=/);
-  for (const row of await page.getByTestId('login-row').all())
-    await expect(row).toContainText(fixture.emails.root);
+  // The unfiltered rows stay on screen until the filtered answer arrives: wait for it to settle
+  // instead of snapshotting rows that may be replaced by a shorter list.
+  await expect(
+    page.getByTestId('login-row').filter({ hasNotText: fixture.emails.root }),
+  ).toHaveCount(0);
+  await expect(page.getByTestId('login-row').first()).toContainText(fixture.emails.root);
   await page.getByText('短时间多次失败').click();
   await expect(page).toHaveURL(/quick=burst_failures/);
   await shot(page, 'console-logins');

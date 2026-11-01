@@ -12,6 +12,7 @@ import {
   Stack,
   Text,
   UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
@@ -23,6 +24,7 @@ import {
   IconGift,
   IconLayoutDashboard,
   IconLogout,
+  IconMessageCircleQuestion,
   IconReceipt,
   IconServer2,
   IconShieldLock,
@@ -35,6 +37,8 @@ import { appName } from '@/lib/types';
 import { APIError, api, message } from '@/lib/api';
 import { AnnouncementGate } from './announcement-gate';
 import { useMeta } from '@/lib/use-meta';
+import { useConsoleTicketSummary, useTicketSummary } from '@/lib/ticket-badges';
+import { badgeText } from '@/lib/tickets';
 import { BrandMark } from './brand-mark';
 import { ThemeToggle } from './theme-toggle';
 import { SupportLauncher, SupportNavItem, useSupportAccess } from './support-widget';
@@ -45,6 +49,7 @@ const links = [
   { href: '/plans', label: '套餐与订阅', icon: IconStack2 },
   { href: '/orders', label: '订单记录', icon: IconReceipt },
   { href: '/referral', label: '推荐有礼', icon: IconGift },
+  { href: '/tickets', label: '我的工单', icon: IconMessageCircleQuestion },
   { href: '/download', label: '下载客户端', icon: IconDownload },
   { href: '/account', label: '账号设置', icon: IconUserCog },
 ];
@@ -62,7 +67,10 @@ export function Logo() {
     </Link>
   );
 }
-// The referral entry shows only when /meta announces the programme (older backends do not).
+// The referral entry shows only when /meta announces the programme (older backends do not), and
+// so does "我的工单" (handoff_ticket.md 11.1), which ordinary users get (an impersonated user is
+// one) with a count of unread replies; administrators get a dot on "管理后台" instead while
+// tickets wait for support.
 function Sidebar({
   admin,
   path,
@@ -75,7 +83,16 @@ function Sidebar({
   onNavigate: () => void;
 }) {
   const { meta } = useMeta();
-  const userLinks = links.filter((link) => link.href !== '/referral' || meta?.referral_enabled);
+  const tickets = meta?.tickets_enabled === true;
+  const userLinks = links.filter(
+    (link) =>
+      (link.href !== '/referral' || meta?.referral_enabled) &&
+      (link.href !== '/tickets' || (tickets && !admin)),
+  );
+  // An older backend has neither route: the summaries are only asked for when /meta has the flag.
+  const unread = useTicketSummary(tickets && !admin, path)?.unread_count ?? 0;
+  const waiting =
+    useConsoleTicketSummary(admin && meta?.tickets_enabled !== undefined, path)?.open_count ?? 0;
   const navigation = admin
     ? [
         ...userLinks,
@@ -98,6 +115,20 @@ function Sidebar({
           >
             <Icon size={19} stroke={1.6} />
             {label}
+            {href === '/tickets' && badgeText(unread) ? (
+              <>
+                <span className="nav-badge" data-testid="ticket-unread-badge" aria-hidden>
+                  {badgeText(unread)}
+                </span>
+                <VisuallyHidden>（{unread} 条未读回复）</VisuallyHidden>
+              </>
+            ) : null}
+            {href === '/admin/console/users' && waiting > 0 ? (
+              <>
+                <span className="nav-dot" data-testid="console-ticket-dot" aria-hidden />
+                <VisuallyHidden>（有待处理的工单）</VisuallyHidden>
+              </>
+            ) : null}
           </Link>
         ))}
       </Stack>
@@ -181,6 +212,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       '/plans',
       '/orders',
       '/referral',
+      '/tickets',
       '/download',
       '/account',
       '/pay/result',

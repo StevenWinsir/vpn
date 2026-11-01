@@ -26,6 +26,7 @@ export default defineConfig({
     'theme.spec.ts',
     'home.spec.ts',
     'support-widget.spec.ts',
+    'tickets.spec.ts',
   ],
   outputDir: process.env.PAYMENT_OUTPUTS,
   workers: 1,

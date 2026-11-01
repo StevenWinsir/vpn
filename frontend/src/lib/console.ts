@@ -246,3 +246,39 @@ export type AdminPlanInput = Omit<
   | 'id'
   | 'version'
 > & { id?: string; version?: number };
+
+// GET /admin/console/tickets[/:id] (handoff_ticket.md 7, 10). Staff messages name the
+// administrator who sent them; none of this reaches the user side.
+export type ConsoleTicket = import('./types').Ticket & {
+  platform: string;
+  closed_at: string | null;
+  closed_by: 'user' | 'staff' | '';
+  waiting_since: string | null;
+  user_id: string;
+  user_email: string;
+  user_status: 'active' | 'deleting' | string;
+};
+export type ConsoleTicketMessage = import('./types').TicketMessage & {
+  author_id: string;
+  author_email: string;
+};
+export type ConsoleTicketDetail = ConsoleTicket & {
+  version: number;
+  closed_by_admin_email: string;
+  user: {
+    id: string;
+    email: string;
+    status: string;
+    plan_name: string;
+    plan_expires_at: string | null;
+  };
+  order: import('./types').TicketOrder | null;
+  messages: ConsoleTicketMessage[];
+};
+export type ConsoleTicketList = {
+  tickets: ConsoleTicket[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+export type ConsoleTicketSummary = { open_count: number; oldest_waiting_since: string | null };

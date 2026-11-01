@@ -25,6 +25,7 @@ export const supportPages = [
   '/plans',
   '/orders',
   '/referral',
+  '/tickets',
   '/download',
   '/account',
   '/pay/result',

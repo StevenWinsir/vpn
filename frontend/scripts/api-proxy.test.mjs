@@ -972,12 +972,35 @@ test(
             (await api(announcements, { method: 'POST', body: 'x'.repeat((32 << 10) + 1) })).status,
             413,
           );
+          // Ticket text (3000 characters, up to 12 KB; handoff_ticket.md 11.4) on both sides.
+          for (const tickets of [
+            '/me/tickets',
+            '/me/tickets/00000000-0000-4000-8000-000000000000/messages',
+            '/admin/console/tickets/00000000-0000-4000-8000-000000000000/messages',
+          ]) {
+            assert.notEqual(
+              (await api(tickets, { method: 'POST', body: 'x'.repeat(12000) })).status,
+              413,
+              tickets,
+            );
+            assert.equal(
+              (await api(tickets, { method: 'POST', body: 'x'.repeat((32 << 10) + 1) })).status,
+              413,
+              tickets,
+            );
+          }
+          assert.equal(first.received.length, before + 4);
+          // Only those prefixes: a lookalike path keeps the 8 KB default.
+          assert.equal(
+            (await api('/me/ticketsx', { method: 'POST', body: 'x'.repeat(8193) })).status,
+            413,
+          );
           assert.equal(
             (await api('/admin/console/coupons', { method: 'POST', body: 'x'.repeat(8193) }))
               .status,
             413,
           );
-          assert.equal(first.received.length, before + 1);
+          assert.equal(first.received.length, before + 4);
           const redirect = await api('/redirect');
           assert.equal(redirect.status, 502);
           assert.equal((await redirect.json()).error.code, 'upstream_redirect');

@@ -7,7 +7,12 @@ type Item = { q: string; a: React.ReactNode };
 
 // Frequently asked questions (handoff_ui.md 8.2). The answers restate the rules of the plan page
 // and the checkout; nothing here promises more than they do (no refunds: there is no refund flow).
-function items(payment: string, supportEmail: string | null, chat: boolean): Item[] {
+function items(
+  payment: string,
+  supportEmail: string | null,
+  chat: boolean,
+  tickets: boolean,
+): Item[] {
   const list: Item[] = [
     {
       q: '流量是如何计算的？',
@@ -35,14 +40,17 @@ function items(payment: string, supportEmail: string | null, chat: boolean): Ite
     },
   ];
   // The online chat (handoff_ui.md 9) is offered on the signed-in user pages; the address is the
-  // operator's optional SITE_SUPPORT_EMAIL. With neither there is nothing to promise.
+  // operator's optional SITE_SUPPORT_EMAIL; tickets are there when /meta says so
+  // (handoff_ticket.md 11.4). With none of them there is nothing to promise.
   const mail = supportEmail ? <a href={`mailto:${supportEmail}`}>{supportEmail}</a> : null;
+  const ticket = tickets ? <>登录后也可以在“我的工单”提交问题，客服会在工单中回复。</> : null;
   if (chat)
     list.push({
       q: '如何联系客服？',
       a: (
         <>
           登录后，点击用户中心页面右下角的“在线客服”按钮，即可与客服在线沟通。
+          {ticket}
           {mail ? <>也可以发送邮件至 {mail}，我们会尽快回复。</> : null}
         </>
       ),
@@ -50,7 +58,16 @@ function items(payment: string, supportEmail: string | null, chat: boolean): Ite
   else if (mail)
     list.push({
       q: '如何联系客服？',
-      a: <>发送邮件至 {mail}，我们会尽快回复。</>,
+      a: (
+        <>
+          发送邮件至 {mail}，我们会尽快回复。{ticket}
+        </>
+      ),
+    });
+  else if (ticket)
+    list.push({
+      q: '如何联系客服？',
+      a: <>登录后可以在“我的工单”提交问题，客服会在工单中回复。</>,
     });
   return list;
 }
@@ -61,34 +78,36 @@ export function HomeFaq({ supportEmail, chat }: { supportEmail: string | null; c
   const base = useId();
   return (
     <div className="home-faq" data-testid="home-faq">
-      {items(paymentMethodsText(meta), supportEmail, chat).map(({ q, a }, index) => {
-        const expanded = open === index;
-        return (
-          <div className="home-faq-item" key={q} data-open={expanded ? '' : undefined}>
-            <h3>
-              <button
-                type="button"
-                id={`${base}-q${index}`}
-                aria-expanded={expanded}
-                aria-controls={`${base}-a${index}`}
-                onClick={() => setOpen(expanded ? null : index)}
+      {items(paymentMethodsText(meta), supportEmail, chat, meta?.tickets_enabled === true).map(
+        ({ q, a }, index) => {
+          const expanded = open === index;
+          return (
+            <div className="home-faq-item" key={q} data-open={expanded ? '' : undefined}>
+              <h3>
+                <button
+                  type="button"
+                  id={`${base}-q${index}`}
+                  aria-expanded={expanded}
+                  aria-controls={`${base}-a${index}`}
+                  onClick={() => setOpen(expanded ? null : index)}
+                >
+                  <span>{q}</span>
+                  <IconChevronDown size={18} aria-hidden />
+                </button>
+              </h3>
+              <div
+                className="home-faq-panel"
+                id={`${base}-a${index}`}
+                role="region"
+                aria-labelledby={`${base}-q${index}`}
+                hidden={!expanded}
               >
-                <span>{q}</span>
-                <IconChevronDown size={18} aria-hidden />
-              </button>
-            </h3>
-            <div
-              className="home-faq-panel"
-              id={`${base}-a${index}`}
-              role="region"
-              aria-labelledby={`${base}-q${index}`}
-              hidden={!expanded}
-            >
-              <p>{a}</p>
+                <p>{a}</p>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        },
+      )}
     </div>
   );
 }

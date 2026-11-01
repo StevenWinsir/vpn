@@ -6,8 +6,21 @@ export const dynamic = 'force-dynamic';
 
 type Context = { params: Promise<{ path: string[] }> };
 const defaultMaxBodyBytes = 8192;
-// Announcement text is up to 5000 characters (20 KB of UTF-8); nothing else needs more than 8 KB.
-const announcementBodyBytes = 32 << 10;
+// Announcement text is up to 5000 characters (20 KB of UTF-8) and ticket text up to 3000 (12 KB,
+// handoff_ticket.md 2.1); nothing else needs more than 8 KB. Same limits as the Go middleware.
+const textBodyBytes = 32 << 10;
+function maxBodyBytes(path: string[]) {
+  const [first, second, third] = path;
+  if (first === 'admin' && second === 'nodes') return 128 << 10;
+  if (
+    first === 'admin' &&
+    second === 'console' &&
+    (third === 'announcements' || third === 'tickets')
+  )
+    return textBodyBytes;
+  if (first === 'me' && second === 'tickets') return textBodyBytes;
+  return defaultMaxBodyBytes;
+}
 // Login records keep a short browser description (handoff_payment_account.md 8).
 const maxUserAgentLength = 200;
 const requestHeaders = [
@@ -109,15 +122,7 @@ async function proxy(request: Request, context: Context) {
     const signal = AbortSignal.any([request.signal, timeout]);
     const body = ['GET', 'HEAD'].includes(request.method)
       ? undefined
-      : await readBody(
-          request,
-          signal,
-          path[0] === 'admin' && path[1] === 'nodes'
-            ? 128 << 10
-            : path[0] === 'admin' && path[1] === 'console' && path[2] === 'announcements'
-              ? announcementBodyBytes
-              : defaultMaxBodyBytes,
-        );
+      : await readBody(request, signal, maxBodyBytes(path));
     const upstream = await fetch(internalURL, {
       method: request.method,
       headers,
