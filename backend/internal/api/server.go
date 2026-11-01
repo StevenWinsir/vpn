@@ -32,6 +32,9 @@ type Server struct {
 	// referralCodes draws a referral code (referral.Generate in production); tests inject
 	// one to force collisions.
 	referralCodes func() (string, error)
+	// ticketNumbers draws a ticket number (randomTicketNo in production); tests inject one
+	// to force collisions.
+	ticketNumbers func(now time.Time) (string, error)
 }
 
 func (s *Server) randomIndex(n int) int {
@@ -107,6 +110,10 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/admin/console/announcements") {
 			bodyLimit = announcementBodyLimit
 		}
+		// 3000 characters of ticket text are up to 12 KB of UTF-8 (handoff_ticket.md 2.1).
+		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/me/tickets") || strings.HasPrefix(c.Request.URL.Path, "/api/v1/admin/console/tickets") {
+			bodyLimit = ticketBodyLimit
+		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, bodyLimit)
 		c.Next()
 	})
@@ -142,6 +149,8 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 		// The website only shows and sends the referral field when this is true, so a new
 		// website never sends it to an older backend that rejects unknown fields.
 		meta["referral_enabled"] = cfg.ReferralEnabled()
+		// Likewise the ticket pages appear only when this is present (handoff_ticket.md 14.1).
+		meta["tickets_enabled"] = cfg.TicketsEnabled()
 		c.JSON(200, meta)
 	})
 	v.GET("/plans", s.plans)
@@ -169,6 +178,13 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	secured.GET("/me/logins", s.myLogins)
 	secured.GET("/me/referral", s.myReferral)
 	secured.GET("/me/referrals", s.myReferrals)
+	secured.GET("/me/tickets", s.myTickets)
+	secured.POST("/me/tickets", s.createTicket)
+	secured.GET("/me/tickets/summary", s.myTicketSummary)
+	secured.GET("/me/tickets/:id", s.myTicket)
+	secured.POST("/me/tickets/:id/messages", s.replyTicket)
+	secured.POST("/me/tickets/:id/close", s.closeMyTicket)
+	secured.POST("/me/tickets/:id/read", s.readMyTicket)
 	secured.GET("/orders", s.orders)
 	secured.POST("/orders/test-purchase", s.testPurchase)
 	secured.GET("/client/bootstrap", s.bootstrap)
@@ -186,6 +202,11 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	console.POST("/users/:id/subscription/end", s.consoleUserSubscriptionEnd)
 	console.POST("/users/:id/delete", s.consoleUserDelete)
 	console.GET("/users/:id/referrals", s.consoleUserReferrals)
+	console.GET("/tickets", s.consoleTicketList)
+	console.GET("/tickets/summary", s.consoleTicketSummary)
+	console.GET("/tickets/:id", s.consoleTicketDetail)
+	console.POST("/tickets/:id/messages", s.consoleTicketReply)
+	console.POST("/tickets/:id/close", s.consoleTicketClose)
 	console.GET("/orders", s.consoleOrderList)
 	console.GET("/orders/:id", s.consoleOrderDetail)
 	console.POST("/orders/:id/check", s.consoleOrderCheck)

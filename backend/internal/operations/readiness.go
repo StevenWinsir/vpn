@@ -57,6 +57,27 @@ type ReadinessReport struct {
 	// Referral programme (handoff_coupon.md 14.3). Switches and counts only: never an
 	// address or a code.
 	Referral ReferralReadiness `json:"referral"`
+	// Support tickets (handoff_ticket.md 13.3). Counts and durations only: never a ticket
+	// number, subject, address or text.
+	Tickets TicketReadiness `json:"tickets"`
+}
+
+// TicketWaitWarning and TicketExpiryLag are the doctor's thresholds for tickets: an open
+// ticket waiting longer than a day, and an expired ticket still present an hour later
+// (the maintenance sweep deletes them every ten minutes).
+const (
+	TicketWaitWarning = 24 * time.Hour
+	TicketExpiryLag   = time.Hour
+)
+
+type TicketReadiness struct {
+	Enabled  bool  `json:"enabled"`
+	Open     int64 `json:"open"`
+	Answered int64 `json:"answered"`
+	// OldestWaitSeconds is how long the longest-waiting open ticket has waited (0: none).
+	OldestWaitSeconds int64 `json:"oldest_wait_seconds"`
+	// ExpiredNotDeleted counts tickets past their retention by more than TicketExpiryLag.
+	ExpiredNotDeleted int64 `json:"expired_not_deleted"`
 }
 
 // ReferralStaleAfter is how long a qualified referral may wait for its reward before
@@ -168,7 +189,7 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if err := tx.Raw("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = ?", cfg.Schema).Scan(&available).Error; err != nil {
 			return err
 		}
-		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons", "login_events", "ip_geo_caches", "announcements", "announcement_reads", "shop_settings", "referrals"} {
+		for _, table := range []string{"users", "sessions", "plans", "subscriptions", "orders", "nodes", "native_sessions", "client_traffic_reports", "node_configs", "admin_audits", "node_agents", "subscription_periods", "connection_grants", "node_usage_reports", "email_auth_challenges", "auth_mail_jobs", "auth_rate_buckets", "node_groups", "connection_leases", "node_assignments", "usage_buckets", "node_health_events", "payment_notifications", "coupons", "login_events", "ip_geo_caches", "announcements", "announcement_reads", "shop_settings", "referrals", "tickets", "ticket_messages"} {
 			if !slices.Contains(available, table) {
 				report.MissingTables = append(report.MissingTables, table)
 			}
@@ -302,6 +323,9 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if report.Referral.StaleQualified > 0 {
 			report.Warnings = append(report.Warnings, "referral_rewards_stale")
 		}
+		if err := ticketReadiness(tx, cfg, &report); err != nil {
+			return err
+		}
 		// Node-authoritative means a live agent governs a node; it does not certify that
 		// enforcement was accepted on that protocol (the warning above stays).
 		report.NodeAuthoritative = report.AuthoritativeNodes > 0
@@ -367,4 +391,41 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		return report, errors.New("read-only readiness inspection failed; database details suppressed")
 	}
 	return report, nil
+}
+
+func ticketReadiness(tx *gorm.DB, cfg config.Config, report *ReadinessReport) error {
+	now := report.CheckedAt
+	report.Tickets.Enabled = cfg.TicketsEnabled()
+	var statuses []struct {
+		Status string
+		Count  int64
+	}
+	if err := tx.Model(&model.Ticket{}).Select("status, count(*) AS count").Where("expires_at > ?", now).Group("status").Scan(&statuses).Error; err != nil {
+		return err
+	}
+	for _, row := range statuses {
+		switch row.Status {
+		case model.TicketOpen:
+			report.Tickets.Open = row.Count
+		case model.TicketAnswered:
+			report.Tickets.Answered = row.Count
+		}
+	}
+	var oldest struct{ Since *time.Time }
+	if err := tx.Model(&model.Ticket{}).Select("min(waiting_since) AS since").Where("status = ? AND expires_at > ?", model.TicketOpen, now).Scan(&oldest).Error; err != nil {
+		return err
+	}
+	if oldest.Since != nil && now.After(*oldest.Since) {
+		report.Tickets.OldestWaitSeconds = int64(now.Sub(*oldest.Since) / time.Second)
+	}
+	if report.Tickets.OldestWaitSeconds > int64(TicketWaitWarning/time.Second) {
+		report.Warnings = append(report.Warnings, "tickets_waiting_over_24h")
+	}
+	if err := tx.Model(&model.Ticket{}).Where("expires_at <= ?", now.Add(-TicketExpiryLag)).Count(&report.Tickets.ExpiredNotDeleted).Error; err != nil {
+		return err
+	}
+	if report.Tickets.ExpiredNotDeleted > 0 {
+		report.Warnings = append(report.Warnings, "tickets_expiry_lagging")
+	}
+	return nil
 }

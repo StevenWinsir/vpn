@@ -1,7 +1,8 @@
 // Package maintenance runs the presence and usage-history housekeeping inside the API
 // process (handoff_node_use_history_and_load_balancing_c.md 4.4): ending lapsed
 // connection leases, enforcing the strict 24-hour usage window, and pruning health
-// events, ended leases and stale sticky assignments.
+// events, ended leases and stale sticky assignments. It also deletes support tickets
+// past their retention (handoff_ticket.md 8).
 //
 // Correctness never depends on this loop running on time: every reader checks
 // expiry and the window itself. The loop only records end reasons and bounds table
@@ -26,6 +27,9 @@ const (
 	LeaseInterval  = 15 * time.Second
 	UsageInterval  = 5 * time.Minute
 	HourlyInterval = time.Hour
+	// TicketInterval is how often expired tickets are deleted. Readers already hide a
+	// ticket from its expiry on, so this only bounds how long its rows stay.
+	TicketInterval = 10 * time.Minute
 	// DefaultBatch bounds every UPDATE/DELETE so no sweep holds a long transaction.
 	DefaultBatch = 1000
 )
@@ -36,6 +40,8 @@ type Sweeper struct {
 	Batch  int
 	Now    func() time.Time
 	Logf   func(format string, args ...any)
+	// Tickets is the ticket expiry interval (TicketInterval when zero); tests shorten it.
+	Tickets time.Duration
 }
 
 // Result reports one pass. Skipped means another instance held the sweep lock and
@@ -48,6 +54,7 @@ type Result struct {
 	HealthEvents   int64
 	EndedLeases    int64
 	Assignments    int64
+	Tickets        int64
 }
 
 func New(db *gorm.DB, schema string) *Sweeper {
@@ -172,6 +179,29 @@ func (s *Sweeper) PruneHourly(ctx context.Context) (Result, error) {
 	return out, err
 }
 
+// PruneTickets deletes tickets whose retention ended (ExpiresAt at or before now); their
+// messages go with them through the foreign key. A ticket a user or an administrator is
+// writing right now is skipped and deleted by the next pass.
+func (s *Sweeper) PruneTickets(ctx context.Context) (Result, error) {
+	now := s.Now().UTC()
+	var out Result
+	var err error
+	out.Skipped, err = s.exclusive(ctx, func() error {
+		var e error
+		out.Tickets, e = s.repeat(ctx, `DELETE FROM `+s.table("tickets")+` WHERE id IN (
+			SELECT id FROM `+s.table("tickets")+` WHERE expires_at <= ? ORDER BY expires_at LIMIT ? FOR UPDATE SKIP LOCKED)`, now, s.batch())
+		return e
+	})
+	return out, err
+}
+
+func (s *Sweeper) ticketInterval() time.Duration {
+	if s.Tickets <= 0 {
+		return TicketInterval
+	}
+	return s.Tickets
+}
+
 // Run executes every pass once at start and then on its own interval until ctx ends.
 // Failures are logged without database details and retried on the next tick.
 func (s *Sweeper) Run(ctx context.Context) {
@@ -179,7 +209,7 @@ func (s *Sweeper) Run(ctx context.Context) {
 		name     string
 		interval time.Duration
 		run      func(context.Context) (Result, error)
-	}{{"lease expiry", LeaseInterval, s.ExpireLeases}, {"usage history", UsageInterval, s.PruneUsage}, {"hourly cleanup", HourlyInterval, s.PruneHourly}}
+	}{{"lease expiry", LeaseInterval, s.ExpireLeases}, {"usage history", UsageInterval, s.PruneUsage}, {"hourly cleanup", HourlyInterval, s.PruneHourly}, {"ticket expiry", s.ticketInterval(), s.PruneTickets}}
 	tickers := make([]*time.Ticker, len(passes))
 	for i, p := range passes {
 		tickers[i] = time.NewTicker(p.interval)
@@ -196,6 +226,8 @@ func (s *Sweeper) Run(ctx context.Context) {
 			s.runPass(ctx, passes[1].name, passes[1].run)
 		case <-tickers[2].C:
 			s.runPass(ctx, passes[2].name, passes[2].run)
+		case <-tickers[3].C:
+			s.runPass(ctx, passes[3].name, passes[3].run)
 		}
 	}
 }
@@ -206,7 +238,7 @@ func (s *Sweeper) runPass(ctx context.Context, name string, run func(context.Con
 	case err != nil && ctx.Err() == nil:
 		s.Logf("maintenance: %s failed (will retry)", name)
 	case err == nil && !result.Skipped:
-		if n := result.Expired + result.SessionRevoked + result.UsageBuckets + result.HealthEvents + result.EndedLeases + result.Assignments; n > 0 {
+		if n := result.Expired + result.SessionRevoked + result.UsageBuckets + result.HealthEvents + result.EndedLeases + result.Assignments + result.Tickets; n > 0 {
 			s.Logf("maintenance: %s changed %d rows", name, n)
 		}
 	}
