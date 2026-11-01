@@ -507,3 +507,45 @@
 **CI 修复（PR #96 第一次运行）**：Release rehearsal 失败，原因是 scripts/test-release-rehearsal.py 的 ALL_TABLES 是精确的表清单，缺少 tickets 和 ticket_messages，属于本轮遗漏。已补上，本地完整演练 exit 0（22 项检查，32 张表，各旧版本回滚时都能带着工单表正常启动）；工单专项的回滚演练仍按计划放在第 3 轮。同一次运行中 macOS 的 R-PACKAGE 失败，原因是 runner 上 hdiutil convert 压缩临时 DMG 时返回 1，本 PR 没有改动任何 macOS 或打包代码，由推送后的新一轮 CI 重跑。
 
 **未完成 / 留给后续轮次**：Next 代理的 32 KB 上限、全部界面和 Playwright 属于第 2 轮；回滚演练、混合部署和文档属于第 3 轮。
+
+
+### 第 2 轮：网站（2026-11-01，分支 worktree-ticket-round2-website，PR 见合并记录）
+
+基线：main 09f7a90（第 1 轮合并后）。证据：artifacts/ticket-round2-website（tickets-run2/ 为工单 spec 单独运行，payment-full2/ 为 test-payment-web.py 全量运行；screens/ 下为各视口与暗色截图）。
+
+**实现概要**
+- 用户页面 /tickets（frontend/src/app/tickets/page.tsx、components/tickets-view.tsx）：列表（处理中 / 已关闭分段，桌面表格、窄屏卡片，未读行加粗带圆点），提交表单（模态框：5 个分类单选卡片、标题、描述带字数、选填设备与关联订单，billing 默认展开订单、connection 和 client 默认展开设备），详情 ?id=（对话气泡 pre-wrap 纯文本，用户靠右、“客服”靠左，删除日期悬停显示 UTC，剩余不足 3 天黄色提示，回复框，“问题已解决，关闭工单”二次确认）。详情每 20 秒、列表每 60 秒轮询（usePolling），刷新不清空回复框；有未读时自动标记已读一次，模拟会话不发。meta 无 tickets_enabled 显示“工单服务暂未开放”，为 false 时只读。
+- 侧边栏（site-shell.tsx）：“我的工单”位于“推荐有礼”之后，仅 tickets_enabled 为 true 且非管理员时出现，未读数角标（9+）；管理员在“管理后台”旁显示待处理小圆点。workspace 与 supportPages 都加入 /tickets。
+- 角标数据（lib/ticket-badges.ts）：每个摘要一个共享轮询器（useSyncExternalStore），有角标挂载时才运行；用户摘要每 60 秒、管理员摘要每 15 秒，页面可见时轮询，聚焦/回到页面/网络恢复/切换页面时立即刷新；请求为 quiet 模式（retry=false，401 不刷新也不登出），失败时隐藏角标；读、回复、关闭后 refreshTicketBadges() 立即重取。管理后台的侧边栏圆点和“工单”标签角标共用同一个请求。
+- 管理后台“工单”标签（components/console/console-tickets.tsx，console-shell.tsx）：位于“订单与支付”之后，标签显示待处理数（精确数字）；筛选（状态默认待处理、分类、关键词，存于 URL）；列表每 15 秒刷新，新进入当前页的行浅色高亮 5 秒；详情抽屉 ?ticket=（提交人链接到 /admin/console/users?user=，关联订单链接到 /admin/console/orders?order=，账号注销中标注并禁用回复，staff 消息标注管理员邮箱），每 10 秒刷新，刷新不清空回复框，新的用户消息提示“用户有新消息”；关闭确认框带选填说明（≤500 字）并提交 version，409 ticket_changed 时提示并自动刷新详情。页面说明加入“工单”。
+- 类型与纯函数：lib/types.ts（Ticket、TicketDetail、TicketMessage、TicketStatus、TicketCategory 等与 Meta.tickets_enabled），lib/console.ts（Console* 工单类型），lib/tickets.ts（文案映射、字数、校验、删除日期、剩余天数、等待时长、角标、限流文案、类型守卫）；scripts/tickets.test.mjs（npm run test:tickets，已加入 CI Web validation）。
+- Next 代理：/api/v1/me/tickets 与 /api/v1/admin/console/tickets 前缀请求体上限 32 KB（与 Go 一致），api-proxy.test 增加 12 KB 通过、32 KB+1 拒绝、/me/ticketsx 仍为 8 KB 的用例。
+- 首页 FAQ“如何联系客服”在 tickets_enabled 为 true 时补一句“登录后也可以在‘我的工单’提交问题”；只有工单、没有在线客服和邮箱时也出现该问答。
+- 测试夹具（payment_acceptance_test.go，仅测试二进制）：新增 ticketroot（管理员）、ticketa、ticketb；维护循环的工单到期清理在夹具时钟上每 1 秒运行一次；新增 /fixture/ticket-expiry（把指定工单的 expires_at 改为当前 + N 秒）和 /fixture/ticket（行是否存在、消息数）。
+- tests/tickets.spec.ts 加入 playwright.payment.config.ts；copy-guard 的覆盖断言加入 tickets-view.tsx 和 lib/tickets.ts。
+
+**验收结果**
+
+| 编号 | 结果 | 证据 / 说明 |
+| --- | --- | --- |
+| T2-01 | PASS | tickets.spec“T2-01 / T2-05 / T2-09”：A 的侧边栏出现“我的工单”且位于推荐有礼与下载客户端之间 → 提交 billing 工单并关联自己的订单 → 详情和列表显示“等待客服回复”、工单号 ^T\d{12}$、删除日期 → 管理员上下文（未刷新）在 25 秒等待内看到“工单”标签角标 1、侧边栏圆点和首行工单（“刚刚提交”）→ 抽屉显示关联订单链接和用户邮箱，发送回复，状态“已回复”，角标消失 → A 切换页面后侧边栏未读角标 1 → 打开详情看到“客服”回复（不含管理员邮箱），角标消失 → A 补充 → 管理员抽屉在 20 秒等待内出现“用户有新消息”，状态回到“待处理”，标签角标回到 1 |
+| T2-02 | PASS | “T2-02 / T2-03 / T2-04”：不填说明直接关闭，抽屉显示“由 管理员邮箱 关闭”；用户侧显示“已关闭（由客服关闭）”和“客服已关闭此工单”，没有回复框和关闭按钮，对话仍只有 1 条；带说明关闭时说明作为最后一条 staff 消息出现在用户侧 |
+| T2-03 | PASS | 管理员打开抽屉后让页面停止可见性轮询，A 发出新消息，管理员在旧详情上关闭 → 提示“用户有新回复”，详情自动刷新为 2 条消息，状态“待处理”；随后带说明关闭成功 |
+| T2-04 | PASS | B 点击“问题已解决，关闭工单”并确认 → “已关闭”“你已关闭此工单”，管理员待处理列表中该工单在 25 秒内消失，标签角标为 1（只剩 A 的第一张）|
+| T2-05 | PASS | 表单：空提交显示三个字段错误；61 字标题、3001 字描述显示“标题最多 60 个字”“问题描述最多 3000 个字”和“3001/3000”，期间没有发出 POST；双击提交只产生一个 Idempotency-Key、一张工单。上限：A 有 3 张未关闭工单时“提交工单”禁用并显示“处理中的工单最多 3 张……” |
+| T2-06 | PASS | 列表和详情显示“将于 YYYY-MM-DD HH:mm 自动删除”；钩子改为 2 天后到期后显示黄色“即将删除”；改为已到期后 1 秒级清理删除行（/fixture/ticket 返回 exists=false），打开中的详情在下一次刷新时显示“该工单已超过保留期限并被删除”，用户列表为空，管理员“全部”列表按关键词也查不到 |
+| T2-07 | PASS | 管理员模拟 A：侧边栏显示“我的工单”和未读角标 1，列表 3 张、没有“提交工单”；打开有未读回复的工单，没有回复框和关闭按钮；网络监听确认没有任何对 /me/tickets 的 POST（含标记已读），角标仍为 1；返回管理员成功 |
+| T2-08 | PASS | 路由改写 /meta 去掉 tickets_enabled：新页面侧边栏无入口，全程没有 /tickets/summary 请求，/tickets 显示“工单服务暂未开放”；改为 false：无入口，/tickets 显示“工单暂停受理”、列表只读、无提交按钮，详情无回复框；管理后台在旧后端 meta 下显示“当前版本暂不支持工单”且无角标 |
+| T2-09 | PASS | 截图：tickets-list / ticket-form / ticket-detail / console-tickets / console-ticket-drawer 的 1440 宽，tickets-list / ticket-detail / console-tickets 的 375 宽（用户列表为卡片、无表格），用户列表、详情与管理员抽屉的暗色各一张，另有 ticket-expiring 与 ticket-impersonation；375 宽页面文本经 bannedIn 检查为空且不含“管理员”；正文中的 `<b>`、`<script>`、带 onerror 的 `<img>` 原样显示为文字，DOM 中没有对应元素，脚本未执行。copy-guard 源码守卫 3/3，tickets.test 的源码检查确认用户侧文件不含“管理员”和 dangerouslySetInnerHTML |
+| T2-10 | PASS | lint、typecheck、build --webpack、test:api-proxy 17/17（含新用例，本机用 PLAYWRIGHT_CHROME_PATH 指向系统 Chrome）、test:tickets 12/12，以及 nodes、downloads、dashboard、referral、copy、theme、home、support 全部通过。test-payment-web.py 全量：PASS，80 passed（6.9 分钟，含 7 个工单 spec 与既有 payment、account、admin-console 系列、shop、referral、ui-copy、theme、home、support-widget），见 payment-full2/。第一次全量运行（payment-full/）中公告 spec 超时，原因与修正见偏离第 6 条 |
+
+**偏离本文的决定**
+1. 夹具只运行维护循环中的工单清理（每 1 秒，在夹具时钟上），不运行整个 Sweeper.Run：其余清理（租约到期、用量、每小时清理）会作用在支付 spec 推进过的时钟上，与本轮无关。
+2. 用户摘要角标没有直接用 useFetched，而是一个共享轮询器，请求方式与 useFetched 的 quiet 模式相同（retry=false）。原因：管理员侧边栏圆点和控制台标签角标需要共用同一个 15 秒请求，用户角标同样需要“可见时轮询 + 切换页面立即刷新 + 被其他页面主动刷新”。
+3. 幂等键沿用下单弹窗的做法：同一次打开表单中，内容相同的提交复用同一个键（重试、双击只产生一张），内容改变后换新键；万一收到 409 idempotency_conflict，按“已提交”处理并刷新列表。回复同理。
+4. “工单”标签显示精确的待处理数（不截成 9+），用户侧未读角标按 11.1 节截成 9+。
+5. 首页 FAQ：没有在线客服、也没有客服邮箱、但开放了工单时，也显示“如何联系客服”一问，指向“我的工单”。
+6. 夹具的三个工单账户放在账户清单最前面创建（最早的行）。原因：管理后台用户列表首页只显示最新的 20 个账户，公告 spec 要在首页找到 kyle；放在后面会把 kyle 挤到第 22 位（第一次全量运行时公告 spec 因此超时，已修正）。
+7. test-payment-web.py 的浏览器步骤超时从默认 600 秒放宽到 1200 秒：加入工单 spec（需要等待 15 秒级的控制台刷新）后本机全量约 8 分钟，CI runner 更慢。CI 上该 job 的总上限仍是 25 分钟（上一次 main 运行该 job 用时约 13 分钟）。
+
+**未完成 / 留给后续轮次**：回滚演练（TICKET_ROLLBACK_REF）、新旧前后端混合部署的真实验证、APP 兼容确认、安全审查、README / DEPLOYMENT / 运维文档属于第 3 轮。用户实测 U-36..U-40 需部署后进行。

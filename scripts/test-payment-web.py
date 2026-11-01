@@ -111,8 +111,10 @@ def main():
             chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
             if Path(chrome).is_file():
                 browser_env['PLAYWRIGHT_CHROME_PATH'] = chrome
+            # The whole browser suite (about eight minutes locally with the ticket spec, which waits for
+            # the console's 15-second refreshes) needs more than the 10-minute default on CI runners.
             run('browser', ['node', 'node_modules/@playwright/test/cli.js', 'test', '--config=playwright.payment.config.ts', *args.spec],
-                ROOT / 'frontend', browser_env)
+                ROOT / 'frontend', browser_env, timeout=1200)
             summary['checks'].append('checkout dialog, gateway redirect, callback, result page, orders page, coupon reasons, expiry paths and tamper display on a local gateway fake')
             summary['passed'] = True
         finally:

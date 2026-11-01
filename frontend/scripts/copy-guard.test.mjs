@@ -121,6 +121,8 @@ test('the scan covers the user pages and leaves the administration out', () => {
     'components/site-shell.tsx',
     'components/home/home-faq.tsx',
     'components/home/plan-preview.tsx',
+    'components/tickets-view.tsx',
+    'lib/tickets.ts',
     'lib/api.ts',
   ])
     assert.ok(userFiles.includes(path), path);

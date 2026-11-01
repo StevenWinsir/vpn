@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"vpn/backend/internal/config"
+	"vpn/backend/internal/maintenance"
 	"vpn/backend/internal/model"
 	"vpn/backend/internal/payment"
 )
@@ -69,10 +70,13 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// ivan, judy, kyle, lena and boss (a second administrator) to the announcement, impersonation
 	// and coupon specs, which publish announcements that must not reach the other specs' users.
 	// themeroot (an administrator) and themea belong to the appearance spec (handoff_ui.md 6);
-	// supportroot (an administrator), supporta and supportb to the support chat spec (handoff_ui.md 9).
-	for _, kind := range []string{"alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea", "supportroot", "supporta", "supportb"} {
+	// supportroot (an administrator), supporta and supportb to the support chat spec (handoff_ui.md 9);
+	// ticketroot (an administrator), ticketa and ticketb to the support ticket spec (handoff_ticket.md 15).
+	// The ticket accounts come first, as the oldest rows: the console's user list shows the newest 20,
+	// and the announcement spec finds kyle on that first page.
+	for _, kind := range []string{"ticketroot", "ticketa", "ticketb", "alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea", "supportroot", "supporta", "supportb"} {
 		role := "user"
-		if kind == "root" || kind == "boss" || kind == "themeroot" || kind == "supportroot" {
+		if kind == "root" || kind == "boss" || kind == "themeroot" || kind == "supportroot" || kind == "ticketroot" {
 			role = "admin"
 		}
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}
@@ -127,6 +131,11 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	router := newServerAt(db, cfg, mail.service, clock.Now)
 	stop := make(chan struct{})
 	reconciler := &Server{db: db, cfg: cfg, clock: clock.Now}
+	// The maintenance loop's ticket expiry pass, every second instead of every ten minutes, on the
+	// fixture's clock (handoff_ticket.md 15, round 2). Only that pass: the others would act on the
+	// payment specs' shifted clock.
+	sweeper := maintenance.New(db, cfg.Schema)
+	sweeper.Now, sweeper.Tickets, sweeper.Logf = clock.Now, time.Second, t.Logf
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -138,6 +147,7 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				_, _ = reconciler.reconcilePayments(t.Context())
 				// The referral worker of cmd/api, driven on the fixture's clock.
 				_, _ = reconciler.processReferrals(t.Context())
+				_, _ = sweeper.PruneTickets(t.Context())
 			}
 		}
 	}()
@@ -286,6 +296,30 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			w.WriteHeader(204)
+		case "/fixture/ticket-expiry":
+			// Test-only: moves a ticket's deletion time to now + seconds (negative: already
+			// expired), so the ticket spec can show the three-day notice and the expiry sweep.
+			seconds, e := strconv.Atoi(r.URL.Query().Get("seconds"))
+			if e != nil {
+				w.WriteHeader(400)
+				return
+			}
+			res := db.Model(&model.Ticket{}).Where("id = ?", r.URL.Query().Get("id")).Update("expires_at", clock.Now().Add(time.Duration(seconds)*time.Second))
+			if res.Error != nil || res.RowsAffected != 1 {
+				w.WriteHeader(404)
+				return
+			}
+			w.WriteHeader(204)
+		case "/fixture/ticket":
+			// Whether a ticket row still exists, and how many messages it has.
+			var n, messages int64
+			id := r.URL.Query().Get("id")
+			if e := db.Model(&model.Ticket{}).Where("id = ?", id).Count(&n).Error; e != nil {
+				w.WriteHeader(500)
+				return
+			}
+			db.Model(&model.TicketMessage{}).Where("ticket_id = ?", id).Count(&messages)
+			reply(map[string]any{"exists": n == 1, "messages": messages})
 		case "/fixture/purge":
 			res, e := (&Server{db: db, cfg: cfg, clock: clock.Now}).purgeDeletedAccounts(t.Context())
 			if e != nil {

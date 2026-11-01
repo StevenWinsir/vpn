@@ -19,7 +19,8 @@
     "brand:icons": "node scripts/brand-icons.mjs",
     "brand:apps": "node scripts/brand-apps.mjs",
     "test:home": "node --experimental-strip-types --test scripts/home.test.mjs",
-    "test:support": "node --experimental-strip-types --test scripts/support.test.mjs"
+    "test:support": "node --experimental-strip-types --test scripts/support.test.mjs",
+    "test:tickets": "node --experimental-strip-types --test scripts/tickets.test.mjs"
   },
   "engines": {
     "node": ">=22"

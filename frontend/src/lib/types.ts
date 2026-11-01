@@ -258,6 +258,9 @@ export type Meta = {
   // Absent on a backend from before the referral programme: the website then neither shows
   // the code field nor sends referral_code (the backend rejects unknown request fields).
   referral_enabled?: boolean;
+  // Absent on a backend from before support tickets: the site then hides the entry and never
+  // calls the ticket routes (handoff_ticket.md 14.1). False: existing tickets stay readable.
+  tickets_enabled?: boolean;
 };
 export type RegisterCodeReceipt = {
   message: string;
@@ -322,3 +325,53 @@ export type AccountLogin = {
   geo_status: string;
   geo_text: string;
 };
+
+// Support tickets (GET /me/tickets…, handoff_ticket.md 10). Replies are "staff": the user side
+// never receives an administrator's id, address or name.
+export type TicketStatus = 'open' | 'answered' | 'closed';
+export type TicketCategory = 'connection' | 'account' | 'billing' | 'client' | 'other';
+export type TicketPlatform = 'windows' | 'macos' | 'android' | 'ios' | 'web' | 'other';
+export type Ticket = {
+  id: string;
+  ticket_no: string;
+  category: TicketCategory;
+  subject: string;
+  status: TicketStatus;
+  user_unread: boolean;
+  message_count: number;
+  created_at: string;
+  last_message_at: string;
+  expires_at: string;
+};
+// One of the user's recent orders, offered by the form and shown on a ticket.
+export type TicketOrder = {
+  id: string;
+  trade_no: string | null;
+  plan_name: string;
+  price_cents: number;
+  status: string;
+  created_at: string;
+};
+export type TicketMessage = {
+  id: string;
+  author: 'user' | 'staff';
+  body: string;
+  created_at: string;
+};
+export type TicketDetail = Ticket & {
+  platform: TicketPlatform | '';
+  closed_at: string | null;
+  closed_by: 'user' | 'staff' | '';
+  order: TicketOrder | null;
+  messages: TicketMessage[];
+};
+export type TicketList = {
+  tickets: Ticket[];
+  total: number;
+  page: number;
+  page_size: number;
+  open_count: number;
+  max_open: number;
+  order_options: TicketOrder[];
+};
+export type TicketSummary = { unread_count: number; open_count: number; max_open: number };

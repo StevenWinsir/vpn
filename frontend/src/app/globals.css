@@ -220,6 +220,88 @@ a:focus-visible {
   color: var(--al-brand);
   font-weight: 650;
 }
+/* Ticket badges (handoff_ticket.md 7.1, 11.1): a count on "我的工单" and the console tab, a dot on
+   "管理后台". */
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--al-hot-to);
+  color: var(--al-on-hot);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.nav-link .nav-badge {
+  font-variant-numeric: tabular-nums;
+}
+.nav-dot {
+  margin-left: auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--al-hot-to);
+}
+/* Ticket conversations: the user's own messages on the right, support's on the left. The text is
+   plain (white-space: pre-wrap), never HTML. */
+.ticket-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ticket-bubble {
+  max-width: min(640px, 88%);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--al-border);
+  background: var(--al-surface);
+}
+.ticket-bubble.mine {
+  align-self: flex-end;
+  background: var(--al-brand-soft);
+  border-color: var(--al-brand-tint-border);
+}
+.ticket-bubble.theirs {
+  align-self: flex-start;
+  background: var(--al-surface-2);
+}
+.ticket-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--al-text);
+  margin: 6px 0 0;
+}
+.ticket-unread {
+  font-weight: 700;
+}
+.ticket-unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--al-hot-to);
+  vertical-align: middle;
+}
+/* The console queue keeps its short columns on one line; the subject may wrap. */
+.ticket-queue th,
+.ticket-queue td {
+  white-space: nowrap;
+}
+.ticket-queue td.ticket-queue-wrap {
+  white-space: normal;
+  min-width: 180px;
+}
+/* A ticket that just entered the console queue is tinted for five seconds. */
+.ticket-row-new td {
+  background: var(--al-warn-bg);
+  transition: background 0.4s;
+}
 .sidebar-note {
   margin-top: auto;
   padding: 20px 8px 8px;
