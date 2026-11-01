@@ -121,6 +121,9 @@ func (s *Server) purgeAccount(ctx context.Context, id string) (bool, error) {
 			// referrer, anonymous; as a referrer its rows go.
 			{`UPDATE ` + t("referrals") + ` SET referee_id = NULL, first_order_id = NULL WHERE referee_id = ?`, []any{id}},
 			{`DELETE FROM ` + t("referrals") + ` WHERE referrer_id = ?`, []any{id}},
+			// Support tickets go whole; their messages follow through the foreign key
+			// (handoff_ticket.md 9.1).
+			{`DELETE FROM ` + t("tickets") + ` WHERE user_id = ?`, []any{id}},
 			// The callback ledger stays, without the link to the account.
 			{`UPDATE ` + t("payment_notifications") + ` SET order_id = NULL WHERE order_id IN (SELECT id FROM ` + t("orders") + ` WHERE user_id = ?)`, []any{id}},
 			{`DELETE FROM ` + t("orders") + ` WHERE user_id = ?`, []any{id}},

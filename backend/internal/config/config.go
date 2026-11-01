@@ -54,6 +54,8 @@ type Config struct {
 	ImpersonationTTL time.Duration
 	// Referral is the referral programme (handoff_coupon.md 14.2).
 	Referral Referral
+	// Tickets is the support-ticket switch (handoff_ticket.md 13.2).
+	Tickets Tickets
 }
 
 func Load() (Config, error) {
@@ -179,6 +181,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	if err := loadReferral(&c); err != nil {
+		return c, err
+	}
+	if err := loadTickets(&c); err != nil {
 		return c, err
 	}
 	if c.Host == "" || c.Database == "" || c.User == "" || c.Password == "" {
