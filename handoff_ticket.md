@@ -504,4 +504,6 @@
 4. 限流使用现有 bumpLimit 的固定窗口：“24 小时 5 张”按 UTC 自然日计，“每小时 30 条”按整点小时计，与优惠码、下单的限流方式一致。
 5. 管理员的回复同样带 Idempotency-Key；关闭先检查是否已关闭（409 ticket_closed），再检查 version（409 ticket_changed）。
 
+**CI 修复（PR #96 第一次运行）**：Release rehearsal 失败，原因是 scripts/test-release-rehearsal.py 的 ALL_TABLES 是精确的表清单，缺少 tickets 和 ticket_messages，属于本轮遗漏。已补上，本地完整演练 exit 0（22 项检查，32 张表，各旧版本回滚时都能带着工单表正常启动）；工单专项的回滚演练仍按计划放在第 3 轮。同一次运行中 macOS 的 R-PACKAGE 失败，原因是 runner 上 hdiutil convert 压缩临时 DMG 时返回 1，本 PR 没有改动任何 macOS 或打包代码，由推送后的新一轮 CI 重跑。
+
 **未完成 / 留给后续轮次**：Next 代理的 32 KB 上限、全部界面和 Playwright 属于第 2 轮；回滚演练、混合部署和文档属于第 3 轮。
