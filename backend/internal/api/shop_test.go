@@ -570,7 +570,7 @@ func TestShopYearlyQuoteOrderAndRenewal(t *testing.T) {
 	}
 	e.want(e.pay(gw), 200)
 	sub := e.subscription(u.ID)
-	if sub == nil || sub.PlanID != "pro" || sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || sub.QuotaCycleBytes != 300*gib || sub.QuotaCycleStartsAt == nil || !sub.QuotaCycleStartsAt.Equal(sub.StartsAt) || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) || sub.MaxDevices != 5 || !sub.AllowDedicated {
+	if sub == nil || sub.PlanID != "pro" || sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || sub.QuotaCycleBytes != 300*gib || sub.QuotaCycleStartsAt == nil || !sub.QuotaCycleStartsAt.Equal(sub.StartsAt) || !sub.ExpiresAt.Equal(sub.StartsAt.UTC().AddDate(0, 0, 365)) || sub.MaxDevices != 5 || !sub.AllowDedicated {
 		t.Fatalf("subscription %+v", sub)
 	}
 	before := nativeEntitlementFingerprint(sub)
@@ -589,7 +589,7 @@ func TestShopYearlyQuoteOrderAndRenewal(t *testing.T) {
 	y, _ := e.gw.open(t, renewal.PayURL)
 	e.want(e.pay(y), 200)
 	renewed := e.subscription(v.ID)
-	if !renewed.StartsAt.Equal(monthlySub.StartsAt) || !renewed.ExpiresAt.Equal(monthlySub.ExpiresAt.AddDate(0, 0, 365)) || renewed.TrafficLimitBytes != monthlySub.TrafficLimitBytes+300*gib || renewed.UsedUnits != monthlySub.UsedUnits ||
+	if !renewed.StartsAt.Equal(monthlySub.StartsAt) || !renewed.ExpiresAt.Equal(monthlySub.ExpiresAt.UTC().AddDate(0, 0, 365)) || renewed.TrafficLimitBytes != monthlySub.TrafficLimitBytes+300*gib || renewed.UsedUnits != monthlySub.UsedUnits ||
 		renewed.QuotaCycleStartsAt == nil || renewed.QuotaCycleStartsAt.Before(monthlySub.StartsAt) || renewed.QuotaCycleStartsAt.After(e.clock.Now()) || renewed.QuotaCycleBytes != 300*gib {
 		t.Fatalf("renewed %+v from %+v", renewed, monthlySub)
 	}
@@ -600,7 +600,7 @@ func TestShopYearlyQuoteOrderAndRenewal(t *testing.T) {
 	// the refreshes, so the current cycle gains nothing.
 	back, _ := e.gw.open(t, e.place(v, "pro", payment.TypeAlipay, "").PayURL)
 	e.want(e.pay(back), 200)
-	if again := e.subscription(v.ID); !again.ExpiresAt.Equal(renewed.ExpiresAt.AddDate(0, 0, 30)) || again.TrafficLimitBytes != renewed.TrafficLimitBytes ||
+	if again := e.subscription(v.ID); !again.ExpiresAt.Equal(renewed.ExpiresAt.UTC().AddDate(0, 0, 30)) || again.TrafficLimitBytes != renewed.TrafficLimitBytes ||
 		!again.QuotaCycleStartsAt.Equal(*renewed.QuotaCycleStartsAt) || again.QuotaCycleDays != 30 {
 		t.Fatalf("monthly renewal of a yearly subscription %+v", again)
 	}
@@ -716,7 +716,7 @@ func TestShopCouponCycleScopeAndTestPrice(t *testing.T) {
 	}
 	gw, _ := e.gw.open(t, o.PayURL)
 	e.want(e.pay(gw), 200)
-	if sub := e.subscription(tester.ID); sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
+	if sub := e.subscription(tester.ID); sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || !sub.ExpiresAt.Equal(sub.StartsAt.UTC().AddDate(0, 0, 365)) {
 		t.Fatalf("test-price yearly fulfilment %+v", sub)
 	}
 }
@@ -776,7 +776,7 @@ func TestShopOrderSnapshotFulfilment(t *testing.T) {
 	gw, _ := e.gw.open(t, o.PayURL)
 	e.want(e.pay(gw), 200)
 	sub := e.subscription(u.ID)
-	if sub.MaxDevices != 5 || !sub.AllowDedicated || sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || sub.PlanName != "进阶计划" || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
+	if sub.MaxDevices != 5 || !sub.AllowDedicated || sub.TrafficLimitBytes != 300*gib || sub.QuotaCycleDays != 30 || sub.PlanName != "进阶计划" || !sub.ExpiresAt.Equal(sub.StartsAt.UTC().AddDate(0, 0, 365)) {
 		t.Fatalf("the plan's later terms leaked into the purchase: %+v", sub)
 	}
 
@@ -805,7 +805,7 @@ func TestShopOrderSnapshotFulfilment(t *testing.T) {
 	e.want(e.post("/plans/short-lived/delete", map[string]any{"version": off["version"]}), 200)
 	e.want(e.post("/orders/"+mo.Order.ID+"/confirm", map[string]any{"admin_password": payPassword, "paid_cents": mo.Order.AmountCents, "note": "ok"}), 200)
 	ms := e.subscription(w.ID)
-	if ms.MaxDevices != 4 || !ms.AllowDedicated || ms.TrafficLimitBytes != 5*gib || ms.QuotaCycleBytes != 5*gib || ms.QuotaCycleDays != 30 || !ms.ExpiresAt.Equal(ms.StartsAt.AddDate(0, 0, 365)) {
+	if ms.MaxDevices != 4 || !ms.AllowDedicated || ms.TrafficLimitBytes != 5*gib || ms.QuotaCycleBytes != 5*gib || ms.QuotaCycleDays != 30 || !ms.ExpiresAt.Equal(ms.StartsAt.UTC().AddDate(0, 0, 365)) {
 		t.Fatalf("manual confirmation %+v", ms)
 	}
 }
@@ -828,7 +828,7 @@ func TestShopTestPurchaseCycle(t *testing.T) {
 		t.Fatalf("test order %+v", o)
 	}
 	sub := e.subscription(u.ID)
-	if !sub.IsTest || sub.TrafficLimitBytes != 100*gib || sub.QuotaCycleBytes != 100*gib || sub.QuotaCycleDays != 30 || !sub.ExpiresAt.Equal(sub.StartsAt.AddDate(0, 0, 365)) {
+	if !sub.IsTest || sub.TrafficLimitBytes != 100*gib || sub.QuotaCycleBytes != 100*gib || sub.QuotaCycleDays != 30 || !sub.ExpiresAt.Equal(sub.StartsAt.UTC().AddDate(0, 0, 365)) {
 		t.Fatalf("test subscription %+v", sub)
 	}
 	e.code(post(key, map[string]any{"plan_id": "starter"}), 409, "idempotency_conflict")

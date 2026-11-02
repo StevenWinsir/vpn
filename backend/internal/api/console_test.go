@@ -236,7 +236,7 @@ func TestConsoleUserListScale(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := e.db.Exec(`INSERT INTO "` + schema + `".subscriptions (id, user_id, plan_id, plan_name, starts_at, expires_at, traffic_limit_bytes, used_units, max_devices, allow_dedicated, is_test, created_at, updated_at, version)
-		SELECT gen_random_uuid(), id, 'starter', '轻量计划', now() - interval '1 day', now() + (random() * 30 || ' days')::interval, 1073741824, 0, 2, false, false, now(), now(), 1
+		SELECT gen_random_uuid(), id, 'starter', '轻量计划', now() - interval '1 day', now() + random() * interval '30 days', 1073741824, 0, 2, false, false, now(), now(), 1
 		FROM "` + schema + `".users WHERE email LIKE 'bulk%' AND email ~ '[02468]@'`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestConsoleUserListScale(t *testing.T) {
 	}
 	// A worst case for the login panel too: 10,000 events.
 	if err := e.db.Exec(`INSERT INTO "` + schema + `".login_events (id, user_id, channel, platform, ip, user_agent, result, failure_reason, occurred_at, geo_status, geo_text, geo_attempts)
-		SELECT gen_random_uuid(), id, 'web', '', register_ip, '', CASE WHEN random() < 0.3 THEN 'failure' ELSE 'success' END, '', now() - (random() * 3600 * 24 || ' seconds')::interval, 'done', 'x', 0
+		SELECT gen_random_uuid(), id, 'web', '', register_ip, '', CASE WHEN random() < 0.3 THEN 'failure' ELSE 'success' END, '', now() - random() * interval '1 day', 'done', 'x', 0
 		FROM "` + schema + `".users WHERE register_ip IS NOT NULL`).Error; err != nil {
 		t.Fatal(err)
 	}
