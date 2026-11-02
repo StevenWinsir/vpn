@@ -123,7 +123,9 @@ func applyPlan(tx *gorm.DB, userID string, plan model.Plan, cycleDays int, now t
 	default:
 		sub.TrafficLimitBytes += plan.TrafficBytes
 	}
-	sub.ExpiresAt = sub.ExpiresAt.AddDate(0, 0, plan.DurationDays)
+	// A day is 24 h: a renewal's expiry is read back in the process's zone, where AddDate
+	// would gain or lose the hour of a daylight-saving change.
+	sub.ExpiresAt = sub.ExpiresAt.UTC().AddDate(0, 0, plan.DurationDays)
 	sub.Version++
 	return saveSubscription(tx, &sub)
 }
