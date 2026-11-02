@@ -186,12 +186,12 @@ func TestShopYearlyQuotaRefresh(t *testing.T) {
 	before := e.stored(u.ID)
 	e.buyYearly(e.loginAgainUser(u), "starter")
 	after := e.stored(u.ID)
-	if !after.ExpiresAt.Equal(before.ExpiresAt.AddDate(0, 0, 365)) || after.TrafficLimitBytes != 100*gib || after.UsedUnits != 40*gib*1000 || !after.QuotaCycleStartsAt.Equal(*before.QuotaCycleStartsAt) {
+	if !after.ExpiresAt.Equal(before.ExpiresAt.UTC().AddDate(0, 0, 365)) || after.TrafficLimitBytes != 100*gib || after.UsedUnits != 40*gib*1000 || !after.QuotaCycleStartsAt.Equal(*before.QuotaCycleStartsAt) {
 		t.Fatalf("yearly renewal %+v", after)
 	}
 	m, _ := e.gw.open(t, e.place(e.loginAgainUser(u), "starter", payment.TypeAlipay, "").PayURL)
 	e.want(e.pay(m), 200)
-	if again := e.stored(u.ID); !again.ExpiresAt.Equal(after.ExpiresAt.AddDate(0, 0, 30)) || again.TrafficLimitBytes != 100*gib || again.UsedUnits != 40*gib*1000 {
+	if again := e.stored(u.ID); !again.ExpiresAt.Equal(after.ExpiresAt.UTC().AddDate(0, 0, 30)) || again.TrafficLimitBytes != 100*gib || again.UsedUnits != 40*gib*1000 {
 		t.Fatalf("monthly renewal %+v", again)
 	}
 

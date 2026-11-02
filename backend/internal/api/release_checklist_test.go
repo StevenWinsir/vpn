@@ -260,7 +260,7 @@ func TestUserPaymentChecklist(t *testing.T) {
 	g7, _ := e.gw.open(t, u7.PayURL)
 	e.want(e.pay(g7), 200)
 	after := e.subscription(owner.ID)
-	if !after.ExpiresAt.Equal(before.ExpiresAt.AddDate(0, 0, plan.DurationDays)) || after.TrafficLimitBytes != before.TrafficLimitBytes+plan.TrafficBytes || !after.StartsAt.Equal(before.StartsAt) {
+	if !after.ExpiresAt.Equal(before.ExpiresAt.UTC().AddDate(0, 0, plan.DurationDays)) || after.TrafficLimitBytes != before.TrafficLimitBytes+plan.TrafficBytes || !after.StartsAt.Equal(before.StartsAt) {
 		t.Fatalf("U-07 renewal: before %+v after %+v", before, after)
 	}
 	if s, code := e.clientSession(token); code != 200 || !s.CanConnect || s.Reason != "" || s.TotalBytes != after.TrafficLimitBytes || !s.SubscriptionExpiresAt.Equal(after.ExpiresAt) {

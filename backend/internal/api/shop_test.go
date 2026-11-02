@@ -846,6 +846,28 @@ func TestShopTestPurchaseCycle(t *testing.T) {
 	}
 }
 
+// A renewal adds whole 24 h days. The expiry it extends is read back in the process's
+// zone; in a daylight-saving zone (TZ=America/Chicago) a local AddDate across the
+// 2026-11-01 change would add 30 days and an hour.
+func TestShopRenewalAddsUTCDays(t *testing.T) {
+	e := newPayEnv(t, nil)
+	u := e.user("dstbuyer", "user")
+	var plan model.Plan
+	if err := e.db.First(&plan, "id = ?", "pro").Error; err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	for i, now := range []time.Time{start, start.AddDate(0, 0, 14)} {
+		if _, err := applyPlan(e.db, u.ID, plan, 0, now, false); err != nil {
+			t.Fatal(err)
+		}
+		sub, err := readSubscription(e.db, u.ID, now)
+		if want := start.Add(time.Duration((i+1)*plan.DurationDays) * 24 * time.Hour); err != nil || !sub.ExpiresAt.Equal(want) {
+			t.Fatalf("purchase %d: expires %v, want %v (%v)", i+1, sub.ExpiresAt.UTC(), want, err)
+		}
+	}
+}
+
 // S1-07: delete against order creation, in both orders; concurrent edits.
 func TestShopConcurrency(t *testing.T) {
 	e := newConsoleEnv(t, nil)

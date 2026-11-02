@@ -221,7 +221,7 @@ func TestPostgresIntegration(t *testing.T) {
 		if db.Where("user_id = ?", user.ID).First(&sub).Error != nil {
 			t.Fatal("missing subscription")
 		}
-		if sub.TrafficLimitBytes != 2*firstSub.TrafficLimitBytes || !sub.ExpiresAt.Equal(firstSub.ExpiresAt.AddDate(0, 0, 30)) {
+		if sub.TrafficLimitBytes != 2*firstSub.TrafficLimitBytes || !sub.ExpiresAt.Equal(firstSub.ExpiresAt.UTC().AddDate(0, 0, 30)) {
 			t.Fatal("concurrent replay double charged")
 		}
 	})
