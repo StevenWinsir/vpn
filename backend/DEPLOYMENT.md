@@ -224,6 +224,16 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 - **诊断**：`bin/doctor` 的 `referral` 段给出开关、封顶和各状态计数；待发放超过 10 分钟时警告 `referral_rewards_stale`。只输出数量，不含邮箱或推荐码。
 - **回滚**：旧二进制忽略新表和新列，外键保证旧版本的删号清除不会失败；回滚期间的首单在再次升级后由补扫处理。必须先发布后端、再发布前端（新前端只在 `/meta` 的 `referral_enabled` 为真时才发送推荐码字段）。回滚到推荐功能之前的版本时，奖励所属的订阅期结束后重新购买的用户，旧奖励不会带进新订阅期；旧版本的年付刷新会刷掉当期奖励，升级回来后下一次刷新按未用完的部分恢复一部分。完整的发布、排查、回滚、真实付款实测清单（U-13 … U-16）和安全审查结论见 [docs/payment-operations.md](../docs/payment-operations.md) 第九、十节；发布演练见 `scripts/test-release-rehearsal.py` 的“推荐”阶段。
 
+## 工单（handoff_ticket.md）
+
+- **迁移**：只增不删，可重复执行。新表 `tickets`（`user_id` 外键 `ON DELETE CASCADE`）和 `ticket_messages`（`ticket_id` 外键 `ON DELETE CASCADE`），不修改任何已有表。
+- **配置**：`TICKETS_ENABLED`（默认 `true`，只接受布尔值）。关闭时 `/meta` 的 `tickets_enabled` 为 `false`，用户不能提交、回复或自行关闭（403 `tickets_disabled`），已有工单只读可见，管理员照常回复和关闭，到期删除照常运行。保留期和各项上限是代码常量，没有对应的环境变量。
+- **保留期**：每张工单从提交时起保留 30 天（`expires_at`，不随回复延长）。到期后所有读写接口立即视为不存在；每个 API 进程的维护循环在启动时和之后每 10 分钟删除到期工单（每批 1000 行，`SKIP LOCKED`，多实例由 advisory lock 保证只有一个执行），对话随外键删除，**不可恢复**。日志只有 `maintenance: ticket expiry changed N rows` 这样的数量。
+- **请求体**：`/api/v1/me/tickets` 和 `/api/v1/admin/console/tickets` 前缀的上限是 32 KB（其他接口 8 KB），反向代理如果单独限制请求体，这两个前缀至少放到 32 KB。
+- **发布顺序**：先后端（迁移），用 `bin/doctor` 确认 `missing_tables` 为空、`tickets.enabled` 为 `true`，并确认 `/api/v1/meta` 出现 `tickets_enabled`，再发布前端。新前端对接旧后端时入口自动隐藏，不报错。
+- **诊断**：`bin/doctor` 的 `tickets` 段给出开关、待处理和已回复数、最早待处理的等待秒数、过期超过 1 小时仍未删除的数量；等待超过 24 小时警告 `tickets_waiting_over_24h`，删除滞后警告 `tickets_expiry_lagging`（维护循环可能没有运行，重启后端会立即清理一次）。只输出数量和时长，不含工单号、标题、正文或邮箱。
+- **回滚**：可以只回滚前端，或连同后端一起回滚，不需要手动处理数据。旧版本忽略新表；旧版本清除注销账号时，外键级联删除其工单；旧版本不删除到期工单，再次升级后读接口立即隐藏它们，启动时的第一轮清理删除。管理员处理流程、排查、实测清单（U-36 … U-40）和安全审查结论见 [docs/ticket-operations.md](../docs/ticket-operations.md)；发布演练见 `scripts/test-release-rehearsal.py` 的“工单”阶段。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：

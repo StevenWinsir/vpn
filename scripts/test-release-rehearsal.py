@@ -20,7 +20,13 @@ the real code flow in the browser stage's test assembly, then qualified, rewarde
 payments and the real reward worker), a yearly referrer carries a reward, the old binary starts over
 the new tables and columns, settles a first purchase without the check, purges accounts and opens a new
 period under a reward; the next upgrade sweeps, rewards and drops the stale reward. The website of the
-release before the referral work (e1fa661) is built and driven against the current backend. The browser
+release before the referral work (e1fa661) is built and driven against the current backend. Support
+tickets (handoff_ticket.md round 3) add a seventh binary, the release just before them (75f906d): tickets
+in every state exist on the current binary; on the old binary an account registers (through that release's
+own test assembly and capture inbox), pays, and an account holding tickets is purged (the foreign keys
+remove them); the upgrade back hides and sweeps the ticket that expired meanwhile and keeps every other row.
+This tree's website is driven against the old binary and the re-upgraded one (tickets-compat.spec.ts), and
+the website of 75f906d against the current backend. The browser
 stage needs a mail inbox, which a normal binary cannot have without trusting a test SMTP server
 in the machine's trust store; it runs the current API as a Go test assembly instead, with the
 real worker delivering into a capture inbox (TestReleaseRehearsalFixture).
@@ -55,7 +61,7 @@ ALL_TABLES = WEB_TABLES + ['native_sessions', 'client_traffic_reports', 'node_co
     'email_auth_challenges', 'auth_mail_jobs', 'auth_rate_buckets',
     'node_groups', 'connection_leases', 'node_assignments', 'usage_buckets', 'node_health_events',
     'payment_notifications', 'coupons', 'login_events', 'ip_geo_caches', 'announcements', 'announcement_reads', 'shop_settings', 'referrals',
-    # Support tickets (handoff_ticket.md 5); the rollback drill for them is round 3.
+    # Support tickets (handoff_ticket.md 5); their rollback drill is the last stage.
     'tickets', 'ticket_messages']
 # main before handoff_auth.md round 1: open registration, no mailbox verification.
 LEGACY_REF = '67e7b37f935e654e4378c14a32bc888ccff2065f'
@@ -75,6 +81,9 @@ REFERRAL_ROLLBACK_REF = '8c311ee'
 # PR #78 merge: the last tree before the referral website; its frontend is the "old website" of the
 # mixed-deployment check (handoff_coupon.md 15.1, R3-02).
 OLD_WEBSITE_REF = 'e1fa661'
+# PR #95 merge: the release immediately before support tickets (handoff_ticket.md 14, 15 round 3). Its
+# backend is the ticket rollback target and its frontend the website from before tickets.
+TICKET_ROLLBACK_REF = '75f906d'
 PAYMENT_TABLES = ['orders', 'payment_notifications', 'coupons', 'announcements', 'announcement_reads', 'login_events', 'ip_geo_caches']
 
 
@@ -124,6 +133,7 @@ def main():
     parser.add_argument('--shop-rollback-ref', default=SHOP_ROLLBACK_REF, help='release just before the shop work (yearly billing, admin plans)')
     parser.add_argument('--referral-rollback-ref', default=REFERRAL_ROLLBACK_REF, help='release just before the referral programme')
     parser.add_argument('--old-website-ref', default=OLD_WEBSITE_REF, help='tree whose frontend is the website from before the referral programme')
+    parser.add_argument('--ticket-rollback-ref', default=TICKET_ROLLBACK_REF, help='release just before support tickets (its backend and its website)')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -248,17 +258,18 @@ def main():
             summary['payment_rollback_commit'], payment_rollback_binary = build_ref('payment-rollback', args.payment_rollback_ref)
             summary['shop_rollback_commit'], shop_rollback_binary = build_ref('shop-rollback', args.shop_rollback_ref)
             summary['referral_rollback_commit'], referral_rollback_binary = build_ref('referral-rollback', args.referral_rollback_ref)
+            summary['ticket_rollback_commit'], ticket_rollback_binary = build_ref('ticket-rollback', args.ticket_rollback_ref)
             doctor_binary = root / 'doctor-current'
             run('build-doctor-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(doctor_binary), './cmd/doctor'], cwd=ROOT / 'backend')
             current_binary = root / 'api-current'
             run('build-api-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(current_binary), './cmd/api'], cwd=ROOT / 'backend')
             summary['binary_sha256'] = {name: hashlib.sha256(binary.read_bytes()).hexdigest()
-                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary), ('shop_rollback', shop_rollback_binary), ('referral_rollback', referral_rollback_binary)]}
+                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary), ('shop_rollback', shop_rollback_binary), ('referral_rollback', referral_rollback_binary), ('ticket_rollback', ticket_rollback_binary)]}
             # Identical binaries are reported, not hidden: a tree whose production backend equals the
             # rollback target makes the rollback step a same-binary restart over the newer data.
             digests = summary['binary_sha256']
-            summary['distinct_backend_versions'] = len(set(digests.values())) == 6
-            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback'), ('current', 'shop_rollback'), ('payment_rollback', 'shop_rollback'), ('current', 'referral_rollback'), ('shop_rollback', 'referral_rollback')]
+            summary['distinct_backend_versions'] = len(set(digests.values())) == 7
+            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback'), ('current', 'shop_rollback'), ('payment_rollback', 'shop_rollback'), ('current', 'referral_rollback'), ('shop_rollback', 'referral_rollback'), ('current', 'ticket_rollback'), ('referral_rollback', 'ticket_rollback')]
                 if digests[a] == digests[b])
             secret, jwt = secrets.token_urlsafe(36), secrets.token_urlsafe(48)
             password_file = root / 'pg-password'
@@ -404,23 +415,30 @@ def main():
             run('web-build', ['node', next_cli, 'build', '--webpack'], cwd=stage, environment=web_env, timeout=600)
             run('web-typecheck', ['npm', 'run', 'typecheck'], cwd=stage, environment=web_env)
             run('web-lint', ['npm', 'run', 'lint'], cwd=stage, environment=web_env)
-            web_stream = (output / 'web-server.log').open('a')
-            streams.append(web_stream)
-            web_process = subprocess.Popen(['node', next_cli, 'start', '--hostname', '127.0.0.1', '--port', str(web_port)],
-                cwd=stage, env=web_env, stdout=web_stream, stderr=subprocess.STDOUT)
-            processes.append(web_process)
-            for _ in range(150):
-                if web_process.poll() is not None:
-                    raise RuntimeError('Next.js failed before readiness')
-                try:
-                    with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(web_url + '/api/runtime-config', timeout=1) as response:
-                        assert json.loads(response.read())['apiBaseUrl'] == '/api/v1'
-                        break
-                except (OSError, urllib.error.URLError):
-                    time.sleep(0.1)
-            else:
-                raise TimeoutError('Next.js readiness timed out')
-            run('browser-current', ['node', str(stage / 'node_modules/@playwright/test/cli.js'), 'test'], cwd=stage, environment=web_env, timeout=600)
+            def wait_for_web(web, what):
+                for _ in range(150):
+                    if web.poll() is not None:
+                        raise RuntimeError(what + ' failed before readiness')
+                    try:
+                        with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(web_url + '/api/runtime-config', timeout=1) as response:
+                            assert json.loads(response.read())['apiBaseUrl'] == '/api/v1'
+                            return
+                    except (OSError, urllib.error.URLError):
+                        time.sleep(0.1)
+                raise TimeoutError(what + ' readiness timed out')
+
+            def start_web(name, environment):
+                web_stream = (output / (name + '.log')).open('a')
+                streams.append(web_stream)
+                web = subprocess.Popen(['node', next_cli, 'start', '--hostname', '127.0.0.1', '--port', str(web_port)],
+                    cwd=stage, env=environment, stdout=web_stream, stderr=subprocess.STDOUT)
+                processes.append(web)
+                wait_for_web(web, 'Next.js')
+                return web
+
+            web_process = start_web('web-server', web_env)
+            browser_cli = str(stage / 'node_modules/@playwright/test/cli.js')
+            run('browser-current', ['node', browser_cli, 'test', 'flow.spec.ts', 'referral-compat.spec.ts'], cwd=stage, environment=web_env, timeout=600)
             summary['checks'].append('real production Next.js / Chromium / PostgreSQL: email-code registration (code from the capture inbox), purchase, cookie rotation, login/logout and responsive public pages incl. /forgot-password')
 
             # Referral bindings through the real registration flow (handoff_coupon.md 6): this assembly is the
@@ -464,41 +482,41 @@ def main():
             summary['checks'].append('referral bindings through the real registration flow on the current API assembly: a legacy account (no code before) gets one when it first opens its page and keeps it; two referrers and six referees register with codes and each binding is a registered row with a masked address; an unknown code, a malformed one and no code all register (201) and bind nothing')
 
             # Mixed deployment (handoff_coupon.md 15.1, R3-02): the website from before the referral work,
-            # built from its own tree, against this backend.
+            # built from its own tree, against this backend. The same again for the website from before
+            # support tickets (handoff_ticket.md 14.1, T3-02).
             stop(web_process)
-            old_stage = root / 'frontend-old'
-            old_stage.mkdir()
-            summary['old_website_commit'] = subprocess.check_output(['git', 'rev-parse', '--verify', args.old_website_ref + '^{commit}'], cwd=ROOT, text=True).strip()
-            for name in subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', summary['old_website_commit'], 'frontend'], cwd=ROOT, text=True).splitlines():
-                if Path(name).name.startswith('.env') or name.endswith('.tsbuildinfo'):
-                    continue
-                destination = old_stage / Path(name).relative_to('frontend')
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(subprocess.check_output(['git', 'show', summary['old_website_commit'] + ':' + name], cwd=ROOT))
-            (old_stage / 'node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
-            assert not (old_stage / 'src/components/referral-view.tsx').exists()
-            old_env = dict(web_env, E2E_ARTIFACTS_DIR=str(output / 'browser-old-website'))
-            old_cli = str(old_stage / 'node_modules/next/dist/bin/next')
-            run('web-old-build', ['node', old_cli, 'build', '--webpack'], cwd=old_stage, environment=old_env, timeout=600)
-            old_stream = (output / 'web-old-server.log').open('a')
-            streams.append(old_stream)
-            old_web = subprocess.Popen(['node', old_cli, 'start', '--hostname', '127.0.0.1', '--port', str(web_port)],
-                cwd=old_stage, env=old_env, stdout=old_stream, stderr=subprocess.STDOUT)
-            processes.append(old_web)
-            for _ in range(150):
-                if old_web.poll() is not None:
-                    raise RuntimeError('The old website failed before readiness')
-                try:
-                    with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(web_url + '/api/runtime-config', timeout=1) as response:
-                        assert json.loads(response.read())['apiBaseUrl'] == '/api/v1'
-                        break
-                except (OSError, urllib.error.URLError):
-                    time.sleep(0.1)
-            else:
-                raise TimeoutError('The old website readiness timed out')
-            run('browser-old-website', ['node', str(old_stage / 'node_modules/@playwright/test/cli.js'), 'test'], cwd=old_stage, environment=old_env, timeout=600)
+
+            def old_website(label, ref, absent):
+                old_stage = root / ('frontend-' + label)
+                old_stage.mkdir()
+                commit = subprocess.check_output(['git', 'rev-parse', '--verify', ref + '^{commit}'], cwd=ROOT, text=True).strip()
+                for name in subprocess.check_output(['git', 'ls-tree', '-r', '--name-only', commit, 'frontend'], cwd=ROOT, text=True).splitlines():
+                    if Path(name).name.startswith('.env') or name.endswith('.tsbuildinfo'):
+                        continue
+                    destination = old_stage / Path(name).relative_to('frontend')
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(subprocess.check_output(['git', 'show', commit + ':' + name], cwd=ROOT))
+                (old_stage / 'node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
+                assert not (old_stage / absent).exists(), absent
+                old_env = dict(web_env, E2E_ARTIFACTS_DIR=str(output / ('browser-' + label)))
+                old_cli = str(old_stage / 'node_modules/next/dist/bin/next')
+                run('web-' + label + '-build', ['node', old_cli, 'build', '--webpack'], cwd=old_stage, environment=old_env, timeout=600)
+                old_stream = (output / ('web-' + label + '-server.log')).open('a')
+                streams.append(old_stream)
+                old_web = subprocess.Popen(['node', old_cli, 'start', '--hostname', '127.0.0.1', '--port', str(web_port)],
+                    cwd=old_stage, env=old_env, stdout=old_stream, stderr=subprocess.STDOUT)
+                processes.append(old_web)
+                wait_for_web(old_web, 'The ' + label + ' website')
+                run('browser-' + label, ['node', str(old_stage / 'node_modules/@playwright/test/cli.js'), 'test'], cwd=old_stage, environment=old_env, timeout=600)
+                stop(old_web)
+                return commit
+
+            summary['old_website_commit'] = old_website('old-website', args.old_website_ref, 'src/components/referral-view.tsx')
             summary['checks'].append('the website from before the referral programme (built from its own tree) against the current backend: registration, purchase, cookie rotation, login/logout and the public pages all pass unchanged (the old registration request carries no referral field, the new /meta field and routes are never used)')
-            stop(old_web)
+            tickets_before_old_site = sql('upgrade', 'SELECT count(*) FROM rehearsal.tickets')
+            summary['old_ticket_website_commit'] = old_website('pre-ticket-website', args.ticket_rollback_ref, 'src/components/tickets-view.tsx')
+            assert sql('upgrade', 'SELECT count(*) FROM rehearsal.tickets') == tickets_before_old_site
+            summary['checks'].append('the website from before support tickets (built from its own tree) against the current backend, which now declares tickets_enabled and serves the ticket routes: registration, purchase, cookie rotation, login/logout, the referral pages and the public pages all pass unchanged; no ticket row appears')
 
             # The legacy account (non-allow-listed domain, never verified) resets its password by mail link.
             web = Client(client.url)
@@ -1091,6 +1109,223 @@ def main():
                 text = (output / (log_name + '.log')).read_text()
                 assert not any(value in text for value in people_text), log_name + ' carries a referral code or an address'
             summary['checks'].append('upgrade again after the rollback: migration repeatable; the sweep qualifies the first order the old binary fulfilled (the order id is the old binary\'s) and the worker pays it, the reward held back while the switch was off is paid when it is on again; the yearly referrer ends with the three rewards as a bonus on its cycle allowance; the monthly referrer\'s old bonus is invisible (dashboard 0, allowance = plan) while its paid history stays; deleted referee shown as deleted; 31 days into the period the yearly refresh keeps the whole bonus (cycle allowance + bonus); doctor reports the counts, warns about a qualified row older than ten minutes and carries no code, address or id; the real process logs hold the sweep and reward lines and no code or address')
+            # Support tickets (handoff_ticket.md 14, 15 round 3: T3-01, T3-02, T3-05). Tickets in every state on
+            # the current binary; a rollback to the release just before them (75f906d, no down migration) on
+            # which an account registers (through that release's own code and a capture inbox), pays, and an
+            # account holding tickets is purged; then the upgrade back. This tree's website is driven against
+            # the old backend and against the current one afterwards. Texts are markers the logs and the
+            # doctor are searched for.
+            tk_db = 'upgrade'
+            admin_person = (admin_email, admin_password)
+            b_person, g_person = ref_people['b'], ref_people['g']
+            tk_text = {name: f'TicketDrill-{name}-{secrets.token_hex(4)}' for name in ('open', 'answered', 'soon', 'staff', 'user', 'expire', 'g1', 'g2', 'new')}
+            tk_bodies = {name: f'Body-{value}\n诊断信息：版本 1.0.0 / macOS 15 / 已连接 / 错误码 0\n<script>alert(1)</script>' for name, value in tk_text.items()}
+
+            def tk_sql(query):
+                return sql(tk_db, query)
+
+            def signed_in(url, person):
+                account = Client(url)
+                account.call('/auth/login', {'email': person[0], 'password': person[1]}, origin=web_url)
+                return account
+
+            def tk_create(account, name, category='other', **extra):
+                body = dict({'category': category, 'subject': tk_text[name], 'body': tk_bodies[name]}, **extra)
+                return account.call('/me/tickets', body, origin=web_url, key=str(uuid.uuid4()), expected=201)['ticket']
+
+            def tk_reply(account, ticket, text, console=False):
+                route = ('/admin/console/tickets/' if console else '/me/tickets/') + ticket['id'] + '/messages'
+                return account.call(route, {'body': text}, origin=web_url, key=str(uuid.uuid4()), expected=201)
+
+            def tk_close(admin_account, ticket, note=''):
+                version = admin_account.call('/admin/console/tickets/' + ticket['id'])['ticket']['version']
+                return admin_account.call('/admin/console/tickets/' + ticket['id'] + '/close', {'version': version, 'note': note}, origin=web_url)['ticket']
+
+            def tk_states():
+                return tk_sql("SELECT COALESCE(string_agg(subject || '=' || status || ':' || message_count || ':' || user_unread, ',' ORDER BY subject), '') FROM rehearsal.tickets")
+
+            def tk_keep_fingerprint(excluded):
+                # Every column of every remaining ticket and message, the way a byte-for-byte backup would see them.
+                where = ', '.join(f"'{value}'" for value in excluded)
+                return (tk_sql(f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY id::text), '')) FROM rehearsal.tickets t WHERE id NOT IN ({where})"),
+                    tk_sql(f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(m)::text, E'\\n' ORDER BY id::text), '')) FROM rehearsal.ticket_messages m WHERE ticket_id NOT IN ({where})"))
+
+            def tk_listed(account, query=''):
+                return {item['ticket_no']: item for item in account.call('/me/tickets' + query)['tickets']}
+
+            def tk_compat(name, backend, api_url, **expected):
+                compat_file = root / 'ticket-compat.json'
+                compat_file.write_text(json.dumps(dict({'backend': backend, 'user': {'email': email, 'password': new_password},
+                    'admin': {'email': admin_email, 'password': admin_password}}, **expected)))
+                compat_env = dict(web_env, API_INTERNAL_URL=api_url + '/api/v1', E2E_ARTIFACTS_DIR=str(output / name), REHEARSAL_TICKET_COMPAT=str(compat_file))
+                web = start_web('web-' + name, compat_env)
+                try:
+                    run(name, ['node', browser_cli, 'test', 'tickets-compat.spec.ts'], cwd=stage, environment=compat_env, timeout=600)
+                finally:
+                    stop(web)
+
+            # A. The current binary: open, answered, closed by support (with a note), closed by the user, one
+            # that runs out during the rollback, one deleted in 2 days (kept), and two of an account to be purged.
+            process, tk = start_api(current_binary, tk_db, 'api-tickets', catalog=True, payment=True)
+            assert tk.call('/meta')['tickets_enabled'] is True
+            owner_tk, b_tk, g_tk, admin_tk = (signed_in(tk.url, person) for person in [(email, new_password), b_person, g_person, admin_person])
+            owner_order = owner_tk.call('/me/tickets')['order_options'][0]
+            tickets = {
+                'open': tk_create(owner_tk, 'open', 'connection', platform='macos'),
+                'answered': tk_create(owner_tk, 'answered', 'billing', order_id=owner_order['id']),
+                'soon': tk_create(owner_tk, 'soon', 'account'),
+                'staff': tk_create(b_tk, 'staff', 'client', platform='windows'),
+                'user': tk_create(b_tk, 'user'),
+                'g1': tk_create(g_tk, 'g1', 'client', platform='android'),
+                'g2': tk_create(g_tk, 'g2'),
+            }
+            assert tickets['answered']['order']['trade_no'] == owner_order['trade_no']
+            tk_reply(admin_tk, tickets['answered'], 'Staff answer one', console=True)
+            tk_reply(admin_tk, tickets['g1'], 'Staff answer g1', console=True)
+            tk_reply(g_tk, tickets['g1'], 'User follow-up g1')
+            tk_reply(admin_tk, tickets['g1'], 'Staff answer g1 again', console=True)
+            assert tk_close(admin_tk, tickets['staff'], 'Closing note')['status'] == 'closed'
+            assert b_tk.call('/me/tickets/' + tickets['user']['id'] + '/close', {}, origin=web_url)['ticket']['closed_by'] == 'user'
+            tickets['expire'] = tk_create(b_tk, 'expire', 'connection', platform='ios')
+            tk_sql(f"UPDATE rehearsal.tickets SET expires_at = now() + interval '20 seconds' WHERE id = '{tickets['expire']['id']}'")
+            tk_sql(f"UPDATE rehearsal.tickets SET expires_at = now() + interval '2 days' WHERE id = '{tickets['soon']['id']}'")
+            assert tickets['expire']['ticket_no'] in tk_listed(b_tk)
+            assert set(tk_listed(owner_tk)) == {tickets[name]['ticket_no'] for name in ('open', 'answered', 'soon')}
+            assert owner_tk.call('/me/tickets/summary') == {'unread_count': 1, 'open_count': 3, 'max_open': 3}
+            assert admin_tk.call('/admin/console/tickets/summary')['open_count'] == 4  # open, soon, g2, expire
+            assert tk_states() == ','.join(sorted(f'{tk_text[name]}={state}' for name, state in [
+                ('open', 'open:1:false'), ('answered', 'answered:2:true'), ('soon', 'open:1:false'), ('staff', 'closed:2:true'),
+                ('user', 'closed:1:false'), ('expire', 'open:1:false'), ('g1', 'answered:4:true'), ('g2', 'open:1:false')])), tk_states()
+            stop(process)
+            g_ids = [tickets['g1']['id'], tickets['g2']['id']]
+            kept_before = tk_keep_fingerprint(g_ids + [tickets['expire']['id']])
+            assert kept_before[0].startswith('5:') and kept_before[1].startswith('7:'), kept_before
+            summary['checks'].append('support tickets on the current binary: tickets_enabled in /meta; eight tickets in every state (open with a device, answered with a linked order and an unread reply, closed by support with a note, closed by the user, one running out in 20 seconds, one deleted in 2 days, and two of an account about to be deleted with a four-message thread); the summaries and the console queue count them')
+
+            # B. Rollback to the release just before tickets. Its own test assembly registers an account
+            # through the old registration flow (a capture inbox stands in for the mailbox).
+            old_tree = root / 'ticket-rollback' / 'backend'
+            old_fixture_dir = root / 'fixture-ticket-rollback'
+            old_fixture_dir.mkdir(mode=0o700)
+            old_fixture = spawn('api-ticket-rollback-fixture', ['go', 'test', '-count=1', '-run', '^TestReleaseRehearsalFixture$', '-timeout=20m', './internal/api'],
+                dict(api_env(tk_db, free_port(), mail=True), REHEARSAL_FIXTURE_DIR=str(old_fixture_dir)), cwd=old_tree)
+            deadline = time.monotonic() + 300
+            while not (old_fixture_dir / 'fixture.json').exists():
+                if old_fixture.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError('The old release\'s test assembly failed before readiness; see api-ticket-rollback-fixture.log')
+                time.sleep(0.2)
+            old_meta = json.loads((old_fixture_dir / 'fixture.json').read_text())
+            assert 'tickets_enabled' not in Client(old_meta['api']).call('/meta')
+            newcomer = (f'tkn-{uuid.uuid4().hex[:10]}@gmail.com', secrets.token_urlsafe(24))
+            receipt = Client(old_meta['api']).call('/auth/register-code', {'email': newcomer[0]}, origin=web_url, expected=202)
+            mail_request = urllib.request.Request(old_meta['api'] + '/fixture/mail?to=' + urllib.parse.quote(newcomer[0]), headers={'X-Acceptance-Control': old_meta['control']})
+            for _ in range(50):
+                try:
+                    with Client(old_meta['api']).opener.open(mail_request, timeout=5) as response:
+                        old_code = json.loads(response.read())['code']
+                        break
+                except urllib.error.HTTPError as error:
+                    if error.code != 404:
+                        raise
+                time.sleep(0.2)
+            else:
+                raise AssertionError('no mail delivered to the old release\'s inbox')
+            Client(old_meta['api']).call('/auth/register', {'name': 'Ticket Newcomer', 'email': newcomer[0], 'password': newcomer[1], 'remember': False,
+                'verification_id': receipt['verification_id'], 'code': old_code}, origin=web_url, expected=201)
+            (old_fixture_dir / 'stop').touch()
+            old_fixture.wait(timeout=60)
+            if old_fixture.returncode:
+                raise RuntimeError('The old release\'s test assembly failed; see api-ticket-rollback-fixture.log')
+            processes.remove(old_fixture)
+            # The normal binary of that release: sign-in, the new account pays, an account with tickets is purged.
+            process, old_tk = start_api(ticket_rollback_binary, tk_db, 'api-ticket-rollback', mail=True, catalog=True, payment=True)
+            assert 'tickets_enabled' not in old_tk.call('/meta')
+            old_owner = signed_in(old_tk.url, (email, new_password))
+            assert old_owner.call('/me/dashboard')['subscription']['plan_id'] == sub_of('owner', 'plan_id')
+            old_owner.call('/me/tickets', expected=404, code='not_found')
+            newcomer_order = pay_for(old_tk.url, newcomer)
+            assert tk_sql(f"SELECT o.status FROM rehearsal.orders o JOIN rehearsal.users u ON u.id = o.user_id WHERE u.email = '{newcomer[0]}'") == 'paid'
+            leaving = signed_in(old_tk.url, g_person)
+            leaving.call('/me/account/delete', {'email': g_person[0], 'password': g_person[1]}, origin=web_url)
+            wait_for(f"SELECT count(*) FROM rehearsal.users WHERE email = '{g_person[0]}'", '0', 'purge on the release before tickets', seconds=150)
+            g_where = ', '.join(f"'{value}'" for value in g_ids)
+            assert tk_sql(f"SELECT count(*) FROM rehearsal.tickets WHERE id IN ({g_where})") == '0'
+            assert tk_sql(f"SELECT count(*) FROM rehearsal.ticket_messages WHERE ticket_id IN ({g_where})") == '0'
+            # The new website against this backend: no entry, no ticket request, no page error.
+            tk_compat('browser-tickets-old-backend', 'old', old_tk.url)
+            # The ticket that ran out meanwhile is still a row: this release has no ticket sweep.
+            wait_for(f"SELECT expires_at <= now() FROM rehearsal.tickets WHERE id = '{tickets['expire']['id']}'", 't', 'expiry during the rollback', seconds=60)
+            time.sleep(2)
+            assert tk_sql(f"SELECT count(*) FROM rehearsal.tickets WHERE id = '{tickets['expire']['id']}'") == '1'
+            assert tk_keep_fingerprint(g_ids + [tickets['expire']['id']]) == kept_before, 'a ticket or message changed on the release before tickets'
+            stop(process)
+            summary['checks'].append('rollback to the release just before support tickets (75f906d, no down migration) over the ticket tables: its own registration flow creates an account (code from the capture inbox of that release\'s test assembly), the account pays, the owner signs in and its dashboard matches, the ticket route is a plain 404, an account holding two tickets and four messages deletes itself and the old purge removes them through the foreign keys; a ticket that runs out meanwhile stays a row (no sweep in that release); every other ticket and message row is byte-identical')
+            summary['checks'].append('mixed deployment, the new website against the release before tickets (real 75f906d binary, real Next.js and Chromium): no "我的工单" entry on any page, /tickets and /tickets?id= explain that tickets are not open, no submit button; the console shows "当前版本暂不支持工单" with no badge or dot; no request to a ticket route in 17 seconds and no page error')
+
+            # C. Upgrade again: the expired ticket is gone with the first sweep, the others are intact and work.
+            run('migration-after-ticket-rollback', [str(current_binary), '-migrate'], environment=api_env(tk_db, free_port()))
+            process, tk_back = start_api(current_binary, tk_db, 'api-ticket-reupgraded', catalog=True, payment=True)
+            b_back = signed_in(tk_back.url, b_person)
+            b_back.call('/me/tickets/' + tickets['expire']['id'], expected=404, code='ticket_not_found')
+            assert tickets['expire']['ticket_no'] not in tk_listed(b_back)
+            wait_for(f"SELECT count(*) FROM rehearsal.tickets WHERE id = '{tickets['expire']['id']}'", '0', 'the first ticket sweep after the upgrade', seconds=30)
+            assert tk_sql(f"SELECT count(*) FROM rehearsal.ticket_messages WHERE ticket_id = '{tickets['expire']['id']}'") == '0'
+            assert 'maintenance: ticket expiry changed 1 rows' in (output / 'api-ticket-reupgraded.log').read_text()
+            assert tk_keep_fingerprint(g_ids + [tickets['expire']['id']]) == kept_before, 'a kept ticket changed across the upgrade'
+            owner_back, admin_back = signed_in(tk_back.url, (email, new_password)), signed_in(tk_back.url, admin_person)
+            assert owner_back.call('/me/tickets/summary') == {'unread_count': 1, 'open_count': 3, 'max_open': 3}
+            assert admin_back.call('/admin/console/tickets/summary')['open_count'] == 2  # open, soon
+            assert {item['ticket_no'] for item in admin_back.call('/admin/console/tickets?status=all&page_size=50')['tickets']} == {tickets[name]['ticket_no'] for name in ('open', 'answered', 'soon', 'staff', 'user')}
+            answered = owner_back.call('/me/tickets/' + tickets['answered']['id'])['ticket']
+            assert [m['author'] for m in answered['messages']] == ['user', 'staff'] and answered['order']['trade_no'] == owner_order['trade_no'] and answered['user_unread'] is True
+            # Everything still works on the kept tickets, and for the account the old release created.
+            owner_back.call('/me/tickets/' + tickets['answered']['id'] + '/read', {}, origin=web_url)
+            assert tk_reply(owner_back, tickets['answered'], 'User follow-up after the upgrade')['ticket']['status'] == 'open'
+            assert tk_reply(admin_back, tickets['open'], 'Staff answer after the upgrade', console=True)['ticket']['status'] == 'answered'
+            assert tk_close(admin_back, tickets['soon'])['closed_by'] == 'staff'
+            newcomer_back = signed_in(tk_back.url, newcomer)
+            newcomer_options = newcomer_back.call('/me/tickets')['order_options']
+            assert [option['id'] for option in newcomer_options] == [newcomer_order['id']], newcomer_options
+            tickets['new'] = tk_create(newcomer_back, 'new', 'billing', order_id=newcomer_order['id'])
+            assert tickets['new']['status'] == 'open' and tickets['new']['order']['trade_no'] == newcomer_order['trade_no']
+            # The new website against this backend: the tickets made before the rollback are there.
+            tk_compat('browser-tickets-current-backend', 'current', tk_back.url, unread=2,  # the reply on "open" and the close of "soon"
+                user_tickets=[tickets[name]['ticket_no'] for name in ('open', 'answered')], gone_tickets=[tickets[name]['ticket_no'] for name in ('expire', 'g1', 'g2')],
+                open_count=2)  # answered (the owner wrote again) and new
+            summary['checks'].append('upgrade again after the ticket rollback: migration repeatable; the ticket that ran out during the rollback is a 404 and missing from the list at once and its row and messages are deleted by the first sweep ("ticket expiry changed 1 rows"); all other ticket and message rows are byte-identical to before the rollback (unread reply, linked order and thread intact); replies, a read mark and a support close work on them, and the account the old release created opens a ticket on the order it paid there; the new website shows the user\'s tickets with the unread badge and the console its queue, never the deleted ones')
+
+            # D. Readers hide an expired ticket before any sweep; the doctor in a test and a development
+            # configuration (production needs verify-full database TLS; its run is the Go test
+            # TestTicketReadinessInBothConfigurations).
+            tk_sql(f"UPDATE rehearsal.tickets SET expires_at = now() - interval '2 hours' WHERE id = '{tickets['user']['id']}'")
+            b_back.call('/me/tickets/' + tickets['user']['id'], expected=404, code='ticket_not_found')
+            admin_back.call('/admin/console/tickets/' + tickets['user']['id'], expected=404, code='ticket_not_found')
+            assert tickets['user']['ticket_no'] not in tk_listed(b_back) and tk_sql(f"SELECT count(*) FROM rehearsal.tickets WHERE id = '{tickets['user']['id']}'") == '1'
+            stop(process)
+            tk_sql(f"UPDATE rehearsal.tickets SET waiting_since = now() - interval '25 hours' WHERE id = '{tickets['answered']['id']}'")
+            secrets_in_tickets = list(tk_text.values()) + [value['ticket_no'] for value in tickets.values()] + [value['id'] for value in tickets.values()] + \
+                [email, admin_email, b_person[0], g_person[0], newcomer[0], 'Staff answer', 'User follow-up', 'Closing note', '诊断信息']
+            for app_env in ('test', 'development'):
+                report = doctor(dict(api_env(tk_db, free_port(), catalog=True, payment=True), APP_ENV=app_env))
+                assert report['tickets'] == {'enabled': True, 'open': 2, 'answered': 1, 'oldest_wait_seconds': report['tickets']['oldest_wait_seconds'], 'expired_not_deleted': 1}, report['tickets']
+                assert 25 * 3600 <= report['tickets']['oldest_wait_seconds'] < 25 * 3600 + 300, report['tickets']
+                assert {'tickets_waiting_over_24h', 'tickets_expiry_lagging'} <= set(report['warnings']) and report['missing_tables'] == [], report['warnings']
+                serialized = json.dumps(report)
+                assert not any(value in serialized for value in secrets_in_tickets), 'doctor output carries ticket text, a number, an id or an address'
+            off = doctor(dict(api_env(tk_db, free_port()), TICKETS_ENABLED='false'))
+            assert off['tickets']['enabled'] is False
+            # The next start sweeps the lagging ticket; a fresh wait clears the other warning.
+            tk_sql(f"UPDATE rehearsal.tickets SET waiting_since = now() WHERE id = '{tickets['answered']['id']}'")
+            process, tk_last = start_api(current_binary, tk_db, 'api-ticket-final', catalog=True, payment=True)
+            wait_for(f"SELECT count(*) FROM rehearsal.tickets WHERE id = '{tickets['user']['id']}'", '0', 'the sweep at start', seconds=30)
+            stop(process)
+            report = doctor(api_env(tk_db, free_port(), catalog=True, payment=True))
+            assert report['tickets']['expired_not_deleted'] == 0 and not {'tickets_waiting_over_24h', 'tickets_expiry_lagging'} & set(report['warnings']), report
+            for log_name in ['api-tickets', 'api-ticket-rollback-fixture', 'api-ticket-rollback', 'api-ticket-reupgraded', 'api-ticket-final',
+                    'web-browser-tickets-old-backend', 'web-browser-tickets-current-backend']:
+                text = (output / (log_name + '.log')).read_text()
+                assert not any(value in text for value in secrets_in_tickets), log_name + ' carries ticket text, a number, an id or an address'
+            summary['checks'].append('ticket expiry and the doctor: a ticket set 2 hours past its retention is a 404 for its owner and the console and gone from the list while its row still exists; the doctor in a test and in a development configuration reports open 2, answered 1, a 25-hour wait (tickets_waiting_over_24h) and 1 expired-but-undeleted ticket (tickets_expiry_lagging), with TICKETS_ENABLED=false reports the switch off, and carries no subject, text, number, id or address; the next start deletes the lagging ticket and both warnings clear; no API or website log of the drill carries ticket text, a ticket number or id, or an address')
             process, restored = start_api(current_binary, 'restored', 'api-restored')
             Client(restored.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
             restored.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)

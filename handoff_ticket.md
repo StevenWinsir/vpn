@@ -551,3 +551,40 @@
 **CI 修复（PR #97 第一次运行）**：Browser job 中 78 passed、1 failed，失败的是既有的 admin-console.spec“the sign-in panel lists attempts and filters them”。原因是测试本身的竞态：点击“筛选”后，未筛选的旧行在新结果返回前仍留在页面上，`.all()` 取到的是旧行的 nth 定位器，较短的筛选结果到达后 nth(i) 不存在。本地两次全量运行都通过，CI runner 较慢时暴露。改为等待“不含该邮箱的行”数量为 0，再断言首行。本地 admin-console.spec 6/6 通过。该次 CI 的浏览器步骤用时 9.5 分钟，印证了偏离第 7 条放宽超时的必要。
 
 **未完成 / 留给后续轮次**：回滚演练（TICKET_ROLLBACK_REF）、新旧前后端混合部署的真实验证、APP 兼容确认、安全审查、README / DEPLOYMENT / 运维文档属于第 3 轮。用户实测 U-36..U-40 需部署后进行。
+
+### 第 3 轮：全链路回归、发布演练与文档（2026-11-01，分支 worktree-ticket-round3-rehearsal，PR 见合并记录）
+
+基线：main 5fde56d（第 2 轮合并后）。TICKET_ROLLBACK_REF = 75f906d（第 1 轮开工时 main 的 HEAD，PR #95 合并）。证据：artifacts/ticket-round3-rehearsal（rehearsal/ 为发布演练全部日志与 summary.json，payment/ 为 test-payment-web.py 全量运行，go-race-suite.txt、ticket-security-tests.txt、app/ 为 APP 侧测试输出）。
+
+**实现概要**
+- 发布演练（scripts/test-release-rehearsal.py）新增第七个后端版本 75f906d 和“工单”阶段：
+  - A. 当前二进制上制造 8 张各状态的工单：待处理（带设备）、已回复（关联订单、未读回复）、客服带说明关闭、用户自行关闭、20 秒后到期、2 天后到期，以及一个即将注销账号的两张（含 4 条消息的对话）；核对两端摘要和队列计数，并记录保留工单与消息的逐行指纹。
+  - B. 回滚到 75f906d（不做降级迁移）：用 75f906d 自己的测试装配（TestReleaseRehearsalFixture，捕获收件箱代替邮箱）走旧版本的真实注册流程新建账号；在 75f906d 的正式二进制上该账号付款、老账号登录、工单路由为普通 404；有工单的账号自助注销后由旧版本的清除循环删除，工单和消息随外键级联删除；20 秒到期的工单在旧版本上仍是一行（旧版本没有工单清理）；其余工单与消息逐字节不变。
+  - C. 再升级：到期工单立即 404、从列表消失，启动时的第一轮清理删除它（日志“maintenance: ticket expiry changed 1 rows”）；其余行与回滚前逐字节一致；在其上回复、标记已读、客服关闭照常；旧版本注册的账号关联旧版本订单提交工单。
+  - D. 运行中把一张工单改为 2 小时前到期：所有者和控制台立即 404、列表消失而行仍在；停服后 doctor（测试配置和开发配置）报告 open 2、answered 1、等待 25 小时（tickets_waiting_over_24h）、1 张滞后（tickets_expiry_lagging），TICKETS_ENABLED=false 时 enabled 为 false；下一次启动清理后两个警告消失。全部 API、旧版本测试装配和 Next.js 日志中没有标题、正文、诊断信息、工单号、工单 id 或邮箱。
+- 混合部署：新增 frontend/tests/tickets-compat.spec.ts，由演练把本树的网站分别接到**真实的 75f906d 二进制**（不再是模拟）和再升级后的当前二进制；另外把 75f906d 的网站从它自己的源码构建，接当前后端跑它自带的 flow 与 referral-compat 用例。旧网站阶段改写为可复用的函数，原有 e1fa661 旧网站检查不变；browser-current 阶段改为按文件名运行 flow.spec.ts 和 referral-compat.spec.ts。
+- 安全审查用例：backend/internal/api/ticket_security_test.go（TestTicketRequestBoundaries、TestTicketMarkupStaysText、TestTicketReadinessInBothConfigurations）。
+- 本地走通 U-36 … U-40：tickets.spec.ts 新增 T3-06，夹具新增账户 ticketc（放在最早创建的一组）。
+- 文档：新增 docs/ticket-operations.md（管理员处理流程、doctor 警告含义、排查表、配置、发布顺序、回滚、U-36 … U-40 实测清单、安全审查结论、到期删除不可恢复的提醒）；README 增加“工单”段落并在管理后台一句中加入工单；backend/DEPLOYMENT.md 增加“工单”一节（TICKETS_ENABLED、保留期、32 KB 请求体、发布顺序、诊断、回滚）。
+
+**验收结果**
+
+| 编号 | 结果 | 证据 / 说明 |
+| --- | --- | --- |
+| T3-01 | PASS | 演练 summary.json passed=true，28 项检查（工单 4 项，见实现概要 A–D），7 个后端版本的二进制两两不同。本地用时约 4 分钟 |
+| T3-02 | PASS | 新前端 + 旧后端（真实 75f906d）：任何页面都没有“我的工单”，/tickets 和 /tickets?id= 显示“工单服务暂未开放”且无提交按钮，控制台“工单”页显示“当前版本暂不支持工单”，无角标和圆点，17 秒内没有任何工单请求，没有页面错误（browser-tickets-old-backend.log）。新前端 + 再升级的后端：入口和未读角标 2、列表正好是升级前的两张处理中工单，控制台角标和待处理行数为 2，被删除的工单两端都不出现（browser-tickets-current-backend.log）。旧前端（75f906d 源码构建）+ 当前后端：其自带 4 个用例全部通过，没有产生工单行（browser-pre-ticket-website.log） |
+| T3-03 | 见说明 | 本机：test-native.py（Go 全量竞态，含 native 契约测试，契约测试未修改）在 TZ=UTC 下 273 PASS、0 FAIL、11 SKIP，10 个包全部 ok（本机默认时区下另有 5 个与工单无关的失败，见偏离第 6 条）；test-app-copy.py 1388 条文案 0 问题；iOS AsterLinkKit swift test 87 个用例通过；macOS 单元套件 8 项中 7 项 PASS（Go IPC 327、共享策略 5、nodeagent 77、vet、env、loglint、Swift 54），U-MIHOMO-PATCH 在 worktree 中 BLOCKED（子模块按惯例从主检出复制时不带版本库元数据，脚本读取子模块历史失败），该项由 CI 的 Native Core 任务执行。CI：iOS、Android 工作流随本 PR 运行，Windows 工作流按路径过滤不会自动触发，已在本分支手动触发（workflow_dispatch），结果见 T3-07。APP 文案：四平台“复制诊断信息”的说明都是“联系客服时可粘贴这段信息”，与网站提交表单的提示一致，不需要更新；APP 没有任何工单入口或帮助文案 |
+| T3-04 | PASS | 逐项结论见 docs/ticket-operations.md 第七节。新增：6 条写接口无 Origin 403 origin_required、外来 Origin 403 origin_forbidden、text/plain 与表单编码 415，未登录 401，被拒请求不改数据；两个前缀恰好 32768 字节通过、32769 字节被拒且不写入，前缀外仍是 8 KB；script、onerror、onmouseover、javascript: 链接、iframe 原样存储，四个读接口的 JSON 中 < > 一律转义并带 nosniff。其余（越权 404 一致、管理员身份不外泄、限流、日志与审计）沿用第 1、2 轮用例并在演练日志中复核 |
+| T3-05 | PASS | 演练中真实 doctor 在测试配置与开发配置下报告工单检查项和两个警告；TestTicketReadinessInBothConfigurations 在开发、生产、生产且关闭开关三种配置下验证计数、两个警告、1 小时宽限和无敏感输出 |
+| T3-06 | PASS（开发方）/ 待用户 | U-36 … U-40 已写入 docs/ticket-operations.md 第六节；tickets.spec.ts T3-06 在本地按清单逐步走通（粘贴六行诊断信息、删除时间 = 提交 + 30 天、未刷新的控制台 15 秒内出现、用户停在“订单记录”页 60 秒轮询内出现未读角标、客服不回复直接关闭、到期后两端消失）。真实结果由用户部署后填写 |
+| T3-07 | PASS | PR #98 的 gh pr checks 18/18 通过：Backend / PostgreSQL / race（含 ticket_security_test.go）、Browser / node catalog（test-payment-web.py 含 T3-06）、Release rehearsal / migration / rollback（含工单阶段与 75f906d）、Native Core（含 Mihomo 补丁检查）、macOS、iOS、Android 六个任务、Backend-only、Managed node protocols 三个任务。Windows 工作流按路径过滤不在 PR 检查中，在本分支手动触发（run 41367022830）：Windows x64 build / test / start 与 Foundation suite on Linux（C# 契约）均 success |
+
+**偏离本文的决定**
+1. “在旧版本上注册”用 75f906d 自己的测试装配完成：正式二进制收不到验证码（演练不能信任测试 SMTP 证书），测试装配与 cmd/api 的区别只有邮件投递到进程内收件箱；付款、登录和账号清除都在 75f906d 的正式二进制上进行。
+2. 新前端对接旧后端使用真实的 75f906d 二进制，而不是推荐功能那样的应答模拟。
+3. 生产配置要求 verify-full 数据库 TLS，演练的私有 PostgreSQL 无法满足，所以真实 doctor 只在测试和开发配置下运行；生产配置由 Go 测试用同一份 Inspect 代码覆盖。
+4. 第 2.1 节所说的超长请求“413”：经 Next 代理时为 413 request_too_large；直接请求 Go 时由解码阶段的 MaxBytesReader 截断，返回 400 invalid_json，同样不写入。行为未修改，文档按实际写明。
+5. T3-06 的“本地逐步走通”由 Playwright 用例按清单顺序执行（真实的 15 秒、60 秒轮询），U-40 的“30 天后”用测试钩子把删除时间改到当前。
+6. 本机（America/Chicago 时区）在 2026-11-01 夏令时结束当天，Go 全量竞态中 4 个 TestShop* 用例稳定失败、TestConsoleUserListScale 偶发失败；在未改动的 main 5fde56d 上同样失败，TZ=UTC 下全部通过（CI 使用 UTC）。原因在测试本身：前者用本地时区的 StartsAt.AddDate(0, 0, 365) 与按 365×24 小时计算的到期时间比较，跨夏令时相差 1 小时；后者把 random() × 30 拼成 interval 字符串，极小的随机数会变成科学计数法。与工单无关，本轮不修改，另作为单独任务提出。
+
+**未完成 / 留给用户**：U-36 … U-40 的生产或预发布实测。

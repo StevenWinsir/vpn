@@ -11,7 +11,7 @@ type Fixture = {
   api: string;
   password: string;
   control: string;
-  emails: Record<'ticketroot' | 'ticketa' | 'ticketb', string>;
+  emails: Record<'ticketroot' | 'ticketa' | 'ticketb' | 'ticketc', string>;
 };
 
 let fixture: Fixture;
@@ -569,4 +569,99 @@ test('T2-09: narrow screens show cards, dark theme, and the copy guard', async (
   await expect(queueRow(admin375.page, first)).toHaveCount(1);
   await shot(admin375.page, 'console-tickets-375', true);
   await admin375.context.close();
+});
+
+// Round 3 (T3-06): the user's own check list U-36 … U-40 (handoff_ticket.md 16.2), walked step by
+// step the way docs/ticket-operations.md describes it, with ticketc and real polling only.
+test('T3-06: the check list U-36 … U-40 walked locally', async ({ browser }) => {
+  const diagnostics = [
+    'AsterLink 诊断信息',
+    '时间: 2026-11-01 21:05',
+    '应用版本: 1.0.0 (100)',
+    '系统版本: macOS 15.1',
+    '连接状态: 连接失败',
+    '错误码: tunnel_failed',
+  ].join('\n');
+  const c = await visitor(browser, fixture.emails.ticketc);
+  const admin = await adminTickets(browser);
+
+  // U-36: a connection ticket with the copied diagnostics; number and a deletion date 30 days on.
+  // Subjects of their own: the console search must find only this walk's tickets.
+  const subject = 'U-36 东京线路连接失败';
+  const id = await submitTicket(c.page, { category: /连接与节点/, subject, body: diagnostics });
+  await expect(c.page.getByTestId('ticket-no')).toHaveText(/^工单号 T\d{12}$/);
+  const pasted = c.page.locator('.ticket-text').first();
+  await expect(pasted).toContainText('AsterLink 诊断信息');
+  await expect(pasted).toContainText('错误码: tunnel_failed');
+  expect(await pasted.evaluate((node) => (node as HTMLElement).innerText.trim())).toBe(diagnostics);
+  const detail = (await call(c.page, 'GET', '/me/tickets/' + id)).json.ticket as {
+    created_at: string;
+    expires_at: string;
+  };
+  expect(Date.parse(detail.expires_at) - Date.parse(detail.created_at)).toBe(30 * 86400 * 1000);
+  const shown = await c.page.evaluate((at) => {
+    const d = new Date(at);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `将于 ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} 自动删除`;
+  }, detail.expires_at);
+  await expect(c.page.getByTestId('ticket-deletion')).toHaveText(shown);
+
+  // U-37: the console page, never reloaded, shows it within one 15-second refresh.
+  await expect(queueRow(admin.page, subject)).toHaveCount(1, { timeout: 25000 });
+  await expect(admin.page.getByTestId('console-ticket-badge')).toBeVisible();
+
+  // U-38: support replies while the user stays on another page; the badge comes within a minute.
+  await c.page.goto('/orders');
+  await expect(unreadBadge(c.page)).toHaveCount(0);
+  await queueRow(admin.page, subject).click();
+  await drawer(admin.page).getByLabel('回复').fill('已切换备用线路，请重新连接后再试。');
+  await drawer(admin.page).getByRole('button', { name: '发送回复' }).click();
+  await expect(drawer(admin.page).getByTestId('console-ticket-status')).toHaveText('已回复');
+  await expect(unreadBadge(c.page)).toHaveText('1', { timeout: 75000 });
+  await nav(c.page)
+    .getByRole('link', { name: /我的工单/ })
+    .click();
+  await c.page.getByTestId('ticket-row').filter({ hasText: subject }).getByRole('link').click();
+  await expect(
+    c.page.getByTestId('ticket-message').filter({ hasText: '已切换备用线路' }),
+  ).toContainText('客服');
+  await expect(unreadBadge(c.page)).toHaveCount(0);
+
+  // U-39: another ticket closed without a reply.
+  const other = 'U-39 Windows 版安装后无法启动';
+  const second = await submitTicket(c.page, {
+    category: /客户端下载与安装/,
+    subject: other,
+    body: diagnostics,
+  });
+  await admin.page.goto('/admin/console/tickets');
+  await expect(queueRow(admin.page, other)).toHaveCount(1, { timeout: 25000 });
+  await queueRow(admin.page, other).click();
+  await drawer(admin.page).getByRole('button', { name: '关闭工单' }).click();
+  await admin.page
+    .getByRole('dialog', { name: /^关闭工单/ })
+    .getByRole('button', { name: '确认关闭' })
+    .click();
+  await expect(drawer(admin.page).getByTestId('console-ticket-status')).toHaveText('已关闭');
+  await c.page.goto('/tickets?id=' + second);
+  await expect(c.page.getByTestId('ticket-status')).toHaveText('已关闭（由客服关闭）');
+  await expect(c.page.getByTestId('ticket-reply')).toHaveCount(0);
+
+  // U-40: 30 days later (the deletion time moved to now), gone from both sides.
+  for (const ticket of [id, second]) {
+    await control(`ticket-expiry?id=${ticket}&seconds=-1`, 'POST');
+    await expect
+      .poll(async () => (await control('ticket?id=' + ticket)).exists, { timeout: 15000 })
+      .toBe(false);
+  }
+  await c.page.goto('/tickets');
+  await expect(c.page.getByTestId('tickets-empty')).toBeVisible();
+  await c.page.locator('.mantine-SegmentedControl-label', { hasText: '已关闭' }).click();
+  await expect(c.page.getByTestId('tickets-empty')).toBeVisible();
+  await admin.page.goto('/admin/console/tickets?status=all&keyword=' + encodeURIComponent(subject));
+  await expect(admin.page.getByTestId('console-tickets-empty')).toBeVisible();
+  await admin.page.goto('/admin/console/tickets?status=all&keyword=' + encodeURIComponent(other));
+  await expect(admin.page.getByTestId('console-tickets-empty')).toBeVisible();
+  await c.context.close();
+  await admin.context.close();
 });

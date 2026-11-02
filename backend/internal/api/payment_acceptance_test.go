@@ -71,10 +71,10 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// and coupon specs, which publish announcements that must not reach the other specs' users.
 	// themeroot (an administrator) and themea belong to the appearance spec (handoff_ui.md 6);
 	// supportroot (an administrator), supporta and supportb to the support chat spec (handoff_ui.md 9);
-	// ticketroot (an administrator), ticketa and ticketb to the support ticket spec (handoff_ticket.md 15).
+	// ticketroot (an administrator), ticketa, ticketb and ticketc to the support ticket spec (handoff_ticket.md 15).
 	// The ticket accounts come first, as the oldest rows: the console's user list shows the newest 20,
 	// and the announcement spec finds kyle on that first page.
-	for _, kind := range []string{"ticketroot", "ticketa", "ticketb", "alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea", "supportroot", "supporta", "supportb"} {
+	for _, kind := range []string{"ticketroot", "ticketa", "ticketb", "ticketc", "alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea", "supportroot", "supporta", "supportb"} {
 		role := "user"
 		if kind == "root" || kind == "boss" || kind == "themeroot" || kind == "supportroot" || kind == "ticketroot" {
 			role = "admin"
