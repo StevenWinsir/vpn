@@ -577,7 +577,7 @@
 | T3-04 | PASS | 逐项结论见 docs/ticket-operations.md 第七节。新增：6 条写接口无 Origin 403 origin_required、外来 Origin 403 origin_forbidden、text/plain 与表单编码 415，未登录 401，被拒请求不改数据；两个前缀恰好 32768 字节通过、32769 字节被拒且不写入，前缀外仍是 8 KB；script、onerror、onmouseover、javascript: 链接、iframe 原样存储，四个读接口的 JSON 中 < > 一律转义并带 nosniff。其余（越权 404 一致、管理员身份不外泄、限流、日志与审计）沿用第 1、2 轮用例并在演练日志中复核 |
 | T3-05 | PASS | 演练中真实 doctor 在测试配置与开发配置下报告工单检查项和两个警告；TestTicketReadinessInBothConfigurations 在开发、生产、生产且关闭开关三种配置下验证计数、两个警告、1 小时宽限和无敏感输出 |
 | T3-06 | PASS（开发方）/ 待用户 | U-36 … U-40 已写入 docs/ticket-operations.md 第六节；tickets.spec.ts T3-06 在本地按清单逐步走通（粘贴六行诊断信息、删除时间 = 提交 + 30 天、未刷新的控制台 15 秒内出现、用户停在“订单记录”页 60 秒轮询内出现未读角标、客服不回复直接关闭、到期后两端消失）。真实结果由用户部署后填写 |
-| T3-07 | 待 CI | 推送后填写 |
+| T3-07 | PASS | PR #98 的 gh pr checks 18/18 通过：Backend / PostgreSQL / race（含 ticket_security_test.go）、Browser / node catalog（test-payment-web.py 含 T3-06）、Release rehearsal / migration / rollback（含工单阶段与 75f906d）、Native Core（含 Mihomo 补丁检查）、macOS、iOS、Android 六个任务、Backend-only、Managed node protocols 三个任务。Windows 工作流按路径过滤不在 PR 检查中，在本分支手动触发（run 41367022830）：Windows x64 build / test / start 与 Foundation suite on Linux（C# 契约）均 success |
 
 **偏离本文的决定**
 1. “在旧版本上注册”用 75f906d 自己的测试装配完成：正式二进制收不到验证码（演练不能信任测试 SMTP 证书），测试装配与 cmd/api 的区别只有邮件投递到进程内收件箱；付款、登录和账号清除都在 75f906d 的正式二进制上进行。
@@ -587,4 +587,4 @@
 5. T3-06 的“本地逐步走通”由 Playwright 用例按清单顺序执行（真实的 15 秒、60 秒轮询），U-40 的“30 天后”用测试钩子把删除时间改到当前。
 6. 本机（America/Chicago 时区）在 2026-11-01 夏令时结束当天，Go 全量竞态中 4 个 TestShop* 用例稳定失败、TestConsoleUserListScale 偶发失败；在未改动的 main 5fde56d 上同样失败，TZ=UTC 下全部通过（CI 使用 UTC）。原因在测试本身：前者用本地时区的 StartsAt.AddDate(0, 0, 365) 与按 365×24 小时计算的到期时间比较，跨夏令时相差 1 小时；后者把 random() × 30 拼成 interval 字符串，极小的随机数会变成科学计数法。与工单无关，本轮不修改，另作为单独任务提出。
 
-**未完成 / 留给用户**：U-36 … U-40 的生产或预发布实测；Windows 工作流的结果见 T3-07 的说明。
+**未完成 / 留给用户**：U-36 … U-40 的生产或预发布实测。
