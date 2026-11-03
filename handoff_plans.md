@@ -562,7 +562,7 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 - 第 3 轮：test-release-rehearsal.py 加入升级场景，回滚目标为 dbe75ca（升级单在旧版上只会转人工）；混合部署；Core 和 APP 断开场景（R3-03）；安全审查；docs/payment-operations.md、README、DEPLOYMENT；用户实测 U-41 … U-46。
 - 本轮没有在本地运行 test-release-rehearsal.py 和 test-payment-web.py，已由 CI 通过。
 
-### 第 2 轮：网站（PR 待合并）
+### 第 2 轮：网站（已合并）
 
 **概况**
 
@@ -570,6 +570,7 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 | --- | --- |
 | 日期 | 2026-11-03 |
 | 分支 | worktree-plans-round2-website（worktree .claude/worktrees/plans-round2-website），基线 main e16f45a |
+| PR | StevenWinsir/vpn#102，squash 合并为 main 3e66252（2026-11-03，16/16 通过）；分支和 worktree 已删除 |
 | 规模 | 14 个代码与测试文件（2 个新增），+1649 / −106（新用例 plans-upgrade.spec.ts 568 行），另有本文的第 1、2 轮记录 |
 | 本地验证 | tsc、eslint、copy-guard 与其他 node 脚本测试通过；test-payment-web.py 全量 90/90 通过（8.5 分钟，含新的 plans-upgrade.spec.ts 9 项） |
 | 本文 | 第 1 轮记录由 docs PR #101 合并为 main 05713bb；本分支以同一版为底追加本节，合并 main 时 handoff_plans.md 的冲突按本分支版本解决（第 1 轮内容逐字一致） |
@@ -622,3 +623,58 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 **未做 / 交给第 3 轮**
 - 发布演练（升级 → 回滚到 dbe75ca → 再升级）、四种新旧组合的脚本证据（本轮只覆盖“旧后端 + 新前端”的页面行为）、Core 与 APP 的升级断开场景、安全审查、docs/payment-operations.md / README / DEPLOYMENT、用户实测 U-41 … U-46。
 - 本轮的证据：本机 artifacts/plans-round2-website（全量与单项 Playwright 日志、9 张截图；artifacts/ 不入库）。
+
+### 第 3 轮：全链路回归、发布演练与文档（PR 待合并）
+
+**概况**
+
+| 项 | 内容 |
+| --- | --- |
+| 日期 | 2026-11-03 |
+| 分支 | worktree-plans-round3-release（worktree .claude/worktrees/plans-round3-release），基线 main 3e66252 |
+| 证据 | 本机 artifacts/plans-round3-release（演练 summary 与全部进程日志、线束报告、Core 端到端与安全测试日志；artifacts/ 不入库） |
+
+**交付（按文件）**
+
+| 文件 | 内容 |
+| --- | --- |
+| scripts/test-release-rehearsal.py | 第八个二进制 dbe75ca（升级之前的版本，`--plans-rollback-ref`）和“套餐升级”阶段（R3-01、R3-02，见下）；旧网站的构建与启动拆成 build_site / serve_site，便于同一个旧网站对接任意后端 |
+| frontend/tests/plans-compat.spec.ts（新增）、playwright.config.ts | 混合部署的浏览器用例，按私有文件选择三种组合：dbe75ca 网站 + 当前后端、当前网站 + dbe75ca 后端、当前网站 + 再升级后的后端 |
+| backend/internal/api/upgrade_core_e2e_test.go（新增） | `upgradeNow`（下单 + 履约，与付款回调走同一段代码，供测试和计费世界使用）；`TestCoreUpgradeDisconnect`（真实 Core 进程 + 真实支付流程 + 假网关）；`TestUpgradeLateNodeUsageStaysInPeriod`（节点计量） |
+| backend/internal/api/upgrade_security_test.go（新增） | `TestUpgradeSecurityMoney`、`TestUpgradeSecurityCallbacks`、`TestUpgradeSecurityOwnership`（R3-04） |
+| backend/internal/api/android_billing_world_test.go | 计费世界新增账户 upgrade（轻量、剩余 20 天、无专线、2 台）和控制调用 `/__world/upgrade`（真实的升级下单与履约） |
+| native/core/internal/harness/acceptance.go、world.go | Core 线束新增 A04-upgrade、A04-upgrade-signed-out、A04-upgrade-relogin；`Only` 支持逗号分隔的用例组（presence、upgrade） |
+| scripts/test-native-ios.py、.github/workflows/ios.yml | `--harness-cases upgrade` 与 `presence,upgrade`；CI 的模拟器步骤改为同时跑在线与升级用例，并要求 10 个用例全部 PASS |
+| apps/android/.../BillingAcceptanceTest.kt、docs/android-billing-acceptance.md | Android 计费验收新增 A04-upgrade（模拟器里的真实 APP） |
+| apps/macos/Tests/AsterLinkSharedTests/Stage2Tests.swift | `testPlanUpgradeWhileConnectedSignsOutWithTheCoresWords` |
+| docs/payment-operations.md | 第十一节“套餐有效期内升级”（规则、算法与算例、后台、发布顺序、人工审核处理、doctor 警告、回滚、APP 与客户端、U-41 … U-46）；第十二节安全审查结论 |
+| README.md、backend/DEPLOYMENT.md | 各一段（功能概述；迁移、配置、发布顺序、诊断、回滚） |
+
+**发布演练的“套餐升级”阶段（全部在私有 PostgreSQL 与回环地址上）**
+1. 当前版本：三个新账户付款买月付轻量，三笔订单都记录了价值覆盖区间。upgrade-options 的关系：轻量 current、进阶和旗舰 upgrade、演练里管理员建的更便宜的 drill-plan 为 downgrade（带“不支持降级”“不退还差价”）。按旧网站的请求方式直接普通下单：进阶返回 409 `plan_change_not_supported`，提示里有“升级”；drill-plan 的提示写明不退差价。账户 A 升级到进阶：报价与脚本按数据库行独立计算的 V、K、应付逐分相等（20.67 元），回调后订阅 id、开始和到期时间不变，流量增加量等于订单发放量，version 加 1。账户 B、C 各留一笔待付款的升级单；B 再下普通单得到 409 `pending_order_exists`。doctor：没有待核对的升级单，`upgrade_group_gaps` 含 `pro>max:JP1`（节点组阶段的 JP1 只给进阶）并警告 `plans_upgrade_group_gap`。
+2. dbe75ca 的网站（用它自己的源码构建）对接当前后端：其他套餐仍显示“当前套餐有效期内不能更换套餐，到期后可购买。”且禁用，续费可用；订单记录把升级单显示成“进阶计划 … / 0 天”；没有任何升级接口请求，没有页面错误。
+3. 回滚到 dbe75ca（不做反向迁移）：`/meta` 没有 `plan_upgrade_supported`；B 的升级单回调落在旧版本上转为待核对（`state_conflict`），管理员在旧控制台确认到账得到 409 `fulfil_conflict`，订阅不变；旧版本照常给 A 续费进阶（到期再加 30 天）、给新账户 D 卖轻量，这两笔订单都没有覆盖区间、类型为 purchase。当前网站对接 dbe75ca：本地判定，“到期后可购买”和“当前套餐有效期内不能更换，到期后可购买。”，规则里没有“升级”，没有升级按钮和请求。其他订单、其他订阅、plans / shop_settings / coupons 逐字节不变。
+4. 再升级：迁移可重复；doctor 报 1 笔待核对升级单（`upgrade_orders_need_review`）；C 的升级单迟到的回调照常开通（开始和到期时间不变）；B 的待核对单由管理员在新控制台确认到账后开通，警告消失。A（期间在旧版本续费过）升级到旗舰：计入三笔订单（两笔记录区间、续费单走兜底区间），报价与脚本计算逐分相等（应付 82.02 元，抵扣 77.78 元），兜底区间比真实区间少抵 1.33 元，`lost_groups` 含 JP1；付款后到期日不变。D（旧版本创建、旧版本付款）升级到进阶，按兜底区间抵扣，应付 20.67 元；当前网站对接再升级后的后端，D 的进阶卡片显示“补差价约 ¥20.67，到期日不变”，弹窗的应付和抵扣与服务端报价一致。三个后端进程的日志不含邮箱、密码和支付链接。
+
+**验收**
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R3-01 发布演练 | PASS | `python3 scripts/test-release-rehearsal.py --output artifacts/plans-round3-release/rehearsal-2`：passed，8 个二进制两两不同，耗时 272 秒（含全部旧阶段）。第一次运行（rehearsal-1）在最后一步失败：账户 D 的页面被前面公告阶段留下的强制公告弹窗挡住点击，脚本改为在每次浏览器用例前替该账户确认公告后通过（与升级无关） |
+| R3-02 混合部署 | PASS | 四种组合：新后端 + 旧前端（dbe75ca 网站的浏览器用例，以及旧网站请求方式的接口检查）；旧后端 + 新前端（真实 dbe75ca 二进制上的浏览器用例）；回滚后升级单的回调与人工确认都只转人工；旧二进制读写新列（升级单在旧控制台详情可读，金额与状态正确，旧版本写入的订单类型默认 purchase、无覆盖区间） |
+| R3-03 Core 与 APP | PASS（iOS 真机 BLOCKED） | Core：`TestCoreUpgradeDisconnect` PASS（真实 Core 在升级付款后约 0.4 秒停掉隧道并结束会话，提示“套餐已变更，请重新登录”；另一台设备在升级后到达的上报按原费率计入同一订阅和同一账本行，回复里是 `subscription_changed`；旧会话再请求授权得到 409；重新登录后列出专线并以 1.0x 连接）；`TestUpgradeLateNodeUsageStaysInPeriod` PASS（节点计量：升级前的授权仍为 keep，之后的用量和最终上报都计入同一周期）。桌面（macOS）：Core 线束宿主运行（macOS 上的真实 Core 与真实 Mihomo 引擎）A04-upgrade、-signed-out、-relogin 全部 PASS（504 ms 断开）；macOS APP 单元测试 `testPlanUpgradeWhileConnectedSignsOutWithTheCoresWords` PASS（不静默重新登录，保存的密码保留）。iOS：同一线束在 iOS 模拟器进程里 PASS，与 CI 步骤相同的 `presence,upgrade` 运行 10/10 PASS；真机 BLOCKED（没有付费 Apple 团队，packet-tunnel 无法签名）。Android：BillingAcceptanceTest 新增 A04-upgrade，本机编译通过，模拟器运行以本 PR 的 CI 为准。Windows：已有的 `Core_ending_the_session_without_a_saved_password_just_asks_to_sign_in` 覆盖同一提示，本机没有 dotnet，以 CI 为准 |
+| R3-04 安全审查 | PASS | docs/payment-operations.md 第十二节逐条复核第 6.8 节；`TestUpgradeSecurityMoney`、`TestUpgradeSecurityCallbacks`、`TestUpgradeSecurityOwnership` PASS（金额与未知字段篡改、优惠码夹带、报价与下单之间改价、下单与付款之间改价按快照交付、伪造来源与少付与重复回调、他人的幂等键和订单、跨站与未登录、停用账号）；模拟登录与旧二进制开通分别由已有的 `TestImpersonationIsReadOnly`、`TestUpgradeOrderRefusedByOlderFulfilment` 和演练覆盖 |
+| R3-05 文档 | PASS | docs/payment-operations.md 第十一、十二节；README、backend/DEPLOYMENT.md 各一段；docs/android-billing-acceptance.md 增加 A04-upgrade |
+| R3-06 全量 CI | 见下方“CI” | |
+
+**CI**
+1. 8078877：“Backend / PostgreSQL / race” 失败一项 `TestCoreOnlineLeasesEndToEnd/a_withdrawn_server_moves_the_device_by_itself_with_a_continuous_ledger`（断开时 Core 的计量仍显示有待确认的批次），与第 1 轮 CI 记录里的偶发完全相同；本轮没有改租约和 Core（线束只在测试标签下编译），本地全量通过，按惯例重跑该任务。其余任务（含 Android 计费验收、发布演练、Windows、macOS）通过。
+
+**本地回归**
+- `python3 scripts/test-native.py`（全部后端包，-race，真实 Core、节点代理与旧版 Core）退出码 0，api 包 665 秒，含本轮 5 个新测试。
+- 上述新测试与演练全部通过；`test-native-macos.py --suite unit`：7/8 通过，唯一失败的 U-MIHOMO-PATCH 需要 Mihomo 子模块的 git 历史，本 worktree 里是不带 .git 的拷贝（环境原因，与本轮无关，以 CI 为准）。
+
+**发现（不在本期修复）**
+- 客户端计量（只在开发 / 测试环境启用，生产环境拒绝客户端上报）下，Core 因 `subscription_changed` 结束会话时不结算上一次上报之后的尾量（最多一个上报间隔）。线束 A04-upgrade 的记录里可以看到：断开前下载的 1 MiB 没有计费。这与管理员在后台改套餐时的现有行为相同；生产环境的节点计量不受影响。修复需要改 Core（先结算尾量再结束会话，四个 APP 随之发版），本期按规划不改 APP，已写进第十二节。
+
+**用户实测**：U-41 … U-46 见 docs/payment-operations.md 11.9，均未执行（需要真实网关和真机）。

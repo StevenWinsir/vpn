@@ -39,7 +39,8 @@ Implemented suites (rounds 1-2):
       initdb and pg_ctl; changes no network setting. The harness also runs the online-presence cases
       P01-P05 of node groups round 6 (device limit at connect, the reconnect after a withdrawn
       server, release on disconnect and Shutdown); --harness-cases presence runs only those (seconds,
-      the CI step). Without --harness those cases are NOT_RUN. The
+      the CI step), and the plan-upgrade case of plans round 3 (--harness-cases upgrade runs only
+      that one, "presence,upgrade" both: the CI step). Without --harness those cases are NOT_RUN. The
       device-billing cases are BLOCKED without a signed device; unit proofs never stand in for either.
   device-tun  round 2 device acceptance (D-T01..D-T09, D-CYCLES, D-MEM-idle). Checks the
       prerequisites first: an Apple signing identity that can sign packet-tunnel-provider and a
@@ -251,10 +252,11 @@ HARNESS_CASES = (
     ('B01.harness', '20 MiB up + 80 MiB down through real Mihomo at 1x and 0.5x against the real backend'),
     ('B02.harness', 'ACK lost, the original batch retried once, charged once, with the real engine'),
     ('B04.harness', 'node_reported line: NodeAgent counts, /traffic refused'),
-    ('A04.harness', 'rate change / disabled line / plan end / quota end stop the real connection and settle the tail'),
+    ('A04.harness', 'rate change / disabled line / plan end / plan upgrade / quota end stop the real connection and settle the tail'),
     ('C01.harness', 'disconnect then immediate reconnect through a real extension hand-over'),
 )
 PRESENCE_CASE = ('P.harness', 'online presence: device limit at connect, reconnect after a withdrawn server, release on disconnect and Shutdown')
+UPGRADE_CASE = ('U.harness', 'plan upgrade on the website while connected: subscription_changed ends the session, signing in again gives the new plan')
 
 
 def check_billing(harness=None, wanted=None, cases='all'):
@@ -276,11 +278,13 @@ def check_billing(harness=None, wanted=None, cases='all'):
     stages = {'host': ('host',), 'simulator': ('simulator',), 'both': ('host', 'simulator')}.get(harness or '', ())
     for stage in stages:
         check_harness(stage, wanted, cases)
-    if stages and cases == 'presence':
-        for case_id, what in HARNESS_CASES:
-            record(case_id, False, 'NOT_RUN: ' + what + ' (this run: --harness-cases presence)', status='NOT_RUN')
+    if stages and cases != 'all':
+        groups = cases.split(',')
+        skipped = HARNESS_CASES + tuple(case for group, case in (('presence', PRESENCE_CASE), ('upgrade', UPGRADE_CASE)) if group not in groups)
+        for case_id, what in skipped:
+            record(case_id, False, 'NOT_RUN: ' + what + ' (this run: --harness-cases %s)' % cases, status='NOT_RUN')
     if not stages:
-        for case_id, what in HARNESS_CASES + (PRESENCE_CASE,):
+        for case_id, what in HARNESS_CASES + (PRESENCE_CASE, UPGRADE_CASE):
             record(case_id, False, 'NOT_RUN: ' + what + '. Run with --harness host|simulator|both (needs initdb and pg_ctl); '
                    'the unit proofs above do not stand in for it', status='NOT_RUN')
     record('device-billing', False, 'BLOCKED: 20 MiB + 80 MiB through a real TUN needs a paid Apple team (packet-tunnel-provider) and a paired iPhone',
@@ -352,8 +356,8 @@ def check_harness(stage, wanted, cases='all'):
         cache.mkdir()
         config = {'world': facts, 'sink': {'host': '127.0.0.1', 'port': int(sink['port']), 'token': sink['token']},
                   'upload_mib': 20, 'download_mib': 80, 'background_bytes': 2 << 20, 'cache_dir': str(cache)}
-        if cases == 'presence':
-            config['only'] = "presence"
+        if cases != 'all':
+            config['only'] = cases
         config_file, report_file = Path(scratch) / 'config.json', Path(scratch) / 'report.json'
         config_file.write_text(json.dumps(config))
         config_file.chmod(0o600)
@@ -950,8 +954,9 @@ def main():
     parser.add_argument('--report', help='write a JSON report here')
     parser.add_argument('--harness', choices=('host', 'simulator', 'both'),
                         help='billing suite: also run the harness acceptance (needs initdb and pg_ctl; changes no network setting)')
-    parser.add_argument('--harness-cases', choices=('all', 'presence'), default='all',
-                        help='billing: with --harness, "presence" runs only the online-presence cases P01-P05 (node groups round 6), in seconds')
+    parser.add_argument('--harness-cases', choices=('all', 'presence', 'upgrade', 'presence,upgrade'), default='all',
+                        help='billing: with --harness, "presence" runs only the online-presence cases P01-P05 (node groups round 6), '
+                             '"upgrade" only the plan-upgrade case (plans round 3), "presence,upgrade" both (the CI step), in seconds')
     parser.add_argument('--release-dir', help='release suite: the package folder (default artifacts/native-ios/release)')
     parser.add_argument('--device', help='device-tun: the iPhone name or UDID to use')
     parser.add_argument('--runtime', default=LOCK['ios']['simulator_runtime']['wanted'].split()[-1],

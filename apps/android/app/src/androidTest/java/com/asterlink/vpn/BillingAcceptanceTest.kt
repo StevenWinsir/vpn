@@ -11,6 +11,7 @@ import com.asterlink.vpn.core.CoreSnapshot
 import com.asterlink.vpn.core.CoreSnapshot.State
 import com.asterlink.vpn.core.LoginTarget
 import com.asterlink.vpn.security.FileDeviceIdentity
+import com.asterlink.vpn.session.AppPhase
 import com.asterlink.vpn.session.CoreLifecycle
 import com.asterlink.vpn.session.CredentialStore
 import com.asterlink.vpn.session.LoginPreferences
@@ -564,6 +565,30 @@ class BillingAcceptanceTest {
                 "alert notification after the Core stopped the tunnel: \"$alert\" (Core reason \"$reason\")")
             record("A04-expire-blocked", if (!s.connection.canConnect && s.snapshot.entitlement?.accountAuthorized == false) "PASS" else "FAIL",
                 "after the plan ended: account authorized ${s.snapshot.entitlement?.accountAuthorized}, reason ${s.snapshot.entitlement?.reason}, connect enabled ${s.connection.canConnect}")
+        }
+
+        // ---- A04: the customer upgrades the plan on the website while connected (handoff_plans.md R3-03):
+        // the Core ends the session with subscription_changed, the app asks for a new sign-in, and
+        // signing in again gives the new plan (its dedicated line).
+        c = signIn("upgrade")
+        run {
+            val listed = c.state.value.snapshot.nodes.map { it.id }
+            if (nodeIds.getValue("dedicated") in listed || nodeIds.getValue("ordinary") !in listed) {
+                record("A04-upgrade", "FAIL", "the starter account lists ${listed.size} lines before the upgrade, not exactly its plan's")
+                return@run
+            }
+            var paid = ""
+            stopCase("A04-upgrade", c, "upgrade", "ordinary", 500, setOf("subscription_changed")) { paid = world("upgrade", """{"user":"upgrade"}""") }
+            val signedOut = waitFor(c, 10_000) { it.phase == AppPhase.SignedOut }
+            val s = c.state.value
+            record("A04-upgrade-signed-out",
+                if (signedOut != null && s.message?.code == "subscription_changed" && s.message?.text == "套餐已变更，请重新登录" && !s.connection.canConnect) "PASS" else "FAIL",
+                "after the upgrade ($paid): phase ${s.phase}, message ${s.message?.code} \"${s.message?.text}\", connect enabled ${s.connection.canConnect}")
+            c = signIn("upgrade")
+            val again = c.state.value.snapshot
+            val dedicated = again.nodes.any { it.id == nodeIds.getValue("dedicated") }
+            record("A04-upgrade-relogin", if (dedicated && again.entitlement?.planName == "进阶计划") "PASS" else "FAIL",
+                "signed in again: plan \"${again.entitlement?.planName}\", dedicated line listed $dedicated")
         }
 
         // ---- A04: the data runs out while connected (the app keeps downloading).

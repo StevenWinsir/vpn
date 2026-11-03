@@ -13,8 +13,14 @@ if (
 export default defineConfig({
   testDir: './tests',
   // The catalog specs need scripts/test-node-catalog.py's fixture, not this one. The script runs
-  // tickets-compat.spec.ts on its own, once per backend (its stages pass the spec files by name).
-  testMatch: ['flow.spec.ts', 'referral-compat.spec.ts', 'tickets-compat.spec.ts'],
+  // tickets-compat.spec.ts and plans-compat.spec.ts on their own, once per pairing (its stages pass
+  // the spec files by name).
+  testMatch: [
+    'flow.spec.ts',
+    'referral-compat.spec.ts',
+    'tickets-compat.spec.ts',
+    'plans-compat.spec.ts',
+  ],
   fullyParallel: false,
   workers: 1,
   retries: 0,

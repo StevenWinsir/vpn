@@ -285,8 +285,18 @@ func pct(counted, body int64) string {
 }
 
 func (r *runner) runCases(ctx context.Context) {
-	if r.cfg.Only == "presence" {
-		r.presenceCases(ctx)
+	if r.cfg.Only != "" {
+		// A short run (the CI step): only the named groups, in order.
+		for _, only := range strings.Split(r.cfg.Only, ",") {
+			switch only {
+			case "presence":
+				r.presenceCases(ctx)
+			case "upgrade":
+				r.upgradeCase(ctx)
+			default:
+				r.record("B.only", "FAIL", "unknown case group "+only)
+			}
+		}
 		return
 	}
 	up, down := r.cfg.UploadMiB<<20, r.cfg.DownloadMiB<<20
@@ -397,6 +407,9 @@ func (r *runner) runCases(ctx context.Context) {
 		r.record("A04-expire-blocked", status, fmt.Sprintf("after the plan ended: account authorized %v, reason %s", authorized, reason))
 	}
 
+	// ---- A04: the customer upgrades the plan on the website while connected (plans round 3).
+	r.upgradeCase(ctx)
+
 	// ---- A04: the data runs out while connected (the client keeps downloading).
 	_, _ = r.world.post(ctx, "quota", map[string]any{"user": "quota", "remaining_bytes": 12 << 20})
 	if r.signIn(ctx, "quota") {
@@ -415,6 +428,50 @@ func (r *runner) runCases(ctx context.Context) {
 
 	// ---- P01-P05: online presence (node groups round 6), last: it ends with a Shutdown.
 	r.presenceCases(ctx)
+}
+
+// upgradeCase: a customer connected on starter pays a mid-period upgrade to pro on the website
+// (handoff_plans.md 7.4, 12, R3-03). The plan's fingerprint changes, so the Core must stop the
+// tunnel by itself and end the session with subscription_changed (the connection billed at its
+// own rate, in the same period); signing in again lists the new plan's dedicated line.
+func (r *runner) upgradeCase(ctx context.Context) {
+	if !r.signIn(ctx, "upgrade") {
+		return
+	}
+	listed := func(s managed.Snapshot, key string) bool {
+		return slices.ContainsFunc(s.Nodes, func(n managed.NodeView) bool { return n.ID == r.cfg.World.Nodes[key] })
+	}
+	if before := r.m.Snapshot(); listed(before, "dedicated") || !listed(before, "ordinary") {
+		r.record("A04-upgrade", "FAIL", "the starter account does not see exactly its plan's lines before the upgrade")
+		return
+	}
+	var answer []byte
+	r.stopCase(ctx, "A04-upgrade", "upgrade", "ordinary", 500, []string{"subscription_changed"}, false, func() {
+		answer, _ = r.world.post(ctx, "upgrade", map[string]string{"user": "upgrade"})
+	})
+	s := r.m.Snapshot()
+	message := ""
+	if s.LastError != nil {
+		message = s.LastError.Message
+	}
+	status := "FAIL"
+	if s.State == managed.StateSignedOut && message == "套餐已变更，请重新登录" && len(s.Nodes) == 0 {
+		status = "PASS"
+	}
+	r.record("A04-upgrade-signed-out", status, fmt.Sprintf("after the upgrade (%s): state %s, %q, %d lines left", strings.TrimSpace(string(answer)), s.State, message, len(s.Nodes)))
+	if !r.signIn(ctx, "upgrade") {
+		return
+	}
+	again := r.m.Snapshot()
+	plan := ""
+	if again.Entitlement != nil {
+		plan = again.Entitlement.PlanName
+	}
+	status = "FAIL"
+	if listed(again, "dedicated") && plan == "进阶计划" {
+		status = "PASS"
+	}
+	r.record("A04-upgrade-relogin", status, fmt.Sprintf("signed in again: plan %q, dedicated line listed %v", plan, listed(again, "dedicated")))
 }
 
 func (r *runner) reconnectCase(ctx context.Context) {

@@ -26,7 +26,12 @@ in every state exist on the current binary; on the old binary an account registe
 own test assembly and capture inbox), pays, and an account holding tickets is purged (the foreign keys
 remove them); the upgrade back hides and sweeps the ticket that expired meanwhile and keeps every other row.
 This tree's website is driven against the old binary and the re-upgraded one (tickets-compat.spec.ts), and
-the website of 75f906d against the current backend. The browser
+the website of 75f906d against the current backend. Mid-period upgrades (handoff_plans.md round 3) add an
+eighth binary, the release just before them (dbe75ca): upgrades paid and pending on the current binary; on
+the old binary a callback or a person can only put an upgrade order under review while it keeps selling
+orders without a value window; the upgrade back settles the late callback and the reviewed order and credits
+the next upgrades through the fallback window exactly as computed from the rows; the website of dbe75ca runs
+against the current backend and this website against the old and the re-upgraded one (plans-compat.spec.ts). The browser
 stage needs a mail inbox, which a normal binary cannot have without trusting a test SMTP server
 in the machine's trust store; it runs the current API as a Go test assembly instead, with the
 real worker delivering into a capture inbox (TestReleaseRehearsalFixture).
@@ -84,6 +89,9 @@ OLD_WEBSITE_REF = 'e1fa661'
 # PR #95 merge: the release immediately before support tickets (handoff_ticket.md 14, 15 round 3). Its
 # backend is the ticket rollback target and its frontend the website from before tickets.
 TICKET_ROLLBACK_REF = '75f906d'
+# PR #99 merge: the release immediately before mid-period upgrades (handoff_plans.md 14, 15 round 3). Its
+# backend is the plans rollback target and its frontend the website from before upgrades.
+PLANS_ROLLBACK_REF = 'dbe75ca'
 PAYMENT_TABLES = ['orders', 'payment_notifications', 'coupons', 'announcements', 'announcement_reads', 'login_events', 'ip_geo_caches']
 
 
@@ -134,6 +142,7 @@ def main():
     parser.add_argument('--referral-rollback-ref', default=REFERRAL_ROLLBACK_REF, help='release just before the referral programme')
     parser.add_argument('--old-website-ref', default=OLD_WEBSITE_REF, help='tree whose frontend is the website from before the referral programme')
     parser.add_argument('--ticket-rollback-ref', default=TICKET_ROLLBACK_REF, help='release just before support tickets (its backend and its website)')
+    parser.add_argument('--plans-rollback-ref', default=PLANS_ROLLBACK_REF, help='release just before mid-period upgrades (its backend and its website)')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -259,17 +268,18 @@ def main():
             summary['shop_rollback_commit'], shop_rollback_binary = build_ref('shop-rollback', args.shop_rollback_ref)
             summary['referral_rollback_commit'], referral_rollback_binary = build_ref('referral-rollback', args.referral_rollback_ref)
             summary['ticket_rollback_commit'], ticket_rollback_binary = build_ref('ticket-rollback', args.ticket_rollback_ref)
+            summary['plans_rollback_commit'], plans_rollback_binary = build_ref('plans-rollback', args.plans_rollback_ref)
             doctor_binary = root / 'doctor-current'
             run('build-doctor-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(doctor_binary), './cmd/doctor'], cwd=ROOT / 'backend')
             current_binary = root / 'api-current'
             run('build-api-current', ['go', 'build', '-trimpath', '-buildvcs=false', '-o', str(current_binary), './cmd/api'], cwd=ROOT / 'backend')
             summary['binary_sha256'] = {name: hashlib.sha256(binary.read_bytes()).hexdigest()
-                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary), ('shop_rollback', shop_rollback_binary), ('referral_rollback', referral_rollback_binary), ('ticket_rollback', ticket_rollback_binary)]}
+                for name, binary in [('legacy', legacy_binary), ('current', current_binary), ('rollback', rollback_binary), ('payment_rollback', payment_rollback_binary), ('shop_rollback', shop_rollback_binary), ('referral_rollback', referral_rollback_binary), ('ticket_rollback', ticket_rollback_binary), ('plans_rollback', plans_rollback_binary)]}
             # Identical binaries are reported, not hidden: a tree whose production backend equals the
             # rollback target makes the rollback step a same-binary restart over the newer data.
             digests = summary['binary_sha256']
-            summary['distinct_backend_versions'] = len(set(digests.values())) == 7
-            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback'), ('current', 'shop_rollback'), ('payment_rollback', 'shop_rollback'), ('current', 'referral_rollback'), ('shop_rollback', 'referral_rollback'), ('current', 'ticket_rollback'), ('referral_rollback', 'ticket_rollback')]
+            summary['distinct_backend_versions'] = len(set(digests.values())) == 8
+            summary['identical_binaries'] = sorted(a + '=' + b for a, b in [('legacy', 'current'), ('legacy', 'rollback'), ('current', 'rollback'), ('current', 'payment_rollback'), ('rollback', 'payment_rollback'), ('current', 'shop_rollback'), ('payment_rollback', 'shop_rollback'), ('current', 'referral_rollback'), ('shop_rollback', 'referral_rollback'), ('current', 'ticket_rollback'), ('referral_rollback', 'ticket_rollback'), ('current', 'plans_rollback'), ('ticket_rollback', 'plans_rollback')]
                 if digests[a] == digests[b])
             secret, jwt = secrets.token_urlsafe(36), secrets.token_urlsafe(48)
             password_file = root / 'pg-password'
@@ -486,7 +496,8 @@ def main():
             # support tickets (handoff_ticket.md 14.1, T3-02).
             stop(web_process)
 
-            def old_website(label, ref, absent):
+            def build_site(label, ref, absent):
+                # The website of an older tree, built from that tree alone (the current dependencies).
                 old_stage = root / ('frontend-' + label)
                 old_stage.mkdir()
                 commit = subprocess.check_output(['git', 'rev-parse', '--verify', ref + '^{commit}'], cwd=ROOT, text=True).strip()
@@ -498,15 +509,23 @@ def main():
                     destination.write_bytes(subprocess.check_output(['git', 'show', commit + ':' + name], cwd=ROOT))
                 (old_stage / 'node_modules').symlink_to(ROOT / 'frontend/node_modules', target_is_directory=True)
                 assert not (old_stage / absent).exists(), absent
-                old_env = dict(web_env, E2E_ARTIFACTS_DIR=str(output / ('browser-' + label)))
-                old_cli = str(old_stage / 'node_modules/next/dist/bin/next')
-                run('web-' + label + '-build', ['node', old_cli, 'build', '--webpack'], cwd=old_stage, environment=old_env, timeout=600)
+                run('web-' + label + '-build', ['node', str(old_stage / 'node_modules/next/dist/bin/next'), 'build', '--webpack'], cwd=old_stage,
+                    environment=dict(web_env, E2E_ARTIFACTS_DIR=str(output / ('browser-' + label))), timeout=600)
+                return old_stage, commit
+
+            def serve_site(label, site, environment):
                 old_stream = (output / ('web-' + label + '-server.log')).open('a')
                 streams.append(old_stream)
-                old_web = subprocess.Popen(['node', old_cli, 'start', '--hostname', '127.0.0.1', '--port', str(web_port)],
-                    cwd=old_stage, env=old_env, stdout=old_stream, stderr=subprocess.STDOUT)
+                old_web = subprocess.Popen(['node', str(site / 'node_modules/next/dist/bin/next'), 'start', '--hostname', '127.0.0.1', '--port', str(web_port)],
+                    cwd=site, env=environment, stdout=old_stream, stderr=subprocess.STDOUT)
                 processes.append(old_web)
                 wait_for_web(old_web, 'The ' + label + ' website')
+                return old_web
+
+            def old_website(label, ref, absent):
+                old_stage, commit = build_site(label, ref, absent)
+                old_env = dict(web_env, E2E_ARTIFACTS_DIR=str(output / ('browser-' + label)))
+                old_web = serve_site(label, old_stage, old_env)
                 run('browser-' + label, ['node', str(old_stage / 'node_modules/@playwright/test/cli.js'), 'test'], cwd=old_stage, environment=old_env, timeout=600)
                 stop(old_web)
                 return commit
@@ -1326,6 +1345,247 @@ def main():
                 text = (output / (log_name + '.log')).read_text()
                 assert not any(value in text for value in secrets_in_tickets), log_name + ' carries ticket text, a number, an id or an address'
             summary['checks'].append('ticket expiry and the doctor: a ticket set 2 hours past its retention is a 404 for its owner and the console and gone from the list while its row still exists; the doctor in a test and in a development configuration reports open 2, answered 1, a 25-hour wait (tickets_waiting_over_24h) and 1 expired-but-undeleted ticket (tickets_expiry_lagging), with TICKETS_ENABLED=false reports the switch off, and carries no subject, text, number, id or address; the next start deletes the lagging ticket and both warnings clear; no API or website log of the drill carries ticket text, a ticket number or id, or an address')
+            # Mid-period upgrades (handoff_plans.md 14, 15 round 3: R3-01, R3-02). On the current binary three
+            # accounts buy starter: one upgrades to pro, two leave an upgrade order pending. A rollback to the
+            # release just before upgrades (dbe75ca, no down migration) can only put an upgrade order under
+            # review, by callback or by hand, while it keeps selling (orders without a value window). The upgrade
+            # back settles the other pending upgrade late, a person confirms the reviewed one, and the next
+            # upgrades are credited through the fallback window exactly as computed here from the rows. The old
+            # website runs against the current backend and this website against the old one (plans-compat.spec.ts).
+            up_db, DAY_US = 'upgrade', 86400 * 1000000
+            minimum = int(sql(up_db, "SELECT upgrade_min_charge_cents FROM rehearsal.shop_settings WHERE id = 1"))
+
+            def up_sql(query):
+                return sql(up_db, query)
+
+            def plan_of(plan_id):
+                price, days, name = up_sql(f"SELECT price_cents || '|' || duration_days || '|' || name FROM rehearsal.plans WHERE id = '{plan_id}'").split('|', 2)
+                return {'id': plan_id, 'price': int(price), 'days': int(days), 'name': name}
+
+            starter, pro, top = plan_of('starter'), plan_of('pro'), plan_of('max')
+            assert starter['price'] < pro['price'] < top['price'], (starter, pro, top)
+
+            def new_account(prefix):
+                address, secret_value = f'{prefix}-{uuid.uuid4().hex[:10]}@example.invalid', secrets.token_urlsafe(24)
+                run('create-' + prefix, [str(current_binary), '-create-admin', address], environment=api_env(up_db, free_port()), stdin=json.dumps({'password': secret_value}))
+                up_sql(f"UPDATE rehearsal.users SET role = 'user' WHERE email = '{address}'")
+                return address, secret_value, up_sql(f"SELECT id FROM rehearsal.users WHERE email = '{address}'")
+
+            def buy_plan(url, person, plan_id):
+                order = signed_in(url, person).call('/payments/orders', {'plan_id': plan_id, 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=201)['order']
+                settle_at(url, order)
+                assert up_sql(f"SELECT status FROM rehearsal.orders WHERE id = '{order['id']}'") == 'paid'
+                return order
+
+            def place_upgrade(account, plan_id):
+                quote = account.call('/payments/upgrade-quote', {'plan_id': plan_id}, origin=web_url)['quote']
+                assert quote['purchasable'] and quote['relation'] == 'upgrade', quote
+                placed = account.call('/payments/upgrade-orders', {'plan_id': plan_id, 'pay_type': 'alipay', 'expected_amount_cents': quote['amount_cents']},
+                    origin=web_url, key=str(uuid.uuid4()), expected=201)
+                assert placed['order']['kind'] == 'upgrade' and placed['order']['amount_cents'] == quote['amount_cents'], placed['order']
+                return quote, placed['order']
+
+            def us(column, table, where):
+                return int(up_sql(f"SELECT (extract(epoch FROM {column}) * 1000000)::bigint FROM rehearsal.{table} WHERE {where}"))
+
+            def sub_state(user_id):
+                return up_sql(f"SELECT id || '|' || plan_id || '|' || starts_at || '|' || expires_at || '|' || traffic_limit_bytes || '|' || max_devices || '|' || allow_dedicated || '|' || version "
+                    f"FROM rehearsal.subscriptions WHERE user_id = '{user_id}'").split('|')
+
+            def paid_windows(user_id):
+                # The period's paid orders as the server reads them (handoff_plans.md 6.4): the recorded value
+                # window, else [paid_at, paid_at + days] for an ordinary order; an upgrade without one counts nothing.
+                rows = up_sql(f"""SELECT COALESCE(string_agg(o.id || '|' || LEAST(o.amount_cents, COALESCE(o.paid_cents, o.amount_cents)) || '|' || o.kind || '|' || o.duration_days || '|' ||
+                    COALESCE((extract(epoch FROM o.covers_from) * 1000000)::bigint::text, '') || '|' || COALESCE((extract(epoch FROM o.covers_to) * 1000000)::bigint::text, '') || '|' ||
+                    (extract(epoch FROM o.paid_at) * 1000000)::bigint, ',' ORDER BY o.paid_at, o.id), '')
+                    FROM rehearsal.orders o JOIN rehearsal.subscriptions s ON s.user_id = o.user_id
+                    WHERE o.user_id = '{user_id}' AND o.status = 'paid' AND o.provider <> 'test' AND o.paid_at >= s.starts_at""")
+                windows = []
+                for row in filter(None, rows.split(',')):
+                    order_id, cents, kind, days, start, end, paid_at = row.split('|')
+                    if start and end and int(end) > int(start):
+                        windows.append((order_id, int(cents), int(start), int(end), 'recorded'))
+                    elif int(days) > 0 and kind != 'upgrade':
+                        windows.append((order_id, int(cents), int(paid_at), int(paid_at) + int(days) * DAY_US, 'fallback'))
+                return windows
+
+            def credit_of(windows, expires, credited):
+                start, total = expires - credited * DAY_US, 0
+                for _, cents, begin, end, _ in windows:
+                    overlap = min(end, expires) - max(begin, start)
+                    if overlap > 0:
+                        total += cents * overlap // (end - begin)
+                return total
+
+            def check_quote(user_id, quote, target, asked_at):
+                # The quote equals the algorithm of handoff_plans.md 6 run here on the database rows.
+                expires = us('expires_at', 'subscriptions', f"user_id = '{user_id}'")
+                credited = [(expires - int(moment * 1000000)) // DAY_US for moment in asked_at]
+                assert quote['credited_days'] in credited and quote['upgrade_days'] == quote['credited_days'] + 1, (quote, credited)
+                windows = paid_windows(user_id)
+                value = -(-target['price'] * quote['upgrade_days'] // target['days'])
+                credit = credit_of(windows, expires, quote['credited_days'])
+                assert (quote['value_cents'], quote['credit_cents'], quote['amount_cents']) == (value, credit, max(value - credit, minimum)), (quote, value, credit, windows)
+                return windows, expires
+
+            def timed_quote(account, user_id, target):
+                before = time.time()
+                quote = account.call('/payments/upgrade-quote', {'plan_id': target['id']}, origin=web_url)['quote']
+                check_quote(user_id, quote, target, (before, time.time()))
+                return quote
+
+            site_files = [(ROOT / 'frontend/playwright.config.ts', 'playwright.compat.config.ts'), (ROOT / 'frontend/tests/plans-compat.spec.ts', 'tests/plans-compat.spec.ts')]
+
+            def plans_compat(name, site, api_url, mode, person, current, blocked, upgrade=None):
+                # The announcements published earlier in the drill would open their forced dialog over the page.
+                reader = signed_in(api_url, person)
+                for note in reader.call('/me/announcements')['announcements']:
+                    reader.call(f"/me/announcements/{note['id']}/ack", {}, origin=web_url)
+                compat_file = root / 'plans-compat.json'
+                compat_file.write_text(json.dumps({'mode': mode, 'user': {'email': person[0], 'password': person[1]},
+                    'current': {'id': current['id'], 'name': current['name']}, 'blocked': [{'id': p['id'], 'name': p['name']} for p in blocked], 'upgrade': upgrade}))
+                compat_env = dict(web_env, API_INTERNAL_URL=api_url + '/api/v1', E2E_ARTIFACTS_DIR=str(output / name), REHEARSAL_PLANS_COMPAT=str(compat_file))
+                if site == stage:
+                    web, config = start_web('web-' + name, compat_env), []
+                else:
+                    # This tree's spec and rehearsal config, run from the older tree (its own pages and modules).
+                    for source, target in site_files:
+                        shutil.copy2(source, site / target)
+                    web, config = serve_site(name, site, compat_env), ['--config', 'playwright.compat.config.ts']
+                try:
+                    run(name, ['node', str(site / 'node_modules/@playwright/test/cli.js'), 'test', *config, 'plans-compat.spec.ts'], cwd=site, environment=compat_env, timeout=600)
+                finally:
+                    stop(web)
+
+            # A. The current binary: starter bought by three accounts, one upgrade paid, two left pending.
+            up_a, up_b, up_c = new_account('upa'), new_account('upb'), new_account('upc')
+            process, plans_now = start_api(current_binary, up_db, 'api-plans', catalog=True, payment=True)
+            assert plans_now.call('/meta')['plan_upgrade_supported'] is True
+            bought = {person[2]: buy_plan(plans_now.url, person, 'starter') for person in (up_a, up_b, up_c)}
+            ids = "', '".join(order['id'] for order in bought.values())
+            assert up_sql(f"SELECT count(*) FROM rehearsal.orders WHERE id IN ('{ids}') AND kind = 'purchase' AND covers_from = paid_at AND covers_to > covers_from") == '3'
+            a_web = signed_in(plans_now.url, up_a)
+            options = {item['plan_id']: item for item in a_web.call('/payments/upgrade-options')['plans']}
+            assert options['starter']['relation'] == 'current' and options['pro']['relation'] == options['max']['relation'] == 'upgrade', options
+            assert options['drill-plan']['relation'] == 'downgrade' and not options['drill-plan']['purchasable'] and '不支持降级' in options['drill-plan']['message'], options['drill-plan']
+            # The request of a website from before upgrades, on this backend: refused as before, the words name the way.
+            refused = a_web.call('/payments/orders', {'plan_id': 'pro', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=409, code='plan_change_not_supported')
+            assert '升级' in refused['error']['message'], refused
+            refused = a_web.call('/payments/orders', {'plan_id': 'drill-plan', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=409, code='plan_change_not_supported')
+            assert '不支持降级' in refused['error']['message'] and '不退还差价' in refused['error']['message'], refused
+            a_before = sub_state(up_a[2])
+            asked = time.time()
+            quote_a, order_a = place_upgrade(a_web, 'pro')
+            check_quote(up_a[2], quote_a, pro, (asked, time.time()))
+            settle_at(plans_now.url, order_a)
+            a_after = sub_state(up_a[2])
+            granted = int(up_sql(f"SELECT upgrade_traffic_bytes FROM rehearsal.orders WHERE id = '{order_a['id']}'"))
+            assert a_after[0] == a_before[0] and a_after[1] == 'pro' and a_after[2:4] == a_before[2:4] and int(a_after[4]) == int(a_before[4]) + granted and int(a_after[7]) == int(a_before[7]) + 1, (a_before, a_after)
+            assert up_sql(f"SELECT status || '|' || kind || '|' || from_plan_id || '|' || duration_days || '|' || (covers_to = (SELECT expires_at FROM rehearsal.subscriptions WHERE user_id = '{up_a[2]}')) FROM rehearsal.orders WHERE id = '{order_a['id']}'") == 'paid|upgrade|starter|0|true'
+            b_web, c_web = signed_in(plans_now.url, up_b), signed_in(plans_now.url, up_c)
+            _, pending_b = place_upgrade(b_web, 'pro')
+            _, pending_c = place_upgrade(c_web, 'pro')
+            # One upgrade at a time and nothing next to it (D9).
+            b_web.call('/payments/orders', {'plan_id': 'starter', 'pay_type': 'wxpay', 'coupon_code': ''}, origin=web_url, key=str(uuid.uuid4()), expected=409, code='pending_order_exists')
+            report = doctor(api_env(up_db, free_port(), catalog=True, payment=True))
+            assert report['shop']['upgrade_enabled'] and report['shop']['upgrade_review_orders'] == 0 and 'upgrade_orders_need_review' not in report['warnings'], report['shop']
+            # Group JP1 (pro only, from the node-group stage) is lost by upgrading pro to max: the doctor warns.
+            assert 'pro>max:JP1' in report['shop']['upgrade_group_gaps'] and 'plans_upgrade_group_gap' in report['warnings'], report['shop']
+            # R3-02, new backend + old website: the dbe75ca website against this binary.
+            old_site, summary['plans_rollback_website_commit'] = build_site('pre-upgrade-website', args.plans_rollback_ref, 'src/components/upgrade-modal.tsx')
+            plans_compat('browser-plans-old-website', old_site, plans_now.url, 'old-website', up_a, pro, [starter, top])
+            stop(process)
+            summary['checks'].append('mid-period upgrades on the current binary: three accounts buy starter and every paid order records its value window; upgrade-options relates every plan (starter current, pro and max upgrades, the administrator-defined cheaper plan a downgrade with the no-refund words); the ordinary purchase request of a website from before upgrades is refused as before (409 plan_change_not_supported) with words naming the upgrade or the no-refund downgrade; one upgrade to pro is quoted exactly as the algorithm computes from the rows, paid by callback and keeps the subscription id, start and expiry while adding the granted traffic; two more upgrades stay pending and block any other order (409 pending_order_exists); the doctor sees no upgrade under review and warns that pro>max loses group JP1')
+            summary['checks'].append('mixed deployment, the website of the release before upgrades (dbe75ca, built from its own tree) against the current backend: the other plans still read "当前套餐有效期内不能更换套餐，到期后可购买。" and stay disabled, renewal works, the order list shows the upgrade order as the plan with 0 days (display only), no request to an upgrade route and no page error')
+
+            # B. Rollback to the release just before upgrades (no down migration).
+            # Every order but the two pending upgrades (a worker may stamp those), the way a backup would see it.
+            untouched_orders = lambda: up_sql(f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(o)::text, E'\\n' ORDER BY id::text), '')) FROM rehearsal.orders o WHERE id NOT IN ('{pending_b['id']}', '{pending_c['id']}') AND created_at <= (SELECT created_at FROM rehearsal.orders WHERE id = '{pending_c['id']}')")
+            orders_kept = untouched_orders()
+            subs_kept = lambda: up_sql(f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(s)::text, E'\\n' ORDER BY id::text), '')) FROM rehearsal.subscriptions s WHERE user_id <> '{up_a[2]}'")
+            subs_before = subs_kept()
+            shop_before = fingerprint(up_db, ['plans', 'shop_settings', 'coupons'])
+            process, plans_old = start_api(plans_rollback_binary, up_db, 'api-plans-rollback', mail=True, catalog=True, payment=True)
+            assert 'plan_upgrade_supported' not in plans_old.call('/meta')
+            # A callback for an upgrade order reaches the old binary: it sells 0 days there, so review, nothing applied.
+            settle_at(plans_old.url, pending_b)
+            assert up_sql(f"SELECT status || '|' || review_reason FROM rehearsal.orders WHERE id = '{pending_b['id']}'") == 'review|state_conflict'
+            # A person confirms it on the old console: refused as well.
+            old_admin = signed_in(plans_old.url, (admin_email, admin_password))
+            detail = old_admin.call('/admin/console/orders/' + pending_b['id'])['order']
+            assert detail['plan_id'] == 'pro' and detail['status'] == 'review' and detail['amount_cents'] == pending_b['amount_cents'], detail
+            old_admin.call(f"/admin/console/orders/{pending_b['id']}/confirm", {'admin_password': admin_password, 'paid_cents': pending_b['amount_cents'], 'note': 'rehearsal: paid at the gateway'},
+                origin=web_url, expected=409, code='fulfil_conflict')
+            assert up_sql(f"SELECT status FROM rehearsal.orders WHERE id = '{pending_b['id']}'") == 'review'
+            assert subs_kept() == subs_before, 'the old binary changed a subscription it must not touch'
+            # The old binary keeps selling: a renewal of the upgraded plan and a new customer, both without a value window.
+            renewal = buy_plan(plans_old.url, up_a, 'pro')
+            up_d = new_account('upd')
+            first_d = buy_plan(plans_old.url, up_d, 'starter')
+            for order in (renewal, first_d):
+                assert up_sql(f"SELECT kind || '|' || (covers_from IS NULL) || '|' || (covers_to IS NULL) FROM rehearsal.orders WHERE id = '{order['id']}'") == 'purchase|true|true'
+            a_renewed = sub_state(up_a[2])
+            assert a_renewed[1] == 'pro' and a_renewed[2] == a_after[2] and us('expires_at', 'subscriptions', f"user_id = '{up_a[2]}'") - us('covers_to', 'orders', f"id = '{order_a['id']}'") == pro['days'] * DAY_US
+            # R3-02, old backend + new website.
+            plans_compat('browser-plans-old-backend', stage, plans_old.url, 'old-backend', up_a, pro, [starter, top])
+            assert untouched_orders() == orders_kept, 'the old binary changed an order it must not touch'
+            assert fingerprint(up_db, ['plans', 'shop_settings', 'coupons']) == shop_before
+            stop(process)
+            summary['checks'].append('rollback to the release just before upgrades (dbe75ca, no down migration) over the new columns: no plan_upgrade_supported; a callback for a pending upgrade order puts it under review (state_conflict) and a person confirming it on the old console is refused (409 fulfil_conflict), the subscription untouched; the old binary renews the upgraded plan (30 more days) and sells starter to a new account, both orders without a value window (kind purchase); every other order, every other subscription and the plans, shop settings and coupons are byte-identical')
+            summary['checks'].append('mixed deployment, this website against the real dbe75ca binary: the plans page uses its local rule ("到期后可购买", "当前套餐有效期内不能更换，到期后可购买。", rules without "升级"), no upgrade button and no request to an upgrade route, the order list renders and no page error')
+
+            # C. Upgrade again: the pending upgrade settles late, the reviewed one is confirmed by a person, the
+            # next upgrades are credited through the fallback window.
+            run('migration-after-plans-rollback', [str(current_binary), '-migrate'], environment=api_env(up_db, free_port()))
+            process, plans_back = start_api(current_binary, up_db, 'api-plans-reupgraded', catalog=True, payment=True)
+            back_env = api_env(up_db, free_port(), catalog=True, payment=True)
+            report = doctor(back_env)
+            assert report['shop']['upgrade_review_orders'] == 1 and 'upgrade_orders_need_review' in report['warnings'], report['shop']
+            c_before = sub_state(up_c[2])
+            settle_at(plans_back.url, pending_c)
+            c_after = sub_state(up_c[2])
+            assert up_sql(f"SELECT status FROM rehearsal.orders WHERE id = '{pending_c['id']}'") == 'paid' and c_after[1] == 'pro' and c_after[2:4] == c_before[2:4], (c_before, c_after)
+            back_admin = signed_in(plans_back.url, (admin_email, admin_password))
+            back_admin.call(f"/admin/console/orders/{pending_b['id']}/confirm", {'admin_password': admin_password, 'paid_cents': pending_b['amount_cents'], 'note': 'rehearsal: paid at the gateway'}, origin=web_url)
+            assert up_sql(f"SELECT status FROM rehearsal.orders WHERE id = '{pending_b['id']}'") == 'paid' and sub_state(up_b[2])[1] == 'pro'
+            report = doctor(back_env)
+            assert report['shop']['upgrade_review_orders'] == 0 and 'upgrade_orders_need_review' not in report['warnings'], report['shop']
+            # The renewal the old binary sold is credited through its fallback window, which can only credit less
+            # than its real one (it starts at the payment, the real one at the expiry it extended).
+            a_back = signed_in(plans_back.url, up_a)
+            before = time.time()
+            quote_top = a_back.call('/payments/upgrade-quote', {'plan_id': 'max'}, origin=web_url)['quote']
+            windows, expires = check_quote(up_a[2], quote_top, top, (before, time.time()))
+            assert [w[4] for w in windows] == ['recorded', 'recorded', 'fallback'] and windows[2][0] == renewal['id'], windows
+            real = [w if w[0] != renewal['id'] else (w[0], w[1], us('covers_to', 'orders', f"id = '{order_a['id']}'"), expires, 'real') for w in windows]
+            assert credit_of(windows, expires, quote_top['credited_days']) < credit_of(real, expires, quote_top['credited_days']), (windows, real)
+            assert 'JP1' in quote_top['lost_groups'], quote_top
+            _, order_top = place_upgrade(a_back, 'max')
+            settle_at(plans_back.url, order_top)
+            a_top = sub_state(up_a[2])
+            assert a_top[1] == 'max' and a_top[2:4] == a_renewed[2:4], (a_renewed, a_top)
+            # The account the old binary created: its first order is credited through the fallback window; this
+            # website's card and dialog show exactly that quote (R3-02, both halves current again).
+            d_web = signed_in(plans_back.url, up_d)
+            quote_d = timed_quote(d_web, up_d[2], pro)
+            assert [w[4] for w in paid_windows(up_d[2])] == ['fallback'], paid_windows(up_d[2])
+            plans_compat('browser-plans-current', stage, plans_back.url, 'current', up_d, starter, [plan_of('drill-plan')],
+                upgrade={'id': 'pro', 'name': pro['name'], 'amount_cents': quote_d['amount_cents'], 'credit_cents': quote_d['credit_cents']})
+            _, order_d = place_upgrade(d_web, 'pro')
+            settle_at(plans_back.url, order_d)
+            assert sub_state(up_d[2])[1] == 'pro' and up_sql(f"SELECT status FROM rehearsal.orders WHERE id = '{order_d['id']}'") == 'paid'
+            assert fingerprint(up_db, ['plans', 'shop_settings', 'coupons']) == shop_before
+            stop(process)
+            plan_people = [person[0] for person in (up_a, up_b, up_c, up_d)]
+            for log_name in ['api-plans', 'api-plans-rollback', 'api-plans-reupgraded']:
+                text = (output / (log_name + '.log')).read_text()
+                assert not any(value in text for value in plan_people + [admin_password]), log_name + ' carries an address or a password'
+                assert '/submit?' not in text, log_name + ' carries a payment link'
+            summary['plans_upgrade'] = {'first_upgrade_cents': quote_a['amount_cents'], 'second_upgrade_cents': quote_top['amount_cents'],
+                'second_upgrade_credit_cents': quote_top['credit_cents'], 'fallback_credit_shortfall_cents': credit_of(real, expires, quote_top['credited_days']) - quote_top['credit_cents'],
+                'old_account_upgrade_cents': quote_d['amount_cents']}
+            summary['checks'].append('upgrade again after the plans rollback: migration repeatable; the doctor reports the upgrade under review (upgrade_orders_need_review); the other pending upgrade is paid by its late callback (subscription start and expiry unchanged); the reviewed one is confirmed by a person on the current console and the warning clears; the upgraded account renewed on dbe75ca upgrades to max with a credit that equals the algorithm on its rows (two recorded windows and the renewal\'s fallback window, which credits less than its real window) and lists JP1 among the lost groups; the account dbe75ca created upgrades to pro credited by its fallback window; plans, shop settings and coupons byte-identical; no API log carries an address, a password or a payment link')
+            summary['checks'].append('mixed deployment, this website against the re-upgraded binary: the account created on dbe75ca sees "补差价约 ¥X，到期日不变" on the pro card and the dialog shows exactly the server quote (amount and credit), no page error')
             process, restored = start_api(current_binary, 'restored', 'api-restored')
             Client(restored.url).call('/auth/login', {'email': email, 'password': password}, origin=web_url, expected=401, code='invalid_credentials')
             restored.call('/auth/login', {'email': email, 'password': new_password}, origin=web_url)

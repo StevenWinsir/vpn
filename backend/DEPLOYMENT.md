@@ -234,6 +234,14 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 - **诊断**：`bin/doctor` 的 `tickets` 段给出开关、待处理和已回复数、最早待处理的等待秒数、过期超过 1 小时仍未删除的数量；等待超过 24 小时警告 `tickets_waiting_over_24h`，删除滞后警告 `tickets_expiry_lagging`（维护循环可能没有运行，重启后端会立即清理一次）。只输出数量和时长，不含工单号、标题、正文或邮箱。
 - **回滚**：可以只回滚前端，或连同后端一起回滚，不需要手动处理数据。旧版本忽略新表；旧版本清除注销账号时，外键级联删除其工单；旧版本不删除到期工单，再次升级后读接口立即隐藏它们，启动时的第一轮清理删除。管理员处理流程、排查、实测清单（U-36 … U-40）和安全审查结论见 [docs/ticket-operations.md](../docs/ticket-operations.md)；发布演练见 `scripts/test-release-rehearsal.py` 的“工单”阶段。
 
+## 套餐有效期内升级（handoff_plans.md）
+
+- **迁移**：只增不删，可重复执行，没有新表。`orders` 增加 `kind`（`purchase` / `upgrade`，旧版本写入的行默认 `purchase`）、`from_plan_id`、`from_plan_name`、`credit_cents`、`upgrade_days`、`upgrade_traffic_bytes`、`upgrade_snapshot`（计算依据，只在控制台展示）和可空的 `covers_from` / `covers_to`（每笔新的已付订单的价值覆盖区间）；`shop_settings` 增加 `upgrade_enabled`（默认 `true`）和 `upgrade_min_charge_cents`（默认 100，1–10000）。
+- **配置**：没有新的环境变量。升级的总前提是 `PAYMENT_ENABLED=true`（`/api/v1/meta` 的 `plan_upgrade_supported` 与它相同）；开关和最低补差在后台“套餐管理”修改，带审计。
+- **发布顺序**：先后端（迁移），用 `bin/doctor` 确认 `shop.upgrade_review_orders` 为 0，再发布前端；APP 不需要发布（升级改变权益指纹，客户端收到 `subscription_changed` 后重新登录一次）。
+- **诊断**：`bin/doctor` 的 `shop` 段增加 `upgrade_enabled`、`upgrade_min_charge_cents`、`upgrade_review_orders` 和 `upgrade_group_gaps`（“A>B:组名”）；警告 `upgrade_orders_need_review`、`plans_upgrade_group_gap`、`shop_upgrade_settings_invalid`。只输出数量、套餐 ID 和线路组名。
+- **回滚**：可以直接回滚二进制，新列留在库里无害。升级订单卖 0 天、0 流量，旧版本的履约一定失败，回调和人工确认都只会转为待核对，不会被当成普通订单开通；旧版本写下的订单没有覆盖区间，再升级后按 [付款时刻, 付款时刻 + 天数] 兜底计算抵扣（只会少抵）。规则、人工审核处理、回滚细节、实测清单（U-41 … U-46）和安全审查结论见 [docs/payment-operations.md](../docs/payment-operations.md) 第十一、十二节；发布演练见 `scripts/test-release-rehearsal.py` 的“套餐升级”阶段（第八个二进制 dbe75ca）。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：
