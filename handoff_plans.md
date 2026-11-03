@@ -667,6 +667,9 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 | R3-05 文档 | PASS | docs/payment-operations.md 第十一、十二节；README、backend/DEPLOYMENT.md 各一段；docs/android-billing-acceptance.md 增加 A04-upgrade |
 | R3-06 全量 CI | 见下方“CI” | |
 
+**CI**
+1. 8078877：“Backend / PostgreSQL / race” 失败一项 `TestCoreOnlineLeasesEndToEnd/a_withdrawn_server_moves_the_device_by_itself_with_a_continuous_ledger`（断开时 Core 的计量仍显示有待确认的批次），与第 1 轮 CI 记录里的偶发完全相同；本轮没有改租约和 Core（线束只在测试标签下编译），本地全量通过，按惯例重跑该任务。其余任务（含 Android 计费验收、发布演练、Windows、macOS）通过。
+
 **本地回归**
 - `python3 scripts/test-native.py`（全部后端包，-race，真实 Core、节点代理与旧版 Core）退出码 0，api 包 665 秒，含本轮 5 个新测试。
 - 上述新测试与演练全部通过；`test-native-macos.py --suite unit`：7/8 通过，唯一失败的 U-MIHOMO-PATCH 需要 Mihomo 子模块的 git 历史，本 worktree 里是不带 .git 的拷贝（环境原因，与本轮无关，以 CI 为准）。
