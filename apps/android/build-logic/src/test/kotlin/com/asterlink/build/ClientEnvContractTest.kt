@@ -35,11 +35,11 @@ class ClientEnvContractTest {
     }
 
     @Test
-    fun theCommittedExampleIsValidAndPointsAtTheDemoServers() {
+    fun theCommittedExampleIsValidAndPointsAtTheProductionServers() {
         val example = ClientEnv.load(contracts.resolve("../../apps/android/.env.example").canonicalFile)
         assertEquals("development", example.channel)
-        assertEquals("https://demo.hyshentou.cn/api/v1/client", example.apiBaseUrl)
-        assertEquals("https://test.hyshentou.cn", example.websiteBaseUrl)
+        assertEquals("https://api.asterlink.vip/api/v1/client", example.apiBaseUrl)
+        assertEquals("https://www.asterlink.vip", example.websiteBaseUrl)
     }
 
     @Test
