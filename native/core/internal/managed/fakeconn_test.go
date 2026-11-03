@@ -163,7 +163,10 @@ func (f *fakeAPI) connectionRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.conns.releaseHits.Add(1)
-	if gate := f.conns.releaseGate; gate != nil {
+	f.mu.Lock()
+	gate := f.conns.releaseGate
+	f.mu.Unlock()
+	if gate != nil {
 		<-gate
 	}
 	id, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/client/connections/"), "/release")

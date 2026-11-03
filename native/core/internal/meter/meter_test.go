@@ -126,6 +126,32 @@ func TestLostAckRetriesOriginalBatchAndNeverDoubleCharges(t *testing.T) {
 	}
 }
 
+// A sealed ledger settles what it counted up to the seal, even across a lost reply, and
+// never what the engine counts afterwards (for another session).
+func TestSealSettlesOnlyWhatWasCountedBeforeIt(t *testing.T) {
+	l := newLedger(1024*mib, 500)
+	e := &engine{}
+	m := start(t, l, e)
+	e.up, e.down = 1*mib, 3*mib
+	if err := m.Seal(); err != nil || m.Settled() {
+		t.Fatalf("seal: %v, settled %v", err, m.Settled())
+	}
+	e.up, e.down = 9*mib, 9*mib // a later segment of another session
+	l.losses = 1
+	if _, _, err := m.Flush(context.Background()); err == nil || !m.Pending() {
+		t.Fatalf("the lost reply must keep the batch: %v", err)
+	}
+	if _, _, err := m.Settle(context.Background()); err != nil || !m.Settled() {
+		t.Fatalf("settle after seal: %v", err)
+	}
+	if l.session.UploadBytes != 1*mib || l.session.DownloadBytes != 3*mib || l.session.UsedUnits != 4*mib*500 || l.calls != 2 {
+		t.Fatalf("server %+v after %d calls", l.session, l.calls)
+	}
+	if err := m.Sample(); err != nil || !m.Settled() {
+		t.Fatalf("a sample after the seal moved the ledger: %v", err)
+	}
+}
+
 func TestCounterRegressionIsFatalAndNothingIsReported(t *testing.T) {
 	l := newLedger(1024*mib, 1000)
 	e := &engine{}

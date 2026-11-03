@@ -354,7 +354,7 @@ func (r *runner) runCases(ctx context.Context) {
 
 	// ---- A04: an administrator re-rates the connected line.
 	if r.signIn(ctx, "change") {
-		r.stopCase(ctx, "A04-rate", "change", "changing", 1000, []string{"profile_changed"}, false, func() {
+		r.stopCase(ctx, "A04-rate", "change", "changing", 1000, []string{"profile_changed"}, false, false, func() {
 			_, _ = r.world.post(ctx, "edit", map[string]any{"node": "changing", "rate_permille": 2000})
 		})
 		rated := r.waitFor(ctx, 10*time.Second, func(s managed.Snapshot) bool {
@@ -374,7 +374,7 @@ func (r *runner) runCases(ctx context.Context) {
 		r.record("A04-rebind", status, fmt.Sprintf("new rate listed after %d ms; the next connection %s bound at %d permille", rated.Milliseconds(), s.State, bound))
 
 		// ---- A04: the line is disabled while connected.
-		r.stopCase(ctx, "A04-disable", "change", "changing", 2000, []string{"client_config_unavailable", "node_unavailable"}, false, func() {
+		r.stopCase(ctx, "A04-disable", "change", "changing", 2000, []string{"client_config_unavailable", "node_unavailable"}, false, false, func() {
 			_, _ = r.world.post(ctx, "edit", map[string]any{"node": "changing", "enabled": false})
 		})
 		gone := r.waitFor(ctx, 10*time.Second, func(s managed.Snapshot) bool {
@@ -391,7 +391,7 @@ func (r *runner) runCases(ctx context.Context) {
 
 	// ---- A04: the plan ends while connected.
 	if r.signIn(ctx, "expire") {
-		r.stopCase(ctx, "A04-expire", "expire", "dedicated", 1000, []string{"subscription_expired"}, false, func() {
+		r.stopCase(ctx, "A04-expire", "expire", "dedicated", 1000, []string{"subscription_expired"}, false, false, func() {
 			_, _ = r.world.post(ctx, "expire", map[string]string{"user": "expire"})
 		})
 		s := r.m.Snapshot()
@@ -413,7 +413,7 @@ func (r *runner) runCases(ctx context.Context) {
 	// ---- A04: the data runs out while connected (the client keeps downloading).
 	_, _ = r.world.post(ctx, "quota", map[string]any{"user": "quota", "remaining_bytes": 12 << 20})
 	if r.signIn(ctx, "quota") {
-		r.stopCase(ctx, "A04-quota", "quota", "dedicated", 1000, []string{"quota_exhausted"}, true, func() {})
+		r.stopCase(ctx, "A04-quota", "quota", "dedicated", 1000, []string{"quota_exhausted"}, true, false, func() {})
 		l, _ := r.world.ledger(ctx, "quota")
 		status := "FAIL"
 		if l.RemainingBytes == 0 {
@@ -432,8 +432,9 @@ func (r *runner) runCases(ctx context.Context) {
 
 // upgradeCase: a customer connected on starter pays a mid-period upgrade to pro on the website
 // (handoff_plans.md 7.4, 12, R3-03). The plan's fingerprint changes, so the Core must stop the
-// tunnel by itself and end the session with subscription_changed (the connection billed at its
-// own rate, in the same period); signing in again lists the new plan's dedicated line.
+// tunnel by itself and end the session with subscription_changed; every byte downloaded before
+// the upgrade, the tail since the last report included, is billed at the line's own rate in the
+// same period; signing in again lists the new plan's dedicated line.
 func (r *runner) upgradeCase(ctx context.Context) {
 	if !r.signIn(ctx, "upgrade") {
 		return
@@ -446,7 +447,7 @@ func (r *runner) upgradeCase(ctx context.Context) {
 		return
 	}
 	var answer []byte
-	r.stopCase(ctx, "A04-upgrade", "upgrade", "ordinary", 500, []string{"subscription_changed"}, false, func() {
+	r.stopCase(ctx, "A04-upgrade", "upgrade", "ordinary", 500, []string{"subscription_changed"}, false, true, func() {
 		answer, _ = r.world.post(ctx, "upgrade", map[string]string{"user": "upgrade"})
 	})
 	s := r.m.Snapshot()
@@ -565,14 +566,16 @@ func (r *runner) ackLossCase(ctx context.Context) {
 // stopCase: connect on node, move a little data, then trigger a server-side change (or, with
 // drive, keep downloading until the quota is gone) and require the engine to stop by itself with
 // one of reasons, the tail to settle and the whole connection to be billed at its own rate.
-func (r *runner) stopCase(ctx context.Context, id, who, node string, rate int64, reasons []string, drive bool, trigger func()) {
+// With whole, the change also ends the session (subscription_changed): the tail is settled
+// after the sign-out, so the ledger is awaited until it holds every byte downloaded before it.
+func (r *runner) stopCase(ctx context.Context, id, who, node string, rate int64, reasons []string, drive, whole bool, trigger func()) {
 	r.selectNode(ctx, node)
 	before, _ := r.world.ledger(ctx, who)
 	if s, err := r.connect(ctx); err != nil || s.State != managed.StateConnected {
 		r.record(id, "FAIL", fmt.Sprintf("did not connect: %v %s", err, r.lastErrorCode(s)))
 		return
 	}
-	_, _ = r.xfer.download(ctx, 1<<20)
+	moved, _ := r.xfer.download(ctx, 1<<20)
 	trigger()
 	began := time.Now()
 	stopped := time.Duration(-1)
@@ -598,8 +601,16 @@ func (r *runner) stopCase(ctx context.Context, id, who, node string, rate int64,
 	code := r.lastErrorCode(s)
 	after, _ := r.world.ledger(ctx, who)
 	counted := (after.UploadBytes - before.UploadBytes) + (after.DownloadBytes - before.DownloadBytes)
+	for wait := time.Now(); whole && counted < moved && time.Since(wait) < 20*time.Second && ctx.Err() == nil; {
+		time.Sleep(100 * time.Millisecond)
+		after, _ = r.world.ledger(ctx, who)
+		counted = (after.UploadBytes - before.UploadBytes) + (after.DownloadBytes - before.DownloadBytes)
+	}
 	units := after.UsedUnits - before.UsedUnits
 	var problems []string
+	if whole && (moved < 1<<20 || counted < moved) {
+		problems = append(problems, fmt.Sprintf("%d bytes downloaded before the change, %d charged", moved, counted))
+	}
 	if !slices.Contains(reasons, code) {
 		problems = append(problems, fmt.Sprintf("stopped with %q, expected one of %v", code, reasons))
 	}

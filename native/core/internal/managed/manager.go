@@ -157,6 +157,9 @@ type Manager struct {
 	bridge bool
 	// sameList: earlier catalog revisions with exactly the current list of lines.
 	sameList map[string]bool
+	// tails counts dropped sessions whose tail is still being settled (settleDropped);
+	// Shutdown waits for them.
+	tails sync.WaitGroup
 }
 
 type errorInfo struct {
@@ -302,6 +305,7 @@ func (m *Manager) Shutdown(ctx context.Context) {
 	m.Logout(ctx) // stops the tunnel and settles before revoking
 	_ = m.opts.Engine.Stop()
 	m.opts.Egress.Clear()
+	m.tails.Wait() // bounded by SettleTimeout plus one release
 }
 
 // teardown drops all session state. keepError retains lastError for a replacement login.
@@ -347,24 +351,73 @@ func (m *Manager) failLocked(err error) {
 	m.lastError = &errorInfo{Code: code, Message: apiclient.Message(code)}
 }
 
-// dropSessionLocked ends the session after the server refused the token.
+// dropSessionLocked ends the session after the server refused the token, or after it
+// said the subscription changed under it.
 func (m *Manager) dropSessionLocked(code string) {
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
 	}
 	m.generation++
-	client := m.client
+	client, token, mt := m.client, m.token, m.meter
+	var leases []string
+	if m.admission != nil {
+		leases = append(leases, m.admission.id)
+	}
+	if m.unreleased != nil && (m.admission == nil || m.unreleased.id != m.admission.id) {
+		leases = append(leases, m.unreleased.id)
+	}
 	m.abortConnLocked()
 	m.resetLocked(false)
 	m.lastError = &errorInfo{Code: code, Message: apiclient.Message(code)}
+	// The data path closes first, so nothing is counted after the tail below.
+	_ = m.opts.Engine.Stop()
+	m.opts.Egress.Clear()
+	if code == "subscription_changed" && client != nil && token != "" && (mt != nil || len(leases) > 0) {
+		// The token still works: the server accepts /traffic while the subscription and its
+		// period are the same (an upgrade or an administrator's plan edit), so the bytes
+		// counted since the last report are settled with it, at the bound rate. A new period
+		// refuses them (409 subscription_changed) and nothing is charged to it. The ledger
+		// is sealed here: whatever the engine counts later belongs to another session.
+		if mt != nil {
+			_ = mt.Seal() // a meter that never began a segment has nothing to settle
+		}
+		m.tails.Add(1)
+		go m.settleDropped(client, token, mt, leases)
+		return
+	}
+	// Any other code means the token is dead, so no settlement is possible: closing the
+	// data path is all that remains to be done.
 	if client != nil {
 		go client.CloseIdle()
 	}
-	// The token is dead, so no settlement is possible: closing the data path is all
-	// that remains to be done.
-	_ = m.opts.Engine.Stop()
-	m.opts.Egress.Clear()
+}
+
+// settleDropped settles a dropped session's tail and then releases its online lease
+// (the final report renewed it). The meter is no longer reachable from the Manager, so
+// this is its only writer; a report still in flight on the old segment was cancelled and
+// its batch is replayed verbatim. Bounded like the stop path's own settlement.
+func (m *Manager) settleDropped(client *apiclient.Client, token string, mt *meter.Meter, leases []string) {
+	defer m.tails.Done()
+	defer client.CloseIdle()
+	ctx, cancel := context.WithTimeout(context.Background(), m.opts.SettleTimeout+releaseTimeout)
+	defer cancel()
+	if mt != nil {
+		if mt.Fatal() == "" && !mt.Settled() {
+			sctx, scancel := context.WithTimeout(ctx, m.opts.SettleTimeout)
+			_, _, _ = mt.Settle(sctx)
+			scancel()
+		}
+		mt.Idle()
+		if !mt.Settled() {
+			return // as on the stop path, a lease is released only after its tail; it lapses
+		}
+	}
+	for _, id := range leases {
+		rctx, rcancel := context.WithTimeout(ctx, releaseTimeout)
+		_, _ = client.ReleaseConnection(rctx, token, id, apiclient.ReleaseStopped)
+		rcancel()
+	}
 }
 
 // applySessionLocked folds a fresh server session in. requestStart is the local time
