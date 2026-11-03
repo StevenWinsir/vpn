@@ -191,6 +191,9 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	secured.POST("/payments/quote", s.paymentQuote)
 	secured.POST("/payments/orders", s.createPaymentOrder)
 	secured.GET("/payments/orders/:id", s.paymentOrder)
+	secured.GET("/payments/upgrade-options", s.upgradeOptions)
+	secured.POST("/payments/upgrade-quote", s.upgradeQuote)
+	secured.POST("/payments/upgrade-orders", s.createUpgradeOrder)
 	// The account console is separate from node administration and does not depend on
 	// the node catalog switch (handoff_payment_account.md 9.1).
 	console := secured.Group("/admin/console")

@@ -159,7 +159,29 @@ type Order struct {
 	// twelve months so an older binary that fulfils the order still grants the year.
 	QuotaCycleDays  int   `gorm:"not null;default:0" json:"quota_cycle_days"`
 	QuotaCycleBytes int64 `gorm:"not null;default:0" json:"quota_cycle_bytes"`
+	// Upgrades (handoff_plans.md 9.1). Kind is purchase on every row an older binary
+	// writes. An upgrade order sells the rest of the current period on PlanID: it keeps
+	// DurationDays and TrafficBytes at 0, so an older binary can never fulfil it as a
+	// purchase, and the computation behind its price is in UpgradeSnapshot.
+	Kind                string `gorm:"size:12;not null;default:purchase;check:kind IN ('purchase','upgrade')" json:"kind"`
+	FromPlanID          string `gorm:"size:32;not null;default:''" json:"-"`
+	FromPlanName        string `gorm:"size:80;not null;default:''" json:"from_plan_name,omitempty"`
+	CreditCents         int64  `gorm:"not null;default:0" json:"credit_cents"`
+	UpgradeDays         int    `gorm:"not null;default:0" json:"upgrade_days"`
+	UpgradeTrafficBytes int64  `gorm:"not null;default:0" json:"upgrade_traffic_bytes"`
+	UpgradeSnapshot     string `gorm:"type:text;not null;default:''" json:"-"`
+	// CoversFrom..CoversTo is the time the order's value pays for, written when it is
+	// fulfilled (handoff_plans.md 6.4). Orders fulfilled before (or by an older binary)
+	// have none.
+	CoversFrom *time.Time `json:"-"`
+	CoversTo   *time.Time `json:"-"`
 }
+
+// Order kinds (Order.Kind).
+const (
+	OrderKindPurchase = "purchase"
+	OrderKindUpgrade  = "upgrade"
+)
 
 // Order statuses. paid means paid and fulfilled, in one transaction.
 const (

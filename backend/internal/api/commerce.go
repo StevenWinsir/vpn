@@ -127,7 +127,7 @@ func (s *Server) testPurchase(c *gin.Context) {
 			return err
 		}
 		now := time.Now().UTC()
-		if _, err := applyPlan(tx, user.ID, terms.forCycle(plan), terms.QuotaCycleDays, now, true); err != nil {
+		if _, _, err := applyPlan(tx, user.ID, terms.forCycle(plan), terms.QuotaCycleDays, now, true); err != nil {
 			return err
 		}
 		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: terms.PriceCents, DurationDays: terms.DurationDays, TrafficBytes: terms.TrafficBytes, Status: model.OrderPaidTest, Provider: "test", PaidAt: &now,

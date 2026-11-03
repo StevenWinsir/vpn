@@ -103,6 +103,13 @@ type ShopReadiness struct {
 	ActivePlans        int64 `json:"active_plans"`
 	PlansOverDeviceCap int64 `json:"plans_over_device_cap"`
 	ActiveYearlyPlans  int64 `json:"active_yearly_plans"`
+	// Mid-period upgrades (handoff_plans.md 13.3): the switch, the minimum charge, upgrade
+	// orders waiting for an administrator, and "from>to:group" for every line group a
+	// customer would lose by upgrading between two active plans.
+	UpgradeEnabled        bool     `json:"upgrade_enabled"`
+	UpgradeMinChargeCents int64    `json:"upgrade_min_charge_cents"`
+	UpgradeReviewOrders   int64    `json:"upgrade_review_orders"`
+	UpgradeGroupGaps      []string `json:"upgrade_group_gaps"`
 }
 
 // ImpersonationReadiness counts the administrator-opened sessions that are still
@@ -294,6 +301,9 @@ func Inspect(ctx context.Context, db *gorm.DB, cfg config.Config, email string) 
 		if report.Shop.ActivePlans == 0 {
 			report.Warnings = append(report.Warnings, "shop_no_active_plans")
 		}
+		if err := upgradeReadiness(tx, &report); err != nil {
+			return err
+		}
 		if report.Payment.ReviewOrders > 0 {
 			report.Warnings = append(report.Warnings, "payment_orders_need_review")
 		}
@@ -426,6 +436,59 @@ func ticketReadiness(tx *gorm.DB, cfg config.Config, report *ReadinessReport) er
 	}
 	if report.Tickets.ExpiredNotDeleted > 0 {
 		report.Warnings = append(report.Warnings, "tickets_expiry_lagging")
+	}
+	return nil
+}
+
+// upgradeReadiness fills the upgrade facts (handoff_plans.md 13.3).
+func upgradeReadiness(tx *gorm.DB, report *ReadinessReport) error {
+	report.Shop.UpgradeEnabled, report.Shop.UpgradeMinChargeCents, report.Shop.UpgradeGroupGaps = true, model.DefaultUpgradeMinChargeCents, []string{}
+	var rows []model.ShopSettings
+	if err := tx.Select("upgrade_enabled", "upgrade_min_charge_cents").Where("id = 1").Find(&rows).Error; err != nil {
+		return err
+	}
+	if len(rows) == 1 {
+		report.Shop.UpgradeEnabled, report.Shop.UpgradeMinChargeCents = rows[0].UpgradeEnabled, rows[0].UpgradeMinChargeCents
+		if rows[0].UpgradeMinChargeCents < 1 || rows[0].UpgradeMinChargeCents > model.MaxUpgradeMinChargeCents {
+			report.Warnings = append(report.Warnings, "shop_upgrade_settings_invalid")
+		}
+	}
+	if err := tx.Model(&model.Order{}).Where("status = ? AND kind = ?", model.OrderReview, model.OrderKindUpgrade).Count(&report.Shop.UpgradeReviewOrders).Error; err != nil {
+		return err
+	}
+	if report.Shop.UpgradeReviewOrders > 0 {
+		report.Warnings = append(report.Warnings, "upgrade_orders_need_review")
+	}
+	var plans []model.Plan
+	if err := tx.Where("active = ? AND deleted_at IS NULL", true).Order("sort asc, id asc").Find(&plans).Error; err != nil {
+		return err
+	}
+	var groups []model.NodeGroup
+	if err := tx.Where("enabled = ?", true).Order("sort asc, name asc").Find(&groups).Error; err != nil {
+		return err
+	}
+	for _, from := range plans {
+		for _, to := range plans {
+			if from.ID == to.ID || from.DurationDays < 1 || to.DurationDays < 1 {
+				continue
+			}
+			relation := billing.UpgradeRelation(
+				billing.Holding{PriceCents: from.PriceCents, Traffic: billing.Rate{Amount: from.TrafficBytes, Days: from.DurationDays}, MaxDevices: from.MaxDevices, AllowDedicated: from.AllowDedicated},
+				billing.Target{PriceCents: to.PriceCents, Traffic: billing.Rate{Amount: to.TrafficBytes, Days: to.DurationDays}, MaxDevices: to.MaxDevices, AllowDedicated: to.AllowDedicated})
+			if relation != billing.RelationUpgrade {
+				continue
+			}
+			for _, g := range groups {
+				had, e1 := billing.GroupVisibleTo(g, from.ID, from.AllowDedicated)
+				has, e2 := billing.GroupVisibleTo(g, to.ID, to.AllowDedicated)
+				if e1 == nil && e2 == nil && had && !has {
+					report.Shop.UpgradeGroupGaps = append(report.Shop.UpgradeGroupGaps, from.ID+">"+to.ID+":"+g.Name)
+				}
+			}
+		}
+	}
+	if len(report.Shop.UpgradeGroupGaps) > 0 {
+		report.Warnings = append(report.Warnings, "plans_upgrade_group_gap")
 	}
 	return nil
 }
