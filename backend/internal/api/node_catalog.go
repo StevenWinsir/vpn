@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
+	"vpn/backend/internal/billing"
 	"vpn/backend/internal/model"
 	"vpn/backend/internal/nodes"
 )
@@ -90,11 +91,11 @@ func (s *Server) catalogRows(db *gorm.DB, enabled bool) ([]catalogRow, error) {
 
 // groupVisible is the plan and dedicated-line rule of plan 6.1 for one group.
 func groupVisible(g model.NodeGroup, sub *model.Subscription) (bool, error) {
-	var plans []string
-	if json.Unmarshal([]byte(g.PlanIDs), &plans) != nil {
+	visible, err := billing.GroupVisibleTo(g, sub.PlanID, sub.AllowDedicated)
+	if err != nil {
 		return false, nodes.ErrInvalid
 	}
-	return g.Enabled && !(g.LineType == "dedicated" && !sub.AllowDedicated) && (len(plans) == 0 || slices.Contains(plans, sub.PlanID)), nil
+	return visible, nil
 }
 
 // serverRow is one enabled server of an enabled group with that group's metadata.

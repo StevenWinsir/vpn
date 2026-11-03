@@ -858,7 +858,7 @@ func TestShopRenewalAddsUTCDays(t *testing.T) {
 	}
 	start := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	for i, now := range []time.Time{start, start.AddDate(0, 0, 14)} {
-		if _, err := applyPlan(e.db, u.ID, plan, 0, now, false); err != nil {
+		if _, _, err := applyPlan(e.db, u.ID, plan, 0, now, false); err != nil {
 			t.Fatal(err)
 		}
 		sub, err := readSubscription(e.db, u.ID, now)

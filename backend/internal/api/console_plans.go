@@ -236,6 +236,8 @@ func (s *Server) adminPlanOf(plan model.Plan, global int, st planStats) adminPla
 
 type shopSettingsView struct {
 	YearlyDiscountPercent int        `json:"yearly_discount_percent"`
+	UpgradeEnabled        bool       `json:"upgrade_enabled"`
+	UpgradeMinChargeCents int64      `json:"upgrade_min_charge_cents"`
 	Version               int64      `json:"version"`
 	UpdatedBy             *string    `json:"updated_by"`
 	UpdatedAt             *time.Time `json:"updated_at"`
@@ -247,12 +249,17 @@ func readShopSettings(db *gorm.DB) (shopSettingsView, error) {
 	var row model.ShopSettings
 	err := db.First(&row, "id = 1").Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return shopSettingsView{YearlyDiscountPercent: model.DefaultYearlyDiscountPercent, RowMissing: true}, nil
+		return shopSettingsView{YearlyDiscountPercent: model.DefaultYearlyDiscountPercent, UpgradeEnabled: true, UpgradeMinChargeCents: model.DefaultUpgradeMinChargeCents, RowMissing: true}, nil
 	}
 	if err != nil {
 		return shopSettingsView{}, err
 	}
-	return shopSettingsView{YearlyDiscountPercent: row.YearlyDiscountPercent, Version: row.Version, UpdatedBy: row.UpdatedBy, UpdatedAt: &row.UpdatedAt}, nil
+	return settingsViewOf(row), nil
+}
+
+func settingsViewOf(row model.ShopSettings) shopSettingsView {
+	return shopSettingsView{YearlyDiscountPercent: row.YearlyDiscountPercent, UpgradeEnabled: row.UpgradeEnabled, UpgradeMinChargeCents: row.UpgradeMinChargeCents,
+		Version: row.Version, UpdatedBy: row.UpdatedBy, UpdatedAt: &row.UpdatedAt}
 }
 
 func (s *Server) consolePlanList(c *gin.Context) {
@@ -602,9 +609,13 @@ func (s *Server) consoleShopSettings(c *gin.Context) {
 	c.JSON(200, gin.H{"settings": settings})
 }
 
+// shopSettingsInput: the upgrade fields are optional, so an older console that only
+// knows the yearly discount leaves them as they are.
 type shopSettingsInput struct {
-	YearlyDiscountPercent int   `json:"yearly_discount_percent"`
-	Version               int64 `json:"version"`
+	YearlyDiscountPercent int    `json:"yearly_discount_percent"`
+	UpgradeEnabled        *bool  `json:"upgrade_enabled"`
+	UpgradeMinChargeCents *int64 `json:"upgrade_min_charge_cents"`
+	Version               int64  `json:"version"`
 }
 
 func (s *Server) consoleShopSettingsSave(c *gin.Context) {
@@ -616,6 +627,10 @@ func (s *Server) consoleShopSettingsSave(c *gin.Context) {
 		planFailure(c, fieldError("yearly_discount_percent", "年付折扣须为 50–100 的整数百分比（90 表示 9 折）"))
 		return
 	}
+	if in.UpgradeMinChargeCents != nil && (*in.UpgradeMinChargeCents < 1 || *in.UpgradeMinChargeCents > model.MaxUpgradeMinChargeCents) {
+		planFailure(c, fieldError("upgrade_min_charge_cents", "最低补差金额须为 0.01–100.00 元"))
+		return
+	}
 	now, actor := s.now(), currentUser(c).ID
 	var row model.ShopSettings
 	err := s.database(c).Transaction(func(tx *gorm.DB) error {
@@ -623,13 +638,23 @@ func (s *Server) consoleShopSettingsSave(c *gin.Context) {
 			return err
 		}
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = 1").Error
-		from := model.DefaultYearlyDiscountPercent
+		before := model.ShopSettings{YearlyDiscountPercent: model.DefaultYearlyDiscountPercent, UpgradeEnabled: true, UpgradeMinChargeCents: model.DefaultUpgradeMinChargeCents}
 		switch {
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			// The row was removed by hand: recreate it rather than refuse.
-			row = model.ShopSettings{ID: 1, YearlyDiscountPercent: in.YearlyDiscountPercent, Version: 1, UpdatedBy: &actor, UpdatedAt: now}
+			row = before
+			row.ID, row.Version, row.UpdatedBy, row.UpdatedAt = 1, 1, &actor, now
+			applySettingsInput(&row, in)
+			enabled := row.UpgradeEnabled
 			if err = tx.Select("*").Create(&row).Error; err != nil {
 				return err
+			}
+			// GORM writes (and reads back) the column default for a false bool on Create.
+			if !enabled {
+				row.UpgradeEnabled = false
+				if err = tx.Model(&row).Update("upgrade_enabled", false).Error; err != nil {
+					return err
+				}
 			}
 		case err != nil:
 			return err
@@ -637,19 +662,39 @@ func (s *Server) consoleShopSettingsSave(c *gin.Context) {
 			if in.Version != row.Version {
 				return &apiError{409, "version_conflict", "设置已被其他管理员修改，请刷新后重试"}
 			}
-			if in.YearlyDiscountPercent == row.YearlyDiscountPercent {
+			before = row
+			applySettingsInput(&row, in)
+			if row.YearlyDiscountPercent == before.YearlyDiscountPercent && row.UpgradeEnabled == before.UpgradeEnabled && row.UpgradeMinChargeCents == before.UpgradeMinChargeCents {
 				return &apiError{400, "no_change", "没有任何改动"}
 			}
-			from = row.YearlyDiscountPercent
-			row.YearlyDiscountPercent, row.Version, row.UpdatedBy, row.UpdatedAt = in.YearlyDiscountPercent, row.Version+1, &actor, now
+			row.Version, row.UpdatedBy, row.UpdatedAt = row.Version+1, &actor, now
 			if err = tx.Save(&row).Error; err != nil {
 				return err
 			}
 		}
-		return consoleAudit(tx, actor, AuditShopSettings, auditTarget("shop", "settings"), row.Version, gin.H{"yearly_discount_percent": gin.H{"from": from, "to": row.YearlyDiscountPercent}}, now)
+		detail := gin.H{}
+		pair := func(key string, a, b any) {
+			if a != b {
+				detail[key] = gin.H{"from": a, "to": b}
+			}
+		}
+		pair("yearly_discount_percent", before.YearlyDiscountPercent, row.YearlyDiscountPercent)
+		pair("upgrade_enabled", before.UpgradeEnabled, row.UpgradeEnabled)
+		pair("upgrade_min_charge_cents", before.UpgradeMinChargeCents, row.UpgradeMinChargeCents)
+		return consoleAudit(tx, actor, AuditShopSettings, auditTarget("shop", "settings"), row.Version, detail, now)
 	})
 	if planFailure(c, err) {
 		return
 	}
-	c.JSON(200, gin.H{"settings": shopSettingsView{YearlyDiscountPercent: row.YearlyDiscountPercent, Version: row.Version, UpdatedBy: row.UpdatedBy, UpdatedAt: &row.UpdatedAt}})
+	c.JSON(200, gin.H{"settings": settingsViewOf(row)})
+}
+
+func applySettingsInput(row *model.ShopSettings, in shopSettingsInput) {
+	row.YearlyDiscountPercent = in.YearlyDiscountPercent
+	if in.UpgradeEnabled != nil {
+		row.UpgradeEnabled = *in.UpgradeEnabled
+	}
+	if in.UpgradeMinChargeCents != nil {
+		row.UpgradeMinChargeCents = *in.UpgradeMinChargeCents
+	}
 }

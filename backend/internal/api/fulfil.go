@@ -91,18 +91,23 @@ func readSubscription(tx *gorm.DB, userID string, now time.Time) (*model.Subscri
 //
 // A monthly purchase onto a refreshing subscription extends it the same way: the days
 // it adds are covered by the refreshes, so the current cycle gains nothing.
-func applyPlan(tx *gorm.DB, userID string, plan model.Plan, cycleDays int, now time.Time, test bool) (*model.Subscription, error) {
+//
+// It also returns where the purchase's days begin: now for a new period, the previous
+// expiry for a renewal (the order's value window, handoff_plans.md 6.4).
+func applyPlan(tx *gorm.DB, userID string, plan model.Plan, cycleDays int, now time.Time, test bool) (*model.Subscription, time.Time, error) {
 	current, err := readSubscription(tx, userID, now)
 	if err != nil {
-		return nil, err
+		return nil, now, err
 	}
 	renew, err := planDecision(current, plan, now, test)
 	if err != nil {
-		return nil, err
+		return nil, now, err
 	}
 	var sub model.Subscription
+	from := now
 	if renew {
 		sub = *current
+		from = current.ExpiresAt.UTC()
 	} else {
 		sub = model.Subscription{UserID: userID, PlanID: plan.ID, PlanName: plan.Name, StartsAt: now, ExpiresAt: now, MaxDevices: plan.MaxDevices, AllowDedicated: plan.AllowDedicated, IsTest: test}
 		if current != nil {
@@ -127,7 +132,8 @@ func applyPlan(tx *gorm.DB, userID string, plan model.Plan, cycleDays int, now t
 	// would gain or lose the hour of a daylight-saving change.
 	sub.ExpiresAt = sub.ExpiresAt.UTC().AddDate(0, 0, plan.DurationDays)
 	sub.Version++
-	return saveSubscription(tx, &sub)
+	saved, err := saveSubscription(tx, &sub)
+	return saved, from, err
 }
 
 // saveSubscription writes sub and mirrors it into its current period when that period

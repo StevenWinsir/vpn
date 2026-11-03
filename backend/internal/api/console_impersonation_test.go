@@ -160,7 +160,7 @@ func TestImpersonationIsReadOnly(t *testing.T) {
 	}
 
 	// Reading works, as the user.
-	for _, path := range []string{"/me/dashboard", "/orders", "/me/devices", "/me/logins", "/me/usage-history", "/payments/orders/" + pending.Order.ID} {
+	for _, path := range []string{"/me/dashboard", "/orders", "/me/devices", "/me/logins", "/me/usage-history", "/payments/orders/" + pending.Order.ID, "/payments/upgrade-options"} {
 		if w := admin.get(path); w.Code != 200 {
 			t.Fatalf("GET %s: %d %s", path, w.Code, w.Body.String())
 		}
@@ -175,6 +175,8 @@ func TestImpersonationIsReadOnly(t *testing.T) {
 		{"/orders/test-purchase", map[string]any{"plan_id": "starter"}},
 		{"/payments/orders", map[string]any{"plan_id": "starter", "pay_type": "wxpay"}},
 		{"/payments/quote", map[string]any{"plan_id": "starter"}},
+		{"/payments/upgrade-quote", map[string]any{"plan_id": "pro"}},
+		{"/payments/upgrade-orders", map[string]any{"plan_id": "pro", "pay_type": "wxpay", "expected_amount_cents": 100}},
 		{"/me/announcements/" + pub.ID + "/ack", nil},
 		{"/admin/console/users/" + peer.ID + "/password", map[string]any{"admin_password": payPassword, "new_password": "Another-Password-2026"}},
 	} {

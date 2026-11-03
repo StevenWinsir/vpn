@@ -156,6 +156,9 @@ func successProcessable(o model.Order) bool {
 // nothing, when the purchase can no longer apply (for example the plan changed
 // meanwhile); the caller then puts the order under review.
 func (s *Server) fulfilOrder(tx *gorm.DB, order *model.Order, paidCents int64, now time.Time) (bool, error) {
+	if order.Kind == model.OrderKindUpgrade {
+		return s.fulfilUpgrade(tx, order, paidCents, now)
+	}
 	var plan model.Plan
 	if err := tx.Where("id = ?", order.PlanID).First(&plan).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -188,7 +191,8 @@ func (s *Server) fulfilOrder(tx *gorm.DB, order *model.Order, paidCents int64, n
 	if err := tx.SavePoint("fulfil").Error; err != nil {
 		return false, err
 	}
-	if _, err := applyPlan(tx, order.UserID, plan, order.QuotaCycleDays, now, false); err != nil {
+	sub, coversFrom, err := applyPlan(tx, order.UserID, plan, order.QuotaCycleDays, now, false)
+	if err != nil {
 		var business *apiError
 		if errors.As(err, &business) {
 			return false, tx.RollbackTo("fulfil").Error
@@ -200,11 +204,34 @@ func (s *Server) fulfilOrder(tx *gorm.DB, order *model.Order, paidCents int64, n
 			return false, err
 		}
 	}
-	if err := tx.Model(order).Updates(map[string]any{"status": model.OrderPaid, "paid_cents": paidCents, "paid_at": now, "review_reason": "", "updated_at": now}).Error; err != nil {
+	// The time this order's value covers, for a later upgrade's credit (handoff_plans.md 6.4).
+	if err := tx.Model(order).Updates(map[string]any{"status": model.OrderPaid, "paid_cents": paidCents, "paid_at": now, "review_reason": "", "updated_at": now,
+		"covers_from": coversFrom, "covers_to": sub.ExpiresAt}).Error; err != nil {
 		return false, err
 	}
 	// The buyer's first real paid order qualifies a referral binding (handoff_coupon.md
 	// 7.1); the reward itself is granted later by the referral worker.
+	return true, s.qualifyReferral(tx, order.UserID, now)
+}
+
+// fulfilUpgrade is fulfilOrder for an upgrade order (handoff_plans.md 8.3): it applies
+// only to the subscription it was priced on, else nothing changes and the caller puts
+// the order under review. An upgrade carries no coupon.
+func (s *Server) fulfilUpgrade(tx *gorm.DB, order *model.Order, paidCents int64, now time.Time) (bool, error) {
+	if err := tx.SavePoint("fulfil").Error; err != nil {
+		return false, err
+	}
+	sub, granted, ok, err := applyUpgrade(tx, order, now)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, tx.RollbackTo("fulfil").Error
+	}
+	if err := tx.Model(order).Updates(map[string]any{"status": model.OrderPaid, "paid_cents": paidCents, "paid_at": now, "review_reason": "", "updated_at": now,
+		"covers_from": now, "covers_to": sub.ExpiresAt, "upgrade_traffic_bytes": granted}).Error; err != nil {
+		return false, err
+	}
 	return true, s.qualifyReferral(tx, order.UserID, now)
 }
 

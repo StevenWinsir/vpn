@@ -176,6 +176,9 @@ func (s *Server) paymentQuote(c *gin.Context) {
 			}
 		}
 		renew, decision := planDecision(sub, terms.forCycle(plan), now, false)
+		if errors.Is(decision, errPlanChange) {
+			decision = s.planChangeProblem(tx, user, sub, plan, now)
+		}
 		var business *apiError
 		switch {
 		case errors.As(decision, &business):
@@ -274,7 +277,7 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 		}
 		err = tx.Where("user_id = ? AND idempotency_key = ?", user.ID, key).First(&order).Error
 		if err == nil {
-			if order.TradeNo == nil || order.PlanID != in.PlanID || order.PayType != in.PayType || order.CouponCode != code || order.BillingCycle != cycle {
+			if order.TradeNo == nil || order.Kind == model.OrderKindUpgrade || order.PlanID != in.PlanID || order.PayType != in.PayType || order.CouponCode != code || order.BillingCycle != cycle {
 				return &apiError{409, "idempotency_conflict", "此请求标识已用于其他订单"}
 			}
 			replayed = true
@@ -284,8 +287,15 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 			return err
 		}
 		var live []model.Order
-		if err = livePending(tx.Select("id", "expires_at"), now).Where("user_id = ?", user.ID).Order("expires_at asc").Find(&live).Error; err != nil {
+		if err = livePending(tx.Select("id", "expires_at", "kind"), now).Where("user_id = ?", user.ID).Order("expires_at asc").Find(&live).Error; err != nil {
 			return err
+		}
+		// An unfinished upgrade was priced on the subscription as it stands (handoff_plans.md D9).
+		for _, o := range live {
+			if o.Kind == model.OrderKindUpgrade {
+				retryAfter(c, *o.ExpiresAt, now)
+				return errPendingOrder
+			}
 		}
 		if len(live) >= s.cfg.Payment.Pending() {
 			retryAfter(c, *live[0].ExpiresAt, now)
@@ -311,6 +321,9 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 			return err
 		}
 		if _, err = planDecision(sub, terms.forCycle(plan), now, false); err != nil {
+			if errors.Is(err, errPlanChange) {
+				return s.planChangeProblem(tx, *locked, sub, plan, now)
+			}
 			return err
 		}
 		p, prob, err := s.price(tx, *locked, plan, terms, code, true, now)
@@ -331,7 +344,7 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 		expires := now.Add(s.cfg.Payment.Window())
 		order = model.Order{ID: uuid.NewString(), UserID: user.ID, IdempotencyKey: key, PlanID: plan.ID, PlanName: plan.Name, PriceCents: p.AmountCents, DurationDays: terms.DurationDays, TrafficBytes: terms.TrafficBytes,
 			Status: model.OrderPending, Provider: "gateway", CreatedAt: now, TradeNo: &tradeNo, PayType: in.PayType, ListPriceCents: p.ListCents, DiscountCents: p.DiscountCents, AmountCents: p.AmountCents,
-			PriceSource: p.Source, ExpiresAt: &expires, UpdatedAt: &now}
+			PriceSource: p.Source, ExpiresAt: &expires, UpdatedAt: &now, Kind: model.OrderKindPurchase}
 		snapshotCycle(&order, terms, plan)
 		if p.Coupon != nil {
 			order.CouponID, order.CouponCode = &p.Coupon.ID, p.Coupon.Code
@@ -377,6 +390,9 @@ func (s *Server) payURL(o model.Order) string {
 
 // gatewayProductName is the product name on the gateway page, from the order snapshot only.
 func gatewayProductName(o model.Order) string {
+	if o.Kind == model.OrderKindUpgrade {
+		return o.PlanName + "·升级"
+	}
 	if o.BillingCycle == model.CycleYearly {
 		return o.PlanName + "·年付"
 	}
@@ -462,5 +478,8 @@ func paymentMeta(cfg config.Config) gin.H {
 	if cfg.Payment.Enabled {
 		methods = []string{payment.TypeWeChat, payment.TypeAlipay}
 	}
-	return gin.H{"payment_enabled": cfg.Payment.Enabled, "payment_methods": methods, "payment_pending_seconds": int(cfg.Payment.Window().Seconds())}
+	// plan_upgrade_supported: this backend sells mid-period upgrades (handoff_plans.md 10);
+	// whether the shop switch is on is in /payments/upgrade-options.
+	return gin.H{"payment_enabled": cfg.Payment.Enabled, "payment_methods": methods, "payment_pending_seconds": int(cfg.Payment.Window().Seconds()),
+		"plan_upgrade_supported": cfg.Payment.Enabled}
 }

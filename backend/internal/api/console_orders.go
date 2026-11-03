@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -42,13 +43,23 @@ type consoleOrder struct {
 	CreatedAt            time.Time  `json:"created_at"`
 	PaidAt               *time.Time `json:"paid_at"`
 	ExpiresAt            *time.Time `json:"expires_at"`
+	// Upgrades (handoff_plans.md 9.1, 11.3).
+	Kind                string     `json:"kind"`
+	FromPlanID          string     `json:"from_plan_id"`
+	FromPlanName        string     `json:"from_plan_name"`
+	CreditCents         int64      `json:"credit_cents"`
+	UpgradeDays         int        `json:"upgrade_days"`
+	UpgradeTrafficBytes int64      `json:"upgrade_traffic_bytes"`
+	CoversFrom          *time.Time `json:"covers_from"`
+	CoversTo            *time.Time `json:"covers_to"`
 }
 
 func (s *Server) consoleOrderQuery(db *gorm.DB) *gorm.DB {
 	schema := s.cfg.Schema
 	return db.Table(schema + ".orders AS o").Joins("JOIN " + schema + ".users AS u ON u.id = o.user_id").
 		Select(`o.id, o.trade_no, o.user_id, u.email, o.plan_id, o.plan_name, o.provider, o.pay_type, o.status, o.review_reason, o.price_source,
-			o.billing_cycle, o.cycle_discount_percent, o.original_cents, o.ent_max_devices, o.ent_allow_dedicated, o.list_price_cents, o.discount_cents, o.amount_cents, o.paid_cents, o.price_cents, o.coupon_code, o.created_at, o.paid_at, o.expires_at`)
+			o.billing_cycle, o.cycle_discount_percent, o.original_cents, o.ent_max_devices, o.ent_allow_dedicated, o.list_price_cents, o.discount_cents, o.amount_cents, o.paid_cents, o.price_cents, o.coupon_code, o.created_at, o.paid_at, o.expires_at,
+			o.kind, o.from_plan_id, o.from_plan_name, o.credit_cents, o.upgrade_days, o.upgrade_traffic_bytes, o.covers_from, o.covers_to`)
 }
 
 var orderStatuses = []string{model.OrderPending, model.OrderPaid, model.OrderExpired, model.OrderFailed, model.OrderReview, model.OrderPaidTest}
@@ -62,6 +73,7 @@ func (s *Server) consoleOrderList(c *gin.Context) {
 	payType, ok2 := enumParam(c, "pay_type", "wxpay", "alipay")
 	source, ok3 := enumParam(c, "source", priceList, priceTest, priceTestPurchase)
 	cycle, okCycle := enumParam(c, "billing_cycle", model.CycleMonthly, model.CycleYearly)
+	kind, okKind := enumParam(c, "kind", model.OrderKindPurchase, model.OrderKindUpgrade)
 	email, ok4 := keywordParam(c, "email")
 	tradeNo, ok5 := keywordParam(c, "trade_no")
 	orderID, ok6 := keywordParam(c, "order_id")
@@ -69,7 +81,7 @@ func (s *Server) consoleOrderList(c *gin.Context) {
 	createdTo, ok8 := timeParam(c, "created_to", true)
 	paidFrom, ok9 := timeParam(c, "paid_from", false)
 	paidTo, ok10 := timeParam(c, "paid_to", true)
-	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && okCycle) {
+	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9 && ok10 && okCycle && okKind) {
 		return
 	}
 	filtered := func() *gorm.DB {
@@ -85,6 +97,9 @@ func (s *Server) consoleOrderList(c *gin.Context) {
 		}
 		if cycle != "" {
 			q = q.Where("o.billing_cycle = ?", cycle)
+		}
+		if kind != "" {
+			q = q.Where("o.kind = ?", kind)
 		}
 		if email != "" {
 			q = q.Where(`u.email ILIKE ? ESCAPE '\'`, likeContains(email))
@@ -174,13 +189,25 @@ func (s *Server) consoleOrderDetail(c *gin.Context) {
 	} else {
 		q = q.Where("order_id = ?", id)
 	}
-	var checked struct{ GatewayCheckedAt *time.Time }
+	var checked struct {
+		GatewayCheckedAt *time.Time
+		UpgradeSnapshot  string
+	}
 	if q.Order("received_at DESC, id").Limit(50).Scan(&notes).Error != nil ||
-		s.database(c).Model(&model.Order{}).Select("gateway_checked_at").Where("id = ?", id).Scan(&checked).Error != nil {
+		s.database(c).Model(&model.Order{}).Select("gateway_checked_at", "upgrade_snapshot").Where("id = ?", id).Scan(&checked).Error != nil {
 		fail(c, 503, "console_unavailable", "订单详情暂时不可用")
 		return
 	}
-	c.JSON(200, gin.H{"order": order, "notifications": notes, "gateway_checked_at": checked.GatewayCheckedAt})
+	// An upgrade's pricing facts (handoff_plans.md 10): the stored snapshot, re-encoded
+	// through its own type so only its known fields are shown.
+	var upgrade *upgradeSnapshot
+	if order.Kind == model.OrderKindUpgrade {
+		var snap upgradeSnapshot
+		if json.Unmarshal([]byte(checked.UpgradeSnapshot), &snap) == nil {
+			upgrade = &snap
+		}
+	}
+	c.JSON(200, gin.H{"order": order, "notifications": notes, "gateway_checked_at": checked.GatewayCheckedAt, "upgrade": upgrade})
 }
 
 // consoleOrderCheck asks the gateway for the order's status. It is read-only: a "paid"
