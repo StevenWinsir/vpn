@@ -321,9 +321,9 @@
 
 ### 11.8 APP 与客户端
 
-- 不改 APP。四个平台都通过同一个 Core：收到 `subscription_changed` 后停掉隧道、清掉会话，界面显示“套餐已变更，请重新登录”；保存了密码的客户端也**不会**静默重新登录，需要用户自己登录一次，登录后按新套餐授权（专线、设备数）。
-- 计量：节点计量（生产环境）下，升级前已发出的节点授权在同一周期内继续有效到空闲超时，这段时间内节点上报的用量照常扣到升级后的余额上（`TestUpgradeLateNodeUsageStaysInPeriod`）。客户端计量（仅开发 / 测试环境，生产环境拒绝客户端上报）下，已经发出的上报照常扣费，但 Core 结束会话时**不再结算**上一次上报之后的尾量（最多一个上报间隔），这与管理员在后台改套餐时的现有行为相同。
-- 自动化证据：`TestCoreUpgradeDisconnect`（真实 Core 进程 + 真实支付流程）、Core 线束 `A04-upgrade`（宿主 macOS 与 iOS 模拟器进程里的真实 Core + 真实 Mihomo 引擎）、Android `BillingAcceptanceTest` 的 `A04-upgrade`（模拟器里的真实 APP）、macOS `testPlanUpgradeWhileConnectedSignsOutWithTheCoresWords`、Windows `Core_ending_the_session_without_a_saved_password_just_asks_to_sign_in`。真机表现由 U-42 确认。
+- 升级功能本身不需要改 APP。四个平台都通过同一个 Core：收到 `subscription_changed` 后停掉隧道、清掉会话，界面显示“套餐已变更，请重新登录”；保存了密码的客户端也**不会**静默重新登录，需要用户自己登录一次，登录后按新套餐授权（专线、设备数）。
+- 计量：节点计量（生产环境）下，升级前已发出的节点授权在同一周期内继续有效到空闲超时，这段时间内节点上报的用量照常扣到升级后的余额上（`TestUpgradeLateNodeUsageStaysInPeriod`）。客户端计量（仅开发 / 测试环境，生产环境拒绝客户端上报）下，已经发出的上报照常扣费；Core 因 `subscription_changed` 结束会话时，先关闭数据通道，再用仍然有效的令牌把上一次上报之后的尾量作为最后一次上报结算（同一订阅、同一周期，按连接绑定的倍率），尾量确认后释放在线租约，最后才清掉会话。管理员在后台改套餐时同样如此。如果服务端已经换了周期（`nativeBound` 不成立），最后一次上报会被 409 拒绝，尾量不计入新周期，租约随之自然过期。令牌失效的原因（`native_session_*` 等）不发送任何请求，只关闭数据通道。这一修复改动了四个 APP 共用的 Core，需要随下一次 APP 发版生效；在此之前的旧版 APP 仍会丢掉最多一个上报间隔的尾量。
+- 自动化证据：`TestCoreUpgradeDisconnect`（真实 Core 进程 + 真实支付流程；升级前刚上报完就再带上 1 + 2 MiB，断开后这部分按 0.5 倍扣到同一周期，在线租约以 released 结束）、Core 单元测试 `TestSubscriptionChangedSettlesTheTail`、`TestDeadTokenDropsTheTailUnsent`、`TestShutdownWaitsForTheDroppedTail`、Core 线束 `A04-upgrade`（宿主 macOS 与 iOS 模拟器进程里的真实 Core + 真实 Mihomo 引擎；升级前下载的 1 MiB 必须全部按线路倍率计费）、Android `BillingAcceptanceTest` 的 `A04-upgrade`（模拟器里的真实 APP）、macOS `testPlanUpgradeWhileConnectedSignsOutWithTheCoresWords`、Windows `Core_ending_the_session_without_a_saved_password_just_asks_to_sign_in`。真机表现由 U-42 确认。
 
 ### 11.9 真实付款实测清单（追加在 U-36 … U-40 之后，由你执行）
 
@@ -361,4 +361,4 @@
 | 信息泄露 | 通过 | 用户接口只多出 5 个字段，计算快照、覆盖区间、订阅 ID、来源套餐 ID、幂等键都不对用户输出（`TestUpgradeSecurityOwnership`、`TestUpgradeKeepsPeriodAndChangesFingerprint`）；演练里三个真实后端进程的日志不含邮箱、密码和支付链接 |
 | 并发 | 通过 | 下单与履约的锁顺序固定；两个标签页并发下单只成功一笔，升级单与续费单的回调并发只开通一笔（`TestUpgradeConcurrencyAndStaleOrders`） |
 | 旧二进制开通 | 通过 | 升级订单写 0 天、0 流量、无优惠码；旧版履约必然失败（`TestUpgradeOrderRefusedByOlderFulfilment`），演练里真实的 dbe75ca 二进制对回调和人工确认都只转人工 |
-| 客户端计量的尾量 | **已知，不在本期修复** | 仅开发 / 测试环境的客户端计量受影响：Core 因 `subscription_changed` 结束会话时不结算最后一次上报之后的尾量（最多一个上报间隔），与管理员改套餐时相同；生产环境由节点计量，升级前的授权在同一周期内照常计费（`TestUpgradeLateNodeUsageStaysInPeriod`）。修复需要改 Core（四个 APP 随之发版），本期不改 APP |
+| 客户端计量的尾量 | 通过（Core 修复，随 APP 发版生效） | 仅涉及开发 / 测试环境的客户端计量：Core 因 `subscription_changed` 结束会话时，用仍然有效的令牌结算最后一次上报之后的尾量，再释放在线租约；服务端 `/traffic` 只要求同一订阅、同一周期（`nativeBound`），换了周期则 409 拒绝，尾量不会进入新周期。令牌失效时不发送任何请求（`TestSubscriptionChangedSettlesTheTail`、`TestDeadTokenDropsTheTailUnsent`、`TestCoreUpgradeDisconnect`、线束 `A04-upgrade`）。生产环境由节点计量，升级前的授权在同一周期内照常计费（`TestUpgradeLateNodeUsageStaysInPeriod`）。修复前发布的 APP 仍会丢掉最多一个上报间隔的尾量 |

@@ -95,6 +95,9 @@ type Meter struct {
 	upRate, downRate int64
 	history          []Sample
 	haveBaseline     bool
+	// sealed: the segment's last sample is taken (Seal); the engine's totals no longer
+	// belong to this ledger.
+	sealed bool
 }
 
 func New(cfg Config) *Meter {
@@ -159,6 +162,9 @@ func (m *Meter) Sample() error {
 	if m.fatal != "" {
 		return &Error{Code: m.fatal}
 	}
+	if m.sealed {
+		return nil
+	}
 	if !m.haveBaseline {
 		return &Error{Code: CodeInvalidCounters}
 	}
@@ -180,6 +186,17 @@ func (m *Meter) Sample() error {
 	m.cumDown += down - m.rawDown
 	m.rawUp, m.rawDown = up, down
 	return nil
+}
+
+// Seal takes the last sample of a segment whose data path is closed and whose session is
+// gone: the engine may count for another session from now on, so every later Sample (and the
+// one a Flush takes) reads nothing and only what is already counted is settled.
+func (m *Meter) Seal() error {
+	err := m.Sample()
+	m.mu.Lock()
+	m.sealed = true
+	m.mu.Unlock()
+	return err
 }
 
 // Flush performs exactly one report attempt. It returns the acknowledged session and

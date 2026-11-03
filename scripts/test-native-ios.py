@@ -237,7 +237,7 @@ BILLING_GO = (
     ('./internal/meter', ('TestExactIntegerChargeAtBothRates', 'TestLostAckRetriesOriginalBatchAndNeverDoubleCharges',
                           'TestCounterRegressionIsFatalAndNothingIsReported', 'TestRebaseAcrossSettledSegments',
                           'TestBeginRefusesUnsettledOrDisagreeingLedger', 'TestRateChangeIsReportedAfterBytesAreSettledAtTheBoundRate',
-                          'TestEstimatedRemainingUsesIntegerUnitsAndFloorsAtZero')),
+                          'TestEstimatedRemainingUsesIntegerUnitsAndFloorsAtZero', 'TestSealSettlesOnlyWhatWasCountedBeforeIt')),
     ('./internal/managed', ('TestLostAcknowledgementReplaysTheSameBatch', 'TestLogoutSettlesTailBeforeRevoking',
                             'TestUnconfirmedTailBlocksReconnectUntilAcknowledged', 'TestHandoffRoundTrip',
                             'TestHandoffExportRefusesUnsettled',
@@ -245,7 +245,11 @@ BILLING_GO = (
                             # withdrawn server (busy throughout), release on exit, the hand-over guard
                             'TestAdmissionRefusals', 'TestReassignmentReconnectsOnce', 'TestReassignmentStaysBusyUntilReconnected',
                             'TestShutdownSettlesThenReleasesThenRevokes', 'TestHandoffRefusesAnUnreleasedLease',
-                            'TestGateReadmitsAnExpiredLease')),
+                            'TestGateReadmitsAnExpiredLease',
+                            # a session ended by subscription_changed settles its tail and releases its
+                            # lease with the still-valid token; a dead token sends nothing
+                            'TestSubscriptionChangedSettlesTheTail', 'TestDeadTokenDropsTheTailUnsent',
+                            'TestShutdownWaitsForTheDroppedTail')),
 )
 BILLING_SWIFT = ('MeteringArithmeticTests', 'TunnelFlowTests', 'TunnelBridgeTests', 'TunnelWatchTests')
 HARNESS_CASES = (

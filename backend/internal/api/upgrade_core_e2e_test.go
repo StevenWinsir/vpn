@@ -18,10 +18,10 @@ import (
 	"vpn/backend/internal/model"
 )
 
-// Mid-period upgrades and the clients (handoff_plans.md 7.4, 12, round 3: R3-03). No app
-// or Core changes: an upgrade changes the entitlement fingerprint, so a signed-in client
-// is told subscription_changed and asked to sign in again, while the period (and with it
-// the ledger and every grant already issued) stays the same.
+// Mid-period upgrades and the clients (handoff_plans.md 7.4, 12, round 3: R3-03). An
+// upgrade changes the entitlement fingerprint, so a signed-in client is told
+// subscription_changed and asked to sign in again, while the period (and with it the
+// ledger and every grant already issued) stays the same.
 
 // upgradeNow places an upgrade of userID to planID at the price the server quotes now and
 // fulfils it in the same transaction, exactly what a paid gateway callback does
@@ -71,8 +71,10 @@ func upgradeNow(db *gorm.DB, cfg config.Config, userID, planID string) (model.Or
 // TestCoreUpgradeDisconnect runs the real Core binary (fake engine) against the real API
 // and PostgreSQL with the real payment flow and the fake gateway: a customer connected on
 // starter upgrades to pro on the website; the Core stops the tunnel and ends the session
-// with "套餐已变更，请重新登录"; a report still in flight from a second device after the
-// upgrade is charged to the same period; signing in again gives the new plan's lines.
+// with "套餐已变更，请重新登录", after settling the bytes it carried since its last report
+// (the token still works for /traffic in the same period) and releasing its online lease;
+// a report still in flight from a second device after the upgrade is charged to the same
+// period; signing in again gives the new plan's lines.
 // scripts/test-native.py builds the Core and sets ASTERLINK_CORE_BIN.
 func TestCoreUpgradeDisconnect(t *testing.T) {
 	bin := os.Getenv("ASTERLINK_CORE_BIN")
@@ -143,6 +145,17 @@ func TestCoreUpgradeDisconnect(t *testing.T) {
 		return model.Subscription{}
 	}
 	waitLedger("the Core's report", func(s model.Subscription) bool { return s.UploadBytes == 3*mib && s.DownloadBytes == 9*mib })
+	var coreSession model.NativeSession
+	if err := db.Where("user_id = ?", u.ID).First(&coreSession).Error; err != nil {
+		t.Fatal(err)
+	}
+	readCoreSession := func() model.NativeSession {
+		var sess model.NativeSession
+		if err := db.First(&sess, "id = ?", coreSession.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		return sess
+	}
 
 	// A second device of the same account with a report in flight across the upgrade
 	// (the client API as an app speaks it).
@@ -180,6 +193,19 @@ func TestCoreUpgradeDisconnect(t *testing.T) {
 	}
 	settled := waitLedger("both devices", func(s model.Subscription) bool { return s.UploadBytes == 4*mib && s.DownloadBytes == 10*mib })
 
+	// Bytes the Core carries just before the upgrade: right after one of its periodic reports
+	// (every 2 s here) has landed, so the next is still most of an interval away, while the
+	// catalog watch (1 s polls) tells the Core of the upgrade sooner. Before the fix the Core
+	// dropped this tail; now its final report settles it with the still-valid token.
+	reported := readCoreSession().LastSequence
+	for deadline := time.Now().Add(10 * time.Second); readCoreSession().LastSequence == reported; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the Core sent no periodic report")
+		}
+	}
+	tailFrom := readCoreSession()
+	core.carry(4*mib, 11*mib)
+
 	// The upgrade on the website: quote, order, gateway, trusted callback.
 	upgradedAt := time.Now()
 	order := e.upgrade(u, "pro")
@@ -202,6 +228,36 @@ func TestCoreUpgradeDisconnect(t *testing.T) {
 	if _, again := core.call("connect", core.gen, nil); again.State == "connected" {
 		t.Fatal("a signed-out Core connected")
 	}
+	// The tail is charged at the line's rate to the same period, and the Core's online lease
+	// is released rather than left to lapse.
+	tailed := waitLedger("the Core's tail", func(s model.Subscription) bool { return s.UploadBytes == 5*mib && s.DownloadBytes == 12*mib })
+	if want := settled.UsedUnits + 3*mib*500; tailed.UsedUnits != want {
+		t.Fatalf("the tail charged %d units, want %d", tailed.UsedUnits-settled.UsedUnits, 3*mib*500)
+	}
+	if final := readCoreSession(); final.UploadBytes != 4*mib || final.DownloadBytes != 11*mib {
+		t.Fatalf("the Core's session counters %d/%d", final.UploadBytes, final.DownloadBytes)
+	} else {
+		var tail model.ClientTrafficReport
+		if err := db.Where("session_id = ? AND sequence = ?", coreSession.ID, final.LastSequence).First(&tail).Error; err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("the tail (sequence %d after %d) was reported %v after the upgrade was placed", final.LastSequence, tailFrom.LastSequence, tail.CreatedAt.Sub(upgradedAt))
+	}
+	var released bool
+	for deadline := time.Now().Add(10 * time.Second); !released && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		var active int64
+		if err := db.Model(&model.ConnectionLease{}).Where("session_id = ? AND state = ?", coreSession.ID, model.LeaseActive).Count(&active).Error; err != nil {
+			t.Fatal(err)
+		}
+		var ended int64
+		if err := db.Model(&model.ConnectionLease{}).Where("session_id = ? AND end_reason = ?", coreSession.ID, model.LeaseReleased).Count(&ended).Error; err != nil {
+			t.Fatal(err)
+		}
+		released = active == 0 && ended > 0
+	}
+	if !released {
+		t.Fatal("the Core's online lease was not released after the tail")
+	}
 
 	// The report in flight lands after the upgrade: charged at the session's own rate to
 	// the same subscription and period, and the reply tells the device to sign in again.
@@ -214,8 +270,8 @@ func TestCoreUpgradeDisconnect(t *testing.T) {
 		t.Fatalf("late report: %d %s", late.Code, late.Body.String())
 	}
 	final := readSub()
-	if want := settled.UsedUnits + (2*mib+mib)*500; final.UsedUnits != want || final.UploadBytes != 6*mib || final.DownloadBytes != 11*mib {
-		t.Fatalf("late report charged %d units (want %d): %+v", final.UsedUnits-settled.UsedUnits, (3*mib)*500, final)
+	if want := tailed.UsedUnits + (2*mib+mib)*500; final.UsedUnits != want || final.UploadBytes != 7*mib || final.DownloadBytes != 13*mib {
+		t.Fatalf("late report charged %d units (want %d): %+v", final.UsedUnits-tailed.UsedUnits, (3*mib)*500, final)
 	}
 	var reports []model.ClientTrafficReport
 	if err := db.Where("user_id = ?", u.ID).Order("created_at").Find(&reports).Error; err != nil {
