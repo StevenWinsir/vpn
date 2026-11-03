@@ -426,7 +426,8 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 		case "/fixture/pay":
 			// The customer pays at the gateway and the gateway sends its callback to the
 			// API from a loopback address (the fixture's allow-list). money overrides the
-			// callback amount in cents to simulate a short payment.
+			// callback amount in cents to simulate a short payment; callback=none pays at
+			// the gateway without calling back (a callback that is late or lost).
 			trade := r.URL.Query().Get("trade_no")
 			gw.mu.Lock()
 			o := gw.orders[trade]
@@ -436,6 +437,10 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			gw.markPaid(o)
+			if r.URL.Query().Get("callback") == "none" {
+				w.WriteHeader(204)
+				return
+			}
 			cents := o.Cents
 			if v, e := strconv.ParseInt(r.URL.Query().Get("money"), 10, 64); e == nil {
 				cents = v

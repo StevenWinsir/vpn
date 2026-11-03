@@ -27,7 +27,7 @@
 
 ## 二、Nginx、真实来源地址与回调路径
 
-回调是网关服务器直接 `POST` 到 `PAYMENT_NOTIFY_URL`（`Content-Type: application/json`，不带 Cookie，不带 `Origin`）。后端用 TCP 对端或受信任代理传来的 `X-Forwarded-For` 判断来源，所以必须保证后端看到的是**网关的真实地址**：
+回调是网关服务器直接 `POST` 到 `PAYMENT_NOTIFY_URL`（`Content-Type: application/json`，不带 Cookie，不带 `Origin`）。网关每笔收款只回调一次，所以回调路径不套用浏览器的来源（`Origin`/Cookie）与 JSON 类型检查：无论带什么头、是 JSON 还是表单（`application/x-www-form-urlencoded`），都会先写入回调流水再判断，不会在记录之前被 403/415 拒掉。后端用 TCP 对端或受信任代理传来的 `X-Forwarded-For` 判断来源，所以必须保证后端看到的是**网关的真实地址**：
 
 1. 后端域名的 `server` 块必须用 `proxy_set_header X-Forwarded-For $remote_addr;`（**覆盖**，不是追加）。不覆盖时，攻击者可以自填 `X-Forwarded-For` 冒充白名单地址。完整示例见 `docs/deployment.md`“真实来源地址”。
 2. `backend/.env` 设置 `TRUSTED_PROXIES=127.0.0.1`（Nginx 与 Go 同机时），只有这些对端提供的转发头会被采用。未设置时 Go 看到的永远是 Nginx 的 `127.0.0.1`，回调来源会显示为本机，**白名单无法匹配**。
@@ -78,14 +78,14 @@
 | 回调流水里全是 `ip_rejected`，但来源看起来是网关 | 网关有多个出口地址；把该地址也加入白名单（逗号分隔，可写 CIDR），重启 |
 | 回调流水为空 | 回调没到后端：核对 `PAYMENT_NOTIFY_URL`、Nginx、防火墙和证书；网关能否访问该地址 |
 | 订单 `amount_mismatch` | 对照网关页面金额。同金额同支付方式有未超时订单时，网关会逐笔加 0.01，容差默认 0.50 元；确认实收后“人工确认到账”并填写实收金额 |
-| 结果页一直显示“确认中” | 回调还没到或被拒；结果页只是提示，不会开通。看回调流水；本地窗口（默认 180 秒）过后对账循环会把订单变成已超时或待核对 |
+| 结果页一直显示“支付已完成，正在确认到账”，订单记录显示“已付款，确认中” | 网关状态接口已报告付款，但可信回调还没把订单开通（没到、被拒或在核对）；这只是提示，不会开通。看回调流水；本地窗口（默认 180 秒）过后对账循环会把订单变成待核对（`callback_missing`），后台订单详情的“网关报告已付”是网关第一次报告付款的时间 |
 | 付款成功但订单显示“已超时” | 晚到的成功回调仍会开通（已付款优先）。若没有，查看回调流水；已被管理员关闭的订单不会再被回调改变 |
 | 用户说“优惠码无效” | 不存在、已停用、未到期或已过期、已删除，界面统一提示“无效或已失效”；不适用于所选套餐、已用完、本人已用过会有各自提示。每个账号每小时最多 20 次无效尝试 |
 | 用户删除账号被拒绝，提示还有未完成订单 | 订单需要等到失效（最多 `PAYMENT_PENDING_LIMIT_SECONDS`）再删 |
 | `./doctor` 报 `account_purge_stuck` | 有账号处于 `deleting` 超过 1 小时：看后端日志 `account purge has failed`（只含用户 UUID），通常是节点还没确认释放；超过 `NODE_AGENT_SETTLE_GRACE_SECONDS` 后会自动清除 |
 | 管理员模拟登录后看不到公告、无法操作 | 这是设计：模拟会话只读、不显示公告、不写登录记录，到点（`IMPERSONATION_MINUTES`）自动结束 |
 
-后端日志不输出密钥、签名、完整 `trade_no`、网关 URL、密码或令牌；回调相关行形如 `payment notify <id>: review (trade …a1b2c3)`。
+后端日志不输出密钥、签名、完整 `trade_no`、网关 URL、密码或令牌；回调相关行形如 `payment notify <id>: review (trade …a1b2c3)`；`ip_rejected`、`invalid`、`unknown_order` 的行另带来源地址（`… ip_rejected from 203.0.113.10 (trade …a1b2c3)`），用于核对 `PAYMENT_NOTIFY_ALLOWED_IPS`。
 
 ## 五、回滚
 

@@ -135,7 +135,7 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	})
 	// The gateway callback has no user, no Origin and a fixed source; it is kept out of
 	// the per-IP API limit and judged by its own rules (handoff_payment_account.md 6.3).
-	r.POST("/api/v1/payments/notify", rateLimit(600), s.paymentNotify)
+	r.POST(paymentNotifyPath, rateLimit(600), s.paymentNotify)
 	v := r.Group("/api/v1")
 	v.Use(rateLimit(cfg.APIRate))
 	v.GET("/meta", func(c *gin.Context) {
@@ -277,6 +277,13 @@ func (s *Server) corsAndCSRF() gin.HandlerFunc {
 		allowed[o] = true
 	}
 	return func(c *gin.Context) {
+		// The gateway callback is server to server: it carries no cookie, is judged only by
+		// its source address and amount, and is sent once. Refusing it here (an Origin, a
+		// form body) would lose it before paymentNotify could log it.
+		if c.Request.Method == http.MethodPost && c.Request.URL.Path == paymentNotifyPath {
+			c.Next()
+			return
+		}
 		origin := c.GetHeader("Origin")
 		c.Header("Vary", "Origin")
 		if origin != "" {

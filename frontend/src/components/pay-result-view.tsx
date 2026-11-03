@@ -68,7 +68,14 @@ export function PayResultView() {
       try {
         const result = await api<PaymentOrder>(`/payments/orders/${orderId}`);
         if (stopped) return;
-        setData(result.order);
+        // Once the gateway has reported the payment, a later poll without the hint (an older
+        // backend only sends it when it queried the gateway) never falls back to "待支付".
+        setData((previous) => ({
+          ...result.order,
+          gateway_paid:
+            result.order.gateway_paid === true ||
+            (result.order.status === 'pending' && previous?.gateway_paid === true),
+        }));
         setError(null);
         done = result.order.status !== 'pending';
       } catch (e) {

@@ -401,6 +401,8 @@ type Detail = {
   order: ConsoleOrder;
   notifications: ConsoleNotification[];
   gateway_checked_at: string | null;
+  // When a status query first saw the gateway report the order paid; absent on older backends.
+  gateway_paid_at?: string | null;
   // Upgrade orders only: the stored computation of the price.
   upgrade?: ConsoleUpgrade | null;
 };
@@ -522,6 +524,9 @@ function OrderDrawer({
                 <Row label="创建" value={<When value={o.created_at} />} />
                 <Row label="支付" value={<When value={o.paid_at} />} />
                 <Row label="上次查询网关" value={<When value={detail.gateway_checked_at} />} />
+                {detail.gateway_paid_at ? (
+                  <Row label="网关报告已付" value={<When value={detail.gateway_paid_at} />} />
+                ) : null}
                 {o.covers_from && o.covers_to ? (
                   <Row
                     label="价值覆盖"

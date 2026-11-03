@@ -191,10 +191,11 @@ func (s *Server) consoleOrderDetail(c *gin.Context) {
 	}
 	var checked struct {
 		GatewayCheckedAt *time.Time
+		GatewayPaidAt    *time.Time
 		UpgradeSnapshot  string
 	}
 	if q.Order("received_at DESC, id").Limit(50).Scan(&notes).Error != nil ||
-		s.database(c).Model(&model.Order{}).Select("gateway_checked_at", "upgrade_snapshot").Where("id = ?", id).Scan(&checked).Error != nil {
+		s.database(c).Model(&model.Order{}).Select("gateway_checked_at", "gateway_paid_at", "upgrade_snapshot").Where("id = ?", id).Scan(&checked).Error != nil {
 		fail(c, 503, "console_unavailable", "订单详情暂时不可用")
 		return
 	}
@@ -207,7 +208,7 @@ func (s *Server) consoleOrderDetail(c *gin.Context) {
 			upgrade = &snap
 		}
 	}
-	c.JSON(200, gin.H{"order": order, "notifications": notes, "gateway_checked_at": checked.GatewayCheckedAt, "upgrade": upgrade})
+	c.JSON(200, gin.H{"order": order, "notifications": notes, "gateway_checked_at": checked.GatewayCheckedAt, "gateway_paid_at": checked.GatewayPaidAt, "upgrade": upgrade})
 }
 
 // consoleOrderCheck asks the gateway for the order's status. It is read-only: a "paid"

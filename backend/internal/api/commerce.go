@@ -60,7 +60,11 @@ func (s *Server) orders(c *gin.Context) {
 		fail(c, 503, "database_unavailable", "订单暂时不可用")
 		return
 	}
-	c.JSON(200, gin.H{"orders": rows, "total": total, "page": page, "page_size": 20})
+	views := make([]orderView, len(rows))
+	for i, o := range rows {
+		views[i] = newOrderView(o)
+	}
+	c.JSON(200, gin.H{"orders": views, "total": total, "page": page, "page_size": 20})
 }
 func (s *Server) testPurchase(c *gin.Context) {
 	if !s.allowTest() {

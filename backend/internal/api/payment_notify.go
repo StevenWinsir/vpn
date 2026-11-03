@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"mime"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,9 @@ import (
 // maxNotifyBytes bounds the callback body; the documented payload is far smaller.
 const maxNotifyBytes = 4 << 10
 
+// paymentNotifyPath is the callback route; PAYMENT_NOTIFY_URL points at it.
+const paymentNotifyPath = "/api/v1/payments/notify"
+
 // paymentNotify receives the gateway callback (handoff_payment_account.md 6.3). The
 // callback carries no signature and the submit signature does not cover the amount,
 // so a callback fulfils an order only when it comes from a configured gateway address
@@ -30,7 +34,12 @@ func (s *Server) paymentNotify(c *gin.Context) {
 	var n payment.Notification
 	parseErr := payment.ErrNotification
 	if err == nil && len(body) <= maxNotifyBytes {
-		n, parseErr = payment.ParseNotification(body)
+		// The documented body is JSON; a form-encoded one is read too, never dropped.
+		if media, _, _ := mime.ParseMediaType(c.GetHeader("Content-Type")); media == "application/x-www-form-urlencoded" {
+			n, parseErr = payment.ParseNotificationForm(body)
+		} else {
+			n, parseErr = payment.ParseNotification(body)
+		}
 	}
 	record := model.PaymentNotification{ID: uuid.NewString(), TradeNo: n.TradeNo, MoneyText: n.MoneyText, TradeStatus: n.TradeStatus, Name: n.Name, SourceIP: c.ClientIP(), Result: model.NotifyReceived, ReceivedAt: now}
 	if err = s.database(c).Create(&record).Error; err != nil {
@@ -47,8 +56,12 @@ func (s *Server) paymentNotify(c *gin.Context) {
 	if e := s.database(c).Model(&record).Updates(map[string]any{"result": result, "order_id": orderID}).Error; e != nil {
 		log.Printf("payment notify %s: result %s could not be recorded", record.ID, result)
 	}
-	if result == model.NotifyReview || result == model.NotifyIPRejected {
+	switch result {
+	case model.NotifyReview:
 		log.Printf("payment notify %s: %s (trade …%s)", record.ID, result, tail(n.TradeNo))
+	case model.NotifyIPRejected, model.NotifyInvalid, model.NotifyUnknownOrder:
+		// The source address is what PAYMENT_NOTIFY_ALLOWED_IPS needs (docs/payment-operations.md).
+		log.Printf("payment notify %s: %s from %s (trade …%s)", record.ID, result, record.SourceIP, tail(n.TradeNo))
 	}
 	c.JSON(200, gin.H{"code": 200, "message": "处理成功"})
 }
@@ -286,6 +299,7 @@ func (s *Server) reconcilePayments(ctx context.Context) (int, error) {
 			}
 		case result.Status == payment.StatusPaid:
 			next, reason = model.OrderReview, model.ReviewCallbackMissing
+			s.noteGatewayPaid(ctx, head.ID, now)
 		case result.Status == payment.StatusTimeout || result.Status == payment.StatusNotFound || result.Expired:
 			next = model.OrderExpired
 		case now.Sub(head.CreatedAt) > reconcileGiveUp:
@@ -308,6 +322,15 @@ func (s *Server) reconcilePayments(ctx context.Context) (int, error) {
 		err = e
 	}
 	return changed, err
+}
+
+// noteGatewayPaid records, once, that the gateway's status query reported the order
+// paid. It is a display hint for the customer and the console and never fulfils (D5);
+// best effort.
+func (s *Server) noteGatewayPaid(ctx context.Context, id string, now time.Time) {
+	if err := s.db.WithContext(ctx).Model(&model.Order{}).Where("id = ? AND gateway_paid_at IS NULL", id).Update("gateway_paid_at", now).Error; err != nil {
+		log.Printf("payment order %s: gateway paid hint could not be recorded", id)
+	}
 }
 
 // settlePending moves an order that is still pending to next, under the user and order

@@ -215,8 +215,40 @@ func ParseNotification(body []byte) (Notification, error) {
 		}
 		n.MoneyText = text
 	}
+	return n.finish(okTrade && okName && okStatus && okMoney)
+}
+
+// ParseNotificationForm reads a callback posted as an HTML form
+// (application/x-www-form-urlencoded) instead of the documented JSON. The gateway sends
+// each callback only once, so a body in this common alternative shape is read rather
+// than lost; the same four fields are required, once each, and validated as in
+// ParseNotification.
+func ParseNotificationForm(body []byte) (Notification, error) {
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return Notification{}, ErrNotification
+	}
+	var n Notification
+	field := func(key string, dest *string) bool {
+		v := values[key]
+		if len(v) != 1 {
+			return false
+		}
+		*dest = v[0]
+		return true
+	}
+	okTrade := field("trade_no", &n.TradeNo)
+	okName := field("name", &n.Name)
+	okMoney := field("money", &n.MoneyText)
+	okStatus := field("trade_status", &n.TradeStatus)
+	return n.finish(okTrade && okName && okStatus && okMoney)
+}
+
+// finish clips the logged fields and validates a callback whose four fields were read
+// (complete reports whether all of them were present and well-typed).
+func (n Notification) finish(complete bool) (Notification, error) {
 	n.TradeNo, n.Name, n.MoneyText, n.TradeStatus = clip(n.TradeNo, 32), clip(n.Name, 80), clip(n.MoneyText, 32), clip(n.TradeStatus, 24)
-	if !okTrade || !okName || !okStatus || !okMoney {
+	if !complete {
 		return n, ErrNotification
 	}
 	cents, err := ParseCallbackAmount(n.MoneyText)
