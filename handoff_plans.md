@@ -572,7 +572,7 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 | 分支 | worktree-plans-round2-website（worktree .claude/worktrees/plans-round2-website），基线 main e16f45a |
 | 规模 | 14 个代码与测试文件（2 个新增），+1649 / −106（新用例 plans-upgrade.spec.ts 568 行），另有本文的第 1、2 轮记录 |
 | 本地验证 | tsc、eslint、copy-guard 与其他 node 脚本测试通过；test-payment-web.py 全量 90/90 通过（8.5 分钟，含新的 plans-upgrade.spec.ts 9 项） |
-| 本文 | 第 1 轮记录在 docs PR #101（plans-round1-record）里，尚未合并；本分支的 handoff_plans.md 以那一版为底，再追加本节。#101 先合并时，以本分支的版本为准解决冲突即可（第 1 轮内容一致） |
+| 本文 | 第 1 轮记录由 docs PR #101 合并为 main 05713bb；本分支以同一版为底追加本节，合并 main 时 handoff_plans.md 的冲突按本分支版本解决（第 1 轮内容逐字一致） |
 
 **交付（按文件）**
 
