@@ -561,3 +561,64 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 - 第 2 轮（网站）：按上面的“实际实现的接口契约”接入。/plans 只在 /meta.plan_upgrade_supported 为真时请求 upgrade-options；升级弹窗必须发送 expected_amount_cents，处理 price_changed 后重新报价；pending_order_exists 时引导到订单记录；订单页按 kind 显示“升级 A → B”；后台订单详情展示 upgrade 快照，商店设置增加两项。
 - 第 3 轮：test-release-rehearsal.py 加入升级场景，回滚目标为 dbe75ca（升级单在旧版上只会转人工）；混合部署；Core 和 APP 断开场景（R3-03）；安全审查；docs/payment-operations.md、README、DEPLOYMENT；用户实测 U-41 … U-46。
 - 本轮没有在本地运行 test-release-rehearsal.py 和 test-payment-web.py，已由 CI 通过。
+
+### 第 2 轮：网站（PR 待合并）
+
+**概况**
+
+| 项 | 内容 |
+| --- | --- |
+| 日期 | 2026-11-03 |
+| 分支 | worktree-plans-round2-website（worktree .claude/worktrees/plans-round2-website），基线 main e16f45a |
+| 规模 | 14 个代码与测试文件（2 个新增），+1649 / −106（新用例 plans-upgrade.spec.ts 568 行），另有本文的第 1、2 轮记录 |
+| 本地验证 | tsc、eslint、copy-guard 与其他 node 脚本测试通过；test-payment-web.py 全量 90/90 通过（8.5 分钟，含新的 plans-upgrade.spec.ts 9 项） |
+| 本文 | 第 1 轮记录由 docs PR #101 合并为 main 05713bb；本分支以同一版为底追加本节，合并 main 时 handoff_plans.md 的冲突按本分支版本解决（第 1 轮内容逐字一致） |
+
+**交付（按文件）**
+
+| 文件 | 内容 |
+| --- | --- |
+| frontend/src/lib/types.ts | Meta.plan_upgrade_supported；Order 增加 kind、from_plan_name、credit_cents、upgrade_days、upgrade_traffic_bytes；新类型 PlanRelation、UpgradeOption、UpgradeOptions、UpgradeQuote（与第 1 轮“实际实现的接口契约”一致） |
+| frontend/src/components/plans-view.tsx | 已登录且 /meta 的 payment_enabled、plan_upgrade_supported 都为真时，请求 GET /payments/upgrade-options，按服务端给出的 relation 决定每张卡片：current 续费（不变）；upgrade 主按钮“升级到 {B}”，下方“补差价约 ¥X，到期日不变”，不可买时显示服务端原因（开关关闭、剩余不足 1 天）；downgrade/lateral 按钮禁用，文字“到期后可购买”，下方是服务端的降级/平级提示（含到期日）；new 照常购买。年付视图里升级卡片多一句“升级按你当前的付费方式补差价；如需年付，可在升级后续费为年付”。旧后端（没有该字段）或升级选项请求失败时退回本地判定，文案为“当前套餐有效期内不能更换，到期后可购买。”，不出现“升级”。“再次购买”链接只对可新购或续费的套餐自动打开弹窗。规则说明按后端能力二选一 |
+| frontend/src/components/upgrade-modal.tsx（新增） | 升级结算弹窗：POST /payments/upgrade-quote 后逐行显示套餐变更、到期时间（不变）、收费/抵扣天数、新套餐剩余价值 V、已付金额抵扣 −K、最低补差提示、专属价（测试价账户）、应付金额，以及取整规则说明；权益变化（月付持有：新增流量；年付持有：本周期新增和以后每 30 天的额度）、设备数、线路权限；重新登录提示；lost_groups 用红色警告列出。没有优惠码输入。下单 POST /payments/upgrade-orders，必带 expected_amount_cents；每组（套餐、支付方式）一个 Idempotency-Key；price_changed 时不打开网关、显示“价格已更新”并重新报价；idempotency_conflict 换新 key；pending_order_exists 与报价里的 pending_orders > 0 都显示“你有未完成的订单…”和“查看订单记录”链接；upgrade_disabled、remaining_too_short、not_upgradable、plan_not_purchasable 显示原因并重新报价 |
+| frontend/src/components/purchase-modal.tsx | 抽出 PayMethods（支付方式单选）和 openGateway（校验协议后整页跳转），升级弹窗复用；购买流程行为不变 |
+| frontend/src/components/orders-view.tsx | kind = upgrade 的行显示“升级 A → B”和“补差价”标签，额度列为“抵扣 ¥K · N 天 · +X GB” |
+| frontend/src/components/pay-result-view.tsx | 升级单付款成功：标题“已升级到 B”，正文“有效期至 …（不变）。已登录的客户端会断开一次，请重新登录以获得新权益。”（到期时间取 /me/dashboard）；徽标为“A → B”；超时或失败时按钮为“返回套餐页”，不带预选参数 |
+| frontend/src/components/home/home-faq.tsx | “如何续费或更换套餐？”：后端支持升级时说明可补差价升级、到期时间不变、不支持降级且不退差价；否则保留原说法 |
+| frontend/src/lib/console.ts、console-orders.tsx | 订单列表增加“类型”列（“升级”标签和“从 A”）与“订单类型”筛选（kind）；详情增加“类型：升级 A → B”、“升级金额”、“价值覆盖”（covers_from/to），以及“升级明细”卡片：订阅 ID、周期（升级不改变）、持有方式、Nc/Nk、V 与费率、K、最低补差是否生效、应付（测试价时注明实收）、新旧流量费率、新增流量、之后每周期额度、失去的线路组、抵扣来源（计入的订单 ID 和各自金额）。升级单不再显示“原价与年付优惠”一行 |
+| frontend/src/components/console/console-plans.tsx | 新的“有效期内升级”设置条：当前状态、“允许有效期内升级”开关、“最低补差金额（元）”输入（按分校验 0.01–100.00，不用浮点）和“保存升级设置”；提交时带上当前年付折扣和 version（乐观锁），后端记录审计。后端较旧（设置里没有 upgrade_enabled）时不显示 |
+| backend/internal/api/payment_acceptance_test.go | 夹具（只在 test-payment-web.py 下运行）：新账户 upgroot（管理员）和 upga … upgg，放在最早创建，不影响公告用例要在用户列表首页找到 kyle；新控制接口 upgrade-seed（按夹具时钟放置一个正在有效期内的订阅和一笔覆盖整段周期的已付订单，可选年付刷新型或测试订阅）、node-group（创建/删除只对指定套餐可见的线路组）、audit（读最新一条审计及其明细）；orders 和 subscription 的读回多出 kind、upgrade_traffic_bytes、starts_at、max_devices、allow_dedicated |
+| frontend/tests/plans-upgrade.spec.ts（新增） | R2-01 … R2-09，见下表 |
+| frontend/tests/shop.spec.ts | S3-05 中“其他套餐有效期内不可购买”的断言：shopb 持有 25 元的 E2E 周期套餐，30 元的 E2E 调价套餐按新规则是升级，所以改为“没有购买按钮、显示‘升级到 E2E 调价套餐’”。含义（有效期内不能新购其他套餐）不变 |
+| frontend/playwright.payment.config.ts | 加入 plans-upgrade.spec.ts |
+
+**为什么订阅由夹具在用例里现放**：所有用例共用一个可前进的时钟（其他用例会推进它），预先放好的订阅到用例运行时剩余时间不确定。upgrade-seed 按调用时的夹具时钟放置“已过 elapsed 秒、还剩 remaining 秒、订单窗口正好覆盖整段周期”的订阅，所以金额与第 6.6 节的算例一致，且与用例的执行顺序无关。
+
+**验收**
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R2-01 | PASS | upga（月付轻量，例 1 的时间点）：轻量“续费”，进阶、旗舰为“升级到 …”，卡片小字分别为“补差价约 ¥14.00”“补差价约 ¥40.67”；upgc（进阶）：轻量按钮禁用、文字“到期后可购买”，提示为“当前套餐有效期内不支持降级（降级不退还差价），请在 {UTC+8 到期日} 到期后购买”，旗舰可升级；upgd（测试订阅）三个都是“购买”且没有升级按钮；upge（剩余 20 小时）升级按钮禁用，显示“剩余不足 1 天，请到期后直接购买新套餐”。截图 upgrade-cards、upgrade-cards-downgrade |
+| R2-02 | PASS | 例 1 报价：收费 20 天、抵扣 19 天、V ¥26.60、K −¥12.60、应付 ¥14.00、新增 133.33 GB（字节数 = 200 GiB − ceil(66.67 GiB)），到期时间与订阅一致；弹窗各行与报价逐项相等；没有优惠码输入；有重新登录提示；临时加一个只有轻量可见的线路组后，报价的 lost_groups 和弹窗的红色警告都列出它。年付持有（upgb）：收费 355、抵扣 354、V ¥419.12、K ¥208.44、应付 ¥210.68，本周期新增 133.33 GB，之后每 30 天 300 GB。截图 upgrade-dialog |
+| R2-03 | PASS | 支付宝 → 假网关 → 回调：结果页“已升级到 进阶计划”，含“（不变）”和重新登录提示；订阅 plan 为 pro、starts_at 和 expires_at 不变、设备 5、开通专线，流量 = 原流量 + 订单实际发放的流量；订单记录显示“升级 轻量计划 → 进阶计划”“补差价”“抵扣 ¥12.60 · 20 天 · +133.33 GB”“¥14.00”“已支付”；总览显示进阶计划；回到 /plans 后轻量变为“到期后可购买”，旗舰可升级。截图 upgrade-result、upgrade-orders |
+| R2-04 | PASS | upgf 剩余 10 天 90 秒：报价 11/10 天、¥8.00；选好支付方式后夹具时钟前进 120 秒再点“去支付”：显示“价格已更新，请确认后再支付”，应付变为 ¥7.33（10/9 天），仍停在 /plans，没有生成任何新订单。截图 upgrade-price-changed |
+| R2-05 | PASS | upgg 有一笔 pending 订单：弹窗一打开就提示“你有未完成的订单…”，点支付后后端返回 pending_order_exists，没有生成升级订单；“查看订单记录”链接到 /orders |
+| R2-06 | PASS | upgc 切到年付视图：旗舰的升级按钮和“补差价约 ¥34.67”不变，并显示“如需年付，可在升级后续费为年付”；弹窗应付仍为 ¥34.67，并有同样的说明 |
+| R2-07 | PASS | 用 Playwright 拦截 /meta 去掉 plan_upgrade_supported：没有任何 /payments/upgrade-* 请求；轻量和旗舰都是禁用的“到期后可购买”，提示“当前套餐有效期内不能更换，到期后可购买。”；规则说明为“有效期内不能更换为其他套餐”，页面上没有升级按钮 |
+| R2-08 | PASS | 后台订单（?kind=upgrade）：类型列“升级 / 从 轻量计划”；详情的升级明细显示 Nc/Nk、¥26.60、¥12.60（K）、持有方式月付、价值覆盖。商店设置：输入 0 被拒（“最低补差金额须为 0.01–100.00 元”）；改为 2.00 后状态更新，审计明细 upgrade_min_charge_cents 从 100 到 200；在 upgc 的弹窗打开时关闭开关（审计 upgrade_enabled 从 true 到 false），再点支付得到“暂未开放有效期内升级…”，按钮变为不可用；重新打开 /plans 后升级按钮禁用并显示原因；最后恢复为开启、1.00 元。截图 console-upgrade-detail、upgrade-disabled |
+| R2-09 | PASS | 卡片、弹窗、结果页的可见文字经 bannedIn（与 ui-copy.spec 同一词表）检查为空；升级按钮的可读名称为“升级到 {B}”；深色主题下打开 /plans 和弹窗，截图 upgrade-dialog-dark 正常；copy-guard 源码扫描通过 |
+| R2-10 | PASS | test-payment-web.py 全量 90 项全部通过（payment、shop、referral、ui-copy、theme、home、tickets、三个后台用例等），shop.spec 只改了上面说明的那一条断言 |
+
+**与规划的差异（实现细节）**
+1. 降级和平级卡片的可读名称仍是“购买 {B}”（按钮禁用、文字为“到期后可购买”），这样现有用例里“有效期内购买其他套餐的按钮不可用”的断言不用改含义。
+2. 第 11.2 节写的“pending_order_exists 时提示”：报价返回 pending_orders > 0 时也提前显示同一提示，但不禁用支付按钮（未完成订单可能马上过期），由后端最终拒绝。
+3. 夹具的设备上限是 2，所以弹窗显示“最多 2 台”（device_limit 已经过 deviceCap）；订阅里保存的是套餐的 5 台，R2-03 断言的是后者。
+
+**踩过的坑**
+- getByLabel 默认是子串匹配，“剩余天数”会同时匹配“新套餐剩余天数价值”，所以弹窗用“新套餐剩余价值”这个规划里的原词，用例里统一加 exact。登录页的“邮箱地址”标签带必填星号，不能用 exact。
+- Mantine 的 Alert 默认 role = alert，用 getByRole('alert') 时要按文字过滤。
+- 本机 ~/Library/Caches/ms-playwright 没有 Playwright 自带的 Chromium，npm run test:api-proxy 要带 PLAYWRIGHT_CHROME_PATH 指向系统 Chrome（结果 17/17）；test-payment-web.py 会自动使用系统 Chrome。
+
+**未做 / 交给第 3 轮**
+- 发布演练（升级 → 回滚到 dbe75ca → 再升级）、四种新旧组合的脚本证据（本轮只覆盖“旧后端 + 新前端”的页面行为）、Core 与 APP 的升级断开场景、安全审查、docs/payment-operations.md / README / DEPLOYMENT、用户实测 U-41 … U-46。
+- 本轮的证据：本机 artifacts/plans-round2-website（全量与单项 Playwright 日志、9 张截图；artifacts/ 不入库）。

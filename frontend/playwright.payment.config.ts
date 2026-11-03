@@ -21,6 +21,7 @@ export default defineConfig({
     'admin-console-2.spec.ts',
     'admin-console-plans.spec.ts',
     'shop.spec.ts',
+    'plans-upgrade.spec.ts',
     'referral.spec.ts',
     'ui-copy.spec.ts',
     'theme.spec.ts',

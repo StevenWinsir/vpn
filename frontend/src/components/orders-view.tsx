@@ -18,7 +18,15 @@ import {
 import { IconReceipt } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
 import { trafficLabel } from '@/lib/shop';
-import { date, livePending, money, orderStatusLabel, payTypeLabel, type Order } from '@/lib/types';
+import {
+  date,
+  gib,
+  livePending,
+  money,
+  orderStatusLabel,
+  payTypeLabel,
+  type Order,
+} from '@/lib/types';
 export function OrdersView() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
@@ -138,9 +146,22 @@ export function OrdersView() {
                 {orders.map((order) => (
                   <Table.Tr key={order.id}>
                     <Table.Td>
-                      <Text size="sm" fw={600}>
-                        {order.plan_name}
-                      </Text>
+                      {order.kind === 'upgrade' ? (
+                        // An upgrade (handoff_plans.md 11.3): from which plan, for the rest of
+                        // the period; there is nothing to buy again.
+                        <Group gap={6} wrap="nowrap">
+                          <Text size="sm" fw={600} data-testid="order-upgrade">
+                            升级 {order.from_plan_name || '原套餐'} → {order.plan_name}
+                          </Text>
+                          <Badge variant="light" color="violet" size="sm">
+                            补差价
+                          </Badge>
+                        </Group>
+                      ) : (
+                        <Text size="sm" fw={600}>
+                          {order.plan_name}
+                        </Text>
+                      )}
                       <div className="order-id">
                         {order.id.slice(0, 8)}…{order.id.slice(-4)}
                       </div>
@@ -155,7 +176,9 @@ export function OrdersView() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      {trafficLabel(order)} / {order.duration_days} 天
+                      {order.kind === 'upgrade'
+                        ? `抵扣 ${money(order.credit_cents ?? 0)} · ${order.upgrade_days ?? 0} 天 · +${gib(order.upgrade_traffic_bytes ?? 0)} GB`
+                        : `${trafficLabel(order)} / ${order.duration_days} 天`}
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" fw={600}>

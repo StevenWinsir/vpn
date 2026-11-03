@@ -50,6 +50,9 @@ export function ConsolePlans() {
           onSaved={refresh}
         />
       ) : null}
+      {data && data.settings.upgrade_enabled !== undefined ? (
+        <UpgradeBar key={data.settings.version} settings={data.settings} onSaved={refresh} />
+      ) : null}
       <Group justify="space-between">
         <Switch
           label="显示已删除"
@@ -349,6 +352,100 @@ function DiscountBar({
           }}
         />
       ) : null}
+    </Paper>
+  );
+}
+
+// "0.01".."100.00" yuan as whole cents, without floating point; null when malformed.
+function yuanCents(text: string): number | null {
+  const m = /^(\d{1,3})(?:\.(\d{1,2}))?$/.exec(text.trim());
+  if (!m) return null;
+  return Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0'));
+}
+
+// Mid-period upgrades (handoff_plans.md 9.2, 11.3): the switch and the minimum charge. Both
+// apply to the next quote; orders already placed keep their price.
+function UpgradeBar({ settings, onSaved }: { settings: ShopSettings; onSaved: () => void }) {
+  const enabledNow = settings.upgrade_enabled ?? true;
+  const minNow = settings.upgrade_min_charge_cents ?? 100;
+  const [enabled, setEnabled] = useState(enabledNow);
+  const [text, setText] = useState((minNow / 100).toFixed(2));
+  const [problem, setProblem] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const cents = yuanCents(text);
+    if (cents === null || cents < 1 || cents > 10000) {
+      setProblem('最低补差金额须为 0.01–100.00 元');
+      return;
+    }
+    if (cents === minNow && enabled === enabledNow) {
+      setProblem('没有任何改动');
+      return;
+    }
+    setProblem('');
+    setError('');
+    setBusy(true);
+    try {
+      await api('/admin/console/shop-settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          yearly_discount_percent: settings.yearly_discount_percent,
+          upgrade_enabled: enabled,
+          upgrade_min_charge_cents: cents,
+          version: settings.version,
+        }),
+      });
+      notifications.show({
+        color: 'teal',
+        title: '升级设置已保存',
+        message: '对下一次升级报价立即生效；已创建的升级订单不受影响',
+      });
+      onSaved();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Paper withBorder radius="lg" p="md" data-testid="upgrade-bar">
+      <Group justify="space-between" align="flex-end" gap="md">
+        <div>
+          <Text fw={700} data-testid="upgrade-current">
+            有效期内升级：{enabledNow ? '已开启' : '已关闭'}，最低补差 {money(minNow)}
+          </Text>
+          <Text size="xs" c="dimmed">
+            用户可在套餐有效期内补差价升级到更高的套餐，到期时间不变；降级始终不可用。补差金额低于最低补差时按最低补差收取。
+          </Text>
+        </div>
+        <Group align="flex-end" gap="md">
+          <Switch
+            label="允许有效期内升级"
+            checked={enabled}
+            onChange={(e) => {
+              setEnabled(e.currentTarget.checked);
+              setProblem('');
+            }}
+          />
+          <TextInput
+            label="最低补差金额（元）"
+            description="0.01–100.00"
+            w={170}
+            value={text}
+            error={problem || undefined}
+            inputMode="decimal"
+            onChange={(e) => {
+              setText(e.currentTarget.value);
+              setProblem('');
+            }}
+          />
+          <Button onClick={() => void save()} loading={busy}>
+            保存升级设置
+          </Button>
+        </Group>
+      </Group>
+      <ErrorBox text={error} />
     </Paper>
   );
 }

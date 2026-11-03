@@ -21,7 +21,7 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { api } from '@/lib/api';
-import { money, orderStatusLabel, payTypeLabel } from '@/lib/types';
+import { gib, money, orderStatusLabel, payTypeLabel } from '@/lib/types';
 import {
   dayEnd,
   dayStart,
@@ -31,6 +31,8 @@ import {
   validDay,
   type ConsoleNotification,
   type ConsoleOrder,
+  type ConsoleRate,
+  type ConsoleUpgrade,
 } from '@/lib/console';
 import {
   describeError,
@@ -49,6 +51,7 @@ const keys = [
   'pay_type',
   'source',
   'billing_cycle',
+  'kind',
   'email',
   'trade_no',
   'order_id',
@@ -67,6 +70,7 @@ function toApi(v: Values): Values {
     pay_type: v.pay_type,
     source: v.source,
     billing_cycle: v.billing_cycle,
+    kind: v.kind,
     email: v.email,
     trade_no: v.trade_no,
     order_id: v.order_id,
@@ -182,6 +186,17 @@ export function ConsoleOrders() {
               value={draft.billing_cycle || null}
               onChange={(v) => set('billing_cycle', v)}
             />
+            <Select
+              label="订单类型"
+              clearable
+              w={120}
+              data={[
+                { value: 'purchase', label: '购买' },
+                { value: 'upgrade', label: '升级' },
+              ]}
+              value={draft.kind || null}
+              onChange={(v) => set('kind', v)}
+            />
             <TextInput
               label="用户邮箱"
               value={draft.email}
@@ -242,11 +257,12 @@ export function ConsoleOrders() {
         ) : (
           <>
             <ScrollArea>
-              <Table verticalSpacing="sm" horizontalSpacing="md" miw={1300} aria-label="订单列表">
+              <Table verticalSpacing="sm" horizontalSpacing="md" miw={1400} aria-label="订单列表">
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>订单 / 网关订单号</Table.Th>
                     <Table.Th>用户</Table.Th>
+                    <Table.Th>类型</Table.Th>
                     <Table.Th>周期</Table.Th>
                     <Table.Th>标价</Table.Th>
                     <Table.Th>优惠</Table.Th>
@@ -303,6 +319,9 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const cycleLabel = (o: ConsoleOrder) => (o.billing_cycle === 'yearly' ? '年付' : '月付');
+const isUpgrade = (o: ConsoleOrder) => o.kind === 'upgrade';
+const centsRate = (r: ConsoleRate) => `${money(r.amount)} / ${r.days} 天`;
+const bytesRate = (r: ConsoleRate) => `${gib(r.amount)} GiB / ${r.days} 天`;
 
 function OrderRow({ order: o, onOpen }: { order: ConsoleOrder; onOpen: () => void }) {
   return (
@@ -316,6 +335,20 @@ function OrderRow({ order: o, onOpen }: { order: ConsoleOrder; onOpen: () => voi
         </Text>
       </Table.Td>
       <Table.Td>{o.email}</Table.Td>
+      <Table.Td data-testid="order-kind">
+        {isUpgrade(o) ? (
+          <>
+            <Badge color="violet" variant="light">
+              升级
+            </Badge>
+            <Text size="xs" c="dimmed">
+              从 {o.from_plan_name || o.from_plan_id || '—'}
+            </Text>
+          </>
+        ) : (
+          '购买'
+        )}
+      </Table.Td>
       <Table.Td data-testid="order-cycle">{cycleLabel(o)}</Table.Td>
       <Table.Td>{money(o.list_price_cents || o.price_cents)}</Table.Td>
       <Table.Td>
@@ -368,6 +401,8 @@ type Detail = {
   order: ConsoleOrder;
   notifications: ConsoleNotification[];
   gateway_checked_at: string | null;
+  // Upgrade orders only: the stored computation of the price.
+  upgrade?: ConsoleUpgrade | null;
 };
 
 function OrderDrawer({
@@ -429,7 +464,18 @@ function OrderDrawer({
             <Paper withBorder radius="md" p="md">
               <Stack gap={4}>
                 <Row label="套餐" value={o.plan_name} />
-                <Row label="付费周期" value={cycleLabel(o)} />
+                <Row
+                  label="类型"
+                  value={
+                    isUpgrade(o)
+                      ? `升级：${o.from_plan_name || o.from_plan_id || '—'} → ${o.plan_name}`
+                      : '购买'
+                  }
+                />
+                <Row
+                  label="付费周期"
+                  value={isUpgrade(o) ? `${cycleLabel(o)}（升级时的持有方式）` : cycleLabel(o)}
+                />
                 <Row label="用户" value={o.email} />
                 <Row label="订单 ID" value={o.id} mono />
                 <Row label="网关订单号" value={o.trade_no ?? '—'} mono />
@@ -448,7 +494,7 @@ function OrderDrawer({
                   label="金额"
                   value={`标价 ${money(o.list_price_cents || o.price_cents)}，优惠 ${money(o.discount_cents)}${o.coupon_code ? `（${o.coupon_code}）` : ''}，应付 ${money(o.amount_cents || o.price_cents)}，实付 ${o.paid_cents != null ? money(o.paid_cents) : '—'}`}
                 />
-                {o.original_cents > 0 ? (
+                {o.original_cents > 0 && !isUpgrade(o) ? (
                   <Row
                     label="原价与年付优惠"
                     value={
@@ -456,6 +502,12 @@ function OrderDrawer({
                         ? `原价 ${money(o.original_cents)}，年付折扣 ${o.cycle_discount_percent}%（立省 ${money(o.original_cents - (o.list_price_cents || o.price_cents))}）`
                         : `原价 ${money(o.original_cents)}`
                     }
+                  />
+                ) : null}
+                {isUpgrade(o) ? (
+                  <Row
+                    label="升级金额"
+                    value={`新套餐剩余价值 ${money(o.original_cents)}，抵扣 ${money(o.credit_cents ?? 0)}，收费 ${o.upgrade_days ?? 0} 天，新增流量 ${gib(o.upgrade_traffic_bytes ?? 0)} GiB`}
                   />
                 ) : null}
                 <Row
@@ -470,8 +522,19 @@ function OrderDrawer({
                 <Row label="创建" value={<When value={o.created_at} />} />
                 <Row label="支付" value={<When value={o.paid_at} />} />
                 <Row label="上次查询网关" value={<When value={detail.gateway_checked_at} />} />
+                {o.covers_from && o.covers_to ? (
+                  <Row
+                    label="价值覆盖"
+                    value={
+                      <>
+                        <When value={o.covers_from} /> 至 <When value={o.covers_to} />
+                      </>
+                    }
+                  />
+                ) : null}
               </Stack>
             </Paper>
+            {isUpgrade(o) ? <UpgradeDetail order={o} upgrade={detail.upgrade ?? null} /> : null}
             <Group gap="sm">
               {o.trade_no ? (
                 <Button variant="light" onClick={() => void check()} loading={checking}>
@@ -538,6 +601,97 @@ function OrderDrawer({
         ) : null}
       </Stack>
     </Drawer>
+  );
+}
+
+// The computation behind an upgrade's price (handoff_plans.md 6, 10): what the order was priced
+// on and which paid orders the credit came from.
+function UpgradeDetail({
+  order,
+  upgrade: u,
+}: {
+  order: ConsoleOrder;
+  upgrade: ConsoleUpgrade | null;
+}) {
+  if (!u)
+    return (
+      <Alert color="orange" data-testid="upgrade-detail">
+        这笔升级订单没有可读的计价明细。
+      </Alert>
+    );
+  const contributions = u.contributions ?? [];
+  return (
+    <Paper withBorder radius="md" p="md" data-testid="upgrade-detail">
+      <Stack gap={4}>
+        <Text fw={600} mb={4}>
+          升级明细
+        </Text>
+        <Row label="订阅 ID" value={u.subscription_id} mono />
+        <Row
+          label="周期"
+          value={
+            <>
+              <When value={u.starts_at} /> 至 <When value={u.expires_at} />
+              （升级不改变）
+            </>
+          }
+        />
+        <Row label="持有方式" value={u.refreshing ? '年付（每 30 天重置）' : '月付'} />
+        <Row
+          label="天数"
+          value={`收费 ${u.charge_days} 天（Nc），抵扣 ${u.credit_days} 天（Nk）`}
+        />
+        <Row
+          label="新套餐价值"
+          value={`${money(u.value_cents)}（按 ${centsRate(u.value_rate)}）`}
+        />
+        <Row label="已付抵扣" value={`${money(u.credit_cents)}（K）`} />
+        <Row
+          label="最低补差"
+          value={`${money(u.min_charge_cents)}${u.min_charge_applied ? '，已生效' : '，未生效'}`}
+        />
+        <Row
+          label="应付"
+          value={`${money(order.list_price_cents)}${order.price_source === 'test_price' ? `（测试价实收 ${money(order.amount_cents)}）` : ''}`}
+        />
+        <Row
+          label="流量费率"
+          value={`新套餐 ${bytesRate(u.to_traffic)}，原套餐参考 ${bytesRate(u.from_traffic)}`}
+        />
+        <Row label="新增流量" value={`${gib(u.traffic_add_bytes)} GiB（报价）`} />
+        {u.new_cycle_bytes ? (
+          <Row label="之后每周期" value={`${gib(u.new_cycle_bytes)} GiB`} />
+        ) : null}
+        {u.lost_groups && u.lost_groups.length > 0 ? (
+          <Row label="失去的线路组" value={u.lost_groups.join('、')} />
+        ) : null}
+      </Stack>
+      <Text size="sm" fw={600} mt="md" mb={4}>
+        抵扣来源（本周期已付订单）
+      </Text>
+      {contributions.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          没有计入抵扣的订单
+        </Text>
+      ) : (
+        <Table verticalSpacing={4} aria-label="抵扣来源">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>订单 ID</Table.Th>
+              <Table.Th>抵扣</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {contributions.map((c) => (
+              <Table.Tr key={c.order_id}>
+                <Table.Td style={{ fontFamily: 'monospace' }}>{c.order_id}</Table.Td>
+                <Table.Td>{money(c.cents)}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      )}
+    </Paper>
   );
 }
 

@@ -417,8 +417,12 @@ test('S3-05 a monthly subscriber renews as yearly and the expiry moves 365 days'
     exact: true,
   });
   await expect(renew).toContainText('续费为年付');
-  // Other plans stay closed during the validity period.
-  await expect(card(page, price).getByRole('button', { name: /^购买 / })).toBeDisabled();
+  // Other plans cannot be bought anew during the validity period; this higher one is offered as an
+  // upgrade instead (handoff_plans.md 11.1, covered by plans-upgrade.spec).
+  await expect(card(page, price).getByRole('button', { name: /^购买 / })).toHaveCount(0);
+  await expect(
+    card(page, price).getByRole('button', { name: '升级到 E2E 调价套餐', exact: true }),
+  ).toBeVisible();
   await renew.click();
   await expect(dialog(page).getByText(`续费 ${monthName}（年付）`)).toBeVisible();
   await expect(dialog(page).getByText(/在当前到期时间基础上顺延 365 天/)).toBeVisible();
