@@ -73,7 +73,21 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// supportroot (an administrator), supporta and supportb to the support chat spec (handoff_ui.md 9);
 	// ticketroot (an administrator), ticketa, ticketb and ticketc to the support ticket spec (handoff_ticket.md 15).
 	// The ticket accounts come first, as the oldest rows: the console's user list shows the newest 20,
-	// and the announcement spec finds kyle on that first page.
+	// and the announcement spec finds kyle on that first page. The plan upgrade spec's accounts
+	// (handoff_plans.md 15, round 2) are older still: upga holds monthly starter, upgb yearly starter,
+	// upgc pro, upgd a test subscription, upge less than a day; upgf crosses a day boundary, upgg has a
+	// pending order, upgh pays an upgrade with a line group lost and upgroot is the administrator.
+	for _, kind := range []string{"upgroot", "upga", "upgb", "upgc", "upgd", "upge", "upgf", "upgg", "upgh"} {
+		role := "user"
+		if kind == "upgroot" {
+			role = "admin"
+		}
+		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}
+		if err = db.Create(&u).Error; err != nil {
+			t.Fatal(err)
+		}
+		emails[kind] = u.Email
+	}
 	for _, kind := range []string{"ticketroot", "ticketa", "ticketb", "ticketc", "alice", "bob", "tester", "carol", "dave", "erin", "frank", "gina", "hank", "ivan", "judy", "kyle", "lena", "boss", "root", "themeroot", "themea", "supportroot", "supporta", "supportb"} {
 		role := "user"
 		if kind == "root" || kind == "boss" || kind == "themeroot" || kind == "supportroot" || kind == "ticketroot" {
@@ -199,7 +213,8 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				if o.TradeNo != nil {
 					trade = *o.TradeNo
 				}
-				out = append(out, map[string]any{"id": o.ID, "trade_no": trade, "status": o.Status, "pay_type": o.PayType, "amount_cents": o.AmountCents, "paid_cents": o.PaidCents, "price_source": o.PriceSource, "coupon_code": o.CouponCode, "review_reason": o.ReviewReason})
+				out = append(out, map[string]any{"id": o.ID, "trade_no": trade, "status": o.Status, "pay_type": o.PayType, "amount_cents": o.AmountCents, "paid_cents": o.PaidCents, "price_source": o.PriceSource, "coupon_code": o.CouponCode, "review_reason": o.ReviewReason, "kind": o.Kind,
+					"upgrade_traffic_bytes": o.UpgradeTrafficBytes})
 			}
 			reply(out)
 		case "/fixture/subscription":
@@ -213,7 +228,8 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				w.WriteHeader(404)
 				return
 			}
-			reply(map[string]any{"plan_id": sub.PlanID, "expires_at": sub.ExpiresAt, "traffic_limit_bytes": sub.TrafficLimitBytes, "is_test": sub.IsTest,
+			reply(map[string]any{"plan_id": sub.PlanID, "starts_at": sub.StartsAt, "expires_at": sub.ExpiresAt, "traffic_limit_bytes": sub.TrafficLimitBytes, "is_test": sub.IsTest,
+				"max_devices": sub.MaxDevices, "allow_dedicated": sub.AllowDedicated,
 				"quota_cycle_days": sub.QuotaCycleDays, "quota_cycle_bytes": sub.QuotaCycleBytes, "quota_cycle_starts_at": sub.QuotaCycleStartsAt})
 		case "/fixture/user":
 			// Account state for the account specs: whether the row exists, its status and
@@ -267,6 +283,86 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			reply(map[string]any{"id": order.ID, "trade_no": trade})
+		case "/fixture/upgrade-seed":
+			// A subscription in its period for the plan upgrade spec, placed on the fixture's clock
+			// when the spec needs it: it started elapsed seconds ago and ends in remaining seconds,
+			// paid by one gateway order covering exactly that period (cycle=yearly: a refreshing
+			// allowance at the yearly price; test=1: a test subscription with no order).
+			q := r.URL.Query()
+			var owner model.User
+			var plan model.Plan
+			if db.First(&owner, "email = ?", q.Get("email")).Error != nil || db.First(&plan, "id = ?", q.Get("plan")).Error != nil {
+				w.WriteHeader(404)
+				return
+			}
+			elapsed, e1 := strconv.Atoi(q.Get("elapsed"))
+			remaining, e2 := strconv.Atoi(q.Get("remaining"))
+			if e1 != nil || e2 != nil || elapsed < 0 || remaining < 1 {
+				w.WriteHeader(400)
+				return
+			}
+			now := clock.Now()
+			starts, expires := now.Add(-time.Duration(elapsed)*time.Second), now.Add(time.Duration(remaining)*time.Second)
+			yearly, test := q.Get("cycle") == model.CycleYearly, q.Get("test") == "1"
+			sub := model.Subscription{ID: uuid.NewString(), UserID: owner.ID, PlanID: plan.ID, PlanName: plan.Name, StartsAt: starts, ExpiresAt: expires, TrafficLimitBytes: plan.TrafficBytes,
+				MaxDevices: plan.MaxDevices, AllowDedicated: plan.AllowDedicated, IsTest: test, Version: 1}
+			cycle := model.CycleMonthly
+			terms, e := termsFor(plan, model.CycleMonthly, 0)
+			if yearly {
+				global, ge := globalDiscount(db)
+				if terms, e = termsFor(plan, model.CycleYearly, global); ge != nil {
+					e = ge
+				}
+				cycle, sub.QuotaCycleDays, sub.QuotaCycleBytes, sub.QuotaCycleStartsAt = model.CycleYearly, 30, plan.TrafficBytes, &starts
+			}
+			if e != nil || db.Omit("User", "Plan").Create(&sub).Error != nil {
+				w.WriteHeader(500)
+				return
+			}
+			if !test {
+				trade := now.Format("20060102") + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+				cents, devices, dedicated := terms.PriceCents, plan.MaxDevices, plan.AllowDedicated
+				order := model.Order{ID: uuid.NewString(), UserID: owner.ID, IdempotencyKey: uuid.NewString(), PlanID: plan.ID, PlanName: plan.Name, PriceCents: cents, DurationDays: terms.DurationDays,
+					TrafficBytes: plan.TrafficBytes, Status: model.OrderPaid, Provider: "gateway", CreatedAt: starts, PaidAt: &starts, TradeNo: &trade, PayType: payment.TypeWeChat,
+					AmountCents: cents, ListPriceCents: cents, OriginalCents: terms.OriginalCents, PaidCents: &cents, PriceSource: priceList, Kind: model.OrderKindPurchase,
+					BillingCycle: cycle, CycleDiscountPercent: terms.DiscountPercent, EntMaxDevices: &devices, EntAllowDedicated: &dedicated, CoversFrom: &starts, CoversTo: &expires}
+				if yearly {
+					order.QuotaCycleDays, order.QuotaCycleBytes = 30, plan.TrafficBytes
+				}
+				if db.Omit("User").Create(&order).Error != nil {
+					w.WriteHeader(500)
+					return
+				}
+			}
+			w.WriteHeader(204)
+		case "/fixture/node-group":
+			// A line group only the listed plans can use (create), removed again by name (delete),
+			// so an upgrade quote names a line the customer would lose.
+			q := r.URL.Query()
+			if q.Get("action") == "delete" {
+				if db.Where("name = ?", q.Get("name")).Delete(&model.NodeGroup{}).Error != nil {
+					w.WriteHeader(500)
+					return
+				}
+				w.WriteHeader(204)
+				return
+			}
+			plans, _ := json.Marshal(strings.Split(q.Get("plans"), ","))
+			group := model.NodeGroup{ID: uuid.NewString(), Name: q.Get("name"), Region: "HK", LineType: "direct", RatePermille: 1000, PlanIDs: string(plans), Enabled: true, Sort: 999,
+				CreatedAt: clock.Now(), UpdatedAt: clock.Now()}
+			if group.Name == "" || db.Create(&group).Error != nil {
+				w.WriteHeader(500)
+				return
+			}
+			w.WriteHeader(204)
+		case "/fixture/audit":
+			// The newest administrator audit entry of an action, with its detail.
+			var row model.AdminAudit
+			if e := db.Where("action = ?", r.URL.Query().Get("action")).Order("version desc, created_at desc").First(&row).Error; e != nil {
+				w.WriteHeader(404)
+				return
+			}
+			reply(map[string]any{"actor_id": row.ActorID, "version": row.Version, "detail": json.RawMessage(row.Detail)})
 		case "/fixture/archive-announcements":
 			// Cleanup for the announcement spec: a failed run must not leave notices that
 			// block every later spec's pages.

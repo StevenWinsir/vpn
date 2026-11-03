@@ -10,7 +10,14 @@ import {
   IconAlertTriangle,
 } from '@tabler/icons-react';
 import { api, APIError, message } from '@/lib/api';
-import { money, orderIdPattern, payTypeLabel, type PaymentOrder } from '@/lib/types';
+import {
+  date,
+  money,
+  orderIdPattern,
+  payTypeLabel,
+  type Dashboard,
+  type PaymentOrder,
+} from '@/lib/types';
 
 const pollMs = 2000;
 const giveUpMs = 5 * 60 * 1000;
@@ -29,6 +36,22 @@ export function PayResultView() {
   const [gaveUp, setGaveUp] = useState(false);
   const status = data?.status;
   const settled = status !== undefined && status !== 'pending';
+  const upgrade = data?.kind === 'upgrade';
+  const upgraded = upgrade && status === 'paid';
+  // An upgrade keeps the expiry; the page names it from the account's subscription.
+  const [expires, setExpires] = useState<string | null>(null);
+  useEffect(() => {
+    if (!upgraded) return;
+    let active = true;
+    void api<Dashboard>('/me/dashboard')
+      .then((d) => {
+        if (active && d.subscription) setExpires(d.subscription.expires_at);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [upgraded]);
 
   useEffect(() => {
     if (!orderId) return;
@@ -96,6 +119,13 @@ export function PayResultView() {
       body: '请稍候。',
       tone: 'gray',
     };
+  else if (upgraded)
+    view = {
+      icon: <IconCircleCheck size={42} stroke={1.4} color="var(--mantine-color-teal-6)" />,
+      title: `已升级到 ${data.plan_name}`,
+      body: `${expires ? `有效期至 ${date(expires)}（不变）。` : '有效期不变。'}已登录的客户端会断开一次，请重新登录以获得新权益。`,
+      tone: 'teal',
+    };
   else if (status === 'paid' || status === 'paid_test')
     view = {
       icon: <IconCircleCheck size={42} stroke={1.4} color="var(--mantine-color-teal-6)" />,
@@ -154,7 +184,9 @@ export function PayResultView() {
             <Stack gap={4} mt="sm" align="center">
               <Group gap="xs">
                 <Badge variant="light" color={view.tone}>
-                  {data.plan_name}
+                  {upgrade
+                    ? `${data.from_plan_name || '原套餐'} → ${data.plan_name}`
+                    : data.plan_name}
                 </Badge>
                 {data.billing_cycle === 'yearly' ? (
                   <Badge variant="light" color="orange">
@@ -185,7 +217,12 @@ export function PayResultView() {
             <Alert color="gray">结果确认中，可稍后在订单记录中查看。</Alert>
           ) : null}
           <Group justify="center" mt="md">
-            {status === 'expired' || status === 'failed' ? (
+            {(status === 'expired' || status === 'failed') && upgrade ? (
+              // An upgrade is priced again from the plans page, never replayed from the link.
+              <Button component={Link} href="/plans">
+                返回套餐页
+              </Button>
+            ) : status === 'expired' || status === 'failed' ? (
               <Button
                 component={Link}
                 href={`/plans?plan=${encodeURIComponent(data?.plan_id ?? '')}${

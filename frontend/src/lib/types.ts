@@ -184,6 +184,13 @@ export type Order = {
   // quota_cycle_days, used up or not; traffic_bytes is then the nominal twelve months.
   quota_cycle_days?: number;
   quota_cycle_bytes?: number;
+  // Mid-period upgrades (handoff_plans.md 9.1); absent on a backend from before them. An
+  // upgrade order carries 0 days and 0 traffic: what it added is upgrade_traffic_bytes.
+  kind?: 'purchase' | 'upgrade';
+  from_plan_name?: string;
+  credit_cents?: number;
+  upgrade_days?: number;
+  upgrade_traffic_bytes?: number;
 };
 export type PayType = 'wxpay' | 'alipay';
 export type CouponResult = { code: string; applied: boolean; reason?: string; message?: string };
@@ -221,6 +228,62 @@ export type PlacedOrder = {
   pay_url: string;
   replayed: boolean;
   other_pending_orders: number;
+};
+// Mid-period upgrades (GET /payments/upgrade-options, POST /payments/upgrade-quote;
+// handoff_plans.md 10). Every figure is the server's; the page never prices an upgrade.
+export type PlanRelation = 'current' | 'upgrade' | 'downgrade' | 'lateral' | 'new';
+export type UpgradeOption = {
+  plan_id: string;
+  plan_name: string;
+  relation: PlanRelation;
+  purchasable: boolean;
+  reason?: string;
+  message?: string;
+  // Upgrades only: the estimate on the card.
+  amount_cents?: number;
+  upgrade_days?: number;
+  traffic_add_bytes?: number;
+};
+export type UpgradeOptions = {
+  enabled: boolean;
+  // Null without a paid subscription in its period: every plan is then a new purchase.
+  current: {
+    plan_id: string;
+    plan_name: string;
+    expires_at: string;
+    billing_cycle: BillingCycle;
+    remaining_seconds: number;
+  } | null;
+  plans: UpgradeOption[];
+};
+export type UpgradeQuote = {
+  from_plan_id: string;
+  from_plan_name: string;
+  plan_id: string;
+  plan_name: string;
+  relation: PlanRelation;
+  // How the subscription is held: yearly = a refreshing allowance.
+  billing_cycle: BillingCycle;
+  expires_at: string;
+  upgrade_days: number;
+  credited_days: number;
+  value_cents: number;
+  credit_cents: number;
+  min_charge_cents: number;
+  min_charge_applied: boolean;
+  list_amount_cents: number;
+  amount_cents: number;
+  test_price: boolean;
+  traffic_add_bytes: number;
+  // Yearly holding: each later 30-day cycle's allowance; 0 otherwise.
+  new_cycle_bytes: number;
+  device_limit: number;
+  allow_dedicated: boolean;
+  lost_groups: string[];
+  reauth_required: boolean;
+  purchasable: boolean;
+  reason?: string;
+  message?: string;
 };
 // GET /payments/orders/:id; gateway_paid is only a display hint, never an entitlement.
 export type PaymentOrder = { order: Order & { gateway_paid?: boolean } };
@@ -261,6 +324,9 @@ export type Meta = {
   // Absent on a backend from before support tickets: the site then hides the entry and never
   // calls the ticket routes (handoff_ticket.md 14.1). False: existing tickets stay readable.
   tickets_enabled?: boolean;
+  // Absent on a backend from before mid-period upgrades: the plans page then keeps its own
+  // "wait for the expiry" rule and never calls the upgrade routes (handoff_plans.md 14.1).
+  plan_upgrade_supported?: boolean;
 };
 export type RegisterCodeReceipt = {
   message: string;

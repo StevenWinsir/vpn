@@ -16,7 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconArrowRight, IconCheck } from '@tabler/icons-react';
+import { IconArrowRight, IconArrowUpRight, IconCheck } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
 import { refreshes, tierOf, trafficLabel, yearlyPromo, zhe } from '@/lib/shop';
 import {
@@ -28,9 +28,16 @@ import {
   type PlansResponse,
   type Meta,
   type Order,
+  type UpgradeOption,
+  type UpgradeOptions,
 } from '@/lib/types';
 import { useAuth } from './providers';
 import { PurchaseModal } from './purchase-modal';
+import { UpgradeModal } from './upgrade-modal';
+
+// What a card offers the signed-in account. closed: another plan during the validity period
+// that cannot be upgraded to (a downgrade or a lateral change); it waits for the expiry.
+type CardState = 'new' | 'renew' | 'upgrade' | 'closed';
 
 export function PlansView() {
   const { user } = useAuth();
@@ -52,11 +59,20 @@ export function PlansView() {
   const selected = choice && user && choice.userId === user.id ? choice.plan : null;
   const selectedCycle: BillingCycle = choice?.cycle ?? 'monthly';
   const [subscription, setSubscription] = useState<Dashboard['subscription']>(null);
+  // The server's relation of every plan to the current subscription (handoff_plans.md 11.1),
+  // kept with the account it was read for.
+  const [options, setOptions] = useState<{ userId: string; data: UpgradeOptions } | null>(null);
+  const [upgradeChoice, setUpgradeChoice] = useState<{ plan: Plan; userId: string } | null>(null);
+  const upgrading =
+    upgradeChoice && user && upgradeChoice.userId === user.id ? upgradeChoice.plan : null;
   const [dismissed, setDismissed] = useState(false);
   const params = useSearchParams();
   const presetPlan = params.get('plan');
   const presetPay = params.get('pay');
   const payOn = meta?.payment_enabled === true;
+  // Only a backend that announces upgrades is asked for them; an older one keeps the rule
+  // "other plans after the expiry" (handoff_plans.md 14.1).
+  const upgradeOn = payOn && meta?.plan_upgrade_supported === true;
   const [busy, setBusy] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const requestKey = useRef<string | null>(null);
@@ -129,24 +145,63 @@ export function PlansView() {
       active = false;
     };
   }, [user, payOn]);
-  // "Buy again" from an expired order: the link preselects the plan, cycle and method until the
-  // dialog is closed or another plan is chosen.
-  const preset =
-    !dismissed && !selected && payOn && user
-      ? plans.find((p) => p.id === presetPlan && (!yearly || p.yearly))
-      : undefined;
-  const presetType: PayType | null =
-    preset && (presetPay === 'wxpay' || presetPay === 'alipay') ? presetPay : null;
+  useEffect(() => {
+    if (!user || !upgradeOn) return;
+    let active = true;
+    const userId = user.id;
+    void api<UpgradeOptions>('/payments/upgrade-options')
+      .then((data) => {
+        if (active) setOptions({ userId, data });
+      })
+      // Without the options the cards fall back to the local rule: nothing can be upgraded.
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [user, upgradeOn]);
+  const upgradeOptions = options && user && options.userId === user.id ? options.data : null;
   const [loadedAt] = useState(() => Date.now());
-  const state = (plan: Plan) => {
+  // The local rule, for a backend without upgrades (or before its answer arrives): the current
+  // plan renews, the others wait for the expiry.
+  const localState = (plan: Plan): CardState => {
     if (
       !subscription ||
       subscription.is_test ||
       new Date(subscription.expires_at).getTime() <= loadedAt
     )
       return 'new';
-    return subscription.plan_id === plan.id ? 'renew' : 'blocked';
+    return subscription.plan_id === plan.id ? 'renew' : 'closed';
   };
+  const optionOf = (plan: Plan): UpgradeOption | undefined =>
+    upgradeOptions?.plans.find((o) => o.plan_id === plan.id);
+  const state = (plan: Plan): CardState => {
+    const option = optionOf(plan);
+    if (!option) return localState(plan);
+    switch (option.relation) {
+      case 'current':
+        return 'renew';
+      case 'upgrade':
+        return 'upgrade';
+      case 'downgrade':
+      case 'lateral':
+        return 'closed';
+      default:
+        return 'new';
+    }
+  };
+  // "Buy again" from an expired order: the link preselects the plan, cycle and method until the
+  // dialog is closed or another plan is chosen. A plan that cannot be bought now is not opened.
+  const preset =
+    !dismissed && !selected && !upgrading && payOn && user
+      ? plans.find(
+          (p) =>
+            p.id === presetPlan &&
+            (!yearly || p.yearly) &&
+            (state(p) === 'new' || state(p) === 'renew'),
+        )
+      : undefined;
+  const presetType: PayType | null =
+    preset && (presetPay === 'wxpay' || presetPay === 'alipay') ? presetPay : null;
   const modalPlan = payOn ? (selected ?? preset ?? null) : null;
   const modalCycle: BillingCycle = selected ? selectedCycle : cycle;
   function choose(plan: Plan) {
@@ -158,6 +213,12 @@ export function PlansView() {
     requestKey.current = crypto.randomUUID();
     setPurchaseError(null);
     setChoice({ plan, userId: user.id, cycle });
+  }
+  function chooseUpgrade(plan: Plan) {
+    if (!user) return;
+    setDismissed(true);
+    setChoice(null);
+    setUpgradeChoice({ plan, userId: user.id });
   }
   async function purchase() {
     if (!selected || !requestKey.current || busy) return;
@@ -238,7 +299,9 @@ export function PlansView() {
           : plans.map((plan) => {
               const tier = tierOf(plan, cycle);
               const st = state(plan);
+              const option = optionOf(plan);
               const label = (verb: string) => `${verb} ${plan.name}${yearly ? '（年付）' : ''}`;
+              const signedIn = payOn && user !== null;
               return (
                 <Paper
                   key={plan.id}
@@ -342,14 +405,37 @@ export function PlansView() {
                       月付档位仍可购买，切换到月付查看流量与有效期。
                     </Text>
                   )}
-                  {tier ? (
+                  {tier && signedIn && st === 'upgrade' ? (
                     <Button
                       fullWidth
                       mt="auto"
                       variant={plan.featured ? 'filled' : 'light'}
-                      disabled={
-                        payOn ? user !== null && st === 'blocked' : !meta?.test_purchase_enabled
-                      }
+                      disabled={!option?.purchasable}
+                      onClick={() => chooseUpgrade(plan)}
+                      rightSection={<IconArrowUpRight size={16} />}
+                      aria-label={`升级到 ${plan.name}`}
+                      data-testid="upgrade-button"
+                    >
+                      升级到 {plan.name}
+                    </Button>
+                  ) : tier && signedIn && st === 'closed' ? (
+                    // The accessible name stays the purchase's: what is closed is buying it now.
+                    <Button
+                      fullWidth
+                      mt="auto"
+                      variant="default"
+                      disabled
+                      aria-label={label('购买')}
+                      rightSection={<IconArrowRight size={16} />}
+                    >
+                      到期后可购买
+                    </Button>
+                  ) : tier ? (
+                    <Button
+                      fullWidth
+                      mt="auto"
+                      variant={plan.featured ? 'filled' : 'light'}
+                      disabled={!payOn && !meta?.test_purchase_enabled}
                       onClick={() => choose(plan)}
                       rightSection={<IconArrowRight size={16} />}
                       aria-label={
@@ -386,9 +472,25 @@ export function PlansView() {
                       查看月付
                     </Button>
                   )}
-                  {tier && payOn && user && st === 'blocked' ? (
-                    <Text size="xs" c="dimmed" ta="center" mt={8}>
-                      当前套餐有效期内不能更换套餐，到期后可购买。
+                  {tier && signedIn && st === 'upgrade' ? (
+                    <Stack gap={4} mt={8} data-testid="upgrade-hint">
+                      <Text size="xs" c="dimmed" ta="center">
+                        {option?.purchasable
+                          ? option.amount_cents
+                            ? `补差价约 ${money(option.amount_cents)}，到期日不变`
+                            : '补差价升级，到期日不变'
+                          : option?.message || '暂时无法升级到此套餐'}
+                      </Text>
+                      {yearly ? (
+                        <Text size="xs" c="dimmed" ta="center">
+                          升级按你当前的付费方式补差价；如需年付，可在升级后续费为年付。
+                        </Text>
+                      ) : null}
+                    </Stack>
+                  ) : null}
+                  {tier && signedIn && st === 'closed' ? (
+                    <Text size="xs" c="dimmed" ta="center" mt={8} data-testid="closed-hint">
+                      {option?.message || '当前套餐有效期内不能更换，到期后可购买。'}
                     </Text>
                   ) : null}
                 </Paper>
@@ -417,14 +519,23 @@ export function PlansView() {
             <Text size="sm" fw={600} mb={7}>
               续费与更换套餐
             </Text>
-            <Text c="dimmed" size="xs" lh={1.9}>
+            <Text c="dimmed" size="xs" lh={1.9} data-testid="change-rules">
               同一套餐的月付与年付可以互相续费，有效期在当前到期时间上顺延。月付续月付时流量累加；月付续成年付时，剩余流量并入第一个
               30 天周期，之后每 30 天刷新；已是年付时再续费只顺延有效期，流量仍按原日期每 30
-              天刷新。有效期内不能更换为其他套餐，到期后可重新选择。
+              天刷新。
+              {meta?.plan_upgrade_supported
+                ? '有效期内可以升级到更高的套餐：按剩余天数补差价，已付金额按剩余时间抵扣，到期日不变，剩余流量保留；有效期内不支持降级，降级不退还差价。到期后可选择任意套餐。'
+                : '有效期内不能更换为其他套餐，到期后可重新选择。'}
             </Text>
           </div>
         </SimpleGrid>
       </Paper>
+      <UpgradeModal
+        plan={payOn ? upgrading : null}
+        allowed={meta?.payment_methods ?? []}
+        yearlyView={yearly}
+        onClose={() => setUpgradeChoice(null)}
+      />
       <PurchaseModal
         plan={modalPlan}
         cycle={modalCycle}

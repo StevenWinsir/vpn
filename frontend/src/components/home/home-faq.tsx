@@ -12,6 +12,8 @@ function items(
   supportEmail: string | null,
   chat: boolean,
   tickets: boolean,
+  // The backend offers mid-period upgrades (/meta plan_upgrade_supported, handoff_plans.md 11.1).
+  upgrades: boolean,
 ): Item[] {
   const list: Item[] = [
     {
@@ -31,8 +33,12 @@ function items(
       a: `支持${payment}在线付款。下单后跳转到支付页面完成付款，付款成功后套餐立即开通。`,
     },
     {
-      q: '如何续费？',
-      a: '在套餐页选择当前套餐即可续费，有效期在当前到期时间上顺延。月付续费时流量累加；年付订阅续费只顺延有效期，流量仍每 30 天刷新。有效期内不能更换为其他套餐，到期后可重新选择。',
+      q: '如何续费或更换套餐？',
+      a:
+        '在套餐页选择当前套餐即可续费，有效期在当前到期时间上顺延。月付续费时流量累加；年付订阅续费只顺延有效期，流量仍每 30 天刷新。' +
+        (upgrades
+          ? '有效期内可以升级到更高的套餐，只需为剩余天数补差价，到期时间不变；有效期内不支持降级，降级不退还差价，到期后可选择任意套餐。'
+          : '有效期内不能更换为其他套餐，到期后可重新选择。'),
     },
     {
       q: '忘记密码怎么办？',
@@ -78,36 +84,40 @@ export function HomeFaq({ supportEmail, chat }: { supportEmail: string | null; c
   const base = useId();
   return (
     <div className="home-faq" data-testid="home-faq">
-      {items(paymentMethodsText(meta), supportEmail, chat, meta?.tickets_enabled === true).map(
-        ({ q, a }, index) => {
-          const expanded = open === index;
-          return (
-            <div className="home-faq-item" key={q} data-open={expanded ? '' : undefined}>
-              <h3>
-                <button
-                  type="button"
-                  id={`${base}-q${index}`}
-                  aria-expanded={expanded}
-                  aria-controls={`${base}-a${index}`}
-                  onClick={() => setOpen(expanded ? null : index)}
-                >
-                  <span>{q}</span>
-                  <IconChevronDown size={18} aria-hidden />
-                </button>
-              </h3>
-              <div
-                className="home-faq-panel"
-                id={`${base}-a${index}`}
-                role="region"
-                aria-labelledby={`${base}-q${index}`}
-                hidden={!expanded}
+      {items(
+        paymentMethodsText(meta),
+        supportEmail,
+        chat,
+        meta?.tickets_enabled === true,
+        meta?.plan_upgrade_supported === true,
+      ).map(({ q, a }, index) => {
+        const expanded = open === index;
+        return (
+          <div className="home-faq-item" key={q} data-open={expanded ? '' : undefined}>
+            <h3>
+              <button
+                type="button"
+                id={`${base}-q${index}`}
+                aria-expanded={expanded}
+                aria-controls={`${base}-a${index}`}
+                onClick={() => setOpen(expanded ? null : index)}
               >
-                <p>{a}</p>
-              </div>
+                <span>{q}</span>
+                <IconChevronDown size={18} aria-hidden />
+              </button>
+            </h3>
+            <div
+              className="home-faq-panel"
+              id={`${base}-a${index}`}
+              role="region"
+              aria-labelledby={`${base}-q${index}`}
+              hidden={!expanded}
+            >
+              <p>{a}</p>
             </div>
-          );
-        },
-      )}
+          </div>
+        );
+      })}
     </div>
   );
 }

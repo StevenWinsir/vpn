@@ -18,6 +18,65 @@ const methods: { type: PayType; hint: string; color: string }[] = [
   { type: 'alipay', hint: '使用支付宝扫码支付', color: '#1677ff' },
 ];
 const couponPattern = /^[A-Za-z0-9-]{4,32}$/;
+
+// Leaves for the gateway's pay page. Whole-page navigation: the gateway's countdown and its
+// redirect back need the full page.
+export function openGateway(payURL: string) {
+  const target = new URL(payURL);
+  if (target.protocol !== 'https:' && target.protocol !== 'http:')
+    throw new Error('支付链接无效，请重试。');
+  window.location.assign(target.href);
+}
+
+// The payment method choice, shared by the purchase and the upgrade checkout.
+export function PayMethods({
+  allowed,
+  value,
+  onChange,
+  disabled,
+}: {
+  allowed: string[];
+  value: PayType | null;
+  onChange: (type: PayType) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div>
+      <Text size="sm" fw={600} mb={8} id="pay-method-label">
+        支付方式
+      </Text>
+      <div role="radiogroup" aria-labelledby="pay-method-label" className="pay-methods">
+        {methods
+          .filter((m) => allowed.includes(m.type))
+          .map((m) => {
+            const on = value === m.type;
+            return (
+              <UnstyledButton
+                key={m.type}
+                role="radio"
+                aria-checked={on}
+                aria-label={payTypeLabel[m.type]}
+                className={`pay-method ${on ? 'selected' : ''}`}
+                style={{ ['--pay-color' as string]: m.color }}
+                disabled={disabled}
+                onClick={() => onChange(m.type)}
+              >
+                <span className="pay-dot" />
+                <span>
+                  <Text size="sm" fw={600}>
+                    {payTypeLabel[m.type]}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {m.hint}
+                  </Text>
+                </span>
+              </UnstyledButton>
+            );
+          })}
+      </div>
+    </div>
+  );
+}
 const normalize = (value: string) => value.trim().toUpperCase();
 
 // The checkout the gateway flow needs: pick a payment method, optionally apply a coupon,
@@ -187,11 +246,7 @@ function Checkout({
           ...(guardAmount ? { expected_amount_cents: quote.amount_cents } : {}),
         }),
       });
-      const target = new URL(placed.pay_url);
-      if (target.protocol !== 'https:' && target.protocol !== 'http:')
-        throw new Error('支付链接无效，请重试。');
-      // Whole-page navigation: the gateway's countdown and its redirect back need the full page.
-      window.location.assign(target.href);
+      openGateway(placed.pay_url);
     } catch (e) {
       setBusy(false);
       if (e instanceof APIError && e.code === 'price_changed') {
@@ -221,40 +276,7 @@ function Checkout({
             ? ' · 流量每 30 天重置为整月额度，未用完不累计'
             : ''}
       </Text>
-      <div>
-        <Text size="sm" fw={600} mb={8} id="pay-method-label">
-          支付方式
-        </Text>
-        <div role="radiogroup" aria-labelledby="pay-method-label" className="pay-methods">
-          {methods
-            .filter((m) => allowed.includes(m.type))
-            .map((m) => {
-              const on = payType === m.type;
-              return (
-                <UnstyledButton
-                  key={m.type}
-                  role="radio"
-                  aria-checked={on}
-                  aria-label={payTypeLabel[m.type]}
-                  className={`pay-method ${on ? 'selected' : ''}`}
-                  style={{ ['--pay-color' as string]: m.color }}
-                  disabled={busy}
-                  onClick={() => setPayType(m.type)}
-                >
-                  <span className="pay-dot" />
-                  <span>
-                    <Text size="sm" fw={600}>
-                      {payTypeLabel[m.type]}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {m.hint}
-                    </Text>
-                  </span>
-                </UnstyledButton>
-              );
-            })}
-        </div>
-      </div>
+      <PayMethods allowed={allowed} value={payType} onChange={setPayType} disabled={busy} />
       <div>
         <Group gap="xs" align="flex-end" wrap="nowrap">
           <TextInput

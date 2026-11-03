@@ -85,6 +85,37 @@ export type ConsoleOrder = {
   created_at: string;
   paid_at: string | null;
   expires_at: string | null;
+  // Mid-period upgrades (handoff_plans.md 9.1); absent on a backend from before them.
+  kind?: 'purchase' | 'upgrade';
+  from_plan_id?: string;
+  from_plan_name?: string;
+  credit_cents?: number;
+  upgrade_days?: number;
+  upgrade_traffic_bytes?: number;
+  covers_from?: string | null;
+  covers_to?: string | null;
+};
+// How an upgrade order was priced (GET /admin/console/orders/:id `upgrade`, the stored
+// computation). A rate is an amount (cents or bytes) over a number of days.
+export type ConsoleRate = { amount: number; days: number };
+export type ConsoleUpgrade = {
+  subscription_id: string;
+  starts_at: string;
+  expires_at: string;
+  refreshing: boolean;
+  charge_days: number;
+  credit_days: number;
+  value_rate: ConsoleRate;
+  value_cents: number;
+  credit_cents: number;
+  min_charge_cents: number;
+  min_charge_applied: boolean;
+  to_traffic: ConsoleRate;
+  from_traffic: ConsoleRate;
+  new_cycle_bytes?: number;
+  traffic_add_bytes: number;
+  contributions: { order_id: string; cents: number }[] | null;
+  lost_groups?: string[];
 };
 export type ConsoleNotification = {
   id: string;
@@ -217,6 +248,9 @@ export type AdminPlan = {
 };
 export type ShopSettings = {
   yearly_discount_percent: number;
+  // Mid-period upgrades (handoff_plans.md 9.2); absent on a backend from before them.
+  upgrade_enabled?: boolean;
+  upgrade_min_charge_cents?: number;
   version: number;
   updated_by: string | null;
   updated_at: string | null;
