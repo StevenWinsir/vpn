@@ -414,6 +414,39 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.message, "登录已失效，请重新登录")
     }
 
+    /// handoff_plans.md R3-03: a mid-period upgrade paid on the website changes the plan while the
+    /// tunnel is up; the Core stops it and ends the session with subscription_changed. The app shows
+    /// the Core's words and waits for the user: the saved password is not replayed silently.
+    func testPlanUpgradeWhileConnectedSignsOutWithTheCoresWords() async throws {
+        let store = InMemoryCredentialStore()
+        try store.save(account: account, password: "saved")
+        let prefs = MemoryPreferences()
+        prefs.rememberedEmail = "fixture@example.invalid"
+        let connected = try snapshotSamples()["connected_metering"]!
+        var changed = expired as! [String: Any]
+        changed["last_error"] = ["code": "subscription_changed", "message": "套餐已变更，请重新登录"]
+        let transport = FakeTransport()
+        let state = Counter()
+        transport.handler = { [self] command, _, _ in
+            switch command {
+            case "login":
+                state.logins += 1
+                return reply(connected)
+            case "read_snapshot": return envelope(result: changed)
+            default: return reply(connected)
+            }
+        }
+        let controller = makeController(transport, store: store, preferences: prefs)
+        await controller.launch()
+        for _ in 0..<100 where controller.phase != .signedOut { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(controller.phase, .signedOut)
+        XCTAssertEqual(controller.snapshot.state, .signedOut)
+        XCTAssertEqual(controller.message, "套餐已变更，请重新登录")
+        XCTAssertEqual(state.logins, 1, "a changed plan is never answered by a silent re-login")
+        XCTAssertEqual(try store.password(for: account), "saved", "the saved password stays for the user's own sign-in")
+    }
+
     func testStaleGenerationRefreshesSnapshotInsteadOfFailing() async {
         let transport = FakeTransport()
         transport.handler = { [self] command, _, _ in

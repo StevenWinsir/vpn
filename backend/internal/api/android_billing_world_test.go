@@ -38,7 +38,8 @@ import (
 //
 // Besides the real /api/v1 router it answers loopback-only control calls under /__world/:
 // what an administrator does (re-rate, disable a line, end a plan, lower a quota, and since node
-// groups round 6 the presence calls of presence_world_test.go), the server's
+// groups round 6 the presence calls of presence_world_test.go), what a customer does on the website
+// (since plans round 3: pay a mid-period upgrade), the server's
 // own ledger, the sink's independent byte counts, and a one-shot "lost acknowledgement": the
 // next /traffic report is committed by the real handler and then its reply is thrown away by
 // closing the connection, which is exactly what a lost ACK looks like to the client. That
@@ -116,6 +117,16 @@ func TestAndroidBillingWorld(t *testing.T) {
 	// Node groups round 6: device limit, reassignment, release (presence_world_test.go). The plan
 	// allows 4 devices; the effective limit is CLIENT_MAX_ONLINE_DEVICES (2, decision D1).
 	makeUser("presence", "user", 4<<30, 4)
+	// Plans round 3 (handoff_plans.md R3-03): a customer on starter (no dedicated line, 2 devices)
+	// with 20 days left upgrades to pro on the website while connected.
+	makeUser("upgrade", "user", 4<<30, 2)
+	{
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		if err := db.Model(&model.Subscription{}).Where("id = ?", subs["upgrade"]).Updates(map[string]any{"plan_id": "starter", "plan_name": "轻量计划",
+			"allow_dedicated": false, "starts_at": now.Add(-10 * 24 * time.Hour), "expires_at": now.Add(20 * 24 * time.Hour)}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// The administrator's web session, as in the console.
 	webCall := func(method, path string, cookies []*http.Cookie, body any) *httptest.ResponseRecorder {
@@ -295,6 +306,18 @@ func TestAndroidBillingWorld(t *testing.T) {
 		case "expire": // the plan ends now
 			db.Model(&model.Subscription{}).Where("id = ?", subs[in.User]).Update("expires_at", time.Now().Add(-time.Second).UTC())
 			w.WriteHeader(http.StatusNoContent)
+		case "upgrade": // the customer pays an upgrade to pro on the website (the order and its fulfilment, as a paid callback runs them)
+			user, ok := users[in.User]
+			if !ok {
+				http.Error(w, "unknown user", 400)
+				return
+			}
+			order, err := upgradeNow(db, cfg, user.ID, "pro")
+			if err != nil {
+				http.Error(w, "upgrade: "+err.Error(), 409)
+				return
+			}
+			answer(map[string]any{"order_id": order.ID, "plan_id": order.PlanID, "amount_cents": order.AmountCents, "traffic_add_bytes": order.UpgradeTrafficBytes})
 		case "quota": // only this much of the plan is left
 			var sub model.Subscription
 			if db.First(&sub, "id = ?", subs[in.User]).Error != nil {

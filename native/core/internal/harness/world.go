@@ -46,8 +46,9 @@ type Config struct {
 	BackgroundBytes int64 `json:"background_bytes"`
 	// CacheDir is where the engine keeps its scratch (the app's private directory on a device).
 	CacheDir string `json:"cache_dir"`
-	// Only, when "presence", runs just the online-presence cases P01-P05 (a few seconds; the
-	// suite's CI step), not the 200 MiB billing transfers.
+	// Only names the case groups of a short run, comma-separated: "presence" the online-presence
+	// cases P01-P05, "upgrade" the plan-upgrade case of plans round 3 (seconds each; the suite's CI
+	// step), instead of the 200 MiB billing transfers.
 	Only string `json:"only,omitempty"`
 }
 
