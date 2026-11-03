@@ -678,3 +678,15 @@ node_usage_reports（属于该用户的 grant）→ connection_grants → subscr
 
 - NOT RUN：真实支付网关（任何一项）；真实邮件投递与 IP 归属地服务；真实公网 HTTPS；多实例并发；四平台 APP 真机界面；你的线上 doctor。
 - 对用户的提醒：真实网关上线前，务必按 `docs/payment-operations.md` 第三节做 U-01 … U-09；如果网关返回“签名验证失败”，先看第 18 节第 1 轮记录里的签名示例问题。
+
+### 修复记录：真实网关 0.01 元实测“先成功、又变待支付、再转人工核对”（2026-11-03）
+
+- 现象（用户实测，真实网关、测试价 0.01 元）：付款成功、网关正常跳回；结果页先显示“支付已完成，正在确认到账”，随即变成“待支付”，`/orders` 也是“待付款”；约 3 分钟后变成“待人工核对”。
+- 根因一（确定的代码缺陷，造成“成功→待支付”的回退）：`GET /payments/orders/:id` 为了限流，每笔订单 10 秒内只查询一次网关（`statusRecheck`），只有抢到这次查询的那个请求带 `gateway_paid=true`；结果页每 2 秒轮询一次，下一次轮询就没有这个提示了，页面因此退回“待支付”，并在两种显示之间反复跳。订单列表从来不带这个提示。
+- 根因二（“待支付 → 待人工核对”）：这说明**可信回调没有把订单推进**。白名单为空时，只要回调进了处理函数，订单会立即变成待核对（`unverified_source`），不会先停在“待支付”。实际过程是：本地窗口（180 秒）过后，对账循环查到网关显示“已付”，于是按设计（D5，网关状态从不单独开通）把订单转成 `callback_missing`。代码里会让回调“无痕丢失”的路径：全局的 `corsAndCSRF` 排在回调处理之前，回调只要带 `Origin`，或带 Cookie 却没有 `Origin`，或 `Content-Type` 不是 `application/json`（例如表单），就会在写入回调流水之前被 403 或 415 拒掉；而网关对每笔收款只回调一次。被拒的回调在回调流水里不留任何记录，正好对应排查表里的“回调流水为空”。
+- 修复：
+  1. 新增订单列 `gateway_paid_at`（可空，`-migrate` 自动添加，旧版本忽略），记录状态查询第一次看到网关报告“已付”的时间。结果页和订单列表据此持续显示“支付已完成，正在确认到账”和“已付款，确认中”，并且不再重复查询网关。它只用于显示，从不开通；后台订单详情显示为“网关报告已付”。前端也做了保持：订单仍是待付时，看到过一次“已付”就不会再退回“待支付”，兼容滚动发布期间的旧后端。
+  2. `POST /api/v1/payments/notify` 不再经过浏览器的 Origin、Cookie 与 JSON 类型检查。每次回调都先写入回调流水再判断。请求体按文档读取 JSON；`Content-Type` 是 `application/x-www-form-urlencoded` 时按表单读取，校验规则相同。信任规则（来源白名单、金额下限与容差）不变。其他所有写接口仍然执行原有规则，有测试覆盖。
+  3. 结果为 `ip_rejected`、`invalid`、`unknown_order` 的回调，日志行带上来源地址，方便核对 `PAYMENT_NOTIFY_ALLOWED_IPS`。
+- 测试：`payment_result_test.go`（`TestGatewayPaidHintIsSticky`、`TestPaymentNotifyIsNeverRefusedBeforeJudging`）、`payment/payment_test.go` `TestParseNotificationForm`、浏览器用例 `payment.spec.ts`“a payment the gateway reports before its callback stays "paid, confirming" until it settles”（验收 fixture 的 `/fixture/pay?callback=none` 只在网关付款、不回调）。
+- **仍需你在线上确认**：把这笔订单在后台“订单与支付 → 订单详情 → 回调流水”里的记录和来源 IP 对照第四节排查表。流水为空说明回调没到后端或被旧版本中间件拒掉（升级后会留下记录）；`ip_rejected` 说明白名单或 `TRUSTED_PROXIES` 配置不对，日志里现在能直接看到来源地址；`unverified_source` 是白名单为空时的预期结果，按 U-02 处理。这笔已付订单请在后台“人工确认到账”。

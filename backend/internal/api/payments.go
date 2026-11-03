@@ -212,9 +212,15 @@ type orderInput struct {
 }
 
 // orderView is the user's view of a gateway order. The review reason stays internal.
+// GatewayPaid: the order is still pending here but the gateway has reported it paid, so
+// the customer sees "paid, confirming" rather than "awaiting payment". Display only.
 type orderView struct {
 	model.Order
 	GatewayPaid bool `json:"gateway_paid,omitempty"`
+}
+
+func newOrderView(o model.Order) orderView {
+	return orderView{Order: o, GatewayPaid: o.Status == model.OrderPending && o.GatewayPaidAt != nil}
 }
 
 func (s *Server) createPaymentOrder(c *gin.Context) {
@@ -361,7 +367,7 @@ func (s *Server) createPaymentOrder(c *gin.Context) {
 	if replayed {
 		status = 200
 	}
-	c.JSON(status, gin.H{"order": orderView{Order: order}, "pay_url": s.payURL(order), "replayed": replayed, "other_pending_orders": others})
+	c.JSON(status, gin.H{"order": newOrderView(order), "pay_url": s.payURL(order), "replayed": replayed, "other_pending_orders": others})
 }
 
 // newTradeNo draws a fresh 20-digit number; a collision (practically impossible) is
@@ -423,9 +429,11 @@ func (s *Server) paymentOrder(c *gin.Context) {
 		fail(c, 503, "database_unavailable", "订单暂时不可用")
 		return
 	}
-	view := orderView{Order: order}
-	// Display hint only: a gateway "paid" never fulfils an order (D5).
-	if order.Status == model.OrderPending && order.TradeNo != nil && s.cfg.Payment.Enabled && impersonationOf(c) == nil {
+	view := newOrderView(order)
+	// Display hint only: a gateway "paid" never fulfils an order (D5). Once seen it is
+	// kept on the order, so polls inside the recheck interval do not fall back to
+	// "awaiting payment" and the gateway is not asked again.
+	if order.Status == model.OrderPending && order.GatewayPaidAt == nil && order.TradeNo != nil && s.cfg.Payment.Enabled && impersonationOf(c) == nil {
 		now := s.now()
 		claim := s.database(c).Model(&model.Order{}).Where("id = ? AND status = ? AND (gateway_checked_at IS NULL OR gateway_checked_at <= ?)", order.ID, model.OrderPending, now.Add(-statusRecheck)).Update("gateway_checked_at", now)
 		if claim.Error == nil && claim.RowsAffected == 1 {
@@ -433,6 +441,7 @@ func (s *Server) paymentOrder(c *gin.Context) {
 				switch {
 				case result.Status == payment.StatusPaid:
 					view.GatewayPaid = true
+					s.noteGatewayPaid(c.Request.Context(), order.ID, now)
 				case (result.Status == payment.StatusTimeout || result.Expired) && now.Sub(order.CreatedAt) >= payment.OrderLifetime:
 					// The gateway's 2 minutes are over: a customer coming back from its timeout
 					// page sees "expired" at once instead of waiting for the local window. A late

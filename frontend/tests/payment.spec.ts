@@ -359,3 +359,34 @@ test('an underpaid callback is held for review and the result page says so', asy
       .getByText('待人工核对', { exact: true }),
   ).toBeVisible();
 });
+
+test('a payment the gateway reports before its callback stays "paid, confirming" until it settles', async ({
+  page,
+}) => {
+  await login(page, fixture.emails.alice);
+  await openDialog(page, '进阶计划', '续费');
+  await choose(page, '微信支付');
+  await goPay(page).click();
+  await page.waitForURL((url) => url.href.startsWith(fixture.gateway + '/submit?'));
+  const order = await lastOrder(fixture.emails.alice);
+  // Paid at the gateway, which returns the browser; the callback has not arrived.
+  await control(`pay?trade_no=${order.trade_no}&callback=none`, 'POST');
+  await page.waitForURL(/\/pay\/result\?order=/, { timeout: 30000 });
+  const confirming = page.getByRole('heading', { name: '支付已完成，正在确认到账' });
+  await expect(confirming).toBeVisible();
+  // Later polls (inside the gateway recheck interval) never fall back to "待支付".
+  await page.waitForTimeout(5000);
+  await expect(confirming).toBeVisible();
+  await expect(page.getByRole('heading', { name: '待支付' })).toHaveCount(0);
+  await shot(page, 'result-confirming');
+  await page.goto('/orders');
+  const row = page.getByRole('row').filter({ hasText: order.id.slice(0, 8) });
+  await expect(row.getByText('已付款，确认中', { exact: true })).toBeVisible();
+  await expect(row.getByText('待付款', { exact: true })).toHaveCount(0);
+  expect((await lastOrder(fixture.emails.alice)).status).toBe('pending');
+  // The trusted callback arrives and settles the order.
+  await pay(order.trade_no);
+  await page.goto(`/pay/result?order=${order.id}`);
+  await expect(page.getByRole('heading', { name: '已到账', exact: true })).toBeVisible();
+  expect((await lastOrder(fixture.emails.alice)).status).toBe('paid');
+});

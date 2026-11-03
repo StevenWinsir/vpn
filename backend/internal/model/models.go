@@ -143,6 +143,9 @@ type Order struct {
 	ReviewReason   string     `gorm:"size:32;not null;default:''" json:"-"`
 	// GatewayCheckedAt throttles status queries (reconciler and result page).
 	GatewayCheckedAt *time.Time `json:"-"`
+	// GatewayPaidAt is when a status query first saw the gateway report the order paid.
+	// A display hint only: it never fulfils an order (handoff_payment_account.md D5).
+	GatewayPaidAt *time.Time `json:"-"`
 	// Written from the injected clock, never by GORM's own time.Now.
 	UpdatedAt *time.Time `gorm:"autoUpdateTime:false" json:"-"`
 	// Shop snapshots (handoff_shop.md 4.3). Rows written before them (or by an older

@@ -191,6 +191,9 @@ export type Order = {
   credit_cents?: number;
   upgrade_days?: number;
   upgrade_traffic_bytes?: number;
+  // Pending here but already reported paid by the gateway: "paid, confirming". Display only,
+  // never an entitlement; absent on a backend from before it.
+  gateway_paid?: boolean;
 };
 export type PayType = 'wxpay' | 'alipay';
 export type CouponResult = { code: string; applied: boolean; reason?: string; message?: string };
@@ -286,7 +289,7 @@ export type UpgradeQuote = {
   message?: string;
 };
 // GET /payments/orders/:id; gateway_paid is only a display hint, never an entitlement.
-export type PaymentOrder = { order: Order & { gateway_paid?: boolean } };
+export type PaymentOrder = { order: Order };
 // Explicit metadata contract. Never add connection parameters or YAML here. Each entry is a
 // node group (a line); the client is assigned one of its servers when it connects.
 export type PublicNode = {

@@ -67,7 +67,10 @@ export function OrdersView() {
       active = false;
     };
   }, [page]);
-  const waiting = orders.filter((o) => livePending(o, tick));
+  // A pending order the gateway already reported paid is waiting for confirmation, not for
+  // payment: no countdown and no "unfinished orders" warning for it.
+  const confirming = (o: Order) => o.status === 'pending' && o.gateway_paid === true;
+  const waiting = orders.filter((o) => livePending(o, tick) && !confirming(o));
   const anyPending = orders.some((o) => o.status === 'pending');
   useEffect(() => {
     // Pending orders count down and settle on their own: keep the clock and the list moving.
@@ -200,13 +203,19 @@ export function OrdersView() {
                       {order.pay_type ? (payTypeLabel[order.pay_type] ?? order.pay_type) : '—'}
                     </Table.Td>
                     <Table.Td>
-                      <Badge
-                        color={orderStatusLabel[order.status]?.color ?? 'gray'}
-                        variant="light"
-                      >
-                        {orderStatusLabel[order.status]?.text ?? order.status}
-                      </Badge>
-                      {livePending(order, tick) ? (
+                      {confirming(order) ? (
+                        <Badge color="teal" variant="light">
+                          已付款，确认中
+                        </Badge>
+                      ) : (
+                        <Badge
+                          color={orderStatusLabel[order.status]?.color ?? 'gray'}
+                          variant="light"
+                        >
+                          {orderStatusLabel[order.status]?.text ?? order.status}
+                        </Badge>
+                      )}
+                      {livePending(order, tick) && !confirming(order) ? (
                         <Text size="xs" c="dimmed" mt={4}>
                           剩余 {remaining(order, tick)}
                         </Text>

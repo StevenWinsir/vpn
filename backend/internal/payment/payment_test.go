@@ -176,3 +176,24 @@ func TestParseNotification(t *testing.T) {
 		t.Fatalf("long name not clipped on a rune boundary: %q %v", n.Name, err)
 	}
 }
+
+// A callback posted as a form is read with the same rules as the documented JSON body.
+func TestParseNotificationForm(t *testing.T) {
+	n, err := ParseNotificationForm([]byte("trade_no=12345678901234567890&name=%E6%9C%88%E5%A5%97%E9%A4%90&money=0.01&trade_status=TRADE_SUCCESS"))
+	if err != nil || n.Cents != 1 || n.Name != "月套餐" || n.TradeStatus != TradeSuccess {
+		t.Fatalf("%+v %v", n, err)
+	}
+	for _, body := range []string{
+		``, `%zz`,
+		`trade_no=12345678901234567890&name=x&money=0.01`,
+		`trade_no=12345678901234567890&name=x&money=0.001&trade_status=TRADE_SUCCESS`,
+		`trade_no=12345678901234567890&name=x&money=-1&trade_status=TRADE_SUCCESS`,
+		`trade_no=12345678901234567890&name=x&money=1&trade_status=SUCCESS`,
+		`trade_no=1234&name=x&money=1&trade_status=TRADE_SUCCESS`,
+		`trade_no=12345678901234567890&trade_no=12345678901234567891&name=x&money=1&trade_status=TRADE_SUCCESS`,
+	} {
+		if _, err := ParseNotificationForm([]byte(body)); err == nil {
+			t.Fatalf("accepted %q", body)
+		}
+	}
+}
