@@ -453,42 +453,111 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 
 （每轮完成后追加：日期、分支、PR、验收表逐项的 PASS / FAIL / BLOCKED 与证据、遗留问题。）
 
-### 第 1 轮：后端闭环（2026-11-02，分支 plans-round1-backend，基线 main dbe75ca，PR 见合并记录）
+### 第 1 轮：后端闭环（已合并）
 
-**交付**
-- 纯函数引擎 backend/internal/billing/upgrade.go：关系判定（D6）、Nc/Nk、V（向上取整）、按订单时间窗计算的 K（向下取整）、新增流量（新套餐的部分向下取整，原套餐的部分向上取整）、最低补差、线路组可见性。乘除都用 128 位整数，溢出时拒绝，不回绕。
-- backend/internal/api/upgrade.go：evaluateUpgrade、GET /payments/upgrade-options、POST /payments/upgrade-quote、POST /payments/upgrade-orders（下单逻辑在 placeUpgradeOrder 里）、applyUpgrade。
-- 履约：fulfilOrder 按订单类型分支（fulfilUpgrade）；普通订单履约时写入 covers_from/covers_to（applyPlan 多返回一个窗口起点）。
-- 普通下单：存在 pending 升级单时返回 409 pending_order_exists；plan_change_not_supported 按方向给出不同提示（code 不变）；幂等检查区分订单类型；网关商品名为“{B}·升级”。
-- /meta 增加 plan_upgrade_supported。
-- 迁移：orders 新增 9 列（含 kind 的 check 约束），shop_settings 新增 2 列（含范围 check）。
-- 控制台：订单列表和详情的升级字段、kind 筛选、详情里的 upgrade 快照；商店设置两项，字段可选，旧版后台只提交年付折扣时这两项保持不变，审计记录前后值。
-- doctor：Shop 下的 upgrade_* 字段，警告 plans_upgrade_group_gap、upgrade_orders_need_review、shop_upgrade_settings_invalid。
+**概况**
+
+| 项 | 内容 |
+| --- | --- |
+| 日期 | 2026-11-02 开发，2026-11-03 合并 |
+| 分支 | plans-round1-backend（worktree .claude/worktrees/plans-round1-backend），基线 main dbe75ca |
+| PR | StevenWinsir/vpn#100，squash 合并为 main e16f45a（2026-11-03 13:07 UTC+8） |
+| 提交 | a2a9ff4（功能），dc6e64d（修正测试中的审计排序） |
+| 规模 | 20 个文件，+2877 / −34（其中 handoff_plans.md 494 行，测试约 1233 行） |
+| CI | dc6e64d 上 16/16 通过（VPN CI、Standalone backend、Managed node protocols、Android、iOS 五个工作流），包括发布演练（迁移和回滚）、浏览器/支付端到端和 Backend / PostgreSQL / race |
+| 合并后 | 本地 main 已快进到 e16f45a；第 1 轮的本地分支、远程分支和 worktree 已删除（见本节末“清理”） |
+
+**交付（按文件）**
+
+| 文件 | 内容 |
+| --- | --- |
+| backend/internal/billing/upgrade.go（新增） | 纯函数引擎，只做整数运算：Rate（金额或流量 / 天数）和逐日精确比较 AtLeast；128 位的 mulDiv，溢出时拒绝，不回绕；UpgradeDays（Nc 向上取整，Nk 向下取整）；CeilDays；ProrateUp（V 向上取整）；TrafficAdd（新套餐的部分向下取整，原套餐的部分向上取整，结果不小于 0）；UpgradeCredit（按订单窗口与 [E − Nk 天, E] 的重叠向下取整，并返回每笔订单的贡献）；UpgradeCharge（最低补差）；UpgradeRelation（D6）；GroupVisibleTo（线路组可见性，与节点目录同一规则） |
+| backend/internal/api/upgrade.go（新增） | 读取商店设置；upgradeSnapshot（存在订单上的计算依据）；evaluateUpgrade（关系、价格、流量、失去的线路组、各种拒绝原因）；本周期订单查询和兜底窗口；三个接口；placeUpgradeOrder（可在测试中直接调用）；applyUpgrade（只对下单时的同一订阅生效，流量按实际剩余时间重算，只会更少） |
+| backend/internal/api/payment_notify.go | fulfilOrder 先按 kind 分支到 fulfilUpgrade（使用 savepoint，失败时整体回退，交给调用方转人工）；普通订单履约时写入 covers_from / covers_to |
+| backend/internal/api/fulfil.go | applyPlan 多返回一个窗口起点（新周期为 now，续费为原到期时间），调用方同步修改（commerce.go、shop_test.go） |
+| backend/internal/api/payments.go | 普通下单：有 pending 升级单时返回 409 pending_order_exists；幂等重放时检查订单类型；报价和下单遇到 plan_change_not_supported 时，提示按方向区分；新订单显式写 kind = purchase；网关商品名“{B}·升级”；/meta 增加 plan_upgrade_supported |
+| backend/internal/api/server.go | 在 secured 组注册三个新路由 |
+| backend/internal/api/console_orders.go | 列表和详情增加 kind、from_plan_id、from_plan_name、credit_cents、upgrade_days、upgrade_traffic_bytes、covers_from、covers_to；新增 ?kind= 筛选（purchase、upgrade，其他值返回 400）；详情返回 upgrade（按快照类型重新编码） |
+| backend/internal/api/console_plans.go | 商店设置的视图和输入增加 upgrade_enabled、upgrade_min_charge_cents（两项可选，旧版后台不提交时保持不变；范围 1–10000 分）；no_change 判断和审计逐项记录前后值；重建被删除的设置行时，补写 false 的开关（GORM 坑，见下） |
+| backend/internal/api/node_catalog.go | groupVisible 委托 billing.GroupVisibleTo |
+| backend/internal/model/models.go、shop.go | Order 新增 9 列和 OrderKind 常量；ShopSettings 新增 2 列；DefaultUpgradeMinChargeCents = 100，MaxUpgradeMinChargeCents = 10000 |
+| backend/internal/operations/readiness.go | report.shop 下的 upgrade_enabled、upgrade_min_charge_cents、upgrade_review_orders、upgrade_group_gaps（格式为 “from>to:组名”）；三个警告 |
+
+**数据模型（AutoMigrate 增量，没有新表）**
+- orders：kind（varchar 12，默认 purchase，check 只允许 purchase 或 upgrade）、from_plan_id、from_plan_name、credit_cents、upgrade_days、upgrade_traffic_bytes、upgrade_snapshot（text JSON）、covers_from、covers_to（可空）。升级订单写 duration_days = traffic_bytes = quota_cycle_days = quota_cycle_bytes = 0；billing_cycle 为持有方式；original_cents = V；list_price_cents = max(V − K, 最低补差)；ent_max_devices / ent_allow_dedicated 为目标套餐。
+- shop_settings：upgrade_enabled（默认 true）、upgrade_min_charge_cents（默认 100，check 1–10000）。迁移时由已有行带默认值补齐。
+
+**实际实现的接口契约（第 2 轮前端以此为准）**
+
+| 接口 | 请求 | 成功响应 | 错误 |
+| --- | --- | --- | --- |
+| GET /api/v1/meta | — | 新增 plan_upgrade_supported（与 payment_enabled 相同） | — |
+| GET /api/v1/payments/upgrade-options | — | enabled；current（plan_id、plan_name、expires_at、billing_cycle、remaining_seconds），没有可升级的订阅时为 null；plans[]：plan_id、plan_name、relation（current/upgrade/downgrade/lateral/new）、purchasable、reason、message（只在有有效订阅时给出），relation 为 upgrade 时还有 amount_cents、upgrade_days、traffic_add_bytes | 503 payment_disabled |
+| POST /api/v1/payments/upgrade-quote | plan_id | quote：from_plan_id/name、plan_id/name、relation、billing_cycle、expires_at、upgrade_days、credited_days、value_cents、credit_cents、min_charge_cents、min_charge_applied、list_amount_cents、amount_cents、test_price、traffic_add_bytes、new_cycle_bytes、device_limit（已经过 deviceCap）、allow_dedicated、lost_groups[]、reauth_required（固定 true）、purchasable、reason、message；另返回 pending_orders。是升级关系但暂不能买时（开关关闭、剩余不足 1 天、超出流量上限）仍为 200，purchasable = false | 409 not_upgradable（error 里带 relation）；404 plan_not_found；409 plan_not_purchasable；400 invalid_plan |
+| POST /api/v1/payments/upgrade-orders | 请求头 Idempotency-Key（UUID）；plan_id、pay_type、expected_amount_cents（必填，大于 0）。不接受 coupon_code（未知字段返回 400） | 201（重放为 200）：order、pay_url、replayed、other_pending_orders（恒为 0） | 409 not_upgradable / upgrade_disabled / remaining_too_short / pending_order_exists（带 Retry-After）/ price_changed / idempotency_conflict / renewal_limit / plan_not_purchasable；400 invalid_expected_amount / invalid_pay_type / idempotency_required；429 order_rate_limited；403 account_disabled，模拟会话为 impersonation_read_only |
+| GET /api/v1/orders、/payments/orders/:id | — | 每笔订单多出 kind、from_plan_name（升级单才有）、credit_cents、upgrade_days、upgrade_traffic_bytes；快照、时间窗、from_plan_id 不对用户输出 | — |
+| POST /api/v1/payments/orders | 不变 | 不变 | 新增 409 pending_order_exists（存在 pending 升级单时）；plan_change_not_supported 的 message 按方向区分：升级提示“可通过‘升级’补差价更换到 X”，降级提示“不支持降级（降级不退还差价），请在 YYYY-MM-DD 到期后购买”，平级提示“X 与当前套餐权益不可直接升级…” |
+| 控制台 GET /orders?kind=、GET /orders/:id、GET/POST /shop-settings | 见上表“交付” | 详情多出 upgrade（快照：订阅 id、起止时间、持有方式、Nc/Nk、V、K、最低补差、费率、流量、计入订单和贡献、失去的线路组） | 400 invalid_plan（带 field） |
+
+提示里的日期按 UTC+8 显示（consoleLocation）。
+
+**关键实现细节**
+1. 本周期订单 = 同一用户、status = paid、provider ≠ test、paid_at ≥ 订阅的 starts_at。金额取 min(amount_cents, paid_cents)。窗口优先用 covers_*；没有窗口的普通订单兜底为 [paid_at, paid_at + duration_days × 24h]；升级单没有窗口时不计入抵扣（只会少抵）。
+2. A 的参考流量：月付持有时，取 A 当前条款与本周期内目标为 A 的订单所售日流量中最大的一项（升级单读快照里的 to_traffic）；年付持有时，取 max(订阅的 quota_cycle_bytes, A.traffic_bytes) 每 30 天。
+3. 新套餐价值：月付持有按 B 的月付条款；年付持有时，B 有年付就用 termsFor 的年付价，否则用月付价（日单价更高）。
+4. 履约的身份校验：订阅 id、starts_at、expires_at、plan_id = from_plan_id、非测试、未过期、刷新状态与快照一致、B 的行存在。不比较 version，因为推荐奖励也会让 version 加 1。
+5. 测试价账户：amount_cents 换成 PAYMENT_TEST_PRICE，price_source = test_price；报价同时返回 list_amount_cents。
+6. 锁顺序：下单为 User → Plan（共享锁）→ 读取 → 插入 Order；履约沿用 User → Order → Subscription → Period。
 
 **与规划的差异（均为实现细节，不改变规则）**
-1. 引擎放在 internal/billing 而不是 api 包：doctor（operations 包）不能引用 api，需要共用同一套关系判定和线路组规则。api 的 groupVisible 改为委托 billing.GroupVisibleTo。
-2. 第 13.1 节写的是“upgrade-quote 对模拟会话开放”，但现有的只读中间件拒绝所有 POST，与 /payments/quote 一致，所以模拟会话下 upgrade-quote 返回 403；只读的 upgrade-options（GET）可用。已加入现有的模拟登录测试。
-3. 年付持有的本周期新增流量按 floor(B × N/30) − ceil(A × N/30) 计算，与普通订阅同一个函数。它比规划写的 floor((B − A) × N/30) 至多少 1 字节，方向对商家有利。
-4. upgrade-orders 响应里的 other_pending_orders 恒为 0，因为 D9 保证不会有其他未完成订单。
+1. 引擎放在 internal/billing 而不是 api 包：doctor（operations 包）不能引用 api，需要共用同一套关系判定和线路组规则。
+2. 规划第 13.1 节写“upgrade-quote 对模拟会话开放”，但现有的只读中间件拒绝所有 POST（与 /payments/quote 一致），所以模拟会话下它返回 403；GET upgrade-options 可读。已写入现有的模拟登录测试。
+3. 年付持有的本周期新增流量用同一个 TrafficAdd 计算（floor(B × N/30) − ceil(A × N/30)），比规划写的 floor((B − A) × N/30) 至多少 1 字节，方向对商家有利。
+4. upgrade-orders 的 other_pending_orders 恒为 0，因为 D9 保证不会有其他未完成订单。
+
+**测试资产**
+
+| 文件 | 用例 |
+| --- | --- |
+| billing/upgrade_test.go | TestUpgradeDaysRounding、TestProrateAndTrafficRounding（含溢出拒绝）、TestUpgradeCreditWindows（例 1、例 2、裁剪、过去的窗口）、TestUpgradeChargeMinimum、TestUpgradeRelation（9 种关系）、TestGroupVisibleTo |
+| api/upgrade_test.go | TestUpgradeExamplesMonthly、TestUpgradeExampleYearly、TestUpgradeExampleRenewalsAndLegacyWindow、TestUpgradeRefusals、TestUpgradeTestPrice、TestUpgradeKeepsPeriodAndChangesFingerprint、TestUpgradeConcurrencyAndStaleOrders、TestUpgradeOrderRefusedByOlderFulfilment、TestUpgradeConsole、TestUpgradeDoctor |
+| api/upgrade_invariant_test.go | TestUpgradeInvariantTrajectories（UPGRADE_TRAJECTORIES 可改条数，默认 2000，固定种子，可复现） |
+| store/upgrade_migrate_test.go | TestPlansUpgradeMigrationOverLegacyData |
+| api/console_impersonation_test.go（修改） | 模拟会话可读 upgrade-options，upgrade-quote 和 upgrade-orders 返回 403 |
+
+本地复现：先用 initdb 启动一个只走 unix socket 的私有 PG，然后在同一条命令里 export NATIVE_TEST_DSN 并执行 go test ./internal/api ./internal/billing ./internal/store -run Upgrade（否则数据库测试会静默跳过）。跑 Core 端到端测试需要先构建 native/core 的 fakeengine 版本，并设置 ASTERLINK_CORE_BIN。全量测试使用 scripts/test-native.py 和 scripts/test-backend-standalone.py；worktree 里要先用 rsync --exclude .git 从主目录拷贝 native/third_party/Clash.Meta。
 
 **验收**
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| R1-01 | PASS | TestUpgradeExamplesMonthly（例 1、2、4）、TestUpgradeExampleYearly（例 3）、TestUpgradeExampleRenewalsAndLegacyWindow（例 5 及其旧订单兜底，K = 22.54）、TestUpgradeRefusals（例 6、7）；billing 包的单元测试覆盖取整。都在 TZ=Asia/Shanghai、UTC、America/New_York 下通过 |
-| R1-02 | PASS | TestUpgradeInvariantTrajectories：2000 条轨迹，检查了 1384 次升级（103 次触发最低补差，151 次带旧订单兜底窗口，272 次连续升级），用独立的 big.Rat 精确模型验证第 6.8 节各条，可复现。变异检查：把抵扣改成向上取整后，测试立即失败（多抵 1 分），已还原 |
-| R1-03 | PASS | billing.TestUpgradeRelation（降级、同价、流量更少、设备更少、失去专线、日流量更低）；TestUpgradeRefusals（lite-plus 判为 lateral，current、new、测试订阅） |
-| R1-04 | PASS | 例 1 和例 2 的端到端流程；TestUpgradeKeepsPeriodAndChangesFingerprint：周期行是同一行并已同步，推荐奖励保留，version 加 1，订单页只露出 5 个字段 |
-| R1-05 | PASS（函数级） | 升级后 nativeBound 仍为真、nativeAuthorizationBound 为假（客户端会得到 subscription_changed），periodIsCurrent 为真（迟到的节点用量仍计入同一周期）。真实 Core 场景留到第 3 轮 R3-03 |
-| R1-06 | PASS | TestUpgradeExampleYearly：重置后额度为 300 GiB；跨过重置后才付款，新周期获得完整的 200 GiB 差额 |
-| R1-07 | PASS | TestUpgradeConcurrencyAndStaleOrders：两个标签页同时下单（201 + 409）、管理员改到期时间（转人工）、推荐奖励到账（正常开通）、付款前已到期（转人工）、重复回调（duplicate）、迟到的续费回调与升级回调并发（只开通一笔） |
-| R1-08 | PASS | TestUpgradeRefusals：剩余不足 1 天、开关关闭、最低补差、降级和平级、pending 双向互斥、price_changed、幂等重放与冲突、跨接口复用 key、优惠码字段 400、缺 expected_amount、模拟会话 403（console_impersonation_test）；TestUpgradeTestPrice 覆盖 D8。账号停用沿用 lockUserRow 的检查（与普通下单同一路径） |
-| R1-09 | PASS | TestUpgradeOrderRefusedByOlderFulfilment：按旧版 fulfilOrder 的读法（天数和流量取自订单），在有效期内和到期后都返回 invalid_plan；TestPlansUpgradeMigrationOverLegacyData：旧库升级后数据指纹不变，旧二进制插入的订单默认为 purchase，check 约束生效 |
-| R1-10 | PASS | TestUpgradeDoctor：种子库没有新警告；加入 starter 专属线路组后报出 starter>pro 和 starter>max；审核中的升级订单报出警告 |
-| R1-11 | PASS | scripts/test-native.py 退出码 0（api 包 635 s，包括 TestSecurityRouteAccessMatrix）；scripts/test-backend-standalone.py：PASS，187 个文件，含 -race 和 Linux 交叉编译。日志在 artifacts/plans-round1-backend/ |
+| R1-01 | PASS | 例 1（14.00 元，约 133.33 GiB）、例 2（14.24 元，约 166.67 GiB）、例 3（41.44 元，本周期加 26.67 GiB，之后每周期 300 GiB）、例 4（20.30 元）、例 5（23.34 元；旧订单兜底时 K = 22.54，应付 24.01 元）、例 6（降级拒绝，提示含 2026-12-01）、例 7（剩余不足 1 天）；金额精确到分、流量精确到字节；在 TZ = Asia/Shanghai、UTC、America/New_York 下都通过 |
+| R1-02 | PASS | 2000 条轨迹，检查 1384 次升级（103 次最低补差、151 次旧订单兜底窗口、272 次连续升级），独立的 big.Rat 精确模型验证：K ≤ 真实残值；应付 + 真实残值 ≥ B 在精确剩余时间内的标价；窗口精确时 K 与真实残值的差不超过每笔订单 1 天加 1 分；新增流量在 0 与精确日差之间；履约后周期和到期时间不变，发放的流量与报价一致。变异检查：把抵扣改成向上取整，测试立即失败（第 72 条轨迹多抵 1 分），已还原 |
+| R1-03 | PASS | 9 种关系的单元测试；接口上验证了 lite-plus（判为 lateral）、current、无订阅、测试订阅 |
+| R1-04 | PASS | 端到端：plan、设备数、专线、流量、version 加 1，starts_at 和 expires_at 不变；周期账本仍是同一行且已同步；推荐奖励保留；用户订单列表只露出 5 个字段，不泄露快照、窗口、订阅 id 和 from_plan_id |
+| R1-05 | PASS（函数级） | 升级后 nativeBound 为真、nativeAuthorizationBound 为假（客户端会得到 subscription_changed），periodIsCurrent 为真（迟到的节点用量仍计入同一周期）。真实 Core 场景在第 3 轮 R3-03 |
+| R1-06 | PASS | 重置后额度为 300 GiB；23:00 下单、00:30（跨过重置）才付款，新周期获得完整的 200 GiB 差额 |
+| R1-07 | PASS | 两个标签页并发下单（201 + 409）、管理员改到期时间（转人工）、推荐奖励到账（正常开通）、付款前已过期（转人工）、重复回调（duplicate，只开通一次）、迟到的续费回调与升级回调并发（恰好一笔开通） |
+| R1-08 | PASS | 剩余不足 1 天、开关关闭、最低补差 90 元生效、降级和平级、pending 双向互斥（带 Retry-After）、price_changed、幂等重放、改支付方式和跨接口复用 key 都返回 idempotency_conflict、带 coupon_code 返回 400、缺 expected_amount、非法 key 和支付方式、模拟会话 403、测试价账户（D8） |
+| R1-09 | PASS | 按旧版 fulfilOrder 的读法，升级单在有效期内和到期后都返回 invalid_plan，不会被当成普通订单开通；旧库迁移后数据指纹不变；旧二进制插入的订单默认为 purchase；check 约束拒绝非法 kind 和 0、10001 的最低补差 |
+| R1-10 | PASS | 种子库没有新警告；starter 专属线路组报出 starter>pro 和 starter>max 的缺口；审核中的升级单报出 upgrade_orders_need_review |
+| R1-11 | PASS | 本地：scripts/test-native.py 退出码 0（api 包 635 s，含 TestSecurityRouteAccessMatrix）；scripts/test-backend-standalone.py：PASS（187 个文件，含 -race 和 Linux amd64/arm64 交叉编译）。CI：dc6e64d 上 16/16 通过 |
 
-**CI 第一次运行（a2a9ff4）**：“Backend / PostgreSQL / race”失败了两项。
-1. TestUpgradeConsole 是测试本身的缺陷：测试时钟冻结，两条商店设置审计的 created_at 相同，按 created_at 取“最新一条”会随机拿到旧的那条。已改为按 version 排序；本地 -race -count=5 通过。
-2. TestCoreOnlineLeasesEndToEnd 的子测试“a withdrawn server moves the device…”：断开时 Core 的计量仍显示有待确认的批次。这条路径不涉及订单和套餐。在本分支本地用 -race 连续运行 5 次全部通过，之前的 CI 记录里也没有出现过，判断为 CI 机器上的时序偶发，等重跑结果确认。
+**CI 记录**
+1. a2a9ff4：VPN CI 中的“Backend / PostgreSQL / race”失败了两项，其他四个工作流通过。
+   - TestUpgradeConsole 是测试本身的缺陷：测试时钟冻结，两条商店设置审计的 created_at 相同，按 created_at 取“最新一条”会随机拿到旧的那条。dc6e64d 改为按 version 排序，本地 -race -count=5 通过。
+   - TestCoreOnlineLeasesEndToEnd 的子测试“a withdrawn server moves the device by itself…”：断开时 Core 的计量仍显示有待确认的批次。这条路径不涉及订单和套餐，本地用 -race 加 fakeengine Core 连续 5 次通过，最近的 CI 记录里也没有出现过，判断为 CI 机器上的时序偶发。
+2. dc6e64d：五个工作流共 16 项全部通过，上面的 Core 在线测试也通过，于是合并。
 
-**未做 / 留给后续轮次**：网站（第 2 轮）。发布演练脚本、混合部署、Core 和 APP 场景、安全审查和文档（第 3 轮）。本轮没有在本地运行 test-release-rehearsal.py 和 test-payment-web.py，交给 CI。
+**踩过的坑（后续轮次注意）**
+- GORM 对带 default:true 的 bool 字段，Create 时如果值为 false，会写入默认值并读回 true（即使用了 Select("*")）。必须在 Create 之前记下想要的值，Create 之后再显式 Update 一次。
+- 用已经带主键的 model 变量去 First 另一行时，GORM 会附加 WHERE id = 旧主键，导致查不到。每次查询要用新的变量。
+- 冻结时钟下多条记录的时间戳可能相同；取“最新一条”要按单调字段（version 或 id 序列）排序。
+- worktree 会话里的 Bash 不允许 heredoc、cd 后再执行 git，也不允许 git -C 指向主目录；补丁脚本先用 Write 写到 /tmp 再用 python3 执行，git 只在本 worktree 里执行。
+
+**清理（合并后）**：删除了本地分支 plans-round1-backend、远程分支 origin/plans-round1-backend 和 worktree .claude/worktrees/plans-round1-backend。同时清理了此前已合并、残留的 worktree-appstd-round5-release-scrub（#93）和 worktree-appstd-round6-regression（#94）的本地分支、远程分支和 worktree，以及远程的 worktree-android-n01-sampling（#95）。prod-api-windows 是用户正在使用的分支（有未提交的 iOS 改动），保留不动。
+
+**未做 / 交给后续轮次**
+- 第 2 轮（网站）：按上面的“实际实现的接口契约”接入。/plans 只在 /meta.plan_upgrade_supported 为真时请求 upgrade-options；升级弹窗必须发送 expected_amount_cents，处理 price_changed 后重新报价；pending_order_exists 时引导到订单记录；订单页按 kind 显示“升级 A → B”；后台订单详情展示 upgrade 快照，商店设置增加两项。
+- 第 3 轮：test-release-rehearsal.py 加入升级场景，回滚目标为 dbe75ca（升级单在旧版上只会转人工）；混合部署；Core 和 APP 断开场景（R3-03）；安全审查；docs/payment-operations.md、README、DEPLOYMENT；用户实测 U-41 … U-46。
+- 本轮没有在本地运行 test-release-rehearsal.py 和 test-payment-web.py，已由 CI 通过。
