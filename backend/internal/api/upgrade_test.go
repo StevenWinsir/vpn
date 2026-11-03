@@ -688,7 +688,7 @@ func TestUpgradeConsole(t *testing.T) {
 		t.Fatalf("saved %+v", settings.Settings)
 	}
 	var audit model.AdminAudit
-	if err := e.db.Where("action = ?", AuditShopSettings).Order("created_at desc").First(&audit).Error; err != nil || !strings.Contains(audit.Detail, "upgrade_enabled") || !strings.Contains(audit.Detail, "upgrade_min_charge_cents") || strings.Contains(audit.Detail, "yearly_discount_percent") {
+	if err := e.db.Where("action = ?", AuditShopSettings).Order("version desc").First(&audit).Error; err != nil || !strings.Contains(audit.Detail, "upgrade_enabled") || !strings.Contains(audit.Detail, "upgrade_min_charge_cents") || strings.Contains(audit.Detail, "yearly_discount_percent") {
 		t.Fatalf("audit %+v %v", audit, err)
 	}
 	e.code(e.post("/shop-settings", map[string]any{"yearly_discount_percent": 85, "upgrade_enabled": false, "upgrade_min_charge_cents": 250, "version": settings.Settings.Version}), 400, "no_change")

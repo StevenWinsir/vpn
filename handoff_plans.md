@@ -487,4 +487,8 @@ Go 单元测试和数据库测试（第 1 轮）、Playwright 加假网关（第
 | R1-10 | PASS | TestUpgradeDoctor：种子库没有新警告；加入 starter 专属线路组后报出 starter>pro 和 starter>max；审核中的升级订单报出警告 |
 | R1-11 | PASS | scripts/test-native.py 退出码 0（api 包 635 s，包括 TestSecurityRouteAccessMatrix）；scripts/test-backend-standalone.py：PASS，187 个文件，含 -race 和 Linux 交叉编译。日志在 artifacts/plans-round1-backend/ |
 
+**CI 第一次运行（a2a9ff4）**：“Backend / PostgreSQL / race”失败了两项。
+1. TestUpgradeConsole 是测试本身的缺陷：测试时钟冻结，两条商店设置审计的 created_at 相同，按 created_at 取“最新一条”会随机拿到旧的那条。已改为按 version 排序；本地 -race -count=5 通过。
+2. TestCoreOnlineLeasesEndToEnd 的子测试“a withdrawn server moves the device…”：断开时 Core 的计量仍显示有待确认的批次。这条路径不涉及订单和套餐。在本分支本地用 -race 连续运行 5 次全部通过，之前的 CI 记录里也没有出现过，判断为 CI 机器上的时序偶发，等重跑结果确认。
+
 **未做 / 留给后续轮次**：网站（第 2 轮）。发布演练脚本、混合部署、Core 和 APP 场景、安全审查和文档（第 3 轮）。本轮没有在本地运行 test-release-rehearsal.py 和 test-payment-web.py，交给 CI。
