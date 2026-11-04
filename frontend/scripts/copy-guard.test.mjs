@@ -122,6 +122,9 @@ test('the scan covers the user pages and leaves the administration out', () => {
     'components/home/home-faq.tsx',
     'components/home/plan-preview.tsx',
     'components/tickets-view.tsx',
+    'app/guide/page.tsx',
+    'components/guide-view.tsx',
+    'lib/guides.ts',
     'lib/tickets.ts',
     'lib/api.ts',
   ])

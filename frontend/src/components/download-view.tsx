@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import {
   Alert,
   Anchor,
@@ -44,7 +45,7 @@ export function DownloadView({
           </Text>
         </div>
 
-        <Paper withBorder radius="lg" p="xl">
+        <Paper withBorder radius="lg" p="xl" id="android" className="guide-section">
           <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
             <Group gap="md" align="center">
               <IconBrandAndroid size={40} stroke={1.5} />
@@ -96,9 +97,20 @@ export function DownloadView({
               Android 安装包暂未发布，请稍后再来。
             </Alert>
           )}
+          <Text size="sm" mt="md">
+            安装后不会用？
+            <Anchor
+              component={Link}
+              href="/guide?platform=android"
+              size="sm"
+              data-testid="download-guide-link"
+            >
+              查看使用教程
+            </Anchor>
+          </Text>
         </Paper>
 
-        <Paper withBorder radius="lg" p="xl">
+        <Paper withBorder radius="lg" p="xl" id="ios" className="guide-section">
           <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
             <Group gap="md" align="center">
               <IconBrandApple size={40} stroke={1.5} />
@@ -147,12 +159,30 @@ export function DownloadView({
               iPhone 版本暂未发布，请稍后再来。
             </Alert>
           )}
+          <Text size="sm" mt="md">
+            安装后不会用？
+            <Anchor
+              component={Link}
+              href="/guide?platform=ios"
+              size="sm"
+              data-testid="download-guide-link"
+            >
+              查看使用教程
+            </Anchor>
+          </Text>
         </Paper>
 
         <Paper withBorder radius="lg" p="xl">
           <Title order={2} size="h4" mb="sm">
             Android 安装、升级与卸载
           </Title>
+          <Text size="sm" c="dimmed" mb="sm">
+            详细图文步骤见
+            <Anchor component={Link} href="/guide?platform=android" size="sm">
+              使用教程
+            </Anchor>
+            。
+          </Text>
           <List spacing="xs" size="sm">
             <List.Item>
               首次安装：用手机浏览器下载 APK
@@ -178,6 +208,13 @@ export function DownloadView({
           <Title order={2} size="h4" mb="sm">
             iPhone 安装、升级与卸载
           </Title>
+          <Text size="sm" c="dimmed" mb="sm">
+            详细图文步骤见
+            <Anchor component={Link} href="/guide?platform=ios" size="sm">
+              使用教程
+            </Anchor>
+            。
+          </Text>
           <List spacing="xs" size="sm">
             <List.Item>
               安装：用 iPhone 的 Safari 打开本页，点击“在 iPhone

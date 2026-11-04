@@ -2182,3 +2182,98 @@ a:focus-visible {
     padding-right: 4px;
   }
 }
+
+/* Usage guide (handoff_guide.md 6): a table of contents beside the steps; one column on a phone. */
+.guide-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+.guide-toc {
+  position: sticky;
+  top: 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.guide-toc a {
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--al-text-2);
+  font-size: 14px;
+}
+.guide-toc a:hover {
+  background: var(--al-surface-2);
+  color: var(--al-brand);
+}
+.guide-main {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  min-width: 0;
+}
+.guide-section {
+  scroll-margin-top: 100px;
+}
+.guide-steps {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.guide-step {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.guide-step-no {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--al-brand-fill);
+  color: var(--al-on-brand);
+  font-weight: 700;
+  font-size: 16px;
+}
+.guide-step-body {
+  min-width: 0;
+  flex: 1;
+}
+.guide-text {
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 767px) {
+  .guide-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .guide-toc {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .guide-toc > p {
+    width: 100%;
+  }
+  .guide-toc a {
+    background: var(--al-surface-2);
+  }
+}
+@media (max-width: 480px) {
+  /* Four names in one row on a phone: the names stay, the icons step aside. */
+  .guide-seg .mantine-SegmentedControl-label {
+    padding-inline: 4px;
+    font-size: 13px;
+  }
+  .guide-seg .mantine-SegmentedControl-label svg {
+    display: none;
+  }
+}
