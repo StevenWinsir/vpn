@@ -19,6 +19,7 @@ import { notifications } from '@mantine/notifications';
 import {
   IconArrowBackUp,
   IconArrowUpRight,
+  IconBook2,
   IconEye,
   IconDownload,
   IconGift,
@@ -51,6 +52,7 @@ const links = [
   { href: '/referral', label: '推荐有礼', icon: IconGift },
   { href: '/tickets', label: '我的工单', icon: IconMessageCircleQuestion },
   { href: '/download', label: '下载客户端', icon: IconDownload },
+  { href: '/guide', label: '使用教程', icon: IconBook2 },
   { href: '/account', label: '账号设置', icon: IconUserCog },
 ];
 // The console has several pages under one navigation entry.
@@ -214,6 +216,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       '/referral',
       '/tickets',
       '/download',
+      '/guide',
       '/account',
       '/pay/result',
     ].includes(path) || path.startsWith('/admin/');

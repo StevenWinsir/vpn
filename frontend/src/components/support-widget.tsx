@@ -27,6 +27,7 @@ export const supportPages = [
   '/referral',
   '/tickets',
   '/download',
+  '/guide',
   '/account',
   '/pay/result',
 ];
@@ -157,4 +158,25 @@ export function SupportNavItem({ onNavigate }: { onNavigate: () => void }) {
       在线客服
     </button>
   );
+}
+
+// Whether the chat is offered to this visitor (the same rule as useSupportAccess, minus its side
+// effects), for a page's own "ask the chat" button.
+export function useSupportOffered(): boolean {
+  const { user, impersonation } = useAuth();
+  const [websiteId, setWebsiteId] = useState<string | null>(null);
+  const eligible = !!user && user.role !== 'admin' && !impersonation;
+  useEffect(() => {
+    if (!eligible) return;
+    let current = true;
+    runtimeConfig()
+      .then((value) => {
+        if (current) setWebsiteId(value.support?.crispWebsiteId ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [eligible]);
+  return eligible && !!websiteId;
 }

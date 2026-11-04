@@ -443,6 +443,7 @@ test('the customer pages read well in both schemes', async ({ browser }) => {
     ['/orders', 'orders'],
     ['/referral', 'referral'],
     ['/download', 'download'],
+    ['/guide', 'guide'],
     ['/account', 'account'],
     [`/pay/result?order=${order.id}`, 'pay-result'],
     ['/no-such-page', 'not-found'],

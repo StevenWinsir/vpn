@@ -79,6 +79,7 @@ test('public pages carry commercial copy only', async ({ page }) => {
   await check(page, '/forgot-password', /^找回密码 · /);
   await check(page, '/plans', /^套餐与订阅 · /);
   await check(page, '/download', /^下载客户端 · /);
+  await check(page, '/guide', /^使用教程 · /);
   await check(page, '/no-such-page', /^页面不存在 · /);
 });
 
@@ -94,6 +95,7 @@ test('a customer without a plan sees no development wording and none of the remo
   await check(page, '/orders', /^订单记录 · /);
   await check(page, '/referral', /^推荐有礼 · /);
   await check(page, '/download', /^下载客户端 · /);
+  await check(page, '/guide', /^使用教程 · /);
   await check(page, '/account', /^账号设置 · /);
   // The sidebar ends with the online chat and the way home (handoff_ui.md 5.4); the development
   // note is gone.
