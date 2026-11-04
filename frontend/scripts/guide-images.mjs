@@ -2,7 +2,7 @@
 // (handoff_guide.md 7.2). Development only, like brand:apps: the results are committed and CI never
 // runs this; scripts/guide.test.mjs checks them against the manifest.
 //
-//   npm run guide:images -- --macos <dir> --windows <dir> --android <dir> --ios <dir>
+//   npm run guide:images -- --macos <dir> --windows <dir> --android <dir> --ios <dir> --manual <dir>
 //
 // Each directory is one suite's output (any subset may be given; the other platforms keep their
 // current entries):
@@ -10,7 +10,11 @@
 //   windows  the unpacked windows-ui-preview CI artifact scripts/test-native-windows.py --suite ui
 //   android  artifacts/native-android/ui                scripts/test-native-android.py --suite ui (guide-*.png)
 //   ios      artifacts/native-ios/ui/screenshots        scripts/test-native-ios.py --suite ui
+//   manual   a folder of real-device system pictures    hand-taken (docs/user-guide.md section 5)
 //
+// A manual pick carries "manual": { "device", "system" } (what it was taken on); its pictures are
+// processed on their own, so a suite run never touches them and a manual run never touches a suite's.
+
 // The pick list is guide-shots.json (key, source scene, optional crop, output width, alt text).
 // Chrome (Playwright; PLAYWRIGHT_CHROME_PATH for a local one) decodes, crops, scales and encodes
 // WebP, so no image dependency is added. The outputs are public/guide/<platform>/<name>.<hash8>.webp
@@ -37,6 +41,7 @@ const picks = JSON.parse(readFileSync(join(frontend, 'guide-shots.json'), 'utf8'
 
 export const QUALITY = 0.82;
 const platforms = ['windows', 'macos', 'android', 'ios'];
+const argNames = [...platforms, 'manual'];
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
@@ -57,15 +62,29 @@ export function sourceProblems(texts) {
   return problems;
 }
 
+/** What a manual pick (a hand-taken system picture) must say about itself (handoff_guide.md 7.4). */
+export function manualProblems(pick) {
+  const problems = [];
+  if (!pick.manual) return [`${pick.key}: not a manual pick`];
+  for (const field of ['device', 'system'])
+    if (typeof pick.manual[field] !== 'string' || pick.manual[field].trim().length < 3)
+      problems.push(
+        `${pick.key}: manual.${field} (the device and system it was taken on) is missing`,
+      );
+  if (!pick.scene?.startsWith('manual:'))
+    problems.push(`${pick.key}: scene must read manual:<what it shows>`);
+  return problems;
+}
+
 function parseArgs(argv) {
   const dirs = {};
   for (let i = 0; i < argv.length; i++) {
     const name = argv[i].replace(/^--/, '');
-    if (!platforms.includes(name) || !argv[i + 1]) throw new Error(`unknown argument ${argv[i]}`);
+    if (!argNames.includes(name) || !argv[i + 1]) throw new Error(`unknown argument ${argv[i]}`);
     dirs[name] = argv[++i];
   }
   if (!Object.keys(dirs).length)
-    throw new Error('give at least one of --windows --macos --android --ios <dir>');
+    throw new Error('give at least one of --windows --macos --android --ios --manual <dir>');
   return dirs;
 }
 
@@ -134,6 +153,8 @@ export type GuideImage = {
   device: 'phone' | 'desktop' | 'menubar';
   platform: 'windows' | 'macos' | 'android' | 'ios';
   scene: string;
+  /** Only a hand-taken system picture: the device and system it was taken on. */
+  capture?: { device: string; system: string };
   sourceSha256: string;
   sha256: string;
   bytes: number;
@@ -164,12 +185,19 @@ async function main() {
   );
   const problems = [];
   try {
-    for (const platform of Object.keys(dirs)) {
-      const dir = dirs[platform];
-      const texts = sceneTexts(dir);
-      for (const key of Object.keys(entries))
-        if (entries[key].platform === platform) delete entries[key];
-      for (const pick of picks.shots.filter((shot) => shot.platform === platform)) {
+    for (const group of Object.keys(dirs)) {
+      const dir = dirs[group];
+      const manual = group === 'manual';
+      // A suite run owns its platform's suite pictures; a manual run owns every manual picture.
+      const owns = (entry) =>
+        manual ? Boolean(entry.capture) : !entry.capture && entry.platform === group;
+      const mine = (shot) =>
+        manual ? Boolean(shot.manual) : !shot.manual && shot.platform === group;
+      const texts = manual ? null : sceneTexts(dir);
+      for (const key of Object.keys(entries)) if (owns(entries[key])) delete entries[key];
+      for (const pick of picks.shots.filter(mine)) {
+        const platform = pick.platform;
+        if (manual) problems.push(...manualProblems(pick));
         const source = join(dir, pick.source);
         if (!existsSync(source)) {
           problems.push(`${pick.key}: ${source} is missing`);
@@ -199,6 +227,9 @@ async function main() {
           device: pick.device,
           platform,
           scene: pick.scene,
+          ...(manual
+            ? { capture: { device: pick.manual.device, system: pick.manual.system } }
+            : {}),
           sourceSha256: sha256(png),
           sha256: hash,
           bytes: webp.length,

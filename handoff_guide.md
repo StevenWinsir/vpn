@@ -441,3 +441,20 @@ G-05 按钮名称核对表（教程用词 → 来源）：
 - 高亮（G-13）：每张图都用无头 Chrome 叠加编号框逐张核对落点（Windows、macOS、Android、iPhone 全部），偏差的已修正；页面证据截图见浏览器用例输出 screens/guide-marks-平台-主题.png。
 - 验收（本地：私有 Postgres + 真实 Next.js 构建 + Chrome，scripts/test-payment-web.py --spec guide --spec ui-copy --spec theme，106 passed）：G-10 PASS；G-11 PASS（上条逐张记录；macOS、Windows 脚本检查 0 问题）；G-12 PASS（单张最大 53 KB、总量 760 KB；用例断言每个平台只请求 /guide/本平台/ 下的图片且全部解码）；G-13 PASS（逐张叠加核对 + guide-marks-*.png 页面证据，用例断言编号框都在图片内、正文编号与圆圈一致）；G-14 PASS（点击与回车打开、Esc 与“关闭”退出；减少动态效果时编号框 animation 为 none、放大层无运行中的动画）；G-15 iOS PASS（本机 ui 套件 49/49、50 张，ScreenshotTests 未改），Android 原有 35 张与新增 8 张 guide- 均在 CI 运行 41789097816 的 ui 套件中通过（本机 BLOCKED，见上）；G-16 本地 lint、typecheck、全部 test:*、webpack/next 构建通过，390 与 1280 宽无横向溢出，浅/深色截图在 browser-artifacts/screens/guide-*.png；CI 结果见 PR。
 - 遗留：系统画面（VPN 授权、安装拦截等）仍为纯文字，第 3 轮真机补齐；Android 与 iPhone 的“首次授权”目前只有 iPhone 的 App 内说明页有图。APP 界面改版后需按 guide-shots.json 的来源重跑对应 --suite ui 再运行 npm run guide:images（第 3 轮写入 docs/user-guide.md）。
+
+### 第 3 轮：系统画面、回归与文档（2026-11-04）
+
+- 分支 worktree-guide-round3-system-docs，基线 main b0232cd（#109 合并后）。
+- 改动：
+  - 手动（真机）图入库流程：guide-images.mjs 新增 `--manual <目录>`；选单条目带 `manual: { device, system }`（拍摄设备与系统版本）且 `scene` 须以 `manual:` 开头（`manualProblems` 检查，缺项则不写清单）；清单条目多一个可选的 `capture` 字段；套件图与手动图互相独立（跑套件不动手动图，反之亦然）。用一张合成 PNG 在本机端到端验证过（清单与图片生成正确，其余 33 条逐字节不变），验证后已还原，未入库任何合成图。
+  - guide-shots.json 新增 `pendingManual`：14 条待拍的系统画面（键、所属章节与步骤、要拍的画面），test:guide 校验每条都指向 guides.ts 里真实存在且还没有图的步骤、键不与已入库的重复。
+  - test:guide 新增 2 个用例（手动图必带拍摄设备与系统、非手动图不得有 capture；待拍清单有效），共 14 个。
+  - guide.spec.ts：浏览器用例的整页截图从 2 个平台扩到全部 4 个平台 × 390 与 1280 × 浅/深色共 16 张，并在每张上断言无破图。
+  - 文档：新增 docs/user-guide.md（数据结构、新增一步、APP 改版后更新截图、系统画面拍摄清单与要求和入库步骤、桌面端正式签名后要删除的步骤、测试与 CI、发布回滚缓存、U-47…U-51 实测表、已知限制）；docs/deployment.md 增加“使用教程图片的长缓存”的 Nginx 片段（可选）。
+  - 无后端、数据库、.env、APP 产品代码改动，无新增 npm 依赖，教程文字与已入库图片都没有变化。
+- 验收：
+  - G-17 **BLOCKED**：需求方尚未提供任何真机系统画面（工作目录与桌面上没有此类文件，桌面上只有与本项目无关的两张截图）。缺口共 14 张，逐项列在 guide-shots.json 的 `pendingManual` 与 docs/user-guide.md 5.1：windows/smartscreen、windows/uac；macos/dmg-drag、macos/open-anyway、macos/login-items、macos/keychain；android/download-done、android/unknown-apps、android/vpn-request、android/notify-permission、android/notification；ios/install-confirm、ios/vpn-add、ios/status-vpn。对应步骤保持纯文字，页面无破图（用例断言）。Windows“找回图标”一步已有托盘菜单图，不再补拍“^”展开图（一步一图）。拿到图后按 docs/user-guide.md 5.3 入库即可，无需再改代码。
+  - G-18 PASS（本地：私有 Postgres + 真实 Next.js 构建 + Chrome，scripts/test-payment-web.py --spec guide --spec ui-copy --spec theme，106 passed）：四个平台 × 390/1280 × 浅/深色共 16 张整页截图与 8 张编号框证据截图已生成（输出目录 browser-artifacts/screens/guide-平台-宽度-主题.png、guide-marks-平台-主题.png），每张断言无横向溢出、无破图；本地 lint、typecheck、全部 test:*（api-proxy 除外，其浏览器用例本机缺 headless shell，CI 覆盖）通过。CI 结果见 PR。
+  - G-19 自查 PASS：docs/user-guide.md 的更新截图与入库命令均已在本机实跑过（--manual 用合成图；套件路径沿用第 2 轮的实跑）；尚未由未参与开发的人照文档独立走一遍，建议需求方或下次改界面时验证。
+  - G-20 NOT RUN：无法安排未接触过产品的人走查，交由 U-49。
+- 遗留：14 张系统画面待需求方真机拍摄（BLOCKED，见上）；U-47…U-51 待需求方在生产环境实测（已整理在 docs/user-guide.md 第 9 节）；下载页“开源许可与源代码”段落观察项仍待需求方决定。

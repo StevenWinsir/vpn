@@ -1,5 +1,5 @@
 {
-  "about": "The usage guide's picture pick list (handoff_guide.md 7.1). Each shot names a scene of a native app's screenshot suite; npm run guide:images turns it into public/guide/<platform>/<name>.<hash>.webp and the manifest src/lib/guide-images.ts. crop is [x, y, width, height] in source pixels; width is the output width (never enlarged).",
+  "about": "The usage guide's picture pick list (handoff_guide.md 7.1). Each shot names a scene of a native app's screenshot suite; npm run guide:images turns it into public/guide/<platform>/<name>.<hash>.webp and the manifest src/lib/guide-images.ts. crop is [x, y, width, height] in source pixels; width is the output width (never enlarged). pendingManual lists the real-device system pictures still to be taken (handoff_guide.md 7.4): each names the step it will go to; the picture is added as an ordinary shot with a \"manual\" block (docs/user-guide.md section 5) and removed from this list.",
   "sources": {
     "macos": "python3 scripts/test-native-macos.py --suite ui → artifacts/native-macos/<run>-ui (Debug preview, release look)",
     "windows": "python3 scripts/test-native-windows.py --suite ui on Windows, or the windows-ui-preview artifact of the Windows CI run",
@@ -314,6 +314,106 @@
       "width": 600,
       "alt": "AsterLink“我的”页的系统权限部分：通知和 VPN 配置的状态，VPN 配置显示“尚未添加”",
       "crop": [0, 446, 1206, 866]
+    }
+  ],
+  "pendingManual": [
+    {
+      "key": "windows/smartscreen",
+      "platform": "windows",
+      "section": "download",
+      "step": "运行安装程序",
+      "what": "“Windows 已保护你的电脑”窗口，同时能看到“更多信息”，再点开后的“仍要运行”按钮"
+    },
+    {
+      "key": "windows/uac",
+      "platform": "windows",
+      "section": "download",
+      "step": "允许管理员权限",
+      "what": "“用户账户控制”弹窗，能看到“是”按钮"
+    },
+    {
+      "key": "macos/dmg-drag",
+      "platform": "macos",
+      "section": "download",
+      "step": "拖进“应用程序”",
+      "what": "打开 DMG 后的窗口：AsterLink 图标与“应用程序”文件夹，箭头指向拖放方向"
+    },
+    {
+      "key": "macos/open-anyway",
+      "platform": "macos",
+      "section": "download",
+      "step": "遇到“无法验证”提示",
+      "what": "系统设置 › 隐私与安全性 里提示被阻止的 AsterLink 和“仍要打开”按钮"
+    },
+    {
+      "key": "macos/login-items",
+      "platform": "macos",
+      "section": "authorize",
+      "step": "在系统设置里打开开关",
+      "what": "系统设置 › 通用 › 登录项与扩展 里“允许在后台”中 AsterLink 的开关"
+    },
+    {
+      "key": "macos/keychain",
+      "platform": "macos",
+      "section": "authorize",
+      "step": "遇到钥匙串提示",
+      "what": "“AsterLink 想要使用钥匙串中的……”弹窗，能看到“始终允许”按钮"
+    },
+    {
+      "key": "android/download-done",
+      "platform": "android",
+      "section": "download",
+      "step": "用手机浏览器下载",
+      "what": "浏览器下载完成后的提示条或下载列表，能看到“打开”"
+    },
+    {
+      "key": "android/unknown-apps",
+      "platform": "android",
+      "section": "download",
+      "step": "允许安装",
+      "what": "系统“安装未知应用”设置页，该浏览器的“允许来自此来源的应用”开关"
+    },
+    {
+      "key": "android/vpn-request",
+      "platform": "android",
+      "section": "authorize",
+      "step": "允许 VPN 连接",
+      "what": "系统“连接请求”对话框，能看到“确定”按钮"
+    },
+    {
+      "key": "android/notify-permission",
+      "platform": "android",
+      "section": "authorize",
+      "step": "允许通知",
+      "what": "Android 13 及以上的通知权限对话框，能看到“允许”按钮"
+    },
+    {
+      "key": "android/notification",
+      "platform": "android",
+      "section": "background",
+      "step": "通知栏里的状态",
+      "what": "下拉通知栏里 AsterLink 的常驻通知（状态与速率）"
+    },
+    {
+      "key": "ios/install-confirm",
+      "platform": "ios",
+      "section": "download",
+      "step": "点“在 iPhone 上安装”",
+      "what": "Safari 里“是否安装”的确认弹窗，能看到“安装”按钮"
+    },
+    {
+      "key": "ios/vpn-add",
+      "platform": "ios",
+      "section": "authorize",
+      "step": "允许添加 VPN 配置",
+      "what": "系统弹窗“AsterLink 想要添加 VPN 配置”，能看到“允许”按钮"
+    },
+    {
+      "key": "ios/status-vpn",
+      "platform": "ios",
+      "section": "background",
+      "step": "切到其他应用",
+      "what": "已连接时状态栏出现的“VPN”图标（只截状态栏一角）"
     }
   ]
 }

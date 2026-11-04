@@ -23,6 +23,7 @@ import {
   requiredSections,
 } from '../src/lib/guides.ts';
 import { bannedIn } from '../tests/copy-words.ts';
+import { manualProblems } from './guide-images.mjs';
 
 const desktop = ['windows', 'macos'];
 
@@ -256,12 +257,54 @@ test('the four platforms all have pictures, and each one leads off its app steps
   for (const id of platformIds) {
     const shots = steps.filter((entry) => entry.id === id && entry.step.shot);
     assert.ok(shots.length >= 6, `${id}: ${shots.length} pictures`);
-    // The phones' first authorization is a system dialog: real-device pictures come in round 3.
+    // The phones' first authorization is a system dialog: a real-device picture (pendingManual).
     const app = id === 'android' || id === 'ios' ? [] : ['authorize'];
     for (const section of [...app, 'login', 'lines', 'connect', 'usage'])
       assert.ok(
         platforms[id].sections.find((s) => s.id === section).steps.some((step) => step.shot),
         `${id}/${section} has a picture`,
       );
+  }
+});
+
+// ---- hand-taken system pictures (handoff_guide.md 7.4, round 3) ---------------------------------
+
+const pending = JSON.parse(readFileSync(join(frontend, 'guide-shots.json'), 'utf8')).pendingManual;
+
+test('a manual picture says what it was taken on, and only manual pictures say so', () => {
+  const good = {
+    key: 'ios/x',
+    manual: { device: 'iPhone 15', system: 'iOS 17.5' },
+    scene: 'manual:x',
+  };
+  assert.deepEqual(manualProblems(good), []);
+  assert.equal(manualProblems({ ...good, manual: { device: 'iPhone 15' } }).length, 1);
+  assert.equal(manualProblems({ ...good, scene: 'x' }).length, 1);
+  assert.equal(manualProblems({ key: 'ios/x', scene: 'x' }).length, 1);
+  for (const pick of picks) {
+    const entry = guideImages[pick.key];
+    if (pick.manual) {
+      assert.deepEqual(manualProblems(pick), [], pick.key);
+      assert.deepEqual(entry.capture, pick.manual, `${pick.key}: capture recorded in the manifest`);
+    } else assert.equal(entry.capture, undefined, `${pick.key}: a suite picture has no capture`);
+  }
+});
+
+test('the pictures still to be taken name a real step, and no taken picture is still listed', () => {
+  assert.ok(pending.length >= 1 || picks.some((pick) => pick.manual));
+  const keys = pending.map((item) => item.key);
+  assert.equal(new Set(keys).size, keys.length, 'pending keys are unique');
+  for (const item of pending) {
+    assert.ok(platformIds.includes(item.platform), item.key);
+    assert.equal(item.key.split('/')[0], item.platform, item.key);
+    assert.ok(!picks.some((pick) => pick.key === item.key), `${item.key} is already taken`);
+    assert.ok(item.what.trim().length >= 10, `${item.key}: what to capture`);
+    const section = platforms[item.platform].sections.find((s) => s.id === item.section);
+    assert.ok(section, `${item.key}: section ${item.section}`);
+    const step = section.steps.find((s) => s.title === item.step);
+    assert.ok(step, `${item.key}: step ${item.step}`);
+    assert.ok(!step.shot, `${item.key}: ${item.step} already has a picture`);
+    // A system picture is shown as the step's picture once it exists, so the step stays text-only now.
+    assert.deepEqual(bannedIn(item.what), [], item.key);
   }
 });

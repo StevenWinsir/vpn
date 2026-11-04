@@ -240,7 +240,14 @@ test('no horizontal overflow at phone and desktop width; both themes are kept as
           .locator('.guide-seg label')
           .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().right)))
           expect(box, `${id} ${width}px device switch`).toBeLessThanOrEqual(width);
-        if (id === 'windows' || id === 'ios') await shot(page, `guide-${id}-${width}-${scheme}`);
+        // All four platforms, both widths, both themes are kept as evidence (G-18); no picture is broken (G-17).
+        await shot(page, `guide-${id}-${width}-${scheme}`);
+        const broken = await page.evaluate(() =>
+          [...document.images]
+            .filter((img) => !img.complete || img.naturalWidth === 0)
+            .map((img) => img.src),
+        );
+        expect(broken, `${id} ${width}px ${scheme}: broken pictures`).toEqual([]);
       }
     }
     await context.close();

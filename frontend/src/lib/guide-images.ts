@@ -11,6 +11,8 @@ export type GuideImage = {
   device: 'phone' | 'desktop' | 'menubar';
   platform: 'windows' | 'macos' | 'android' | 'ios';
   scene: string;
+  /** Only a hand-taken system picture: the device and system it was taken on. */
+  capture?: { device: string; system: string };
   sourceSha256: string;
   sha256: string;
   bytes: number;
