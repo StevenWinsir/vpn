@@ -2,9 +2,11 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
 import { mkdir, readFile } from 'node:fs/promises';
 import { bannedIn } from './copy-words';
 import { overflowing } from './layout';
+import { platforms, type PlatformId } from '../src/lib/guides';
 
-// The usage guide (handoff_guide.md 8.3, round 1): the sidebar entry, public access, platform
-// deep links and device detection, the download availability, layout and copy. The fixture has
+// The usage guide (handoff_guide.md 8.3, rounds 1–2): the sidebar entry, public access, platform
+// deep links and device detection, the download availability, layout and copy, and the pictures
+// (only the chosen platform's load, numbered marks, zoom). The fixture has
 // Android released and iPhone not (scripts/test-payment-web.py). homea only signs in and
 // themeroot is an administrator; neither is changed here.
 type Fixture = {
@@ -34,6 +36,15 @@ const agents = {
 async function shot(page: Page, name: string) {
   const dir = `${process.env.PAYMENT_OUTPUTS ?? 'test-results'}/screens`;
   await mkdir(dir, { recursive: true });
+  // A full-page capture does not scroll, so lazy pictures below the fold would stay blank.
+  await page.evaluate(() =>
+    Promise.all(
+      [...document.images].map((img) => {
+        img.loading = 'eager';
+        return img.decode().catch(() => undefined);
+      }),
+    ),
+  );
   await page.screenshot({ path: `${dir}/${name}.png`, animations: 'disabled', fullPage: true });
 }
 
@@ -231,6 +242,129 @@ test('no horizontal overflow at phone and desktop width; both themes are kept as
           expect(box, `${id} ${width}px device switch`).toBeLessThanOrEqual(width);
         if (id === 'windows' || id === 'ios') await shot(page, `guide-${id}-${width}-${scheme}`);
       }
+    }
+    await context.close();
+  }
+});
+
+// ---- pictures (round 2) -------------------------------------------------------------------------
+
+const ids: PlatformId[] = ['windows', 'macos', 'android', 'ios'];
+const shotCount = (id: PlatformId) =>
+  platforms[id].sections.flatMap((section) => section.steps).filter((step) => step.shot).length;
+
+test('each platform loads its own pictures and no other platform’s; every one decodes', async ({
+  browser,
+}) => {
+  for (const id of ids) {
+    const { context, page } = await agentPage(browser, agents.windows);
+    const requested: string[] = [];
+    page.on('request', (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith('/guide/')) requested.push(path);
+    });
+    await page.goto(`/guide?platform=${id}`);
+    await expect(platform(page)).toHaveAttribute('data-platform', id);
+    const figures = page.getByTestId('guide-shot');
+    await expect(figures).toHaveCount(shotCount(id));
+    for (let i = 0; i < shotCount(id); i++) {
+      const img = figures.nth(i).locator('img');
+      await img.scrollIntoViewIfNeeded();
+      await expect
+        .poll(() => img.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth), {
+          message: `${id} picture ${i + 1} decodes`,
+        })
+        .toBeGreaterThan(0);
+      await expect(img).toHaveAttribute('alt', /.{8,}/);
+      await expect(figures.nth(i)).toContainText('示意图，线路名称与数据以实际为准');
+    }
+    expect(requested.length, `${id} requested its pictures`).toBeGreaterThan(0);
+    for (const path of requested)
+      expect(path, `${id} page asked for ${path}`).toMatch(`/guide/${id}/`);
+    // The marks are for the eye only; the step text names the same numbers.
+    const marks = page.locator('.guide-mark');
+    expect(await marks.count()).toBeGreaterThan(0);
+    for (const hidden of await marks.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('aria-hidden')),
+    ))
+      expect(hidden).toBe('true');
+    await context.close();
+  }
+});
+
+test('a picture opens larger on click or Enter and closes on Escape', async ({ browser }) => {
+  const { context, page } = await agentPage(browser, agents.windows);
+  await page.goto('/guide?platform=macos');
+  const frame = page.locator('.guide-shot-frame').first();
+  await frame.scrollIntoViewIfNeeded();
+  await frame.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('img')).toHaveAttribute('alt', /登录页/);
+  await expect(dialog.locator('.guide-mark')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await frame.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: '关闭' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await context.close();
+});
+
+test('with reduced motion the marks and the zoom do not animate', async ({ browser }) => {
+  const context = await browser.newContext({ reducedMotion: 'reduce', userAgent: agents.windows });
+  const page = await context.newPage();
+  await page.goto('/guide?platform=android');
+  const mark = page.locator('.guide-mark').first();
+  await mark.scrollIntoViewIfNeeded();
+  expect(await mark.evaluate((node) => getComputedStyle(node).animationName)).toBe('none');
+  await page.locator('.guide-shot-frame').first().click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  expect(
+    await dialog.evaluate(
+      (node) =>
+        node.getAnimations({ subtree: true }).filter((a) => a.playState === 'running').length,
+    ),
+  ).toBe(0);
+  await context.close();
+});
+
+test('the marks sit on their buttons: one picture per platform kept as evidence', async ({
+  browser,
+}) => {
+  for (const scheme of ['light', 'dark'] as const) {
+    const context = await browser.newContext({ colorScheme: scheme, userAgent: agents.windows });
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    for (const id of ids) {
+      await page.goto(`/guide?platform=${id}`);
+      const connect = page.locator('#connect .guide-step').first();
+      await connect.scrollIntoViewIfNeeded();
+      const img = connect.locator('img');
+      await expect
+        .poll(() => img.evaluate((node: HTMLImageElement) => node.naturalWidth))
+        .toBeGreaterThan(0);
+      await expect(connect.locator('.guide-mark')).not.toHaveCount(0);
+      const dir = `${process.env.PAYMENT_OUTPUTS ?? 'test-results'}/screens`;
+      await mkdir(dir, { recursive: true });
+      await connect.screenshot({
+        path: `${dir}/guide-marks-${id}-${scheme}.png`,
+        animations: 'disabled',
+      });
+      // Every mark lies within its picture.
+      const frame = await connect.locator('.guide-shot-frame').boundingBox();
+      for (const box of await connect
+        .locator('.guide-mark')
+        .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON())))
+        expect(
+          box.left >= frame!.x - 1 &&
+            box.top >= frame!.y - 1 &&
+            box.right <= frame!.x + frame!.width + 1 &&
+            box.bottom <= frame!.y + frame!.height + 1,
+          `${id} mark inside the picture`,
+        ).toBe(true);
     }
     await context.close();
   }

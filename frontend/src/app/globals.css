@@ -2249,6 +2249,128 @@ a:focus-visible {
   line-height: 1.75;
   overflow-wrap: anywhere;
 }
+/* Guide pictures (handoff_guide.md 6.3, D5, D7): light app shots in a thin frame on either theme; a
+   phone shot sits beside its text on a wide screen, a desktop shot spans the column under it. The
+   numbered marks are percent boxes over the picture. */
+.guide-step-body[data-device='phone'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: start;
+}
+.guide-shot {
+  margin: 14px 0 0;
+}
+.guide-step-body[data-device='phone'] .guide-shot {
+  margin-top: 0;
+}
+.guide-shot figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--al-text-3);
+}
+.guide-shot-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--al-border);
+  border-radius: 10px;
+  background: var(--al-surface);
+  box-shadow: var(--al-shadow);
+  overflow: visible;
+  cursor: zoom-in;
+  line-height: 0;
+}
+.guide-shot[data-device='phone'] .guide-shot-frame {
+  width: 280px;
+  border-radius: 22px;
+}
+.guide-shot-frame img,
+.guide-zoom-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: inherit;
+}
+.guide-shot-frame:focus-visible {
+  outline: 3px solid var(--al-focus-strong);
+  outline-offset: 3px;
+}
+.guide-shot-zoom {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--al-surface);
+  color: var(--al-text-2);
+  border: 1px solid var(--al-border);
+  opacity: 0.9;
+}
+.guide-zoom-frame {
+  position: relative;
+  line-height: 0;
+  border: 1px solid var(--al-border);
+  border-radius: 10px;
+  margin-inline: auto;
+}
+.guide-zoom-frame[data-device='phone'] {
+  border-radius: 22px;
+}
+.guide-mark {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2.5px solid var(--al-brand);
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px var(--al-brand-soft);
+  pointer-events: none;
+}
+.guide-mark[data-shape='circle'] {
+  border-radius: 50%;
+}
+.guide-mark-no {
+  position: absolute;
+  top: -11px;
+  left: -11px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--al-brand-fill);
+  color: var(--al-on-brand);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--al-surface);
+}
+.guide-mark[data-badge='end'] .guide-mark-no {
+  left: auto;
+  right: -11px;
+}
+.guide-mark[data-shape='circle'] .guide-mark-no {
+  top: 4%;
+  left: 4%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .guide-mark {
+    animation: guide-mark-in 0.5s ease-out both;
+  }
+  @keyframes guide-mark-in {
+    from {
+      opacity: 0;
+      transform: scale(1.12);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
 @media (max-width: 767px) {
   .guide-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -2265,6 +2387,10 @@ a:focus-visible {
   }
   .guide-toc a {
     background: var(--al-surface-2);
+  }
+  .guide-step-body[data-device='phone'] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
   }
 }
 @media (max-width: 480px) {

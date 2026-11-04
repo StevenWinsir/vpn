@@ -18,6 +18,7 @@
     "test:theme": "node --test scripts/theme.test.mjs",
     "brand:icons": "node scripts/brand-icons.mjs",
     "brand:apps": "node scripts/brand-apps.mjs",
+    "guide:images": "node --experimental-strip-types --no-warnings scripts/guide-images.mjs",
     "test:home": "node --experimental-strip-types --test scripts/home.test.mjs",
     "test:support": "node --experimental-strip-types --test scripts/support.test.mjs",
     "test:tickets": "node --experimental-strip-types --test scripts/tickets.test.mjs",

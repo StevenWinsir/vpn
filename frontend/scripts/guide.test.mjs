@@ -1,7 +1,12 @@
 // The usage guide's content and platform choice (handoff_guide.md 8.1): structure, links, copy
-// vocabulary and the User-Agent rules. The picture checks arrive with the pictures (round 2).
+// vocabulary, the User-Agent rules, and the pictures (round 2): manifest against files, budgets,
+// highlights against the step texts.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { guideImages } from '../src/lib/guide-images.ts';
 import {
   beforeYouStart,
   choosePlatform,
@@ -11,6 +16,7 @@ import {
   faqFor,
   guideLinkPaths,
   guideTexts,
+  markNumbers,
   parseInline,
   platformIds,
   platforms,
@@ -126,4 +132,136 @@ test('the platform: a valid query wins, otherwise the device decides', () => {
   assert.equal(choosePlatform('', mac), 'macos');
   assert.equal(choosePlatform(null, windows), 'windows');
   assert.equal(choosePlatform(undefined, ''), 'windows');
+});
+
+// ---- pictures (handoff_guide.md 7.2, 8.1) ------------------------------------------------------
+
+const frontend = new URL('../', import.meta.url).pathname;
+const publicDir = join(frontend, 'public');
+const picks = JSON.parse(readFileSync(join(frontend, 'guide-shots.json'), 'utf8')).shots;
+const steps = platformIds.flatMap((id) =>
+  platforms[id].sections.flatMap((section) =>
+    section.steps.map((step) => ({ id, where: `${id}/${section.id}/${step.title}`, step })),
+  ),
+);
+
+/** Width and height from a WebP header (lossy, lossless or extended). */
+function webpSize(data) {
+  assert.equal(data.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(data.toString('ascii', 8, 12), 'WEBP');
+  const chunk = data.toString('ascii', 12, 16);
+  if (chunk === 'VP8 ') return [data.readUInt16LE(26) & 0x3fff, data.readUInt16LE(28) & 0x3fff];
+  if (chunk === 'VP8L') {
+    const bits = data.readUInt32LE(21);
+    return [(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1];
+  }
+  if (chunk === 'VP8X') return [data.readUIntLE(24, 3) + 1, data.readUIntLE(27, 3) + 1];
+  throw new Error(`unknown WebP chunk ${chunk}`);
+}
+
+function files(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    return statSync(path).isDirectory() ? files(path) : [path];
+  });
+}
+
+test('every picture of the pick list is in the manifest, and every step picture is a pick', () => {
+  const keys = picks.map((pick) => pick.key);
+  assert.equal(new Set(keys).size, keys.length, 'pick keys are unique');
+  assert.deepEqual(Object.keys(guideImages).sort(), [...keys].sort());
+  for (const pick of picks) {
+    const entry = guideImages[pick.key];
+    assert.equal(pick.key.split('/')[0], pick.platform, pick.key);
+    assert.equal(entry.platform, pick.platform, pick.key);
+    assert.equal(entry.scene, pick.scene, `${pick.key}: traceable to its suite scene`);
+    assert.equal(entry.device, pick.device, pick.key);
+    assert.equal(entry.alt, pick.alt, pick.key);
+    assert.ok(entry.alt.trim().length >= 8, `${pick.key}: alt text describes the picture`);
+    assert.deepEqual(bannedIn(entry.alt), [], `${pick.key}: ${entry.alt}`);
+    if (pick.platform === 'windows' || pick.platform === 'macos')
+      assert.ok(!/VPN|内核|协议/i.test(entry.alt), `${pick.key}: ${entry.alt}`);
+    assert.match(entry.sourceSha256, /^[0-9a-f]{64}$/, `${pick.key}: source hash recorded`);
+    assert.ok(entry.file.startsWith(`/guide/${pick.platform}/`), pick.key);
+  }
+  for (const { id, where, step } of steps)
+    if (step.shot) {
+      assert.ok(guideImages[step.shot], `${where}: ${step.shot} is in the manifest`);
+      assert.equal(guideImages[step.shot].platform, id, `${where}: its own platform's picture`);
+    }
+  // Every pick is shown somewhere.
+  const used = new Set(steps.map(({ step }) => step.shot).filter(Boolean));
+  for (const key of keys) assert.ok(used.has(key), `${key} is used by a step`);
+});
+
+test('the files match the manifest: bytes, hash, size, name, budgets, nothing extra', () => {
+  let total = 0;
+  for (const [key, entry] of Object.entries(guideImages)) {
+    const path = join(publicDir, entry.file);
+    assert.ok(existsSync(path), `${key}: ${entry.file} exists`);
+    const data = readFileSync(path);
+    const hash = createHash('sha256').update(data).digest('hex');
+    assert.equal(data.length, entry.bytes, `${key}: bytes`);
+    assert.equal(hash, entry.sha256, `${key}: sha256`);
+    assert.ok(
+      entry.file.endsWith(`.${hash.slice(0, 8)}.webp`),
+      `${key}: the name carries the hash`,
+    );
+    assert.deepEqual(webpSize(data), [entry.width, entry.height], `${key}: size`);
+    assert.ok(entry.bytes <= 200 * 1024, `${key}: ${entry.bytes} bytes is over 200 KB`);
+    assert.ok(entry.display > 0 && entry.display <= entry.width, `${key}: display width`);
+    if (entry.device === 'phone') assert.ok(entry.width <= 720, `${key}: phone output width`);
+    else assert.ok(entry.width <= 1440, `${key}: desktop output width`);
+    total += entry.bytes;
+  }
+  assert.ok(total <= 4 * 1024 * 1024, `${total} bytes in all is over 4 MB`);
+  const named = new Set(Object.values(guideImages).map((entry) => join(publicDir, entry.file)));
+  for (const path of files(join(publicDir, 'guide')))
+    assert.ok(named.has(path), `${path} is not in the manifest`);
+});
+
+test('highlights sit inside their picture and the step text names exactly their numbers', () => {
+  let marks = 0;
+  for (const { where, step } of steps) {
+    const highlights = step.highlights ?? [];
+    const named = markNumbers(step.body);
+    if (!step.shot) assert.equal(highlights.length, 0, `${where}: highlights need a picture`);
+    assert.deepEqual(
+      named,
+      highlights.map((mark) => mark.n).sort((a, b) => a - b),
+      `${where}: the text names ${named.join(',') || 'none'}`,
+    );
+    const numbers = highlights.map((mark) => mark.n);
+    assert.deepEqual(
+      numbers,
+      numbers.map((_, index) => index + 1),
+      `${where}: numbered 1, 2, 3 … in order`,
+    );
+    for (const mark of highlights) {
+      const [x, y, w, h] = mark.rect;
+      for (const value of mark.rect)
+        assert.ok(value >= 0 && value <= 100, `${where}: ${mark.rect}`);
+      assert.ok(w > 0 && h > 0 && x + w <= 100 && y + h <= 100, `${where}: ${mark.rect} overflows`);
+      marks += 1;
+    }
+  }
+  for (const item of beforeYouStart) assert.deepEqual(markNumbers(item.body), []);
+  for (const id of platformIds)
+    for (const item of faqFor(id)) assert.deepEqual(markNumbers(item.a), [], item.q);
+  assert.ok(marks >= 20, `${marks} highlights in all`);
+});
+
+test('the four platforms all have pictures, and each one leads off its app steps with one', () => {
+  for (const id of platformIds) {
+    const shots = steps.filter((entry) => entry.id === id && entry.step.shot);
+    assert.ok(shots.length >= 6, `${id}: ${shots.length} pictures`);
+    // The phones' first authorization is a system dialog: real-device pictures come in round 3.
+    const app = id === 'android' || id === 'ios' ? [] : ['authorize'];
+    for (const section of [...app, 'login', 'lines', 'connect', 'usage'])
+      assert.ok(
+        platforms[id].sections.find((s) => s.id === section).steps.some((step) => step.shot),
+        `${id}/${section} has a picture`,
+      );
+  }
 });

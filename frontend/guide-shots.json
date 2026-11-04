@@ -1,0 +1,319 @@
+{
+  "about": "The usage guide's picture pick list (handoff_guide.md 7.1). Each shot names a scene of a native app's screenshot suite; npm run guide:images turns it into public/guide/<platform>/<name>.<hash>.webp and the manifest src/lib/guide-images.ts. crop is [x, y, width, height] in source pixels; width is the output width (never enlarged).",
+  "sources": {
+    "macos": "python3 scripts/test-native-macos.py --suite ui → artifacts/native-macos/<run>-ui (Debug preview, release look)",
+    "windows": "python3 scripts/test-native-windows.py --suite ui on Windows, or the windows-ui-preview artifact of the Windows CI run",
+    "android": "python3 scripts/test-native-android.py --suite ui → GuideScreenshotTest guide-*.png (release build facts)",
+    "ios": "python3 scripts/test-native-ios.py --suite ui → artifacts/native-ios/ui/screenshots (status bar fixed at 9:41)"
+  },
+  "shots": [
+    {
+      "key": "windows/login-service",
+      "platform": "windows",
+      "scene": "02-login-service-install",
+      "source": "02-login-service-install.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 登录页，上方是“首次使用：安装后台服务”卡片，卡片里有“安装（需要管理员权限）”和“重新检测”两个按钮"
+    },
+    {
+      "key": "windows/login",
+      "platform": "windows",
+      "scene": "01-login",
+      "source": "01-login.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 登录页，右侧依次是邮箱、密码输入框、“记住密码”勾选框和“登录”按钮"
+    },
+    {
+      "key": "windows/connect-ready",
+      "platform": "windows",
+      "scene": "10-connect-ready",
+      "source": "10-connect-ready.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 连接页，左侧栏选中“连接”，中间是圆形连接按钮，状态为未连接"
+    },
+    {
+      "key": "windows/connect-connected",
+      "platform": "windows",
+      "scene": "12-connect-connected",
+      "source": "12-connect-connected.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 连接页，状态显示“已连接”，下方是当前线路、套餐和实时速率三张卡片"
+    },
+    {
+      "key": "windows/plan-card",
+      "platform": "windows",
+      "scene": "12-connect-connected",
+      "source": "12-connect-connected.png",
+      "crop": [248, 378, 702, 263],
+      "device": "desktop",
+      "width": 1440,
+      "alt": "连接页下方的三张卡片：当前线路、套餐（剩余流量、到期日期）和实时速率"
+    },
+    {
+      "key": "windows/lines",
+      "platform": "windows",
+      "scene": "20-lines",
+      "source": "20-lines.png",
+      "crop": [0, 0, 984, 452],
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 线路页，上方有搜索框和“全部、专线、普通线路”筛选，线路按地区分组，选中的线路标有“已选”"
+    },
+    {
+      "key": "windows/lines-rate",
+      "platform": "windows",
+      "scene": "20-lines",
+      "source": "20-lines.png",
+      "crop": [248, 160, 710, 290],
+      "device": "desktop",
+      "width": 1440,
+      "alt": "线路列表特写：每条线路右侧标有线路类型（专线或普通线路）和“线路倍率”，选中的线路标有“已选”"
+    },
+    {
+      "key": "windows/account",
+      "platform": "windows",
+      "scene": "30-account",
+      "source": "30-account.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 账户页，显示账户邮箱、套餐和到期时间，下面是“续费或升级”按钮、外观和通用设置"
+    },
+    {
+      "key": "windows/window",
+      "platform": "windows",
+      "scene": "90-desktop-window",
+      "textsScene": "12-connect-connected",
+      "source": "90-desktop-window.png",
+      "crop": [0, 0, 976, 664],
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 窗口，右上角有最小化、最大化和关闭按钮"
+    },
+    {
+      "key": "windows/tray",
+      "platform": "windows",
+      "scene": "42-tray-connected",
+      "source": "42-tray-connected.png",
+      "device": "menubar",
+      "width": 400,
+      "alt": "右键任务栏通知区域 AsterLink 图标出现的菜单：打开 AsterLink、断开、退出"
+    },
+    {
+      "key": "macos/login-setup",
+      "platform": "macos",
+      "scene": "login-service-setup",
+      "source": "login-service-setup.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 登录页，上方是“首次使用：允许 AsterLink 在后台运行”卡片，列出三步说明和“启用”按钮"
+    },
+    {
+      "key": "macos/login",
+      "platform": "macos",
+      "scene": "login-light",
+      "source": "login-light.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 登录页，右侧依次是邮箱、密码输入框、“记住密码”勾选框和“登录”按钮"
+    },
+    {
+      "key": "macos/connect-ready",
+      "platform": "macos",
+      "scene": "connect-ready",
+      "source": "connect-ready.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 连接页，左侧栏选中“连接”，中间是圆形连接按钮，状态为未连接"
+    },
+    {
+      "key": "macos/connect-connected",
+      "platform": "macos",
+      "scene": "connect-connected-light",
+      "source": "connect-connected-light.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 连接页，状态显示“已连接”，下方是当前线路、套餐和实时速率三张卡片"
+    },
+    {
+      "key": "macos/plan-card",
+      "platform": "macos",
+      "scene": "connect-connected-light",
+      "source": "connect-connected-light.png",
+      "crop": [440, 860, 1410, 420],
+      "device": "desktop",
+      "width": 1440,
+      "alt": "连接页下方的三张卡片：当前线路、套餐（剩余流量、到期日期）和实时速率"
+    },
+    {
+      "key": "macos/lines",
+      "platform": "macos",
+      "scene": "lines-light",
+      "source": "lines-light.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 线路页，上方有搜索框和“全部、专线、普通线路”筛选，线路按地区分组，选中的线路标有“已选”"
+    },
+    {
+      "key": "macos/lines-rate",
+      "platform": "macos",
+      "scene": "lines-light",
+      "source": "lines-light.png",
+      "crop": [440, 330, 1410, 310],
+      "device": "desktop",
+      "width": 1440,
+      "alt": "线路列表特写：每条线路右侧标有线路类型（专线或普通线路）和“线路倍率”，选中的线路标有“已选”"
+    },
+    {
+      "key": "macos/account",
+      "platform": "macos",
+      "scene": "account-light",
+      "source": "account-light.png",
+      "device": "desktop",
+      "width": 1440,
+      "alt": "AsterLink 账户页，显示账户邮箱、套餐和到期时间，下面是“续费或升级”按钮、外观、通用和后台服务"
+    },
+    {
+      "key": "macos/menubar",
+      "platform": "macos",
+      "scene": "menubar-connected-light",
+      "source": "menubar-connected-light.png",
+      "device": "menubar",
+      "width": 600,
+      "alt": "点菜单栏 AsterLink 图标出现的面板：已连接状态、断开按钮、当前线路、剩余流量，以及“打开 AsterLink”和“退出”",
+      "display": 300
+    },
+    {
+      "key": "android/login",
+      "platform": "android",
+      "scene": "guide-login",
+      "source": "guide-login.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 登录页，依次是邮箱、密码输入框、“记住密码”开关和“登录”按钮，下方有“注册账号”和“忘记密码”"
+    },
+    {
+      "key": "android/connect-ready",
+      "platform": "android",
+      "scene": "guide-connect-ready",
+      "source": "guide-connect-ready.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 连接页，上方是圆形连接按钮，状态为未连接，下面是当前线路卡和套餐卡（剩余流量与到期时间），底部是连接、线路、我的三个标签"
+    },
+    {
+      "key": "android/connect-connected",
+      "platform": "android",
+      "scene": "guide-connect-connected",
+      "source": "guide-connect-connected.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 连接页，状态显示“已连接”和连接时长，下面是当前线路、实时速率与本次用量，以及套餐卡"
+    },
+    {
+      "key": "android/lines",
+      "platform": "android",
+      "scene": "guide-lines",
+      "source": "guide-lines.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 线路页，上方有搜索框和“全部、专线、普通”筛选，线路按地区分组，选中的线路带勾选标记"
+    },
+    {
+      "key": "android/lines-rate",
+      "platform": "android",
+      "scene": "guide-lines",
+      "source": "guide-lines.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "线路列表特写：每条线路下方标有线路类型（专线或普通线路）和“线路倍率”",
+      "crop": [0, 616, 1233, 1112]
+    },
+    {
+      "key": "android/account",
+      "platform": "android",
+      "scene": "guide-account",
+      "source": "guide-account.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink“我的”页，显示账户、套餐与到期时间，下面是“续费或升级”和“订单记录”按钮，以及外观与后台运行设置"
+    },
+    {
+      "key": "android/account-background",
+      "platform": "android",
+      "scene": "guide-account-background",
+      "source": "guide-account-background.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink“我的”页的“后台运行与省电”一项，提示系统可能在息屏后限制本应用，可在此设为“不限制”"
+    },
+    {
+      "key": "ios/login",
+      "platform": "ios",
+      "scene": "02-login-remembered",
+      "source": "02-login-remembered.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 登录页，依次是邮箱、密码输入框、“记住密码”勾选框和“登录”按钮，下方有“注册账号”和“忘记密码”"
+    },
+    {
+      "key": "ios/vpn-setup",
+      "platform": "ios",
+      "scene": "48-vpn-setup",
+      "source": "48-vpn-setup.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "首次连接时 AsterLink 显示的说明页“首次连接需要添加 VPN 配置”，列出三条说明，下方是“继续”和“稍后再说”按钮"
+    },
+    {
+      "key": "ios/connect-ready",
+      "platform": "ios",
+      "scene": "06-connect-ready",
+      "source": "06-connect-ready.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 连接页，上方是圆形连接按钮，状态为未连接，下面是当前线路卡和套餐卡（剩余流量与到期时间），底部是连接、线路、我的三个标签"
+    },
+    {
+      "key": "ios/connect-connected",
+      "platform": "ios",
+      "scene": "15-connect-connected",
+      "source": "15-connect-connected.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 连接页，状态显示“已连接”和连接时长，下面是当前线路、实时速率与本次用量"
+    },
+    {
+      "key": "ios/lines",
+      "platform": "ios",
+      "scene": "25-lines",
+      "source": "25-lines.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink 线路页，上方有搜索框和“全部、专线、普通”筛选，线路按地区分组，选中的线路带勾选标记"
+    },
+    {
+      "key": "ios/lines-rate",
+      "platform": "ios",
+      "scene": "25-lines",
+      "source": "25-lines.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "线路列表特写：每条线路下方标有线路类型（专线或普通线路）和“线路倍率”",
+      "crop": [0, 760, 1206, 1340]
+    },
+    {
+      "key": "ios/account-vpn",
+      "platform": "ios",
+      "scene": "32-account",
+      "source": "32-account.png",
+      "device": "phone",
+      "width": 600,
+      "alt": "AsterLink“我的”页的系统权限部分：通知和 VPN 配置的状态，VPN 配置显示“尚未添加”",
+      "crop": [0, 446, 1206, 866]
+    }
+  ]
+}

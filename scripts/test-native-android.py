@@ -862,15 +862,21 @@ def run_ui_suite(args):
     shutil.rmtree(shots, ignore_errors=True)
     results_dir = ANDROID / 'app' / 'build' / 'test-results' / 'testDebugUnitTest'
     shutil.rmtree(results_dir, ignore_errors=True)
-    run = gradle([':app:testDebugUnitTest', '--tests', 'com.asterlink.vpn.ui.ScreenshotTest', '--rerun'], capture_output=True, text=True)
+    # GuideScreenshotTest: the website guide's pictures (handoff_guide.md 7.3), release look, "guide-" files.
+    run = gradle([':app:testDebugUnitTest', '--tests', 'com.asterlink.vpn.ui.ScreenshotTest',
+                  '--tests', 'com.asterlink.vpn.ui.GuideScreenshotTest', '--rerun'], capture_output=True, text=True)
     tests, failures = junit_counts(results_dir)
-    pngs = sorted(shots.glob('*.png')) if shots.is_dir() else []
+    all_pngs = sorted(shots.glob('*.png')) if shots.is_dir() else []
+    guide = [p for p in all_pngs if p.name.startswith('guide-')]
+    pngs = [p for p in all_pngs if not p.name.startswith('guide-')]
     record('ui.screenshot_tests', run.returncode == 0 and tests > 0 and failures == 0,
            '%d screenshot tests passed (each also asserts its state)' % tests if run.returncode == 0 else gradle_failure(run))
+    record('ui.guide_shots', run.returncode == 0 and len(guide) >= 8,
+           '%d guide pictures (release look, no development marker)' % len(guide))
     out_dir = Path(args.out or ROOT / 'artifacts' / 'native-android' / 'ui')
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True)
-    for png in pngs:
+    for png in all_pngs:
         shutil.copy2(png, out_dir / png.name)
     names = [p.stem for p in pngs]
     required = ('login', 'admin-no-plan', 'expired', 'quota-zero', 'no-line', 'ready', 'connecting', 'connected', 'failed',
