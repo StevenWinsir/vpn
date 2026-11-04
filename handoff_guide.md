@@ -417,3 +417,27 @@ G-05 按钮名称核对表（教程用词 → 来源）：
 | 首次连接需要添加 VPN 配置；继续；尚未添加；VPN 配置 | ios VPNSetupSheet.swift、AccountView.swift |
 | 已达到同时在线设备上限 | ios UIFixtures.swift 与 Core 提示文案 |
 | 系统原文（SmartScreen、用户账户控制、未受信任的开发者等） | 系统界面，第 3 轮真机核对 |
+
+### 第 2 轮：APP 截图、高亮与放大（2026-11-04）
+
+- 分支 worktree-guide-round2-shots，基线 main f3f76cb（#108 合并后）。
+- 改动：
+  - 选单 frontend/guide-shots.json（33 张：Windows 10、macOS 9、Android 7、iPhone 7；键、来源场景、可选裁切、输出宽度、替代文字）。
+  - 处理脚本 frontend/scripts/guide-images.mjs（npm run guide:images -- --macos/--windows/--android/--ios 目录）：Playwright 驱动本机 Chrome 解码、裁切、缩放、WebP（质量 0.82）编码；输出 public/guide/平台/键.哈希前8位.webp 与清单 src/lib/guide-images.ts（键、文件、宽高、显示宽度、设备类型、来源场景、来源 SHA-256、输出 SHA-256、字节数、替代文字）；有 texts.json 的平台（macOS、Windows）做来源文字检查（开发版、example.com 以外的域名、网站禁用词），失败则不写清单；清单外的文件删除。没有新增 npm 依赖。
+  - 教程数据 guides.ts：步骤加截图键与编号高亮（正文用 ①②③ 指向同号圆圈；高亮可选圆形与编号放右上角）；新增 markNumbers。
+  - 页面 guide-view.tsx 与 globals.css：手机图在宽屏时放在文字右侧（280 px），桌面图在文字下方占满正文宽度；细边框与圆角（--al-* 令牌，深色模式同样适用）；百分比定位的编号框（读屏隐藏，减少动态效果时无动画）；点击或回车打开放大层（Mantine Modal，Esc 或“关闭”退出，减少动态效果时无过渡）；每张图下注“示意图，线路名称与数据以实际为准”。next/image unoptimized、懒加载、尺寸取自清单。
+  - Android：新增测试类 GuideScreenshotTest.kt（只改测试代码）：发布渠道构建信息（无“开发版”）、api.example.com、虚构线路名“香港 01”等、浅色、常规字号，文件名 guide- 前缀，每张断言所示状态并额外断言无“开发版”、无 example.com 以外的地址；scripts/test-native-android.py 的 ui 套件同时跑两个类，原有 ui.states 只统计非 guide- 文件，新增 ui.guide_shots 记录；android.yml 新增 android-ui-screenshots 产物（保留 14 天，供本脚本取图）。
+  - iOS：scripts/test-native-ios.py 的 ui 套件在拍摄前把模拟器状态栏覆盖为 9:41、满信号、满电、无运营商，结束后清除（新增 ui.status_bar 记录）。未改 ScreenshotTests。
+  - 测试：test:guide 新增图片断言（选单与清单一一对应、来源场景可追溯、文件字节/哈希/WebP 尺寸与清单一致、文件名带哈希、单张 ≤ 200 KB、总量 ≤ 4 MB、public/guide 下无清单外文件、高亮在 0–100 且不越界、正文编号与高亮编号一致且按 1、2、3 编号、替代文字过禁用词、桌面端替代文字无“VPN”等）；copy-guard 覆盖清单加入 lib/guide-images.ts；guide.spec 新增图片用例（只请求当前平台图片且全部解码、放大层点击/回车打开与 Esc/关闭、减少动态效果、四平台高亮证据截图）。
+  - 无后端、数据库、.env、APP 产品代码改动。
+- 截图来源（G-10）：
+  - macOS：本机 python3 scripts/test-native-macos.py --suite ui --run-id guide-r2（4/4 PASS，28 场景，593 条文字 0 命中）。
+  - Windows：main 1dc51f0 的 Windows CI 运行 41757650836 的 windows-ui-preview 产物（f3f76cb 未改 Windows 代码）。
+  - Android：本分支 Android CI 运行 41789097816（workflow_dispatch）的 android-ui-screenshots 产物。本机 Robolectric 原生图形 jar 未缓存，下载经公司网络在 24 MB 处停滞，本机 ui 套件 BLOCKED（与代码无关）。
+  - iOS：本机 python3 scripts/test-native-ios.py --suite ui --runtime latest（iOS 27.0 模拟器；49/49 通过，50 张截图）。注意：worktree 需要从主检出复制被忽略的 apps/ios/.env、Config/Generated.xcconfig 和 Frameworks/，否则 App 停在配置错误页、49 个用例全部失败。
+  - 同一输入重新运行脚本，清单逐字节一致（四个平台一起重跑后 diff 为空）。
+- 截图逐张人工过目（G-11）：无“开发版”；邮箱只有 user@ / vip@ / demo@example.com；线路名均为虚构（香港 01、东京专线 01 等）；无禁用词。处理时主动避开的内容：Windows 线路页最后一条“一个特别长的线路名称用来检查换行和裁切”（裁掉）、Windows 真实窗口截屏底部的任务栏与时钟（裁掉）、iOS“我的”页底部 Debug 专用的“调试 / 隧道调试”（只取上半部分系统权限区）、iOS 登录页页脚只有版本号（Debug 构建本次未显示“开发版”，如出现应裁掉页脚）。macOS、Windows 脚本来源检查 0 问题。
+- 体积（G-12）：33 张共 760 KB，最大 53 KB（macOS login-setup）。
+- 高亮（G-13）：每张图都用无头 Chrome 叠加编号框逐张核对落点（Windows、macOS、Android、iPhone 全部），偏差的已修正；页面证据截图见浏览器用例输出 screens/guide-marks-平台-主题.png。
+- 验收（本地：私有 Postgres + 真实 Next.js 构建 + Chrome，scripts/test-payment-web.py --spec guide --spec ui-copy --spec theme，106 passed）：G-10 PASS；G-11 PASS（上条逐张记录；macOS、Windows 脚本检查 0 问题）；G-12 PASS（单张最大 53 KB、总量 760 KB；用例断言每个平台只请求 /guide/本平台/ 下的图片且全部解码）；G-13 PASS（逐张叠加核对 + guide-marks-*.png 页面证据，用例断言编号框都在图片内、正文编号与圆圈一致）；G-14 PASS（点击与回车打开、Esc 与“关闭”退出；减少动态效果时编号框 animation 为 none、放大层无运行中的动画）；G-15 iOS PASS（本机 ui 套件 49/49、50 张，ScreenshotTests 未改），Android 原有 35 张与新增 8 张 guide- 均在 CI 运行 41789097816 的 ui 套件中通过（本机 BLOCKED，见上）；G-16 本地 lint、typecheck、全部 test:*、webpack/next 构建通过，390 与 1280 宽无横向溢出，浅/深色截图在 browser-artifacts/screens/guide-*.png；CI 结果见 PR。
+- 遗留：系统画面（VPN 授权、安装拦截等）仍为纯文字，第 3 轮真机补齐；Android 与 iPhone 的“首次授权”目前只有 iPhone 的 App 内说明页有图。APP 界面改版后需按 guide-shots.json 的来源重跑对应 --suite ui 再运行 npm run guide:images（第 3 轮写入 docs/user-guide.md）。

@@ -124,6 +124,14 @@ jobs:
         run: python3 scripts/test-native-android.py --suite unit --report artifacts/native-android/unit-report.json
       - name: UI suite (Roborazzi screenshots of every page and state, dark, 200 % font, 360 dp, English)
         run: python3 scripts/test-native-android.py --suite ui --report artifacts/native-android/ui-report.json
+      - name: Retain the UI screenshots (the website guide takes its Android pictures, guide-*.png, from here)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-ui-screenshots
+          if-no-files-found: ignore
+          retention-days: 14
+          path: artifacts/native-android/ui/
       - name: Retain the Core AAR for the emulator job
         uses: actions/upload-artifact@v4
         with:

@@ -23,14 +23,20 @@ export type Highlight = {
   /** Percent of the picture: left, top, width, height (0–100). */
   rect: [number, number, number, number];
   shape?: 'circle' | 'box';
+  /** Where the number sits: the top-left corner (default) or the top-right one (text on the left). */
+  badge?: 'start' | 'end';
 };
 
 export type Step = {
   title: string;
-  /** Plain text. "**x**" is emphasis, "[x](/path)" a link to a site path in guideLinkPaths. */
+  /**
+   * Plain text. "**x**" is emphasis, "[x](/path)" a link to a site path in guideLinkPaths. A
+   * circled number (①②③) names the highlight with that number on the step's picture.
+   */
   body: string;
-  /** Key into the picture manifest (round 2); steps without a picture are text only. */
+  /** Key into the picture manifest (guide-images.ts); steps without a picture are text only. */
   shot?: string;
+  /** Numbered marks drawn on the picture (handoff_guide.md D7); they need a shot. */
   highlights?: Highlight[];
   /** The step that fetches the installer: the page shows the download button or the support hint. */
   download?: boolean;
@@ -84,7 +90,7 @@ export const beforeYouStart: { title: string; body: string }[] = [
 ];
 
 const lineExplain =
-  '“专线”和“普通线路”是两类线路，购买的套餐决定能用哪些。每条线路都标有“线路倍率”：倍率 1.5× 表示实际用掉 1 GB，会按 1.5 GB 扣减套餐流量；倍率 1× 就是用多少扣多少。';
+  '“专线”和“普通线路”是两类线路，购买的套餐决定能用哪些。每条线路都标有“线路倍率”①：倍率 1.5× 表示实际用掉 1 GB，会按 1.5 GB 扣减套餐流量；倍率 1× 就是用多少扣多少。';
 
 const windows: Platform = {
   id: 'windows',
@@ -137,7 +143,12 @@ const windows: Platform = {
         },
         {
           title: '点卡片上的按钮',
-          body: '卡片上的按钮会显示为“安装（需要管理员权限）”“修复（需要管理员权限）”或“启动（需要管理员权限）”，点它并在“用户账户控制”中点“是”。完成后会自动继续，必要时点“重新检测”。',
+          body: '卡片上的按钮①会显示为“安装（需要管理员权限）”“修复（需要管理员权限）”或“启动（需要管理员权限）”，点它并在“用户账户控制”中点“是”。完成后会自动继续，必要时点“重新检测”②。',
+          shot: 'windows/login-service',
+          highlights: [
+            { n: 1, rect: [57.6, 21.6, 18.6, 7.2] },
+            { n: 2, rect: [76.0, 21.6, 12.0, 7.2] },
+          ],
         },
       ],
       note: { kind: 'tip', text: '这一步每台电脑通常只需要做一次。' },
@@ -148,7 +159,13 @@ const windows: Platform = {
       steps: [
         {
           title: '输入邮箱和密码',
-          body: '填写网站注册时的邮箱和密码，点“登录”。点密码框右侧的“显示密码”按钮可以查看输入的内容。',
+          body: '在邮箱框①和密码框②里填写网站注册时的邮箱和密码，点“登录”③。点密码框右侧的“显示密码”按钮可以查看输入的内容。',
+          shot: 'windows/login',
+          highlights: [
+            { n: 1, rect: [51.0, 36.6, 39.6, 7.2] },
+            { n: 2, rect: [51.0, 48.6, 39.6, 7.2] },
+            { n: 3, rect: [51.0, 63.4, 39.6, 7.4] },
+          ],
         },
         {
           title: '选择是否记住密码',
@@ -163,10 +180,21 @@ const windows: Platform = {
       steps: [
         {
           title: '打开“线路”',
-          body: '点窗口左侧的“线路”。可以在上方搜索，也可以按“全部”“专线”“普通线路”筛选，线路按地区分组。',
+          body: '点窗口左侧的“线路”①。可以在上方搜索②，也可以按“全部”“专线”“普通线路”筛选③，线路按地区分组。',
+          shot: 'windows/lines',
+          highlights: [
+            { n: 1, rect: [1.0, 25.6, 20.4, 9.2] },
+            { n: 2, rect: [25.4, 21.6, 23.2, 9.6] },
+            { n: 3, rect: [75.2, 21.6, 21.8, 9.6] },
+          ],
         },
         { title: '点选一条线路', body: '点一条线路，它会出现“已选”标记。' },
-        { title: '看懂线路倍率', body: lineExplain },
+        {
+          title: '看懂线路倍率',
+          body: lineExplain,
+          shot: 'windows/lines-rate',
+          highlights: [{ n: 1, rect: [84.6, 13.0, 13.4, 11.0] }],
+        },
       ],
       note: { kind: 'tip', text: '已连接时换线路，会先提示“将断开当前连接”，确认后需要重新连接。' },
     },
@@ -174,10 +202,23 @@ const windows: Platform = {
       id: 'connect',
       title: '第五步 连接与断开',
       steps: [
-        { title: '回到“连接”', body: '点窗口左侧的“连接”，页面中间是一个大圆形按钮。' },
+        {
+          title: '回到“连接”',
+          body: '点窗口左侧的“连接”①，页面中间是一个大圆形按钮②。',
+          shot: 'windows/connect-ready',
+          highlights: [
+            { n: 1, rect: [1.0, 11.6, 20.4, 7.0] },
+            { n: 2, rect: [51.4, 15.6, 18.8, 28.8], shape: 'circle' },
+          ],
+        },
         {
           title: '点圆形按钮连接',
-          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”和连接时长。页面下方会显示“本次已用 X · 按倍率计 Y”。',
+          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”①。页面下方会显示“本次已用 X · 按倍率计 Y”②。',
+          shot: 'windows/connect-connected',
+          highlights: [
+            { n: 1, rect: [55.4, 46.0, 11.0, 7.2] },
+            { n: 2, rect: [74.8, 90.6, 20.6, 6.4] },
+          ],
         },
         { title: '再点一次断开', body: '连接中再点同一个按钮即可断开，状态变回“未连接”。' },
       ],
@@ -188,13 +229,23 @@ const windows: Platform = {
       steps: [
         {
           title: '在“连接”页看套餐卡',
-          body: '套餐卡上有剩余流量和到期时间。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          body: '套餐卡上有剩余流量①和到期时间②。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          shot: 'windows/plan-card',
+          highlights: [
+            { n: 1, rect: [36.6, 38.4, 23.0, 9.0] },
+            { n: 2, rect: [36.6, 56.4, 14.0, 9.0] },
+          ],
         },
         {
           title: '续费与升级',
           body: '套餐用完或到期后，到网站的[套餐与订阅](/plans)续费，回到 AsterLink 会自动同步。',
         },
-        { title: '看账户信息', body: '点“账户”可以查看账户、套餐、外观设置，以及版本信息。' },
+        {
+          title: '看账户信息',
+          body: '点“账户”①可以查看账户、套餐、外观设置，以及版本信息。',
+          shot: 'windows/account',
+          highlights: [{ n: 1, rect: [1.0, 25.4, 20.4, 7.0] }],
+        },
       ],
     },
     {
@@ -203,11 +254,19 @@ const windows: Platform = {
       steps: [
         {
           title: '关闭窗口不会退出',
-          body: '点窗口右上角的“×”，AsterLink 会缩到屏幕右下角的任务栏通知区域继续运行，连接不受影响。第一次关闭时会有一条提示。',
+          body: '点窗口右上角的“×”①，AsterLink 会缩到屏幕右下角的任务栏通知区域继续运行，连接不受影响。第一次关闭时会有一条提示。',
+          shot: 'windows/window',
+          highlights: [{ n: 1, rect: [94.6, 0.2, 5.2, 4.4] }],
         },
         {
           title: '找回图标',
-          body: '图标可能被收在“^”（显示隐藏的图标）里。点它可以打开窗口；右键图标，菜单里有“打开 AsterLink”“连接”（连接后变为“断开”）和“退出”。',
+          body: '图标可能被收在“^”（显示隐藏的图标）里。点它可以打开窗口；右键图标，菜单里有“打开 AsterLink”①、“连接”（连接后变为“断开”②）和“退出”③。',
+          shot: 'windows/tray',
+          highlights: [
+            { n: 1, rect: [2.0, 25.0, 96.0, 19.0], badge: 'end' },
+            { n: 2, rect: [2.0, 45.0, 96.0, 21.0], badge: 'end' },
+            { n: 3, rect: [2.0, 74.0, 96.0, 19.0], badge: 'end' },
+          ],
         },
         {
           title: '彻底退出',
@@ -297,7 +356,9 @@ const macos: Platform = {
       steps: [
         {
           title: '点“启用”',
-          body: '登录页会显示“首次使用：允许 AsterLink 在后台运行”卡片，点“启用”。',
+          body: '登录页会显示“首次使用：允许 AsterLink 在后台运行”卡片，点“启用”①。',
+          shot: 'macos/login-setup',
+          highlights: [{ n: 1, rect: [48.6, 40.0, 7.0, 6.6] }],
         },
         {
           title: '在系统设置里打开开关',
@@ -318,7 +379,16 @@ const macos: Platform = {
       id: 'login',
       title: '第三步 登录',
       steps: [
-        { title: '输入邮箱和密码', body: '填写网站注册时的邮箱和密码，点“登录”。' },
+        {
+          title: '输入邮箱和密码',
+          body: '在邮箱框①和密码框②里填写网站注册时的邮箱和密码，点“登录”③。',
+          shot: 'macos/login',
+          highlights: [
+            { n: 1, rect: [50.4, 34.0, 34.6, 6.6] },
+            { n: 2, rect: [50.4, 45.2, 34.6, 6.6] },
+            { n: 3, rect: [50.4, 58.0, 34.6, 7.0] },
+          ],
+        },
         {
           title: '选择是否记住密码',
           body: '勾选“记住密码”，下次打开会自动登录；密码只保存在这台 Mac 的钥匙串里。忘记密码点“忘记密码”，会打开网站的[找回密码](/forgot-password)页面。',
@@ -332,10 +402,21 @@ const macos: Platform = {
       steps: [
         {
           title: '打开“线路”',
-          body: '点窗口左侧的“线路”。可以搜索，也可以按“全部”“专线”“普通线路”筛选，线路按地区分组。',
+          body: '点窗口左侧的“线路”①。可以搜索②，也可以按“全部”“专线”“普通线路”筛选③，线路按地区分组。',
+          shot: 'macos/lines',
+          highlights: [
+            { n: 1, rect: [0.8, 15.6, 19.4, 5.4] },
+            { n: 2, rect: [23.6, 18.4, 29.6, 5.6] },
+            { n: 3, rect: [54.0, 18.8, 20.6, 4.4] },
+          ],
         },
         { title: '点选一条线路', body: '点一条线路，它会出现“已选”标记。' },
-        { title: '看懂线路倍率', body: lineExplain },
+        {
+          title: '看懂线路倍率',
+          body: lineExplain,
+          shot: 'macos/lines-rate',
+          highlights: [{ n: 1, rect: [78.6, 21.0, 12.8, 16.0] }],
+        },
       ],
       note: { kind: 'tip', text: '已连接时换线路，会先提示“将断开当前连接”，确认后需要重新连接。' },
     },
@@ -343,10 +424,23 @@ const macos: Platform = {
       id: 'connect',
       title: '第五步 连接与断开',
       steps: [
-        { title: '回到“连接”', body: '点窗口左侧的“连接”，页面中间是一个大圆形按钮。' },
+        {
+          title: '回到“连接”',
+          body: '点窗口左侧的“连接”①，页面中间是一个大圆形按钮②。',
+          shot: 'macos/connect-ready',
+          highlights: [
+            { n: 1, rect: [0.8, 11.2, 19.4, 5.4] },
+            { n: 2, rect: [49.4, 21.8, 20.6, 30.8], shape: 'circle' },
+          ],
+        },
         {
           title: '点圆形按钮连接',
-          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”和连接时长。页面下方会显示“本次已用 X · 按倍率计 Y”。',
+          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”①。页面下方会显示“本次已用 X · 按倍率计 Y”②。',
+          shot: 'macos/connect-connected',
+          highlights: [
+            { n: 1, rect: [55.2, 54.4, 9.2, 6.6] },
+            { n: 2, rect: [73.8, 92.6, 16.4, 6.6] },
+          ],
         },
         { title: '再点一次断开', body: '连接中再点同一个按钮即可断开，状态变回“未连接”。' },
       ],
@@ -357,13 +451,23 @@ const macos: Platform = {
       steps: [
         {
           title: '在“连接”页看套餐卡',
-          body: '套餐卡上有剩余流量和到期时间。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          body: '套餐卡上有剩余流量①和到期时间②。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          shot: 'macos/plan-card',
+          highlights: [
+            { n: 1, rect: [35.8, 38.6, 23.4, 10.6] },
+            { n: 2, rect: [35.8, 59.6, 13.6, 10.0] },
+          ],
         },
         {
           title: '续费与升级',
           body: '套餐用完或到期后，到网站的[套餐与订阅](/plans)续费，回到 AsterLink 会自动同步。',
         },
-        { title: '看账户信息', body: '点“账户”可以查看账户、套餐、外观设置，以及版本信息。' },
+        {
+          title: '看账户信息',
+          body: '点“账户”①可以查看账户、套餐、外观设置，以及版本信息。',
+          shot: 'macos/account',
+          highlights: [{ n: 1, rect: [0.8, 20.0, 19.4, 5.4] }],
+        },
       ],
     },
     {
@@ -376,7 +480,9 @@ const macos: Platform = {
         },
         {
           title: '找回窗口',
-          body: '点菜单栏里的 AsterLink 图标，选“打开 AsterLink”。菜单栏太满时图标可能被刘海遮住，可以先退出几个别的菜单栏程序。',
+          body: '点菜单栏里的 AsterLink 图标，选“打开 AsterLink”①。菜单栏太满时图标可能被刘海遮住，可以先退出几个别的菜单栏程序。',
+          shot: 'macos/menubar',
+          highlights: [{ n: 1, rect: [3.6, 81.6, 71.0, 14.4] }],
         },
         {
           title: '彻底退出',
@@ -468,7 +574,16 @@ const android: Platform = {
       id: 'login',
       title: '第三步 登录',
       steps: [
-        { title: '输入邮箱和密码', body: '填写网站注册时的邮箱和密码，点“登录”。' },
+        {
+          title: '输入邮箱和密码',
+          body: '在邮箱框①和密码框②里填写网站注册时的邮箱和密码，点“登录”③。',
+          shot: 'android/login',
+          highlights: [
+            { n: 1, rect: [4.4, 25.9, 91.2, 7.2] },
+            { n: 2, rect: [4.4, 34.6, 91.2, 7.0] },
+            { n: 3, rect: [4.4, 50.2, 91.2, 7.0] },
+          ],
+        },
         {
           title: '选择是否记住密码',
           body: '勾选“记住密码”，下次打开会自动登录；密码经系统密钥库加密，只保存在本机。还没有账号点“注册账号”，忘记密码点“忘记密码”。',
@@ -482,10 +597,21 @@ const android: Platform = {
       steps: [
         {
           title: '打开“线路”',
-          body: '点底部的“线路”标签。可以搜索线路或地区，也可以按“全部”“专线”“普通”筛选。',
+          body: '点底部的“线路”标签①。可以搜索线路或地区②，也可以按“全部”“专线”“普通”筛选③。',
+          shot: 'android/lines',
+          highlights: [
+            { n: 1, rect: [42.0, 91.6, 15.6, 7.6] },
+            { n: 2, rect: [4.4, 7.4, 91.2, 7.2] },
+            { n: 3, rect: [4.4, 15.6, 91.2, 5.2] },
+          ],
         },
         { title: '点选一条线路', body: '点一条线路，它会出现“已选择”标记。' },
-        { title: '看懂线路倍率', body: lineExplain },
+        {
+          title: '看懂线路倍率',
+          body: lineExplain,
+          shot: 'android/lines-rate',
+          highlights: [{ n: 1, rect: [33.4, 15.4, 20.4, 7.2] }],
+        },
       ],
       note: {
         kind: 'tip',
@@ -496,10 +622,23 @@ const android: Platform = {
       id: 'connect',
       title: '第五步 连接与断开',
       steps: [
-        { title: '回到“连接”', body: '点底部的“连接”标签，页面中间是一个大圆形按钮。' },
+        {
+          title: '回到“连接”',
+          body: '点底部的“连接”标签①，页面中间是一个大圆形按钮②。',
+          shot: 'android/connect-ready',
+          highlights: [
+            { n: 1, rect: [8.0, 91.6, 15.6, 7.6] },
+            { n: 2, rect: [29.6, 8.8, 40.6, 19.0], shape: 'circle' },
+          ],
+        },
         {
           title: '点圆形按钮连接',
-          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”和连接时长，下方显示“本次已用 X · 按倍率计 Y”。',
+          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”和连接时长①，下方显示“本次已用 X · 按倍率计 Y”②。',
+          shot: 'android/connect-connected',
+          highlights: [
+            { n: 1, rect: [19.0, 30.4, 62.0, 5.2] },
+            { n: 2, rect: [7.6, 66.2, 62.4, 3.4] },
+          ],
         },
         {
           title: '再点一次断开',
@@ -513,11 +652,18 @@ const android: Platform = {
       steps: [
         {
           title: '在“连接”页看套餐卡',
-          body: '套餐卡上有剩余流量和到期时间。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          body: '套餐卡上有剩余流量①和到期时间②。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          shot: 'android/connect-ready',
+          highlights: [
+            { n: 1, rect: [7.6, 59.2, 25.6, 3.4] },
+            { n: 2, rect: [54.8, 53.8, 37.2, 3.2] },
+          ],
         },
         {
           title: '续费与升级',
-          body: '点“我的”页的“续费或升级”，或到网站的[套餐与订阅](/plans)，回到 AsterLink 会自动同步。',
+          body: '点“我的”页的“续费或升级”①，或到网站的[套餐与订阅](/plans)，回到 AsterLink 会自动同步。',
+          shot: 'android/account',
+          highlights: [{ n: 1, rect: [8.4, 31.8, 40.8, 5.8] }],
         },
       ],
     },
@@ -531,7 +677,9 @@ const android: Platform = {
         },
         {
           title: '设置后台运行',
-          body: '点“我的”页的“后台运行与省电”，按提示把 AsterLink 设为“不限制”。小米、华为、OPPO、vivo 等品牌的入口名称不同，一般在“电池”或“应用管理”里。',
+          body: '点“我的”页的“后台运行与省电”①，按提示把 AsterLink 设为“不限制”。小米、华为、OPPO、vivo 等品牌的入口名称不同，一般在“电池”或“应用管理”里。',
+          shot: 'android/account-background',
+          highlights: [{ n: 1, rect: [5.0, 52.0, 90.0, 9.2] }],
         },
         {
           title: '关于“始终开启的 VPN”',
@@ -614,7 +762,9 @@ const ios: Platform = {
       steps: [
         {
           title: '点“继续”',
-          body: '第一次点连接时，AsterLink 会先显示“首次连接需要添加 VPN 配置”，点“继续”。',
+          body: '第一次点连接时，AsterLink 会先显示“首次连接需要添加 VPN 配置”，点“继续”①。',
+          shot: 'ios/vpn-setup',
+          highlights: [{ n: 1, rect: [6.0, 80.8, 88.0, 6.8] }],
         },
         {
           title: '允许添加 VPN 配置',
@@ -634,7 +784,16 @@ const ios: Platform = {
       id: 'login',
       title: '第三步 登录',
       steps: [
-        { title: '输入邮箱和密码', body: '填写网站注册时的邮箱和密码，点“登录”。' },
+        {
+          title: '输入邮箱和密码',
+          body: '在邮箱框①和密码框②里填写网站注册时的邮箱和密码，点“登录”③。',
+          shot: 'ios/login',
+          highlights: [
+            { n: 1, rect: [5.4, 35.0, 91.6, 6.8] },
+            { n: 2, rect: [5.4, 45.1, 91.6, 6.8] },
+            { n: 3, rect: [5.4, 60.0, 91.6, 7.2] },
+          ],
+        },
         {
           title: '选择是否记住密码',
           body: '勾选“记住密码”，下次打开会自动登录。忘记密码点“忘记密码”。',
@@ -648,10 +807,21 @@ const ios: Platform = {
       steps: [
         {
           title: '打开“线路”',
-          body: '点底部的“线路”标签。可以搜索，也可以按“全部”“专线”“普通线路”筛选。',
+          body: '点底部的“线路”标签①。可以搜索②，也可以按“全部”“专线”“普通”筛选③。',
+          shot: 'ios/lines',
+          highlights: [
+            { n: 1, rect: [38.0, 91.0, 24.0, 7.4] },
+            { n: 2, rect: [3.4, 13.4, 93.2, 6.0] },
+            { n: 3, rect: [7.6, 21.2, 85.0, 5.0] },
+          ],
         },
         { title: '点选一条线路', body: '点一条线路，它会出现已选标记。' },
-        { title: '看懂线路倍率', body: lineExplain },
+        {
+          title: '看懂线路倍率',
+          body: lineExplain,
+          shot: 'ios/lines-rate',
+          highlights: [{ n: 1, rect: [17.4, 16.0, 23.2, 6.4] }],
+        },
       ],
       note: { kind: 'tip', text: '已连接时换线路，会提示“将断开当前连接，切换后需要重新连接”。' },
     },
@@ -659,10 +829,23 @@ const ios: Platform = {
       id: 'connect',
       title: '第五步 连接与断开',
       steps: [
-        { title: '回到“连接”', body: '点底部的“连接”标签，页面中间是一个大圆形按钮。' },
+        {
+          title: '回到“连接”',
+          body: '点底部的“连接”标签①，页面中间是一个大圆形按钮②。',
+          shot: 'ios/connect-ready',
+          highlights: [
+            { n: 1, rect: [16.4, 91.0, 24.2, 7.4] },
+            { n: 2, rect: [27.0, 17.6, 46.0, 21.6], shape: 'circle' },
+          ],
+        },
         {
           title: '点圆形按钮连接',
-          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”和连接时长，下方显示“本次已用 X · 按倍率计 Y”。手机顶部状态栏会出现“VPN”图标。',
+          body: '状态会依次显示“正在准备”“正在连接”，成功后显示“已连接”和连接时长①，下方显示“本次已用 X · 按倍率计 Y”②。手机顶部状态栏会出现“VPN”图标。',
+          shot: 'ios/connect-connected',
+          highlights: [
+            { n: 1, rect: [20.4, 38.8, 58.6, 5.6] },
+            { n: 2, rect: [8.2, 76.6, 66.4, 3.6] },
+          ],
         },
         {
           title: '再点一次断开',
@@ -676,7 +859,12 @@ const ios: Platform = {
       steps: [
         {
           title: '在“连接”页看套餐卡',
-          body: '套餐卡上有剩余流量和到期时间。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          body: '套餐卡上有剩余流量①和到期时间②。看到“正在同步用量”表示刚用的流量正在上报，稍等片刻就会更新。',
+          shot: 'ios/connect-ready',
+          highlights: [
+            { n: 1, rect: [8.2, 65.0, 48.0, 3.8] },
+            { n: 2, rect: [64.4, 60.2, 28.0, 3.6] },
+          ],
         },
         {
           title: '续费与升级',
@@ -684,7 +872,9 @@ const ios: Platform = {
         },
         {
           title: '查看配置状态',
-          body: '“我的”页可以看到 VPN 配置的状态，显示“尚未添加”表示还没有允许添加。',
+          body: '“我的”页可以看到 VPN 配置的状态①，显示“尚未添加”表示还没有允许添加。',
+          shot: 'ios/account-vpn',
+          highlights: [{ n: 1, rect: [3.4, 59.0, 93.2, 15.6] }],
         },
       ],
     },
@@ -801,6 +991,17 @@ export function guideTexts(id: PlatformId): string[] {
   }
   for (const item of faqFor(id)) texts.push(item.q, item.a);
   return texts;
+}
+
+/** The circled numbers ①–⑨ a text names, in ascending order (they point at a picture's marks). */
+export const markDigits = '①②③④⑤⑥⑦⑧⑨';
+export function markNumbers(text: string): number[] {
+  const found = new Set<number>();
+  for (const char of text) {
+    const at = markDigits.indexOf(char);
+    if (at >= 0) found.add(at + 1);
+  }
+  return [...found].sort((a, b) => a - b);
 }
 
 // ---- choosing the platform ------------------------------------------------------------------

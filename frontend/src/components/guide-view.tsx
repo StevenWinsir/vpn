@@ -1,7 +1,9 @@
 'use client';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useReducedMotion } from '@mantine/hooks';
 import {
   Accordion,
   Alert,
@@ -9,6 +11,7 @@ import {
   Button,
   Container,
   Group,
+  Modal,
   Paper,
   SegmentedControl,
   SimpleGrid,
@@ -27,6 +30,7 @@ import {
   IconInfoCircle,
   IconMessageCircleQuestion,
   IconAlertTriangle,
+  IconZoomIn,
 } from '@tabler/icons-react';
 import { useAuth } from './providers';
 import { useSupportOffered } from './support-widget';
@@ -40,10 +44,12 @@ import {
   platformIds,
   platforms,
   type GuideDownloads,
+  type Highlight,
   type PlatformId,
   type Section,
   type Step,
 } from '@/lib/guides';
+import { guideImages, type GuideImage } from '@/lib/guide-images';
 
 const icons = {
   windows: IconBrandWindows,
@@ -107,6 +113,98 @@ function DownloadAction({ id, downloads }: { id: PlatformId; downloads: GuideDow
   );
 }
 
+// The numbered marks over a picture: percent boxes, so they follow the picture's size. Screen
+// readers skip them; the step text names the same numbers and says what to tap (handoff_guide.md 6.4).
+function Marks({ highlights }: { highlights: Highlight[] }) {
+  return (
+    <>
+      {highlights.map((mark) => (
+        <span
+          key={mark.n}
+          className="guide-mark"
+          data-shape={mark.shape ?? 'box'}
+          data-badge={mark.badge ?? 'start'}
+          data-n={mark.n}
+          aria-hidden
+          style={{
+            left: `${mark.rect[0]}%`,
+            top: `${mark.rect[1]}%`,
+            width: `${mark.rect[2]}%`,
+            height: `${mark.rect[3]}%`,
+          }}
+        >
+          <span className="guide-mark-no">{mark.n}</span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+// The zoom shows a phone about one and a half times its step size (it still fits a laptop
+// screen's height) and anything else at its own size, at most 960 wide.
+const zoomWidth = (image: GuideImage) =>
+  image.device === 'phone' ? 420 : Math.max(image.display, Math.min(image.width, 960));
+
+function Shot({ image, step }: { image: GuideImage; step: Step }) {
+  const [open, setOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const highlights = step.highlights ?? [];
+  return (
+    <figure className="guide-shot" data-device={image.device} data-testid="guide-shot">
+      <button
+        type="button"
+        className="guide-shot-frame"
+        onClick={() => setOpen(true)}
+        aria-label={`放大查看图片：${image.alt}`}
+        style={{ maxWidth: image.display }}
+      >
+        <Image
+          src={image.file}
+          width={image.width}
+          height={image.height}
+          alt={image.alt}
+          unoptimized
+          loading="lazy"
+          sizes={image.device === 'phone' ? '280px' : '(max-width: 767px) 100vw, 860px'}
+        />
+        <Marks highlights={highlights} />
+        <span className="guide-shot-zoom" aria-hidden>
+          <IconZoomIn size={16} />
+        </span>
+      </button>
+      <figcaption>示意图，线路名称与数据以实际为准</figcaption>
+      <Modal
+        opened={open}
+        onClose={() => setOpen(false)}
+        title={step.title}
+        size="auto"
+        centered
+        closeButtonProps={{ 'aria-label': '关闭' }}
+        transitionProps={reduceMotion ? { duration: 0 } : undefined}
+        data-testid="guide-zoom"
+      >
+        <div
+          className="guide-zoom-frame"
+          data-device={image.device}
+          style={{ maxWidth: zoomWidth(image) }}
+        >
+          <Image
+            src={image.file}
+            width={image.width}
+            height={image.height}
+            alt={image.alt}
+            unoptimized
+          />
+          <Marks highlights={highlights} />
+        </div>
+        <Text size="sm" c="dimmed" mt="sm" className="guide-text">
+          {image.alt}
+        </Text>
+      </Modal>
+    </figure>
+  );
+}
+
 function StepItem({
   step,
   index,
@@ -118,19 +216,24 @@ function StepItem({
   id: PlatformId;
   downloads: GuideDownloads;
 }) {
+  // A step shows its picture once the manifest has it (pictures arrive per platform).
+  const image = step.shot ? guideImages[step.shot] : undefined;
   return (
     <li className="guide-step">
       <span className="guide-step-no" aria-hidden>
         {index + 1}
       </span>
-      <div className="guide-step-body">
-        <Title order={3} size="h5">
-          {step.title}
-        </Title>
-        <Text mt={4} size="sm" className="guide-text">
-          <Rich text={step.body} />
-        </Text>
-        {step.download ? <DownloadAction id={id} downloads={downloads} /> : null}
+      <div className="guide-step-body" data-device={image?.device}>
+        <div className="guide-step-text">
+          <Title order={3} size="h5">
+            {step.title}
+          </Title>
+          <Text mt={4} size="sm" className="guide-text">
+            <Rich text={step.body} />
+          </Text>
+          {step.download ? <DownloadAction id={id} downloads={downloads} /> : null}
+        </div>
+        {image ? <Shot image={image} step={step} /> : null}
       </div>
     </li>
   );

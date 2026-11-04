@@ -865,7 +865,16 @@ def check_ui(out_dir: Path, wanted):
         shutil.rmtree(shots)
     shots.mkdir(parents=True)
     result = out_dir / 'ui.xcresult'
-    run = xcodebuild_test(udid, 'AsterLinkUI', result, {'ASTER_SCREENSHOT_DIR': str(shots)})
+    # A fixed status bar (9:41, full signal and battery, no carrier): the shots feed the website
+    # usage guide (handoff_guide.md 7.3), which must not show the machine's clock or carrier.
+    bar = simctl('status_bar', udid, 'override', '--time', '9:41', '--dataNetwork', 'wifi', '--wifiMode', 'active', '--wifiBars', '3',
+                 '--cellularMode', 'active', '--cellularBars', '4', '--operatorName', '', '--batteryState', 'charged',
+                 '--batteryLevel', '100', check=False)
+    record('ui.status_bar', bar.returncode == 0, 'status bar fixed at 9:41, full signal and battery' if bar.returncode == 0 else bar.stderr.strip()[-300:])
+    try:
+        run = xcodebuild_test(udid, 'AsterLinkUI', result, {'ASTER_SCREENSHOT_DIR': str(shots)})
+    finally:
+        simctl('status_bar', udid, 'clear', check=False)
     cases = test_cases(result)
     for name, status in cases:
         record('ui.' + name.rstrip('()'), status == 'Passed', status)
