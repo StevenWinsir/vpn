@@ -50,7 +50,7 @@ func TestCheckNotifyURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"probe":"` + ProbeAnswer(secret, "00000000000000000000000000000000") + `"}`))
 		})), ProbeWrongTarget},
 		"redirect (website, http→https)": {serve(http.RedirectHandler("https://example.invalid"+NotifyPath, http.StatusMovedPermanently)), ProbeWrongTarget},
-		"server error": {serve(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(502) })), ProbeUnreachable},
+		"server error":                   {serve(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(502) })), ProbeUnreachable},
 	}
 	for name, c := range cases {
 		if got := CheckNotifyURL(ctx, nil, c.url, secret); got != c.want {
