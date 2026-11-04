@@ -173,6 +173,22 @@ Go 从工作目录加载 `.env`，因此后端进程的 WorkingDirectory 应是 
 - **回滚**：重新部署上一版前端构建（检出上一版本后 `npm ci && npm run build`，或使用保留的上一版 `.next` 目录）并重启 Next.js。浏览器中留下的主题偏好（`asterlink-color-scheme`）、客服归属（`asterlink-support-owner`）和 Crisp 自己的 Cookie 对旧版本没有影响。
 - **缓存**：图标文件由 Next.js 按约定地址提供；此前 `/favicon.ico` 为 404，不存在旧图标缓存问题。页面与脚本由 Next.js 构建哈希区分，回滚后完整刷新即可。
 
+### 使用教程图片的长缓存（可选）
+
+网站“使用教程”（`/guide`，维护见 [user-guide.md](user-guide.md)）的截图在同源 `/guide/<平台>/<名字>.<哈希>.webp`，文件名带内容哈希，换图后文件名随之改变，所以可以长缓存。Next.js 对 `public/` 下的文件不带长缓存头，需要时在前端站点的 server 块里，放在 `location /` **之前**加一段（正则只匹配这些图片，`/guide` 页面本身不受影响，仍然动态渲染）：
+
+```nginx
+location ~* ^/guide/(windows|macos|android|ios)/[a-z0-9-]+\.[0-9a-f]{8}\.webp$ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+}
+```
+
+不加这段不影响功能（图片只是每次校验一下）；回滚前端时旧哈希文件名随旧版本一起回来，不会读到错的图。
+
 ## 容器、不同主机与限流
 
 同一物理服务器的**两个独立 Docker 容器通常不共享回环网络**。这种情况下，Next.js 的 `127.0.0.1` 是前端容器自身。应使用受保护的容器网络，例如 `API_INTERNAL_URL=http://backend:8080/api/v1`，Go 在容器内监听可达接口，并通过网络隔离限制访问。不要为便利而公开数据库或后端管理端口。
