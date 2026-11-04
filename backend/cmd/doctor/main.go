@@ -32,6 +32,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	operations.CheckPaymentNotify(ctx, cfg, &report)
 	output := json.NewEncoder(os.Stdout)
 	output.SetIndent("", "  ")
 	if err := output.Encode(report); err != nil {

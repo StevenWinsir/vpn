@@ -148,6 +148,7 @@ func main() {
 	}()
 	if c.Payment.Enabled {
 		go paymentLoop(ctx, db, c)
+		go api.WatchNotifyURL(ctx, c, log.Printf)
 	}
 	go purgeLoop(ctx, db, c)
 	go referralLoop(ctx, db, c)

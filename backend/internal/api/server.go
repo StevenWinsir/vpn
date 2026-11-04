@@ -136,6 +136,7 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 	// The gateway callback has no user, no Origin and a fixed source; it is kept out of
 	// the per-IP API limit and judged by its own rules (handoff_payment_account.md 6.3).
 	r.POST(paymentNotifyPath, rateLimit(600), s.paymentNotify)
+	r.GET(paymentNotifyPath, rateLimit(60), s.paymentNotifyProbe)
 	v := r.Group("/api/v1")
 	v.Use(rateLimit(cfg.APIRate))
 	v.GET("/meta", func(c *gin.Context) {

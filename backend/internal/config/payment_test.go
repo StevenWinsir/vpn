@@ -90,6 +90,27 @@ func TestPaymentConfiguration(t *testing.T) {
 	}
 }
 
+// The gateway posts only to PAYMENT_NOTIFY_URL; a path other than the callback route
+// answers 404 (or another site's 200) and the callback is lost, so it is refused at
+// startup. A reverse-proxy prefix is allowed.
+func TestPaymentNotifyURLPath(t *testing.T) {
+	paymentBase(t, false)
+	enablePayment(t, "http://127.0.0.1:8080/api/v1/payments/notify")
+	for _, bad := range []string{"https://api.example.com/notify", "https://api.example.com/payment/notify", "https://api.example.com/api/v1/payments/notify/",
+		"https://api.example.com/api/v1/payments", "https://api.example.com/api/v1/payments%2Fnotify", "https://api.example.com/api/v1/payments/notifyx"} {
+		t.Setenv("PAYMENT_NOTIFY_URL", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAYMENT_NOTIFY_URL") {
+			t.Fatalf("notify URL %s accepted: %v", bad, err)
+		}
+	}
+	for _, good := range []string{"https://api.example.com/api/v1/payments/notify", "https://example.com/backend/api/v1/payments/notify"} {
+		t.Setenv("PAYMENT_NOTIFY_URL", good)
+		if c, err := Load(); err != nil || c.Payment.NotifyURL != good {
+			t.Fatalf("notify URL %s refused: %v", good, err)
+		}
+	}
+}
+
 func TestPaymentProductionRules(t *testing.T) {
 	paymentBase(t, true)
 	if _, err := Load(); err != nil {

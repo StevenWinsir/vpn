@@ -562,7 +562,14 @@ function OrderDrawer({
             ) : null}
             <Stack gap={6}>
               <Text fw={600}>网关回调流水</Text>
-              {detail.notifications.length === 0 ? (
+              {detail.notifications.length === 0 && detail.gateway_paid_at ? (
+                <Alert color="orange" data-testid="notify-missing">
+                  网关已报告收款，但本服务一次回调也没有收到：回调很可能发到了别的服务器。请核对后端
+                  PAYMENT_NOTIFY_URL 是否为 https://&lt;本后端域名&gt;/api/v1/payments/notify（运行
+                  doctor 查看
+                  payment.notify_self_check）。网关只回调一次，这笔订单请在网关商户后台核对金额后人工确认到账。
+                </Alert>
+              ) : detail.notifications.length === 0 ? (
                 <Text size="sm" c="dimmed">
                   没有收到过回调
                 </Text>

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"slices"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"vpn/backend/internal/config"
 	"vpn/backend/internal/model"
 	"vpn/backend/internal/nodes"
+	"vpn/backend/internal/payment"
 )
 
 type ReadinessReport struct {
@@ -138,6 +140,28 @@ type PaymentReadiness struct {
 	PendingOrders     int64 `json:"pending_orders"`
 	ReviewOrders      int64 `json:"review_orders"`
 	RejectedNotify24h int64 `json:"rejected_callbacks_24h"`
+	// NotifyHost is the host of PAYMENT_NOTIFY_URL (never the full address).
+	NotifyHost string `json:"notify_url_host,omitempty"`
+	// NotifySelfCheck is the callback address self-check (CheckPaymentNotify): ok,
+	// unreachable or wrong_target; empty when it was not run.
+	NotifySelfCheck string `json:"notify_self_check,omitempty"`
+}
+
+// CheckPaymentNotify adds the callback address self-check to a report. It is a network
+// call (GET on PAYMENT_NOTIFY_URL with a random challenge), so it is separate from the
+// database-only Inspect; the doctor command runs both. Anything but ok means gateway
+// callbacks are delivered somewhere else and paid orders end in manual review.
+func CheckPaymentNotify(ctx context.Context, cfg config.Config, report *ReadinessReport) {
+	if !cfg.Payment.Enabled || cfg.Payment.NotifyURL == "" {
+		return
+	}
+	if u, err := url.Parse(cfg.Payment.NotifyURL); err == nil {
+		report.Payment.NotifyHost = u.Host
+	}
+	report.Payment.NotifySelfCheck = payment.CheckNotifyURL(ctx, nil, cfg.Payment.NotifyURL, cfg.Payment.Secret)
+	if report.Payment.NotifySelfCheck != payment.ProbeOK {
+		report.Warnings = append(report.Warnings, "payment_notify_url_not_this_backend")
+	}
 }
 
 type MailReadiness struct {

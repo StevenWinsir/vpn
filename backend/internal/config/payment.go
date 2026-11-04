@@ -192,6 +192,12 @@ func notifyURL(raw string, production bool) (string, error) {
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(raw, "#") || u.Opaque != "" || u.Path == "" || u.Path == "/" || !isASCII(raw) {
 		return "", invalid
 	}
+	// The gateway posts to this address and nothing else; any other path (the gateway
+	// doc's "/notify" or "/payment/notify" examples) answers 404 and the callback is
+	// lost. A reverse-proxy prefix in front of the route is allowed.
+	if u.RawPath != "" || !strings.HasSuffix(u.Path, payment.NotifyPath) {
+		return "", invalid
+	}
 	switch {
 	case u.Scheme == "https":
 	case u.Scheme == "http" && !production:

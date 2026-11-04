@@ -208,6 +208,8 @@ func TestSecurityRouteAccessMatrix(t *testing.T) {
 		"POST /api/v1/auth/reset-password/validate": true, "POST /api/v1/auth/reset-password": true, "POST /api/v1/auth/login": true,
 		"POST /api/v1/auth/refresh": true, "POST /api/v1/auth/logout": true,
 		"POST /api/v1/client/login": true, "GET /api/v1/client/capabilities": true, "POST /api/v1/payments/notify": true,
+		// The callback address self-check: answers an HMAC of a random challenge, nothing else.
+		"GET /api/v1/payments/notify": true,
 	}
 	concrete := func(path string) string {
 		parts := strings.Split(path, "/")

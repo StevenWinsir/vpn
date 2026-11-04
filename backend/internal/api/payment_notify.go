@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net/url"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +22,77 @@ import (
 const maxNotifyBytes = 4 << 10
 
 // paymentNotifyPath is the callback route; PAYMENT_NOTIFY_URL points at it.
-const paymentNotifyPath = "/api/v1/payments/notify"
+const paymentNotifyPath = payment.NotifyPath
+
+// paymentNotifyProbe answers the callback address self-check (payment.CheckNotifyURL):
+// GET on the callback route with a random challenge returns its HMAC under the gateway
+// secret, proving the address reaches this deployment. Nothing is stored or logged.
+func (s *Server) paymentNotifyProbe(c *gin.Context) {
+	if !s.cfg.Payment.Enabled {
+		fail(c, 404, "not_found", "接口不存在")
+		return
+	}
+	challenge := c.Query("probe")
+	if !payment.ValidProbeChallenge(challenge) {
+		fail(c, 400, "invalid_probe", "自检参数不正确")
+		return
+	}
+	c.JSON(200, gin.H{"probe": payment.ProbeAnswer(s.cfg.Payment.Secret, challenge)})
+}
+
+// Callback address self-check schedule: a few early tries (the API may sit behind a
+// proxy that comes up after it), then hourly. Only changes are logged.
+var (
+	notifyCheckDelays   = []time.Duration{3 * time.Second, 15 * time.Second, 45 * time.Second}
+	notifyCheckInterval = time.Hour
+)
+
+// WatchNotifyURL checks that PAYMENT_NOTIFY_URL reaches this backend and logs a
+// warning whenever it does not: every gateway callback would otherwise go elsewhere and
+// every paid order would end in manual review (callback_missing). It returns when ctx ends.
+func WatchNotifyURL(ctx context.Context, cfg config.Config, logf func(string, ...any)) {
+	if !cfg.Payment.Enabled || cfg.Payment.NotifyURL == "" {
+		return
+	}
+	host := notifyHost(cfg.Payment.NotifyURL)
+	last := ""
+	for attempt := 0; ; attempt++ {
+		wait := notifyCheckInterval
+		if attempt < len(notifyCheckDelays) {
+			wait = notifyCheckDelays[attempt]
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		result := payment.CheckNotifyURL(ctx, nil, cfg.Payment.NotifyURL, cfg.Payment.Secret)
+		if ctx.Err() != nil {
+			return
+		}
+		// Early failures are retried quietly; the last early try reports either way.
+		if result != payment.ProbeOK && attempt < len(notifyCheckDelays)-1 {
+			continue
+		}
+		if result == last {
+			continue
+		}
+		last = result
+		if result == payment.ProbeOK {
+			logf("payment notify URL self-check passed (host %s)", host)
+		} else {
+			logf("WARNING: PAYMENT_NOTIFY_URL (host %s) does not reach this backend: %s. Gateway callbacks go elsewhere and paid orders end in manual review; point it at https://<this backend's domain>%s", host, result, paymentNotifyPath)
+		}
+	}
+}
+
+// notifyHost is the host part of the callback address, for logs (never the full URL).
+func notifyHost(raw string) string {
+	if u, err := url.Parse(raw); err == nil {
+		return u.Host
+	}
+	return "?"
+}
 
 // paymentNotify receives the gateway callback (handoff_payment_account.md 6.3). The
 // callback carries no signature and the submit signature does not cover the amount,
