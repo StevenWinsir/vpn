@@ -248,7 +248,7 @@
       "source": "guide-account-background.png",
       "device": "phone",
       "width": 600,
-      "alt": "AsterLink“我的”页的“后台运行与省电”一项，提示系统可能在息屏后限制本应用，可在此设为“不限制”"
+      "alt": "AsterLink“我的”页的“后台运行与省电”一项，提示系统可能在后台或息屏时限制本应用、导致网速变慢或断开，可在此设为“不限制”"
     },
     {
       "key": "ios/login",

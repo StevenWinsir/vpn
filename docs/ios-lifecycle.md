@@ -33,6 +33,7 @@
 - 扩展每 5 s 读 `phys_footprint`：≥38 MiB 触发 Go 回收，≥44 MiB 记录压力（第 2 轮已有，初值）。**本轮没有真机数据，所以阈值与 Go 堆上限（22 MiB / GOGC 60）仍是初值，没有“定值”**。
 - 回收限频（handoff_fix.md F5，2026-11-05）：从低于 38 MiB 第一次越过时立即回收；一直停在 38 MiB 以上时，要距上次回收至少 30 s、且又涨了 2 MiB 才再回收；≥44 MiB 时只要又涨了 2 MiB 就回收（不等 30 s）。平台期不再每 5 s 做一次完整回收。压力日志同样限频。
 - 采样行新增 `releases`（累计强制回收次数）、`prio_min`/`prio_max`（本进程线程基础优先级范围，31 为正常，低于 31 说明被系统降级）、`gc_cpu_pm`（Go GC 占用的 CPU 千分比）。旧格式的行仍能读，新字段按 0 处理；汇总脚本输出 `forced_releases`、`gc_cpu_permille_max`、`thread_priority`、`samples_below_normal_priority`，只报告不判定（还没有真机基线）。
+- 测到的数据（handoff_fix.md 第 2、3 轮，截至 2026-11-05）：**还没有**。第 2 轮的 30 分钟持续流量测量（R2-12）没有做；第 3 轮的真机长时观看（R3-08）因为没有付费开发者团队签名而 BLOCKED；数据包隧道扩展本身在模拟器里不运行；计费 harness（`test-native-ios.py --suite billing --harness simulator`）能在模拟器进程里跑真实 Core，但它不含扩展的内存策略（MemoryBudget 在扩展的 Swift 代码里），模拟器的内存计算方式也与真机不同，本轮没有用它做长时测量。阈值和堆上限因此继续是初值，限频规则只减少无效回收，不改变上限。有了真机后按第 5 节采样，用汇总脚本看 `thread_priority` 是否低于 31、`forced_releases` 和 `gc_cpu_permille_max`；若持续流量下占用长期在 38 MiB 以上或 GC 占比长期超过 25%，按 handoff_fix.md 第 5.4 节第 3 条提出调整方案，由用户决定。
 - 每 60 s 写一行（只有数字）：
 
   ```text

@@ -135,6 +135,38 @@ Evidence: `artifacts/native-android/lifecycle/` (`lifecycle-report.json`, `instr
 - **Vendor ROMs** (Xiaomi/Huawei/OPPO/vivo background killing), real radio hand-over and real
   battery drain need a real phone — a release gate of round 6.
 
+## Scheduling while connected (handoff_fix.md R3-06, 2026-11-05)
+
+The data plane runs in the app process: `AsterVpnService` is a foreground service bound by the system
+with `BIND_VPN_SERVICE`, and the Go Core is loaded there from an ordinary thread, so its threads inherit
+normal priority. Nothing in the app lowers a thread's priority, and Go gets no memory limit here.
+
+`scripts/android/thread-sched.py` checks this from outside, over adb only (no root, no debug build,
+nothing is changed): every thread's nice value, priority and policy group (`ps -T`), the process's
+cgroups, `oom_score_adj`, the screen state and whether the VPN interface is up. It fails when a thread
+other than ART's own housekeeping daemons has nice above 0, or when the process sits in a background
+group; ART runs its JIT, heap and finalizer daemons at nice 4-9 on purpose, and those are listed only.
+
+```sh
+python3 scripts/android/thread-sched.py --samples 3 --interval 30 --out thread-sched.json
+python3 scripts/android/thread-sched.py --duration 1800 --interval 20 --only-connected --out thread-sched.json
+```
+
+Measured on the emulator (API 36, arm64, `sdk_gphone64_arm64`), while the lifecycle suite held one
+real connection with the app's interface not in front, including all 600 s of L01's screen-off
+(31 connected samples, 12 of them at 6-10 minutes of screen-off): the process stayed in
+`cpuset:/foreground` and `cpu:/foreground` with `oom_score_adj` 0 throughout; every thread was in the
+`fg` policy group; the Go Core's threads, the network callback thread, the dispatcher threads and the
+main thread were all at nice 0 (some framework threads at -2 to -20); only ART's daemons were above 0.
+**The emulator's scheduling groups are not a vendor phone's.** On a real phone, especially one with a
+vendor background manager (MIUI/HyperOS, EMUI/HarmonyOS, ColorOS, OriginOS), run the same script once
+with YouTube in front and once after 10 minutes of screen-off, and record the model and system version.
+
+Vendor background managers can restrict or freeze even a foreground service, which shows up as a slower
+connection before it shows up as a disconnect. The app cannot override that in code; the account page's
+"后台运行与省电" hint now names both effects, and the website guide (/guide, Android, "后台运行与省电")
+lists the per-vendor steps to allow the app.
+
 ## Manual check on the emulator or a phone
 
 `scripts/android/lifecycle.sh` prints and runs the same device commands the suite uses:

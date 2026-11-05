@@ -34,17 +34,17 @@ export const guideImages: Record<string, GuideImage> = {
     "alt": "AsterLink“我的”页，显示账户、套餐与到期时间，下面是“续费或升级”和“订单记录”按钮，以及外观与后台运行设置"
   },
   "android/account-background": {
-    "file": "/guide/android/account-background.2ecb7a41.webp",
+    "file": "/guide/android/account-background.bc33c7eb.webp",
     "width": 600,
     "height": 1301,
     "display": 280,
     "device": "phone",
     "platform": "android",
     "scene": "guide-account-background",
-    "sourceSha256": "ecc3b47cd2f15314eb3b791c10f9b9fa8a7fa318cf220fb3be74c4327b83f2c6",
-    "sha256": "2ecb7a416802aed01ab26cedc9b3c29ff2a011f7746c92daee3305e7ad2cb802",
-    "bytes": 31646,
-    "alt": "AsterLink“我的”页的“后台运行与省电”一项，提示系统可能在息屏后限制本应用，可在此设为“不限制”"
+    "sourceSha256": "0637da47453dec5aa4ee89a761fdf9ec234c013c7739202023f921024d2a63e5",
+    "sha256": "bc33c7ebec88baca7b688b82e00026006daf0c7657c16df473b34a0993d67d43",
+    "bytes": 32032,
+    "alt": "AsterLink“我的”页的“后台运行与省电”一项，提示系统可能在后台或息屏时限制本应用、导致网速变慢或断开，可在此设为“不限制”"
   },
   "android/connect-connected": {
     "file": "/guide/android/connect-connected.ec55b5ef.webp",

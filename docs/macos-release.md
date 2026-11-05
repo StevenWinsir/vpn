@@ -92,6 +92,7 @@ python3 scripts/test-native-macos.py --suite release
 - Helper 每次握手都报告自己和 Core 是否仍被限制（`scheduling_limited`，`SchedulingProbe`）。版本相同但仍被限制时，App 给出同样的“重新安装”提示；本版本注册过一次后仍被限制，就不再拦截连接，避免死循环。
 - 在 Helper 里给子进程声明服务质量**突破不了**继承来的限制（实测：utility 限制下声明 userInitiated 的子进程仍是 20），所以唯一有效的是 plist。
 - 开发直连模式和用 sudo 跑的验收工具本来就是 31，看不到这个问题。**性能验收必须用正式安装、经 Helper 拉起的 Core**，并用 `ps -M` 确认 Core 线程不低于 31、`launchctl print system/com.asterlink.vpn.helper` 显示 `spawn type = interactive (4)`。
+- 吞吐回归（handoff_fix.md 第 3 轮）：连接后在本机跑 `native/core/cmd/asterlink-throughput`（用法、判定和阈值见 docs/speed-troubleshooting.md 第 3 节）。它只是隧道里的普通应用，测的就是经 Helper 拉起的正式 Core；报告里 Core 线程最高优先级是 31，不能出现“UTILITY CLAMP”。看 `ps -M` 时注意：忙的线程会被系统临时降到 21～30，这是正常的分时衰减，**所有线程都不高于 20** 才是限制。
 - 守护：bundle 套件的 S-PLIST-TYPE（plist 必须是 Interactive）和 S-QOS（把构建出的 Helper 自检作为本用户 launchd 任务运行：发布类型下 Helper 和 Core 都不受限，不设类型的对照组必须受限）。
 
 **卸载**：
