@@ -91,7 +91,7 @@
     <string name="theme_light">浅色</string>
     <string name="theme_dark">深色</string>
     <string name="settings_battery">后台运行与省电</string>
-    <string name="settings_battery_hint">如系统清理后台导致断开，可在系统设置中调整</string>
+    <string name="settings_battery_hint">如系统限制或清理后台导致网速变慢或断开，可在系统设置中调整</string>
     <string name="settings_vpn">系统 VPN 设置</string>
     <string name="settings_vpn_hint">本版本不支持“始终开启的 VPN”</string>
     <string name="about_title">关于</string>
@@ -158,5 +158,5 @@
     <string name="settings_notifications_on">已允许：显示连接状态、实时速率与断开原因</string>
     <string name="settings_notifications_off">已关闭：VPN 仍可使用，但通知栏不会显示状态与断开原因</string>
     <string name="settings_battery_unrestricted">已允许后台运行</string>
-    <string name="settings_battery_restricted">系统可能在息屏后限制本应用，导致恢复变慢或断开；可在此设为“不限制”</string>
+    <string name="settings_battery_restricted">系统可能在后台或息屏时限制本应用，导致网速变慢或断开；可在此设为“不限制”</string>
 </resources>

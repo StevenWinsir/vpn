@@ -69,3 +69,13 @@ codesign --verify --deep --strict \
 新增 PostgreSQL 并发快照测试和客户端倍率/配置绑定测试，都先在修复前复现失败，再在修复后通过。GitHub 付款故障与这些代码缺陷是不同问题；本机测试通过不代表 GitHub CI 已变绿。
 
 只读 `backend/cmd/doctor` 检查显示：`test@test.com` 权益符合当前开发配置，存在管理员，但启用节点为 0。管理员必须录入自己实际可用的节点后，才能进行真实线路测试。当前 macOS managed 模式是回环 mixed listener 与系统代理，不是完整 TUN；开发测试、付款、签名公证、节点强制撤销及生产反作弊的界限见 [架构](architecture.md) 和 [计费说明](admin-node-metering.md)。
+
+## 偶发失败与判断方法（2026-11-05 起）
+
+合并后 main 的 CI 偶发失败，先区分环境问题还是代码问题，再决定重跑还是修：
+
+- **Android 计费验收：模拟器没启动。** 日志里有 `Not enough space to create userdata partition`（托管 Runner 磁盘只剩约 3 GB，模拟器要 7.3 GB）。这时一个测试都没跑，与代码无关，只重跑失败的作业即可。计费作业另有几项会在负载高的模拟器上偶发失败（B01、B04、N01、C01，handoff_fix.md R2-09 也列了），处理方式相同。
+- **macOS bundle 作业的 `U-GO-IPC`（Core 的 Go 测试）有 1 项失败，而同一提交 Linux 的 "Native Core / IPC contract / shared policy"（同一套测试，带 `-race`）通过。** 先在本机跑 `CGO_ENABLED=0 go test -count=1 ./...`（native/core），再重跑失败的作业；两次都通过就是负载敏感的偶发项。`scripts/test-native-macos.py` 从第 3 轮起在 observed 和 evidence 里直接写出失败测试的名字和前后日志（以前只保留输出最后 400 个字符，往往只看到最后一个通过的包），下次可以直接定位。
+- 只有同一个测试在重跑后、或在本机也失败，才按代码问题处理。
+
+网速类问题（不是 CI）的排障顺序见 docs/speed-troubleshooting.md。

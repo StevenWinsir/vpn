@@ -349,6 +349,7 @@ jobs:
           path: |
             artifacts/windows/core/asterlink-core.exe
             artifacts/windows/core/asterlink-tuntest.exe
+            artifacts/windows/core/asterlink-throughput.exe
             artifacts/windows/billing/asterlink-billtest.exe
             artifacts/windows/billing/asterlink-trafficsink.exe
             artifacts/windows/billing/asterlink-trafficsink-linux-amd64

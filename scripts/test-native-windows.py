@@ -165,7 +165,7 @@ def check_platform_split():
            'non-Windows CI hosts still use the test placeholder: %s' % got)
 
 
-def check_cross_build(out_dir, names=('asterlink-core', 'asterlink-tuntest', 'asterlink-billtest', 'asterlink-trafficsink')):
+def check_cross_build(out_dir, names=('asterlink-core', 'asterlink-tuntest', 'asterlink-billtest', 'asterlink-trafficsink', 'asterlink-throughput')):
     out_dir.mkdir(parents=True, exist_ok=True)
     env = go_env(GOOS='windows', GOARCH='amd64', GOAMD64='v1')
     for name in names:

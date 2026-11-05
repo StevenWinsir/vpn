@@ -41,6 +41,18 @@ def count_tests(text, pattern):
     return len(re.findall(pattern, text))
 
 
+def failure_context(output, limit=3000):
+    """The lines around each `--- FAIL` (the test's own log lines precede it), else the tail."""
+    lines = output.splitlines()
+    picked = []
+    for i, line in enumerate(lines):
+        if re.match(r'\s*--- FAIL', line) or line.startswith('panic:') or 'build failed' in line:
+            picked.extend(lines[max(0, i - 12):i + 1])
+            picked.append('...')
+    text = '\n'.join(picked) if picked else output[-400:]
+    return text[-limit:]
+
+
 def suite_unit():
     result = sh([sys.executable, 'scripts/test-mihomo-patches.py'])
     record('U-MIHOMO-PATCH', 'hash-locked patch and real NAT lifecycle regressions pass',
@@ -52,7 +64,13 @@ def suite_unit():
         passed = count_tests(result.stdout, r'(?m)^\s*--- PASS')
         failed = count_tests(result.stdout, r'(?m)^\s*--- FAIL')
         ok = result.returncode == 0 and passed > 0 and failed == 0
-        record(case_id, 'go tests pass', '%d passed, %d failed' % (passed, failed), 'pass' if ok else 'fail', result.stdout[-400:] if not ok else '')
+        # Name what failed: the tail alone is usually the last passing package (main CI, 2026-11-05).
+        failures = re.findall(r'(?m)^\s*--- FAIL: (\S+)', result.stdout) + re.findall(r'(?m)^FAIL[ \t]+(\S+)', result.stdout)
+        evidence = ''
+        if not ok:
+            evidence = 'failed: %s\n%s' % (', '.join(failures[:20]) or 'none named (build error?)', failure_context(result.stdout + result.stderr))
+        observed = '%d passed, %d failed' % (passed, failed) + (': ' + ', '.join(failures[:8]) if failures else '')
+        record(case_id, 'go tests pass', observed, 'pass' if ok else 'fail', evidence)
     result = sh(['go', 'vet', './...'], cwd=ROOT / 'native/core', env=go_env)
     record('U-GO-VET', 'go vet clean', result.stderr.strip() or 'clean', 'pass' if result.returncode == 0 else 'fail')
     # test-native-env imports native_env from its own directory.

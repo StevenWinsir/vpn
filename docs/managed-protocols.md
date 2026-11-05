@@ -42,6 +42,8 @@ WireGuard 的 `private-key` 是严格验证的 32 字节 Base64 内容，不是�
 
 倍率和计费不按协议更改：`charged_units = (upload_delta + download_delta) * rate_permille`，1000 单位为 1 字节；500‰ = 0.5×，1000‰ = 1×。费率、节点和套餐绑定取自后端会话，不能由流量上报请求覆盖。累计计数、顺序、防重放、旧倍率结清、禁用节点、过期套餐与配额控制沿用现有逻辑。
 
+客户端 Core 的固定规则（四个平台共用，handoff_fix.md F2/F3，2026-11-05 起）：UDP 且目标端口 443 → REJECT，排在 `MATCH,<节点>` 之前；节点不支持 UDP 时其余 UDP 照旧 → REJECT。浏览器和 App 的 QUIC 因此不经节点的 UDP 通道（固定版本 Mihomo 的 UDP 队列满时静默丢包，跨境 UDP 也常被限速），自动回退到 TCP；TCP 443 与其他 UDP（DNS、游戏、WebRTC/STUN）不受影响，任何时候都不直连。这条规则与节点协议无关（hysteria2、tuic 节点上浏览器同样走 TCP），不进管理员 YAML，也没有开关。被 REJECT 或 REJECT-DROP 处理的字节从未离开设备，不计入客户端上报的代理口径（审查补丁 asterlink-mihomo-v2）：只会少计从未发出的字节，不会少计任何经节点转发的字节。排障见 docs/speed-troubleshooting.md。
+
 这里必须区分两种计量来源。`client_reported` 仍只适合内部开发：TLS、幂等序列、隐藏 YAML 或内嵌签名密钥都不能证明设备所有者没有少报。`node_reported` 则使用节点侧 per-grant UUID、可信累计负载计数、epoch 字节上限、绝对到期和存量连接撤销；客户端 `/traffic` 不能再给这些 grant 记账。后者是后续商业计费轮引入的能力，不是上面的协议导入白名单自动提供的保证。
 
 ### NodeAgent 参考转发器的商业能力

@@ -41,6 +41,8 @@ sudo networksetup -setdnsservers Wi-Fi Empty   # 仅当 DNS 被残留修改时
 
 ## 已核实的上游事实
 
+- sing-tun v0.4.22 的 system 栈（handoff_fix.md 第 2.1 节，2026-11-04 核实，不改代码）：TCP NAT 表的条目空闲 5 分钟后回收；本地端口在约 5.5 万次新连接后回绕；darwin 下只有一个读包循环（batchLoopDarwin），所有 TCP 包往返都经过它两次，所以整条隧道的时延系于这一个循环的调度等级（这正是 F1 伤害大的原因）。前两项都不会造成持续变慢。排障见 docs/speed-troubleshooting.md。
+
 锁定的 FlClash 分支 Mihomo（`70f0570`）中 `executor.ApplyConfig` **故意不启动监听器**
 （`updateListeners` / `updateTun` 被注释），所以 TUN 必须在 `ApplyConfig` 之后显式调用
 `listener.ReCreateTun(cfg.General.Tun, tunnel.Tunnel)`，关闭时传入零值 `LC.Tun{}`。

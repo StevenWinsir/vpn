@@ -72,7 +72,10 @@ SYSTEM. Only then is `hello` (and later a password) sent.
   `ProcessPowerThrottling`, control bit set, state bit clear = High QoS). Windows 11 22H2+ otherwise treats a windowless child of a
   service as a background service (Utility QoS): on battery, most efficient frequency and efficiency cores (handoff_fix.md F4, quoting
   Microsoft's "Quality of Service" page). The priority class stays Normal. A failure is logged (`PowerThrottlingError`) and the Core
-  still starts. `WorkerTests` reads the policy back from the running Core. Performance acceptance on a laptop must include a run on battery.
+  still starts. `WorkerTests` reads the policy back from the running Core. Performance acceptance on a laptop must include a run on battery:
+  `asterlink-throughput.exe` (built by `test-native-windows.py --suite core`, kept in the `windows-core-poc` CI artifact; usage in
+  docs/speed-troubleshooting.md section 3) once plugged in and once on battery, run elevated so it can read the Core's policy. Each
+  report must show `power` `ac` resp. `battery`, `throttling` `opted_out` and priority class `normal`, and pass section 6.1 of handoff_fix.md.
 * The recovery record is written (atomic replace, flushed to disk) **while the Core is still suspended**; if that fails the Core is
   killed unrun.
 * The Core's `hello` must report `asterlink-core`, protocol 1 and the manifest version.

@@ -449,3 +449,38 @@ QUIC 被拒绝后，Chrome、Safari 和 YouTube App 都会自动改走 TCP（HTT
 | R2-12 | NOT RUN | 本轮没有做 30 分钟持续流量的内存测量，交给第 3 轮的 R3-08（真机）或模拟器。所以阈值保持初值不变（D9） |
 
 **留给后续**：R2-06、R2-12、用户在自己的 Chrome 和 Safari 上观看 30 分钟（U-53）、同一时段的吞吐对比，以及第 1 轮记录里的单条连接偶发低速，都交给第 3 轮的吞吐工具。用户机器上现在装的是本轮的 0.1.1 构建（r2-quic，带补丁 v2）。
+
+
+### 第 3 轮（2026-11-05，分支 worktree-fix-round3-throughput）
+
+**改动**
+- 吞吐回归工具 native/core/cmd/asterlink-throughput（开发和验收工具，不进发布包）：
+  - 只作为隧道里的普通应用测量，不启动 Core，所以测的就是经 Helper 或系统服务拉起的正式路径。
+  - 多条并行下载、每 10 s 一行 CSV（吞吐、1 s 一次的首字节时间、请求数、出错和卡住重试的次数、Core 状态），内置 CPU 竞争阶段（每核一个忙循环进程），按第 6.1 节判 PASS、FAIL、BLOCKED；阈值都是参数并写进报告。
+  - Core 状态：macOS 读各线程优先级（报告标出“所有线程不高于 20”的实用级限制）；Windows 读优先级类、执行速度节流状态和电源。
+  - relay 子命令是第 2.2 节的替身转发器（可限速），burn 是竞争进程；--limit-mbps 可以把总速率限在一路视频的水平，减少测试消耗的流量。
+  - 测试 14 项：判定规则（健康、F1 塌陷、恢复慢、平台期、不可判、无竞争阶段）、ps 解析、参数校验、Core 汇总、回环上的真实测量、限速、卡住重试；macOS 上读取被 taskpolicy 限制的子进程必须是 20；Windows 上读回本进程的节流状态（设置前 system，设置后 opted_out）。
+  - Windows 的交叉构建和 CI 产物 windows-core-poc 带上 asterlink-throughput.exe。
+- Android：
+  - scripts/android/thread-sched.py：只经 adb 读取，不改设备：各线程 nice、优先级和策略组，进程的 cgroup、oom_score_adj，屏幕状态和 VPN 接口。
+  - “后台运行与省电”的两条提示（中英文）改为同时提到网速变慢和断开。
+  - 网站 /guide 的 Android“后台运行与省电”一节：设置步骤补上“变慢”的说明，新增小米、华为与荣耀、OPPO 系、vivo 系、三星的放行步骤；下载页的同类提示同步。
+- macOS 单元报告：Go 测试失败时，observed 和 evidence 直接写出失败测试的名字和前后日志（main CI 2026-11-05 的偶发失败只能看到最后一个通过的包）。
+- 文档：
+  - 新增 docs/speed-troubleshooting.md：排障顺序（第 9 节）、工具用法与判定、替身校准、四个平台结论、QUIC 拒绝与计费、留档的上游细节。
+  - 更新 docs/macos-release.md、docs/windows-service-design.md、docs/ios-lifecycle.md、docs/android-lifecycle.md、docs/managed-protocols.md、docs/macos-tun-poc.md、docs/ci-troubleshooting.md。
+
+**验收**
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R3-01 | 替身 PASS / 真实节点 待测 | 替身限速 2 Gbit/s、10 个竞争进程：普通优先级的竞争期中位数为基线的 83%，判 PASS；`taskpolicy -c utility` 下为 29%，判 FAIL，并标出 UTILITY CLAMP，证明工具能抓到 F1。不限速时普通优先级也只有 66%，因为替身在回环上自己吃满 CPU，这组不作为判据（docs/speed-troubleshooting.md 第 3.3 节）。真实节点：用户事先说明节点当时很慢。正式 Core（Helper 为 interactive (4)，线程全部 31T，CPU 0.1%）。10 分钟测量开始约 10 s 后，OVH 对节点出口完全不再应答，Cloudflare 下载接口返回 403，Hetzner 只有 0.03～1.4 Mbit/s，测量作废。改在节点恢复后再测 |
+| R3-02 | BLOCKED | 没有 Windows 笔记本。工具的 Windows 读取由 CI 的 Windows 测试覆盖，exe 在 windows-core-poc 产物里；用户实测按 docs/windows-service-design.md 第 4 节插电、用电池各跑一次 |
+| R3-03 | 待测 | 用户同意做 60 分钟、限速 20 Mbit/s 的长测，但当时节点出口异常（见 R3-01），推迟到节点恢复后。Windows 部分 BLOCKED（同 R3-02） |
+| R3-04 | PASS | 第 6.3 节列出的文档都已更新，排障顺序在 docs/speed-troubleshooting.md 第 2 节 |
+| R3-05 | PASS | 第 10 节的 U-52 … U-60 不变，交给用户 |
+| R3-06 | PASS（模拟器） | API 36 arm64 模拟器（sdk_gphone64_arm64，Android 16）。生命周期套件 26 项 PASS，期间保持一条真实连接，App 界面不在前台，并包括 L01 的 600 s 息屏。31 个已连接样本（其中 12 个在息屏后 6～10 分钟）：进程始终在 cpuset 和 cpu 的 foreground 组，oom_score_adj 为 0；所有线程都在 fg 策略组；Go Core 的线程、网络回调线程、调度线程和主线程都是 nice 0，只有 ART 自己的 JIT、GC 和终结器守护线程是 4～9。**模拟器的调度组与厂商系统不同**，真机（尤其国产系统）留给 U-60 |
+| R3-07 | PASS（本地）/ 截图待更新 | 中英文提示已改，App 文案检查 0 问题；/guide 新增放行步骤，教程数据测试 14 项和文案检查通过。“后台运行与省电”的教程截图来自 Android 截图套件，要用本 PR 的 CI 产物重新生成 |
+| R3-08 | BLOCKED | 没有付费开发者团队签名，不能在真机上运行数据包隧道扩展；扩展在模拟器里也不运行。阈值仍是初值（docs/ios-lifecycle.md 第 3 节） |
+
+**第 2 轮遗留项**：R2-06（移动端 App 回退）、R2-12（iOS 30 分钟内存测量）仍未做，原因同 R3-08；单条连接偶发低速，要等节点正常时用本工具复测。

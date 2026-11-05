@@ -44,7 +44,7 @@ export const guideImages: Record<string, GuideImage> = {
     "sourceSha256": "ecc3b47cd2f15314eb3b791c10f9b9fa8a7fa318cf220fb3be74c4327b83f2c6",
     "sha256": "2ecb7a416802aed01ab26cedc9b3c29ff2a011f7746c92daee3305e7ad2cb802",
     "bytes": 31646,
-    "alt": "AsterLink“我的”页的“后台运行与省电”一项，提示系统可能在息屏后限制本应用，可在此设为“不限制”"
+    "alt": "AsterLink“我的”页的“后台运行与省电”一项，提示系统可能在后台或息屏时限制本应用、导致网速变慢或断开，可在此设为“不限制”"
   },
   "android/connect-connected": {
     "file": "/guide/android/connect-connected.ec55b5ef.webp",

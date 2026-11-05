@@ -84,7 +84,7 @@
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="settings_battery">Background and battery</string>
-    <string name="settings_battery_hint">If the system stops the app in the background, adjust it in Settings</string>
+    <string name="settings_battery_hint">If the system restricts or stops the app in the background, which slows the connection or drops it, adjust it in Settings</string>
     <string name="settings_vpn">System VPN settings</string>
     <string name="settings_vpn_hint">Always-on VPN is not supported in this version</string>
     <string name="about_title">About</string>
@@ -147,5 +147,5 @@
     <string name="settings_notifications_on">Allowed: connection status, live rates and why a connection ended</string>
     <string name="settings_notifications_off">Off: the VPN still works, but status and disconnect reasons are not shown</string>
     <string name="settings_battery_unrestricted">Background use allowed</string>
-    <string name="settings_battery_restricted">The system may restrict this app while the screen is off, which slows recovery or disconnects; set it to “Unrestricted” here</string>
+    <string name="settings_battery_restricted">The system may restrict this app in the background or while the screen is off, which slows the connection or drops it; set it to “Unrestricted” here</string>
 </resources>
