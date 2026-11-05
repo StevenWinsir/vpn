@@ -208,6 +208,7 @@ def run_core_tests():
     process = subprocess.run(['go', 'test', '-count=1', '-json', './...'], cwd=CORE, capture_output=True, text=True, env=go_env())
     passed = failed = skipped = 0
     failures = []
+    output = {}  # (package, test) -> its output lines, so a failure says why, not only which
     for line in process.stdout.splitlines():
         try:
             event = json.loads(line)
@@ -215,17 +216,25 @@ def run_core_tests():
             continue
         if not event.get('Test'):
             continue
+        key = (event.get('Package', '').rsplit('/', 1)[-1], event['Test'])
         action = event.get('Action')
-        if action == 'pass':
+        if action == 'output':
+            output.setdefault(key, []).append(event.get('Output', '').rstrip())
+        elif action == 'pass':
             passed += 1
         elif action == 'fail':
             failed += 1
-            failures.append('%s.%s' % (event.get('Package', '').rsplit('/', 1)[-1], event['Test']))
+            failures.append(key)
         elif action == 'skip':
             skipped += 1
     ok = process.returncode == 0 and failed == 0 and passed > 0
-    record('go.core_tests', ok, 'native %s: passed=%d failed=%d skipped=%d%s' % (
-        sys.platform, passed, failed, skipped, '' if ok else ' FAILED: ' + ', '.join(failures[:10]) + process.stderr[-500:]))
+    detail = ''
+    if not ok:
+        named = ['%s.%s' % key for key in failures[:10]]
+        why = ['%s.%s: %s' % (key + (' | '.join(l for l in output.get(key, []) if l and not l.startswith(('=== ', '--- ')))[-600:],))
+               for key in failures[:5]]
+        detail = ' FAILED: ' + ', '.join(named) + '\n' + '\n'.join(why) + process.stderr[-500:]
+    record('go.core_tests', ok, 'native %s: passed=%d failed=%d skipped=%d%s' % (sys.platform, passed, failed, skipped, detail))
 
 
 def run_billing_suite(args):
