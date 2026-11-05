@@ -19,7 +19,7 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { toast } from '@/lib/toast';
 import { api, APIError } from '@/lib/api';
 import { money } from '@/lib/types';
 import {
@@ -121,6 +121,8 @@ export function ConsoleCoupons() {
         method: 'POST',
         body: JSON.stringify(inputOf(c, { enabled: !c.enabled })),
       });
+      // Until now the switch gave no word of its result (handoff_message.md M5).
+      toast.success(c.enabled ? '优惠码已停用' : '优惠码已启用', c.code);
       refresh();
     } catch (e) {
       setToggleError(couponError(e));
@@ -310,11 +312,7 @@ function CouponForm({
         method: 'POST',
         body: JSON.stringify(body),
       });
-      notifications.show({
-        color: 'teal',
-        title: coupon ? '优惠码已保存' : '优惠码已创建',
-        message: coupon?.code ?? '',
-      });
+      toast.success(coupon ? '优惠码已保存' : '优惠码已创建', coupon?.code ?? '');
       onSaved();
       onClose();
     } catch (e) {
@@ -495,11 +493,7 @@ function RemoveCoupon({
         method: 'DELETE',
         body: '{}',
       });
-      notifications.show({
-        color: 'teal',
-        title: r.deleted === 'soft' ? '优惠码已停用并隐藏' : '优惠码已删除',
-        message: coupon.code,
-      });
+      toast.success(r.deleted === 'soft' ? '优惠码已停用并隐藏' : '优惠码已删除', coupon.code);
       onDone();
       onClose();
     } catch (e) {

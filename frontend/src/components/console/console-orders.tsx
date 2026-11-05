@@ -19,7 +19,7 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { toast } from '@/lib/toast';
 import { api } from '@/lib/api';
 import { gib, money, orderStatusLabel, payTypeLabel } from '@/lib/types';
 import {
@@ -735,7 +735,7 @@ function ConfirmModal({ order, onClose, onDone }: ModalProps) {
         method: 'POST',
         body: JSON.stringify({ admin_password: adminPassword, paid_cents: cents, note }),
       });
-      notifications.show({ color: 'teal', title: '已确认到账', message: '订阅已开通。' });
+      toast.success('已确认到账', '订阅已开通。');
       onDone();
       onClose();
     } catch (e) {
@@ -792,7 +792,7 @@ function CloseModal({ order, onClose, onDone }: ModalProps) {
         method: 'POST',
         body: JSON.stringify({ note }),
       });
-      notifications.show({ color: 'teal', title: '订单已关闭', message: '未开通任何权益。' });
+      toast.success('订单已关闭', '未开通任何权益。');
       onDone();
       onClose();
     } catch (e) {

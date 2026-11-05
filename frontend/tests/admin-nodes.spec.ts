@@ -40,6 +40,8 @@ test('administrator YAML catalog persists and ordinary users cannot access it', 
 
   // A line is a node group; its servers carry the YAML. The legacy Mihomo acceptance that
   // follows connects to the groups "Catalog-Half-Edited" (0.5x) and "Catalog-Premium" (1x).
+  // One result message for the page, replaced by the next result; no card stays behind.
+  const toast = (title: string) => page.getByTestId('toast').filter({ hasText: title });
   async function createGroup(name: string, dedicated = false) {
     await page.getByRole('button', { name: '新建节点组', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '新建节点组' });
@@ -50,6 +52,7 @@ test('administrator YAML catalog persists and ordinary users cannot access it', 
     }
     await dialog.getByRole('button', { name: '保存节点组', exact: true }).click();
     await expect(dialog).not.toBeVisible();
+    await expect(toast('节点组已创建')).toContainText(`节点组「${name}」已创建。`);
     return page.getByRole('region', { name: `节点组 ${name}`, exact: true });
   }
   async function importServer(group: string, yaml: string, label: string) {
@@ -59,6 +62,7 @@ test('administrator YAML catalog persists and ordinary users cannot access it', 
     await dialog.getByLabel('备注').fill(label);
     await dialog.getByRole('button', { name: '保存服务器', exact: true }).click();
     await expect(dialog).not.toBeVisible();
+    await expect(toast('服务器已导入')).toContainText(/已导入 \d+ 台服务器。/);
   }
   const half = await createGroup('Catalog-Half');
   await expect(half.getByText(/倍率 0\.5×/)).toBeVisible();
@@ -121,6 +125,12 @@ test('administrator YAML catalog persists and ordinary users cannot access it', 
   await groupEdit.getByLabel('组名').fill('Catalog-Half-Edited');
   await groupEdit.getByRole('button', { name: '保存节点组', exact: true }).click();
   await expect(groupEdit).not.toBeVisible();
+  await expect(toast('节点组已保存')).toContainText(
+    '改名、倍率、线路或套餐会让该组在线设备重新读取配置',
+  );
+  await expect(page.getByTestId('toast').filter({ hasNotText: '登录成功' })).toHaveCount(1);
+  await expect(page.getByRole('alert').filter({ hasText: '已更新' })).toHaveCount(0);
+  await expect(page.getByText('已更新', { exact: true })).toHaveCount(0);
   const edited = page.getByRole('region', { name: '节点组 Catalog-Half-Edited', exact: true });
   await expect(edited.getByText(/版本 2$/)).toBeVisible();
   await edited.getByRole('button', { name: '编辑服务器 half-a', exact: true }).click();
@@ -251,10 +261,47 @@ test('administrator imports and reopens VLESS Reality and WireGuard without losi
       page.getByRole('button', { name: `删除服务器 ${fixture.name}`, exact: true }),
     ).toHaveCount(0);
   }
+  // A node agent on a disabled server: registering, switching and removing each say what
+  // happened (handoff_message.md M3, M4); the group stays out of the live catalog throughout.
+  const toast = (title: string) => page.getByTestId('toast').filter({ hasText: title });
+  await group.getByRole('button', { name: '导入服务器到 Protocol-Fixtures', exact: true }).click();
+  await page
+    .getByLabel('服务器 YAML')
+    .fill(fixtures[0].yaml.replaceAll('VLESS-Reality-UI', 'Agent-Probe'));
+  await page.getByLabel('启用服务器', { exact: true }).uncheck();
+  await page.getByRole('button', { name: '保存服务器', exact: true }).click();
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(toast('服务器已导入')).toBeVisible();
+  const agents = page.getByTestId('agent-panel');
+  await agents.getByRole('button', { name: '登记节点代理' }).click();
+  const register = page.getByRole('dialog', { name: '登记节点代理' });
+  await register.getByRole('textbox', { name: '服务器（节点组 / 备注）' }).click();
+  await page.getByRole('option', { name: /Agent-Probe/ }).click();
+  await register.getByLabel('代理名称').fill('probe-agent');
+  await register.getByLabel('客户端证书 SHA-256 指纹').fill('ab'.repeat(32));
+  await register.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(register).not.toBeVisible();
+  await expect(toast('节点代理已保存')).toContainText('才会向客户端发放独立凭据');
+  await agents.getByRole('switch', { name: '停用 probe-agent' }).click({ force: true });
+  await expect(toast('节点代理已停用')).toContainText('probe-agent');
+  await agents.getByRole('switch', { name: '启用 probe-agent' }).click({ force: true });
+  await expect(toast('节点代理已启用')).toContainText('probe-agent');
+  // The page keeps a single message: each result replaced the one before.
+  await expect(page.getByTestId('toast').filter({ hasNotText: '登录成功' })).toHaveCount(1);
+  await agents.getByRole('button', { name: '移除 probe-agent' }).click();
+  await page.getByRole('button', { name: '确认移除', exact: true }).click();
+  await expect(toast('节点代理已移除')).toContainText('不再发放新凭据');
+  await expect(agents.getByText('probe-agent')).toHaveCount(0);
+  await page.getByRole('button', { name: '删除服务器 Agent-Probe', exact: true }).click();
+  await page.getByRole('button', { name: '确认删除', exact: true }).click();
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(toast('服务器已删除')).toContainText('服务器「Agent-Probe」已删除');
+
   // Only an empty group can be deleted.
   await group.getByRole('button', { name: '删除节点组 Protocol-Fixtures', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '确认删除节点组' })).toBeVisible();
   await page.getByRole('button', { name: '确认删除', exact: true }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(group).toHaveCount(0);
+  await expect(toast('节点组已删除')).toContainText('节点组「Protocol-Fixtures」已删除。');
 });

@@ -19,7 +19,7 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { toast } from '@/lib/toast';
 import { IconHeadset, IconSend, IconUser } from '@tabler/icons-react';
 import { api, APIError } from '@/lib/api';
 import {
@@ -408,6 +408,7 @@ function TicketPanel({ id, onChanged }: { id: string; onChanged: () => void }) {
       attempt.current = null;
       setDraft('');
       setNotice('');
+      toast.success('回复已发送', t.ticket_no, { id: 'console-ticket-reply' });
       onChanged();
       window.setTimeout(() => bottom.current?.scrollIntoView({ block: 'end' }), 0);
     } catch (e) {
@@ -670,7 +671,7 @@ function CloseModal({
           body: JSON.stringify({ version: ticket.version, note: note.trim() }),
         },
       );
-      notifications.show({ color: 'teal', title: '工单已关闭', message: ticket.ticket_no });
+      toast.success('工单已关闭', ticket.ticket_no);
       onClosed(out.ticket);
       onClose();
     } catch (e) {

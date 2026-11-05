@@ -19,12 +19,15 @@ import {
 
 export type { NextPageToast, ToastTone } from './toast-flash';
 
-// Milliseconds on screen (D2); hovering pauses the countdown, moving away starts it again.
-export const toastDurations: Record<ToastTone, number> = {
+// Milliseconds on screen (D2); hovering pauses the countdown, moving away starts it again. note is
+// for the administration's results that carry a consequence to read (who was signed out, what
+// takes effect when).
+export const toastDurations: Record<ToastTone | 'note', number> = {
   success: 3000,
   info: 4000,
   warning: 5000,
   error: 6000,
+  note: 8000,
 };
 
 const tones: Record<ToastTone, { color: string; icon: React.ReactNode; role: string }> = {

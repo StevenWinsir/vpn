@@ -17,6 +17,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { api, message } from '@/lib/api';
+import { toast, toastDurations } from '@/lib/toast';
 
 type AgentNode = { id: string; name: string };
 type NodeAgent = {
@@ -66,7 +67,6 @@ function seen(value: string | null) {
 export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
   const [data, setData] = useState<AgentList | null>(null);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [formError, setFormError] = useState('');
   const [opened, setOpened] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -128,7 +128,11 @@ export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
           enabled: form.enabled,
         }),
       });
-      setNotice('节点代理已保存。代理上线并上报支持的协议后，该线路才会向客户端发放独立凭据。');
+      toast.success(
+        '节点代理已保存',
+        '节点代理已保存。代理上线并上报支持的协议后，该线路才会向客户端发放独立凭据。',
+        { id: 'admin-nodes', duration: toastDurations.note },
+      );
       setOpened(false);
       setForm(emptyForm());
       await load(lifetime.current?.signal);
@@ -154,6 +158,10 @@ export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
           enabled: !agent.enabled,
         }),
       });
+      // Until now a switch gave no word of its result (handoff_message.md M4).
+      toast.success(agent.enabled ? '节点代理已停用' : '节点代理已启用', agent.name, {
+        id: 'admin-nodes',
+      });
       await load(lifetime.current?.signal);
     } catch (failure) {
       if (!lifetime.current?.signal.aborted) setError(message(failure));
@@ -174,7 +182,11 @@ export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
         body: JSON.stringify({}),
       });
       setRemoveTarget(null);
-      setNotice('已移除节点代理。该线路在授权租约到期后停止服务，且不再发放新凭据。');
+      toast.success(
+        '节点代理已移除',
+        '已移除节点代理。该线路在授权租约到期后停止服务，且不再发放新凭据。',
+        { id: 'admin-nodes', duration: toastDurations.note },
+      );
       await load(lifetime.current?.signal);
     } catch (failure) {
       if (!lifetime.current?.signal.aborted) setError(message(failure));
@@ -213,11 +225,6 @@ export function AdminAgentsPanel({ nodes }: { nodes: AgentNode[] }) {
       {error && (
         <Alert color="red" mb="sm" title="读取失败">
           {error}
-        </Alert>
-      )}
-      {notice && (
-        <Alert color="teal" mb="sm" withCloseButton onClose={() => setNotice('')}>
-          {notice}
         </Alert>
       )}
       {!data && !error ? (

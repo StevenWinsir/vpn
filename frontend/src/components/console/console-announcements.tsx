@@ -15,7 +15,7 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { toast } from '@/lib/toast';
 import { api, APIError } from '@/lib/api';
 import { describeError, ErrorBox, Pager, useFetched, When } from './console-common';
 
@@ -290,7 +290,7 @@ function Editor({
         method: 'POST',
         body: JSON.stringify(item ? { title, body, version: item.version } : { title, body }),
       });
-      notifications.show({ color: 'teal', title: '草稿已保存', message: title });
+      toast.success('草稿已保存', title);
       onSaved();
       onClose();
     } catch (e) {
@@ -386,7 +386,7 @@ function Confirm({
     setBusy(true);
     try {
       await api(action, { method, body: '{}' });
-      notifications.show({ color: 'teal', title: done, message: '' });
+      toast.success(done);
       onDone();
       onClose();
     } catch (e) {

@@ -329,3 +329,45 @@ Crisp 按钮在右下角，层级低于通知（globals.css:317 注释已有约�
 - Notification 组件的 role 可以通过数据对象覆盖（role || "alert"），data-* 属性也会透传到根节点。
 - 测位置要等入场动画结束（约 250ms），否则 y 为负。
 - 夹具新账号必须加在最早的那一组（upg* 之前），否则 admin-console-2 在控制台第一页找不到 kyle。
+
+第 1 轮合并记录：PR StevenWinsir/vpn#114，2026-11-05 squash 合并为 9f4d845，CI 16/16 全绿；本地 main 已快进，分支（本地与远端）和 worktree 已删除。
+
+### 第 2 轮：管理侧迁移、守卫与回归（2026-11-05，分支 worktree-message-round2-admin，PR 见合并记录）
+
+基线 9f4d845。改动：
+
+- console-users / orders / plans / coupons / announcements / tickets 六个文件共 14 处 notifications.show 全部迁移到 toast.success，标题和正文逐字不变（含原有句号）。其中带后果说明的 4 处（用户密码已修改、账号已删除、升级设置已保存、全局年付折扣已保存）用 8 秒（toastDurations.note，本轮新增）；公告操作原来传的空正文现在不再渲染空行。
+- admin-nodes-view.tsx：删除常驻的“已更新”Alert 与 notice 状态。节点组创建/保存/启用/停用/删除、服务器导入/保存/删除、清除冷却都改为 8 秒 Toast：标题是按操作拆出的短句，正文保留原句。“操作失败”红色 Alert 不变。
+- admin-agents-panel.tsx：删除常驻 Alert；节点代理保存、移除改为 8 秒 Toast；启用/停用开关新增成功提示（M4，原来没有任何反馈）。
+- 整个 /admin/nodes 页（含节点代理面板）共用一个提示 id admin-nodes，新结果替换上一条，不叠加（偏差，见下）。
+- console-coupons.tsx：列表里的启用/停用按钮新增成功提示（M5）；console-tickets.tsx：管理员回复新增“回复已发送 / 工单号”（M6）。
+- scripts/toast.test.mjs：守卫扩展到整个 src（M2-06）。除 lib/toast.tsx 与 components/toaster.tsx 外，任何文件以 from / import() / require() 引入 @mantine/notifications 都会失败；根布局的样式表引入不算。守卫同时断言这两个允许的文件确实被识别到。用一个临时探针文件验证过守卫会失败，探针已删除。
+- 新增 docs/web-messages.md（M2-10）：何时用 Toast、何时用页面内 Alert、何时什么都不显示，以及调用方式、时长、id、文案规范、跨整页提示的白名单与新增流程、全站提示点清单、测试位置。README 功能列表加一行指向它。
+- 用例：admin-console-2.spec 断言“优惠码已创建”并走一遍停用→启用；tickets.spec 断言管理员“回复已发送”；admin-nodes.spec 第 1 例断言节点组创建/保存、服务器导入，以及页面上只有一条结果提示、没有“已更新”；第 2 例在已停用的 Protocol-Fixtures 组里导入一台停用的服务器 Agent-Probe，依次登记、停用、启用、移除节点代理，再删除服务器和节点组，每一步断言对应提示。整个过程不进入在线目录，不影响后续 Mihomo 实流量验收。
+
+验收（本机 macOS）：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| M2-01 | PASS | 迁移 diff 逐条对照第 2.2 节：14 处标题和正文逐字一致；admin-console.spec 的“已确认到账”、admin-console-2.spec 的“优惠码已创建”通过 |
+| M2-02 | PASS | admin-nodes.spec 第 1、2 例：每种成功操作都有对应 Toast；页面上没有“已更新”文字；同页只有一条结果提示；409 删除冲突仍在弹窗内显示“节点已被修改，请刷新目录” |
+| M2-03 | PASS | admin-nodes.spec 第 2 例：节点代理保存、停用、启用、移除都有提示，移除后代理从列表消失 |
+| M2-04 | PASS | admin-console-2.spec：停用 / 启用 E2E-OFF10 分别出现“优惠码已停用 / 优惠码已启用”，正文为优惠码，之后该码仍为“有效” |
+| M2-05 | PASS | tickets.spec：管理员发送回复后出现“回复已发送” |
+| M2-06 | PASS | test:toast 7/7；临时探针 src/components/console/__guard_probe.tsx 让守卫失败（6 pass / 1 fail），删除后恢复 7/7 |
+| M2-07 | PASS | admin-console、admin-console-2、admin-console-plans 随 payment fixture 全量通过；admin-nodes 两例随 catalog 套件通过 |
+| M2-08 | PASS（本机） | payment fixture 全量 112 passed / 0 failed（10.2 分钟）；catalog 套件 10/10，含官方 Mihomo 实流量与加权账本（Clash.Meta 源码从主目录 rsync 进 worktree）；test:api-proxy 17/17；lint、typecheck、build（--webpack 与默认）、test:copy、test:theme 及全部 node 单元套件通过。CI 结果见 PR |
+| M2-09 | PASS（有偏差） | 浏览器实测（Chrome 加载页面时取 /_next/static 下全部 JS 的 gzip 大小之和，两边都是默认 next build）：/login 257 994 → 259 855 B（+1 861，+0.7%）；/dashboard 289 043 → 290 648（+1 605）；/referral 283 363 → 285 020（+1 657）；/account 273 462 → 275 067（+1 605）；/admin/nodes 303 959 → 305 629（+1 670）；/admin/console/users 301 957 → 303 553（+1 596）。增量约 1.6–1.9 KB，比第 7 节估计的“1 KB 量级”略大，主要来自四个图标和统一模块。基线为 6b7e48a（两轮之前），本轮相对第 1 轮几乎没有新增 |
+| M2-10 | PASS | docs/web-messages.md；README 一行 |
+
+偏差：
+
+- /admin/nodes 全页共用一个提示 id：8 秒的结果提示连续操作时会三条叠在页面顶部中央，挡住下面的按钮。改为新结果替换旧结果，页面上始终只有一条最新结果。
+- 体积增量见 M2-09，比估计略大，可接受。
+- 本轮没有改用户页，第 1 轮记为“部分”的 M1-03（连续重发验证码只保留一条）和 M1-12（同屏 4 条）仍未在浏览器中构造。
+
+经验：
+
+- Turbopack 不接受指向项目外的 node_modules 符号链接（报 Symlink … points out of the filesystem root）。在 /tmp 建体积基线时，用 cp -cR（APFS 克隆，不额外占盘）复制 node_modules。
+- 从 frontend/ 目录导出基线要用 git archive <rev> -- .；6b7e48a:frontend 这种写法在子目录里解析为空树，会静默得到空包。
+- 往目录页加管理侧测试步骤时，不要把节点代理登记到在线目录用的组上：线路会变成节点计费，后续 Mihomo 验收就连不上。放在已停用的组和服务器上做，做完删除。
