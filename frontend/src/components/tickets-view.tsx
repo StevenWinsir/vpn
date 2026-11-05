@@ -25,7 +25,6 @@ import {
   Title,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
 import {
   IconArrowLeft,
   IconCheck,
@@ -71,6 +70,7 @@ import {
 } from '@/lib/types';
 import { useMeta } from '@/lib/use-meta';
 import { usePolling } from '@/lib/use-polling';
+import { toast } from '@/lib/toast';
 
 // Support tickets for users (handoff_ticket.md 11.2). The other party is always "客服" (D6). The
 // text people write is shown as plain text (pre-wrap), never as HTML or links.
@@ -438,10 +438,8 @@ function TicketForm({
         body: signature,
       });
       if (!isTicketDetail(created.ticket)) throw new Error('提交结果无法识别，请刷新列表查看。');
-      notifications.show({
-        color: 'teal',
-        title: '工单已提交',
-        message: `工单号 ${created.ticket.ticket_no}，客服会尽快回复。`,
+      toast.success('工单已提交', `工单号 ${created.ticket.ticket_no}，客服会尽快回复`, {
+        id: 'ticket-created',
       });
       onCreated(created.ticket);
     } catch (err) {
@@ -455,7 +453,7 @@ function TicketForm({
         setErrors({ order: err.message });
       } else if (err instanceof APIError && err.code === 'idempotency_conflict') {
         // This form already submitted a ticket whose answer was lost.
-        notifications.show({ color: 'teal', title: '工单已提交', message: '请在列表中查看。' });
+        toast.success('工单已提交', '请在列表中查看', { id: 'ticket-created' });
         onAlreadySent();
       } else setFailure(ticketError(err));
     }
@@ -823,6 +821,7 @@ function ReplyBox({
       if (isTicketDetail(out.ticket)) onChanged(out.ticket);
       attempt.current = null;
       setDraft('');
+      toast.success('回复已发送', undefined, { id: 'ticket-reply' });
     } catch (e) {
       if (e instanceof APIError && e.status === 404) onGone();
       else setError(ticketError(e));
@@ -841,7 +840,7 @@ function ReplyBox({
       if (isTicketDetail(out.ticket)) onChanged(out.ticket);
       setConfirming(false);
       refreshTicketBadges();
-      notifications.show({ color: 'teal', title: '工单已关闭', message: '感谢你的反馈。' });
+      toast.success('工单已关闭', '感谢你的反馈', { id: 'ticket-closed' });
     } catch (e) {
       setConfirming(false);
       if (e instanceof APIError && e.status === 404) onGone();

@@ -29,6 +29,7 @@ export default defineConfig({
     'support-widget.spec.ts',
     'tickets.spec.ts',
     'guide.spec.ts',
+    'toast.spec.ts',
   ],
   outputDir: process.env.PAYMENT_OUTPUTS,
   workers: 1,

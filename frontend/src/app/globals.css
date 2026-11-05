@@ -2403,3 +2403,19 @@ a:focus-visible {
     display: none;
   }
 }
+
+/* Short messages (handoff_message.md 4.3): one card style in both schemes (Mantine keeps the
+   container 16px clear of the edges on phones). Two classes outrank Mantine's own rule, which the
+   production build loads later. */
+.al-toasts .al-toast {
+  background: var(--al-surface);
+  border-color: var(--al-border);
+  box-shadow: var(--al-shadow);
+}
+.al-toasts .al-toast .mantine-Notification-title {
+  color: var(--al-text);
+  font-weight: 600;
+}
+.al-toasts .al-toast .mantine-Notification-description {
+  color: var(--al-text-2);
+}

@@ -27,6 +27,7 @@ import {
   type User,
 } from '@/lib/types';
 import { safeNext } from '@/lib/next-path';
+import { toast } from '@/lib/toast';
 import { normalizeReferralInput, referralField, referralInputMax } from '@/lib/referral';
 import { useMeta } from '@/lib/use-meta';
 import { useAuth } from './providers';
@@ -105,6 +106,8 @@ function LoginForm() {
       );
       setUser(data.user);
       setPassword('');
+      // Client-side navigation keeps the message on screen in the page that opens.
+      toast.success('登录成功', `欢迎回来，${data.user.name}`, { id: 'signed-in' });
       router.replace(
         safeNext(new URLSearchParams(window.location.search).get('next')) || '/dashboard',
       );
@@ -294,6 +297,7 @@ function RegisterForm() {
       setResendAt(at + receipt.resend_after_seconds * 1000);
       setCode('');
       setNotice(receipt.message);
+      toast.success('验证码已发送', '请查收邮件', { id: 'register-code' });
     } catch (err) {
       if (current !== sequence.current) return;
       if (err instanceof APIError && err.code === 'rate_limited') {
@@ -354,6 +358,8 @@ function RegisterForm() {
       setPassword('');
       setCode('');
       setUser(data.user);
+      // Never a word about the referral code: the server binds a good one quietly (D9).
+      toast.success('注册成功', `欢迎加入 ${appName}`, { id: 'signed-in' });
       router.replace('/dashboard');
     } catch (err) {
       if (!(err instanceof APIError)) setError(message(err));

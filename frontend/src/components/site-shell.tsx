@@ -15,7 +15,6 @@ import {
   VisuallyHidden,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
 import {
   IconArrowBackUp,
   IconArrowUpRight,
@@ -36,6 +35,8 @@ import {
 import { useAuth } from './providers';
 import { appName } from '@/lib/types';
 import { APIError, api, message } from '@/lib/api';
+import { supportInjected } from '@/lib/support';
+import { toast, toastAcrossReload, toastAfterNavigation } from '@/lib/toast';
 import { AnnouncementGate } from './announcement-gate';
 import { useMeta } from '@/lib/use-meta';
 import { useConsoleTicketSummary, useTicketSummary } from '@/lib/ticket-badges';
@@ -151,13 +152,18 @@ function useReturnToAdmin() {
   const back = () => {
     setBusy(true);
     api('/auth/impersonation/return', { method: 'POST', body: '{}' }, false)
-      .then(() => window.location.replace('/admin/console/users'))
+      .then(() => {
+        toastAfterNavigation('returned-admin');
+        window.location.replace('/admin/console/users');
+      })
       .catch((e) => {
         // Without a valid way back the server has already ended the session: sign in again.
-        if (e instanceof APIError && e.status === 401) window.location.replace('/login');
-        else {
+        if (e instanceof APIError && e.status === 401) {
+          toastAfterNavigation('session-ended');
+          window.location.replace('/login');
+        } else {
           setBusy(false);
-          notifications.show({ color: 'red', title: '返回失败', message: message(e) });
+          toast.error('返回失败', message(e), { id: 'return-admin' });
         }
       });
   };
@@ -222,11 +228,14 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     ].includes(path) || path.startsWith('/admin/');
   const signout = async () => {
     setLeaving(true);
+    // Once the support chat ran here, signing out turns the next navigation into a full load.
+    const reloading = supportInjected();
     try {
       await logout();
+      toastAcrossReload('signed-out', reloading);
       router.replace('/login');
     } catch (e) {
-      notifications.show({ color: 'red', title: '退出失败', message: message(e) });
+      toast.error('退出失败', message(e), { id: 'sign-out' });
     } finally {
       setLeaving(false);
     }

@@ -77,9 +77,12 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// (handoff_plans.md 15, round 2) are older still: upga holds monthly starter, upgb yearly starter,
 	// upgc pro, upgd a test subscription, upge less than a day; upgf crosses a day boundary, upgg has a
 	// pending order, upgh pays an upgrade with a line group lost and upgroot is the administrator.
-	for _, kind := range []string{"upgroot", "upga", "upgb", "upgc", "upgd", "upge", "upgf", "upgg", "upgh"} {
+	// The short-message spec's accounts (handoff_message.md 8) are the oldest of all: toasta signs in
+	// and out, toastb has its session ended from another browser, toastdel deletes itself and
+	// toastroot (an administrator) views toasta read-only and returns.
+	for _, kind := range []string{"toastroot", "toasta", "toastb", "toastdel", "upgroot", "upga", "upgb", "upgc", "upgd", "upge", "upgf", "upgg", "upgh"} {
 		role := "user"
-		if kind == "upgroot" {
+		if kind == "upgroot" || kind == "toastroot" {
 			role = "admin"
 		}
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}

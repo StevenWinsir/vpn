@@ -264,6 +264,8 @@ test('T2-01 / T2-05 / T2-09: submit, the console sees it, support replies, the u
   await a.page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(a.page.getByTestId('ticket-status')).toHaveText('等待客服回复');
   await expect(a.page.getByTestId('ticket-reply')).toHaveValue('');
+  // handoff_message.md C4.
+  await expect(a.page.getByTestId('toast').filter({ hasText: '回复已发送' })).toBeVisible();
   await expect(drawer(admin.page).getByTestId('console-ticket-news')).toHaveText(/用户有新消息/, {
     timeout: 20000,
   });

@@ -17,10 +17,10 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useAuth } from './providers';
 import { api, APIError, message } from '@/lib/api';
+import { toast, toastAfterNavigation } from '@/lib/toast';
 import {
   adminPasswordMinBytes,
   date,
@@ -89,7 +89,6 @@ function PasswordCard({ user }: { user: User }) {
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
   const nextBytes = utf8Bytes(next);
   const problem =
     next && (nextBytes < minBytes || nextBytes > passwordMaxBytes)
@@ -104,7 +103,6 @@ function PasswordCard({ user }: { user: User }) {
     if (!ready) return;
     setBusy(true);
     setError(null);
-    setDone(false);
     try {
       await api('/me/password', {
         method: 'POST',
@@ -113,12 +111,8 @@ function PasswordCard({ user }: { user: User }) {
       setCurrent('');
       setNext('');
       setConfirm('');
-      setDone(true);
-      notifications.show({
-        color: 'teal',
-        title: '密码已修改',
-        message: '其他设备上的登录已退出。',
-      });
+      // The message goes away by itself; nothing stays behind on the card (handoff_message.md B1).
+      toast.success('密码已修改', '其他设备上的登录已退出', { id: 'password-changed' });
     } catch (e) {
       if (e instanceof APIError && e.status === 429)
         setError(
@@ -174,11 +168,6 @@ function PasswordCard({ user }: { user: User }) {
           {error ? (
             <Alert color="red" role="alert">
               {error}
-            </Alert>
-          ) : null}
-          {done ? (
-            <Alert color="teal" role="status">
-              密码已修改，其他设备上的登录已退出。
             </Alert>
           ) : null}
           <Group>
@@ -365,6 +354,7 @@ function DeleteForm({
         body: JSON.stringify({ password, email: email.trim() }),
       });
       setUser(null);
+      toastAfterNavigation('account-deleted');
       // A full page load: the signed-in state, dialogs and caches of the deleted account go
       // with it, and RequireAuth cannot redirect to the login page instead of the home page.
       window.location.replace('/');
