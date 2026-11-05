@@ -270,14 +270,19 @@ test('back to the administrator: the console says so, with user-page wording', a
 });
 
 test('the next-page message: only a fresh, known key, shown once', async ({ page }) => {
-  // M1-14 in the browser (the unit test covers every malformed value).
-  await page.goto('/login');
-  const put = (value: string) =>
-    page.evaluate(([key, v]) => sessionStorage.setItem(key, v), [storageKey, value] as const);
-  await put(JSON.stringify({ key: 'signed-out', at: Date.now() }));
-  await page.reload();
+  // M1-14 in the browser (the unit test covers every malformed value). The value is written from a
+  // same-origin document that is not the app (the icon), then the app loads: an app page open
+  // while writing could still be hydrating and take the value itself, which hid the message
+  // from the next load on a busy CI runner.
+  const arrive = async (value: string) => {
+    await page.goto('/icon.svg');
+    await page.evaluate(([key, v]) => sessionStorage.setItem(key, v), [storageKey, value] as const);
+    await page.goto('/login');
+  };
+  const stored = () => page.evaluate((key) => sessionStorage.getItem(key), storageKey);
+  await arrive(JSON.stringify({ key: 'signed-out', at: Date.now() }));
   await expect(toast(page, '已退出登录')).toHaveCount(1);
-  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBeNull();
+  expect(await stored()).toBeNull();
   await page.reload();
   await page.waitForTimeout(1000);
   await expect(toasts(page)).toHaveCount(0);
@@ -286,10 +291,10 @@ test('the next-page message: only a fresh, known key, shown once', async ({ page
     JSON.stringify({ key: '<b>领取奖励</b>', at: Date.now() }),
     '{broken',
   ]) {
-    await put(value);
-    await page.reload();
+    await arrive(value);
+    // The page read and removed the value, and showed nothing for it.
+    await expect.poll(stored).toBeNull();
     await page.waitForTimeout(1000);
     await expect(toasts(page)).toHaveCount(0);
-    expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBeNull();
   }
 });
