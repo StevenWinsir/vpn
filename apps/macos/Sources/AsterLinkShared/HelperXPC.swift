@@ -30,14 +30,19 @@ public struct HelperReply: Codable, Sendable, Equatable {
     public var protocolVersion: Int
     public var workerRunning: Bool
     public var core: CoreHello?
+    /// True when macOS holds the Helper, or the Core it runs, below the normal scheduling band
+    /// (SchedulingProbe): the launchd registration predates ProcessType Interactive and must be
+    /// reinstalled. Absent from Helpers built before the field existed, and when unreadable.
+    public var schedulingLimited: Bool?
 
     enum CodingKeys: String, CodingKey {
         case ok, errorCode = "error_code", detail, helperVersion = "helper_version"
         case protocolVersion = "protocol_version", workerRunning = "worker_running", core
+        case schedulingLimited = "scheduling_limited"
     }
 
     public init(ok: Bool, errorCode: HelperErrorCode? = nil, detail: String? = nil, helperVersion: String,
-                workerRunning: Bool, core: CoreHello? = nil) {
+                workerRunning: Bool, core: CoreHello? = nil, schedulingLimited: Bool? = nil) {
         self.ok = ok
         self.errorCode = errorCode
         self.detail = detail
@@ -45,6 +50,7 @@ public struct HelperReply: Codable, Sendable, Equatable {
         self.protocolVersion = AsterLinkIdentity.protocolVersion
         self.workerRunning = workerRunning
         self.core = core
+        self.schedulingLimited = schedulingLimited
     }
 
     public func encoded() -> Data { (try? JSONEncoder().encode(self)) ?? Data() }

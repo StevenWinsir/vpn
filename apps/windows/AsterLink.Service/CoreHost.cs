@@ -81,6 +81,8 @@ public sealed class CoreHost(InstallLayout layout, RecoveryStore store, ILogger 
             throw;
         }
         logger.LogInformation("Core {Version} started (pid {Pid})", CoreVersion, worker!.ProcessId);
+        if (worker.PowerThrottlingError != 0)
+            logger.LogWarning("Core runs with the system's default power throttling: opt-out failed with error {Code}", worker.PowerThrottlingError);
     }
 
     private async Task CheckCoreIdentityAsync(ReleaseManifest manifest, CancellationToken cancellationToken)

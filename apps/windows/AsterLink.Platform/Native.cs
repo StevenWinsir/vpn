@@ -140,6 +140,27 @@ internal static class Native
         public UIntPtr PeakJobMemoryUsed;
     }
 
+    // ---- process power throttling (EcoQoS / Utility QoS) ---------------------------------------
+    internal const int ProcessPowerThrottling = 4; // PROCESS_INFORMATION_CLASS
+    internal const uint ProcessPowerThrottlingCurrentVersion = 1;
+    internal const uint ProcessPowerThrottlingExecutionSpeed = 0x1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct ProcessPowerThrottlingState
+    {
+        public uint Version;
+        public uint ControlMask;
+        public uint StateMask;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetProcessInformation(IntPtr process, int infoClass, ref ProcessPowerThrottlingState info, int size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetProcessInformation(SafeProcessHandle process, int infoClass, ref ProcessPowerThrottlingState info, int size);
+
     // ---- CreateProcess with an explicit handle list ------------------------------------------
     internal const uint CreateSuspended = 0x00000004;
     internal const uint CreateUnicodeEnvironment = 0x00000400;

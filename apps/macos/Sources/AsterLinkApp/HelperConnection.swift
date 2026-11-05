@@ -114,7 +114,13 @@ final class XPCCoreTransport: CoreTransport {
         guard let hello = try? JSONDecoder().decode(HelperReply.self, from: greeting), hello.protocolVersion == AsterLinkIdentity.protocolVersion else {
             throw HelperUnavailable("后台服务需要更新，请在“账户”页重新安装后台服务")
         }
-        if let message = HelperUpgradePolicy.userMessage(for: HelperUpgradePolicy.verdict(helperVersion: hello.helperVersion, appVersion: appVersion)) {
+        // A Helper still running under a pre-Interactive launchd registration (handoff_fix.md F1)
+        // gets the same reinstall prompt as a stale one, until the user has reinstalled once.
+        let verdict = HelperUpgradePolicy.verdict(helperVersion: hello.helperVersion, appVersion: appVersion,
+                                                  schedulingLimited: hello.schedulingLimited)
+        let reinstalled = UserDefaults.standard.string(forKey: HelperUpgradePolicy.reinstalledVersionKey)
+        if HelperUpgradePolicy.refusesConnect(verdict, reinstalledForVersion: reinstalled, appVersion: appVersion),
+           let message = HelperUpgradePolicy.userMessage(for: verdict) {
             throw HelperUnavailable(message)
         }
         let data = try await call { $0.startWorker(reply: $1) }

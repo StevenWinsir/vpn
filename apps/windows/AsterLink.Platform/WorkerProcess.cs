@@ -25,6 +25,11 @@ public sealed class WorkerProcess : IDisposable
 
     public int ProcessId { get; }
     public long StartFileTime { get; }
+    /// <summary>
+    /// 0 when the Core was opted out of execution-speed throttling before it ran (PowerThrottling),
+    /// otherwise the Win32 error. The Core runs either way; the service logs a failure.
+    /// </summary>
+    public int PowerThrottlingError { get; }
     /// <summary>Where the service writes requests (the Core's command pipe).</summary>
     public Stream ToWorker => commands;
     /// <summary>Where the service reads the Core's replies.</summary>
@@ -33,12 +38,13 @@ public sealed class WorkerProcess : IDisposable
     public Task<uint> Exited => exited.Task;
 
     private WorkerProcess(SafeJobHandle job, SafeProcessHandle process, int processId, long startFileTime,
-        AnonymousPipeServerStream commands, AnonymousPipeServerStream replies)
+        AnonymousPipeServerStream commands, AnonymousPipeServerStream replies, int powerThrottlingError)
     {
         this.job = job;
         this.process = process;
         ProcessId = processId;
         StartFileTime = startFileTime;
+        PowerThrottlingError = powerThrottlingError;
         this.commands = commands;
         this.replies = replies;
         waitEvent = new ManualResetEvent(false) { SafeWaitHandle = new SafeWaitHandle(process.DangerousGetHandle(), ownsHandle: false) };
@@ -129,6 +135,10 @@ public sealed class WorkerProcess : IDisposable
             if (!Native.AssignProcessToJobObject(job, processInfo.Process))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "AssignProcessToJobObject");
 
+            // Still suspended: the Core's first instruction already runs at High QoS, not at the
+            // Utility level Windows gives a windowless child of a service (handoff_fix.md F4).
+            var powerThrottlingError = PowerThrottling.OptOut(processInfo.Process);
+
             processHandle = new SafeProcessHandle(processInfo.Process, ownsHandle: true);
             processInfo.Process = IntPtr.Zero;
             _ = Native.GetProcessTimes(processHandle, out var startTime, out _, out _, out _);
@@ -145,7 +155,7 @@ public sealed class WorkerProcess : IDisposable
             Native.CloseHandle(processInfo.Thread);
             processInfo.Thread = IntPtr.Zero;
 
-            var worker = new WorkerProcess(job, processHandle, processInfo.ProcessId, startTime, commands, replies);
+            var worker = new WorkerProcess(job, processHandle, processInfo.ProcessId, startTime, commands, replies, powerThrottlingError);
             job = null; // owned by the worker now
             return worker;
         }
@@ -222,6 +232,15 @@ public sealed class WorkerProcess : IDisposable
         };
         var block = string.Concat(variables.Select(kv => kv.Key + "=" + kv.Value + "\0")) + "\0";
         return Marshal.StringToHGlobalUni(block);
+    }
+
+    /// <summary>The Core's execution-speed throttling policy as Windows reports it (diagnostics and tests).</summary>
+    public ThrottlingPolicy? ReadPowerThrottling()
+    {
+        lock (gate)
+        {
+            return disposed ? null : PowerThrottling.Read(process);
+        }
     }
 
     /// <summary>Kills the Core and everything it started, immediately.</summary>

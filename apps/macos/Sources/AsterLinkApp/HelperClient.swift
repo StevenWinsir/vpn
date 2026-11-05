@@ -53,6 +53,13 @@ final class HelperClient {
             try? HelperConnection.service.register()
         }
         refreshRegistration()
+        if registration == .enabled || registration == .requiresApproval {
+            // This version's plist is what launchd now holds (handoff_fix.md F1). If macOS still clamps the
+            // Helper anyway, HelperUpgradePolicy.refusesConnect lets the user connect instead of looping on
+            // "reinstall". Recorded on every registration path: a reinstall whose immediate re-register is
+            // refused is usually finished with the plain "启用" button.
+            UserDefaults.standard.set(appVersion, forKey: HelperUpgradePolicy.reinstalledVersionKey)
+        }
         switch registration {
         case .enabled:
             lastError = nil
@@ -109,6 +116,8 @@ final class HelperClient {
         if lastError == nil { register() }
     }
 
+    private var appVersion: String { (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev" }
+
     func openSystemSettings() { SMAppService.openSystemSettingsLoginItems() }
 
     func hello() { diagnose { $0.hello(reply: $1) } }
@@ -134,8 +143,8 @@ final class HelperClient {
                        reply.protocolVersion == AsterLinkIdentity.protocolVersion {
                         self.lastReply = reply
                         self.versionWarning = HelperUpgradePolicy.userMessage(for: HelperUpgradePolicy.verdict(
-                            helperVersion: reply.helperVersion,
-                            appVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"))
+                            helperVersion: reply.helperVersion, appVersion: self.appVersion,
+                            schedulingLimited: reply.schedulingLimited))
                         self.lastError = reply.ok ? nil : "后台服务暂时不可用，请稍后重试"
                     } else {
                         self.lastError = "后台服务需要更新，请重新安装后台服务"
