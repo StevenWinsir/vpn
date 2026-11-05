@@ -31,6 +31,8 @@
 ## 3. 内存与采样
 
 - 扩展每 5 s 读 `phys_footprint`：≥38 MiB 触发 Go 回收，≥44 MiB 记录压力（第 2 轮已有，初值）。**本轮没有真机数据，所以阈值与 Go 堆上限（22 MiB / GOGC 60）仍是初值，没有“定值”**。
+- 回收限频（handoff_fix.md F5，2026-11-05）：从低于 38 MiB 第一次越过时立即回收；一直停在 38 MiB 以上时，要距上次回收至少 30 s、且又涨了 2 MiB 才再回收；≥44 MiB 时只要又涨了 2 MiB 就回收（不等 30 s）。平台期不再每 5 s 做一次完整回收。压力日志同样限频。
+- 采样行新增 `releases`（累计强制回收次数）、`prio_min`/`prio_max`（本进程线程基础优先级范围，31 为正常，低于 31 说明被系统降级）、`gc_cpu_pm`（Go GC 占用的 CPU 千分比）。旧格式的行仍能读，新字段按 0 处理；汇总脚本输出 `forced_releases`、`gc_cpu_permille_max`、`thread_priority`、`samples_below_normal_priority`，只报告不判定（还没有真机基线）。
 - 每 60 s 写一行（只有数字）：
 
   ```text

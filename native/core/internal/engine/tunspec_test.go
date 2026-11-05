@@ -53,7 +53,7 @@ func TestAndroidTemplateHandsRoutingToTheVpnService(t *testing.T) {
 		t.Fatalf("tunnel address %v", android.Inet4Address)
 	}
 	// The trailing REJECT guard is shared: a node without UDP never sends UDP DIRECT.
-	if want := []string{"MATCH," + ProxyName, "MATCH,REJECT"}; len(cfg.Rules) != len(want) {
+	if want := []string{RejectQUICRule, "MATCH," + ProxyName, "MATCH,REJECT"}; len(cfg.Rules) != len(want) {
 		t.Fatalf("rules %v", cfg.Rules)
 	}
 }

@@ -231,10 +231,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             sampleTick += 1
             if sampleTick % 12 == 0 {
                 let sample = ResourceSample.capture(uptime: Int(ProcessInfo.processInfo.systemUptime - startedAt), footprint: footprint,
-                                                    peak: max(budget.peak, footprint), stats: MobileRuntimeStats())
+                                                    peak: max(budget.peak, footprint), stats: MobileRuntimeStats(), releases: budget.releases)
                 log.notice("\(sample.logLine, privacy: .public)")
             }
-            switch budget.observe(footprint) {
+            switch budget.observe(footprint, at: ProcessInfo.processInfo.systemUptime) {
             case .none: break
             case .release: MobileFreeMemory()
             case .pressure:

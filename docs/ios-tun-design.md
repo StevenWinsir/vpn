@@ -31,7 +31,7 @@
 
 ## 4. TunSpec 与 NE 设置（`tun-spec-ios-v1.json`）
 
-- 模板：`auto-route:false`、`auto-detect-interface:false`、`mtu:1500`、`inet4-address:198.18.0.1/30`、`inet6-address:fdfe:dcba:9876::1/126`、`find-process-mode:off`，规则仍是 `MATCH,node` + `MATCH,REJECT`（UDP 不会 DIRECT）。
+- 模板：`auto-route:false`、`auto-detect-interface:false`、`mtu:1500`、`inet4-address:198.18.0.1/30`、`inet6-address:fdfe:dcba:9876::1/126`、`find-process-mode:off`，规则是 `AND,((NETWORK,UDP),(DST-PORT,443)),REJECT` + `MATCH,node` + `MATCH,REJECT`（QUIC 一律拒绝、浏览器回退 TCP；UDP 不会 DIRECT；handoff_fix.md F2）。
 - **iOS 规格永远 `ipv6:true`**：固定 Mihomo 在宿主无全局 IPv6 时会清掉 IPv6 地址，`iosTunConf` 把它补回；Swift 拒绝 `ipv6:false` 的规格。
 - NE：IPv4 `198.18.0.1/255.255.255.252` + 默认路由；IPv6 `fdfe:dcba:9876::1/126` + `::/0`；DNS `198.18.0.2`、`matchDomains [""]`；`tunnelRemoteAddress 127.0.0.1`（不暴露节点）；MTU 1500（初值，第 5 轮按真机吞吐/内存定值）。
 - 找 fd：遍历本进程 fd，`getpeername` 为 AF_SYSTEM 且控制 id 等于 `com.apple.net.utun_control`，且 `UTUN_OPT_IFNAME` 为 `utunN`；0 个或多于 1 个都拒绝；返回 `F_DUPFD_CLOEXEC` 副本。单测发现并修复了 `ctl_info` 结构对齐错误（100 字节）。macOS 非 root 不能建 utun（实测 EPERM），真实扫描只能在真机或 `sudo swift test` 验证。
@@ -53,7 +53,7 @@
 
 ## 8. 内存
 
-启动时 `MobileTuneMemory(22 MiB, GOGC 60)`；每 5 s 读 `phys_footprint`：≥38 MiB `FreeOSMemory`，≥44 MiB 记录压力。峰值写入扩展日志。`MobileRuntimeStats()` 提供 goroutine/堆数据给 D-CYCLES。全部为初值，真机 D-MEM-idle 后定。
+启动时 `MobileTuneMemory(22 MiB, GOGC 60)`；每 5 s 读 `phys_footprint`：≥38 MiB `FreeOSMemory`，≥44 MiB 记录压力，两者都限频（规则见 docs/ios-lifecycle.md 第 3 节，handoff_fix.md F5）。峰值写入扩展日志。`MobileRuntimeStats()` 提供 goroutine/堆数据给 D-CYCLES。全部为初值，真机 D-MEM-idle 后定。
 
 体积：xcframework 设备切片 `go.o` 52.9 MB（无 DWARF），第 1 轮记录为 28.5 MB，差异原因未查明（可能是测量口径不同），第 6 轮发布审计时以链接后体积为准复核。
 

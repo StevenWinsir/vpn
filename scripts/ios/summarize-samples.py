@@ -3,7 +3,9 @@
 
 The extension writes one line a minute (ResourceSample.logLine in AsterLinkKit/Lifecycle.swift):
 
-    sample t=600 footprint=33554432 peak=37748736 fds=41 threads=19 goroutines=88 heap=12582912 sys=26214400 gc=140
+    sample t=600 footprint=33554432 peak=37748736 fds=41 threads=19 goroutines=88 heap=12582912 sys=26214400 gc=140 releases=1 prio_min=31 prio_max=47 gc_cpu_pm=12
+
+(releases, prio_min, prio_max and gc_cpu_pm since handoff_fix.md round 2; older lines read them as 0.)
 
 plus event lines ("gate closed ...", "gate reopened ...", "foreground lease expired", "stop: reason ...",
 "sleep", "wake"). Collect them on the Mac with the iPhone connected:
@@ -22,6 +24,8 @@ import re
 import sys
 
 FIELDS = ('t', 'footprint', 'peak', 'fds', 'threads', 'goroutines', 'heap', 'sys', 'gc')
+OPTIONAL = ('releases', 'prio_min', 'prio_max', 'gc_cpu_pm')
+NORMAL_PRIORITY = 31
 EVENTS = {
     'gate_closed': re.compile(r'gate closed reason=(\S+)'),
     'gate_reopened': re.compile(r'gate reopened reason=(\S+) outcome=(\S+) closed_ms=(\d+) attempts=(\d+) total=(\d+)'),
@@ -40,7 +44,9 @@ def parse_sample(line):
     pairs = dict(re.findall(r'(\w+)=(\d+)', line[start:]))
     if any(field not in pairs for field in FIELDS):
         return None
-    return {field: int(pairs[field]) for field in FIELDS}
+    sample = {field: int(pairs[field]) for field in FIELDS}
+    sample.update({field: int(pairs.get(field, 0)) for field in OPTIONAL})
+    return sample
 
 
 def summarize(lines, hard_limit_mib=44, fd_growth=8, goroutine_growth=20):
@@ -78,6 +84,14 @@ def summarize(lines, hard_limit_mib=44, fd_growth=8, goroutine_growth=20):
         'lease_expired': len(events['lease_expired']), 'sleep': len(events['sleep']), 'wake': len(events['wake']),
         'stops': [item[0] if isinstance(item, tuple) else item for item in events['stop']],
         'memory_pressure_events': len(events['memory_pressure']),
+        # handoff_fix.md F5: how often the extension forced a release, how much CPU the GC took, and
+        # whether any thread ran below the normal band (the iOS twin of the macOS F1 clamp). Reported,
+        # not judged: there is no device baseline yet (0 = a line written before these fields).
+        'forced_releases': last['releases'],
+        'gc_cpu_permille_max': max(s['gc_cpu_pm'] for s in samples),
+        'thread_priority': {'min': min((s['prio_min'] for s in samples if s['prio_min']), default=0),
+                            'max': max(s['prio_max'] for s in samples)},
+        'samples_below_normal_priority': sum(1 for s in samples if 0 < s['prio_min'] < NORMAL_PRIORITY),
         'problems': problems,
     }
     return report, 1 if problems else 0

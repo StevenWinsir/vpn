@@ -176,3 +176,80 @@
 +		t.Fatalf("New = %v, %v; want nil listener and error", l, err)
 +	}
 +}
+--- a/tunnel/statistic/manager.go
++++ b/tunnel/statistic/manager.go
+@@ -67,8 +67,23 @@
+ 	})
+ }
+ 
++// AsterLinkRejectPatchVersion is a build-time guard: the client meters TotalTraffic(true)
++// and must not bill bytes that a REJECT or REJECT-DROP outbound discarded.
++const AsterLinkRejectPatchVersion = 1
++
++// asterLinkBilled reports whether bytes on a chain ending at lastChain count as proxy
++// traffic. DIRECT never left through the proxy; REJECT and REJECT-DROP never left at all
++// (their connections accept writes and discard them), so neither may reach the proxy totals.
++func asterLinkBilled(lastChain string) bool {
++	switch lastChain {
++	case "DIRECT", "REJECT", "REJECT-DROP":
++		return false
++	}
++	return true
++}
++
+ func (m *Manager) PushUploaded(lastChain string, size int64) {
+-	if lastChain != "DIRECT" {
++	if asterLinkBilled(lastChain) {
+ 		m.proxyUploadTemp.Add(size)
+ 		m.proxyUploadTotal.Add(size)
+ 	}
+@@ -77,7 +92,7 @@
+ }
+ 
+ func (m *Manager) PushDownloaded(lastChain string, size int64) {
+-	if lastChain != "DIRECT" {
++	if asterLinkBilled(lastChain) {
+ 		m.proxyDownloadTemp.Add(size)
+ 		m.proxyDownloadTotal.Add(size)
+ 	}
+--- /dev/null
++++ b/tunnel/statistic/asterlink_reject_test.go
+@@ -0,0 +1,38 @@
++package statistic
++
++import "testing"
++
++// AsterLink bills Manager.TotalTraffic(true). Bytes a REJECT outbound swallowed never
++// left the device and must not be billed; DIRECT stays excluded; any proxy counts.
++func TestAsterLinkRejectIsNotBilled(t *testing.T) {
++	m := &Manager{}
++	m.PushUploaded("node", 100)
++	m.PushDownloaded("node", 1000)
++	m.PushUploaded("REJECT", 7)
++	m.PushDownloaded("REJECT", 70)
++	m.PushUploaded("REJECT-DROP", 9)
++	m.PushDownloaded("REJECT-DROP", 90)
++	m.PushUploaded("DIRECT", 11)
++	m.PushDownloaded("DIRECT", 110)
++
++	up, down := m.TotalTraffic(true)
++	if up != 100 || down != 1000 {
++		t.Fatalf("proxy totals = %d/%d, want 100/1000 (only the node)", up, down)
++	}
++	up, down = m.TotalTraffic(false)
++	if up != 127 || down != 1270 {
++		t.Fatalf("all totals = %d/%d, want 127/1270 (every chain)", up, down)
++	}
++}
++
++func TestAsterLinkBilledChains(t *testing.T) {
++	for chain, want := range map[string]bool{
++		"node": true, "DIRECT": false, "REJECT": false, "REJECT-DROP": false,
++		// Only the exact built-in names are excluded: a proxy that merely contains the word is billed.
++		"REJECT-node": true, "reject": true, "": true,
++	} {
++		if got := asterLinkBilled(chain); got != want {
++			t.Errorf("asterLinkBilled(%q) = %v, want %v", chain, got, want)
++		}
++	}
++}

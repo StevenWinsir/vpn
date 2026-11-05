@@ -131,13 +131,45 @@ struct TunnelContractTests {
 
     @Test func memoryBudgetThresholds() {
         var budget = MemoryBudget()
-        #expect(budget.observe(20 << 20) == .none)
-        #expect(budget.observe(40 << 20) == .release)
-        #expect(budget.observe(45 << 20) == .pressure)
-        #expect(budget.observe(10 << 20) == .none)
+        #expect(budget.observe(20 << 20, at: 0) == .none)
+        #expect(budget.observe(40 << 20, at: 5) == .release)
+        #expect(budget.observe(45 << 20, at: 10) == .pressure)
+        #expect(budget.observe(10 << 20, at: 15) == .none)
         #expect(budget.peak == 45 << 20)
+        #expect(budget.releases == 2)
         #expect((MemoryBudget.footprint() ?? 0) > 0)
         #expect(MemoryBudget.goHeapLimit < Int64(MemoryBudget.softLimit))
+    }
+
+    /// handoff_fix.md F5 / R2-10: a footprint that stays above the soft threshold under sustained
+    /// traffic is released once, then only after 30 s and 2 MiB of growth, not every 5 s sample.
+    @Test func memoryReleaseIsRateLimitedOnAPlateau() {
+        var budget = MemoryBudget()
+        #expect(budget.observe(39 << 20, at: 0) == .release)
+        for tick in 1...12 { // one minute on a plateau, sampled every 5 s
+            #expect(budget.observe(39 << 20, at: Double(tick * 5)) == .none, "tick \(tick)")
+        }
+        #expect(budget.releases == 1)
+        // Growth alone is not enough before 30 s; growth after 30 s is.
+        var growing = MemoryBudget()
+        #expect(growing.observe(38 << 20, at: 0) == .release)
+        #expect(growing.observe(41 << 20, at: 10) == .none)
+        #expect(growing.observe(41 << 20, at: 31) == .release)
+        // Dropping below the soft threshold re-arms: the next crossing releases at once.
+        #expect(growing.observe(30 << 20, at: 35) == .none)
+        #expect(growing.observe(38 << 20, at: 40) == .release)
+        #expect(growing.releases == 3)
+    }
+
+    /// Above the hard threshold growth is enough (no 30 s wait), but a flat footprint is not
+    /// released, or reported, every sample either.
+    @Test func pressureFollowsGrowthNotTheClock() {
+        var budget = MemoryBudget()
+        #expect(budget.observe(45 << 20, at: 0) == .pressure)
+        #expect(budget.observe(45 << 20, at: 5) == .none)
+        #expect(budget.observe(46 << 20, at: 10) == .none)
+        #expect(budget.observe(47 << 20, at: 15) == .pressure)
+        #expect(budget.observe(47 << 20, at: 100) == .none)
     }
 
     @Test func routeProbeNeedsTheControlledAnswer() {

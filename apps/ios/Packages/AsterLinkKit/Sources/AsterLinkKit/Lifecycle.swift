@@ -113,20 +113,36 @@ public struct ResourceSample: Sendable, Equatable {
     public let goHeap: UInt64
     public let goSys: UInt64
     public let gcCount: Int
+    /// handoff_fix.md F5 / 5.4: forced releases so far, the lowest and highest base priority of
+    /// this process's threads (31 is the normal band; lower means the system clamps the
+    /// extension, the iOS twin of the macOS F1 clamp), and the GC's CPU share in per mille.
+    /// Lines written before these fields existed read them as zero.
+    public var releases: Int = 0
+    public var priorityMin: Int = 0
+    public var priorityMax: Int = 0
+    public var gcCPUPerMille: Int = 0
 
     public static let prefix = "sample "
 
     /// `stats` is the Core's RuntimeStats document; an unreadable one reads as zeros.
-    public static func capture(uptime: Int, footprint: UInt64, peak: UInt64, stats: String) -> ResourceSample {
+    public static func capture(uptime: Int, footprint: UInt64, peak: UInt64, stats: String, releases: Int = 0) -> ResourceSample {
         let object = (try? JSONSerialization.jsonObject(with: Data(stats.utf8))) as? [String: Any] ?? [:]
         func number(_ key: String) -> UInt64 { (object[key] as? NSNumber)?.uint64Value ?? 0 }
-        return ResourceSample(uptimeSeconds: uptime, footprint: footprint, peak: peak, openFiles: openFileCount(), threads: threadCount(),
-                              goroutines: Int(number("goroutines")), goHeap: number("heap_in_use"), goSys: number("sys"),
-                              gcCount: Int(number("num_gc")))
+        let gcShare = (object["gc_cpu_fraction"] as? NSNumber)?.doubleValue ?? 0
+        let band = priorityBand()
+        var sample = ResourceSample(uptimeSeconds: uptime, footprint: footprint, peak: peak, openFiles: openFileCount(), threads: threadCount(),
+                                    goroutines: Int(number("goroutines")), goHeap: number("heap_in_use"), goSys: number("sys"),
+                                    gcCount: Int(number("num_gc")))
+        sample.releases = releases
+        sample.priorityMin = band.min
+        sample.priorityMax = band.max
+        sample.gcCPUPerMille = Int((min(max(gcShare, 0), 1) * 1000).rounded())
+        return sample
     }
 
     public var logLine: String {
         Self.prefix + "t=\(uptimeSeconds) footprint=\(footprint) peak=\(peak) fds=\(openFiles) threads=\(threads) goroutines=\(goroutines) heap=\(goHeap) sys=\(goSys) gc=\(gcCount)"
+            + " releases=\(releases) prio_min=\(priorityMin) prio_max=\(priorityMax) gc_cpu_pm=\(gcCPUPerMille)"
     }
 
     /// The reading back of `logLine` (the tests prove the two agree with the script's format).
@@ -140,8 +156,38 @@ public struct ResourceSample: Sendable, Equatable {
         guard let t = fields["t"], let footprint = fields["footprint"], let peak = fields["peak"], let fds = fields["fds"],
               let threads = fields["threads"], let goroutines = fields["goroutines"], let heap = fields["heap"],
               let sys = fields["sys"], let gc = fields["gc"] else { return nil }
-        return ResourceSample(uptimeSeconds: Int(t), footprint: footprint, peak: peak, openFiles: Int(fds), threads: Int(threads),
-                              goroutines: Int(goroutines), goHeap: heap, goSys: sys, gcCount: Int(gc))
+        var sample = ResourceSample(uptimeSeconds: Int(t), footprint: footprint, peak: peak, openFiles: Int(fds), threads: Int(threads),
+                                    goroutines: Int(goroutines), goHeap: heap, goSys: sys, gcCount: Int(gc))
+        sample.releases = Int(fields["releases"] ?? 0)
+        sample.priorityMin = Int(fields["prio_min"] ?? 0)
+        sample.priorityMax = Int(fields["prio_max"] ?? 0)
+        sample.gcCPUPerMille = Int(fields["gc_cpu_pm"] ?? 0)
+        return sample
+    }
+
+    /// The lowest and highest base priority among this process's threads (0, 0 if unreadable).
+    static func priorityBand() -> (min: Int, max: Int) {
+        var list: thread_act_array_t?
+        var count = mach_msg_type_number_t(0)
+        guard task_threads(mach_task_self_, &list, &count) == KERN_SUCCESS, let list else { return (0, 0) }
+        defer {
+            for index in 0..<Int(count) { mach_port_deallocate(mach_task_self_, list[index]) }
+            vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: list)), vm_size_t(Int(count) * MemoryLayout<thread_t>.size))
+        }
+        var low = Int.max, high = Int.min
+        for index in 0..<Int(count) {
+            var info = thread_extended_info_data_t()
+            var size = mach_msg_type_number_t(MemoryLayout<thread_extended_info_data_t>.size / MemoryLayout<natural_t>.size)
+            let result = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+                    thread_info(list[index], thread_flavor_t(THREAD_EXTENDED_INFO), $0, &size)
+                }
+            }
+            guard result == KERN_SUCCESS else { continue }
+            low = min(low, Int(info.pth_priority))
+            high = max(high, Int(info.pth_priority))
+        }
+        return low <= high ? (low, high) : (0, 0)
     }
 
     /// Descriptors open in this process (the directory listing's own descriptor is not counted).

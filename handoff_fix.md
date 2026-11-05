@@ -405,3 +405,47 @@ QUIC 被拒绝后，Chrome、Safari 和 YouTube App 都会自动改走 TCP（HTT
 - R1-07：睡眠唤醒和能耗。
 - 正式发版时用新版本号构建。
 - 单条连接偶发卡在低速的现象，交给第 2 轮（拒绝 QUIC 后复测）和第 3 轮的吞吐工具继续观察。
+
+
+### 第 2 轮（2026-11-05，分支 worktree-fix-round2-quic-reject）
+
+**改动**
+- 共享 Core 规则（native/core/internal/engine/config.go）：
+  - 新增常量 RejectQUICRule，内容为 AND,((NETWORK,UDP),(DST-PORT,443)),REJECT，排在 MATCH,node 和 MATCH,REJECT 之前。四个平台共用。
+  - 测试：config_test、tunspec_test、ios_test 锁定三条规则的顺序。新增 TestQUICIsRejectedBeforeTheNode，覆盖两类节点：
+    - 支持 UDP 的节点：UDP 443 → REJECT，TCP 443 → 节点，UDP 53、3478、4433、8443、19302 → 节点。
+    - 不支持 UDP 的节点：UDP 443 和其他 UDP 端口都 → REJECT，TCP 443 → 节点。
+- Mihomo 审查补丁：
+  - 由 0001-sing-tun-listener-context.patch（asterlink-sing-tun-context-v1）改为 0001-asterlink-mihomo.patch（asterlink-mihomo-v2）。v1 的 sing-tun 部分逐字节保留。
+  - 新增 tunnel/statistic/manager.go 的计费判断：DIRECT、REJECT、REJECT-DROP 都不计入代理口径。新增回归测试 asterlink_reject_test.go。
+  - manifest 新增两个文件的原始和补丁后哈希。
+  - 编译期守护常量 statistic.AsterLinkRejectPatchVersion，在 internal/engine/mihomo_patch.go 中引用。
+  - scripts/test-mihomo-patches.py 同时运行 statistic 包的回归测试。补丁 README 已更新。
+- 进程内端到端测试（internal/engine/quic_reject_test.go）：
+  - 按生产规则配置 Mihomo，经 tunnel.HandleUDPPacket 送入 20 个 1200 字节的 UDP 443 包。
+  - 断言：流量由 REJECT 出站承载；全部流量统计增加 24000 字节；计费口径不变。
+- iOS（F5）：
+  - MemoryBudget.observe 增加时钟参数，强制回收按 D9 和第 5.4 节限频，并累计 releases。
+  - ResourceSample 增加 releases、prio_min、prio_max、gc_cpu_pm 四个字段。旧格式的行仍能解析。
+  - Go 的 mobile.RuntimeStats 增加 gc_cpu_fraction。
+  - summarize-samples.py 输出新字段，只报告不判定。
+  - 文档：docs/ios-lifecycle.md 第 3 节、docs/ios-tun-design.md 第 8 节和第 34 行（规则说明）。
+
+**验收**
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| R2-01 | PASS | 四个平台生成的配置都被固定版本的 Core 解析，规则依次是 AND→REJECT、MATCH→node、MATCH→REJECT。Windows、Android、iOS 原有的平台差异测试全部通过 |
+| R2-02 | PASS | prepare_mihomo --check 通过，id 为 asterlink-mihomo-v2。把 manager.go 换回原文后，go build ./internal/engine 失败，报 undefined: statistic.AsterLinkRejectPatchVersion。test-mihomo-patches 全部通过（哈希锁的 6 项、sing-tun 的 3 项，其中 1 项只能在 Linux 上运行而跳过，以及 statistic 的 2 项） |
+| R2-03 | PASS | TestAsterLinkRejectIsNotBilled、TestAsterLinkBilledChains |
+| R2-04 | PASS（进程内）/ NOT RUN（真实后端） | TestQUICPacketsAreRejectedAndNotBilled 走的是真实规则、REJECT 出站和统计模块。把计费判断临时改回“只排除 DIRECT”后，测试报出“proxy totals 0/0 -> 24000/0”，证明它能抓到这个缺陷。没有用真实后端做对账：本轮没有改后端，也没有改 Core 的上报代码 |
+| R2-05 | PASS（Chromium 内核，macOS） | 用户本机，同一节点（出口 IP 不变）。旧内核时，内置浏览器（Chrome 152 内核）访问 Cloudflare 诊断页显示 http=http/3。换成新内核后显示 http=http/2，YouTube 4K 视频正常起播，几张截图里画面在持续推进，视频分片的 nextHopProtocol 没有 h3。用户自己的 Chrome、Safari 和 Windows 上的浏览器没有测 |
+| R2-06 | NOT RUN | 没有在 Android 或 iOS 设备上测 YouTube App 的回退。iOS 真机受签名限制，按惯例为 BLOCKED |
+| R2-07 | PASS（规则级） | TestQUICIsRejectedBeforeTheNode 覆盖 UDP 53、3478、4433、8443、19302 和 TCP 443。没有做真实 WebRTC 或游戏测试 |
+| R2-08 | 部分 | 新内核加第 1 轮修复，在用户本机、真实节点上的结果：Core 的 16 个线程全部 31T；每轮 4 条并行下载，10 个核心全部占满时与空闲时的速度比为 0.96～1.09，边播 4K 边测时为 1.01。但当晚的绝对吞吐只有约 18 Mbit/s，第 1 轮早上同一节点、同一方法测到约 67 Mbit/s。本轮没有改动 TCP 路径（只多了一条只匹配 UDP 的规则），Core 的 CPU 占用不到单核的 50%（机器共 10 核），所以判断是节点或线路的时段差异，但没有核实。没有做 30 分钟观看测试 |
+| R2-09 | 本地 PASS / 待 CI | macOS unit 8/8（Go IPC 338 项）。bundle 8/8。release 15 PASS、2 BLOCKED（开发者 ID）、1 FAIL：R02-UNINSTALL 因用户的 AsterLink 正在运行而拒绝执行卸载，属于测试环境原因，第 1 轮 App 未运行时该项通过。Go Core 全部包、AsterLinkKit 89 项通过。Windows、Android、iOS 的完整构建待 CI |
+| R2-10 | PASS | memoryReleaseIsRateLimitedOnAPlateau、pressureFollowsGrowthNotTheClock、memoryBudgetThresholds |
+| R2-11 | PASS（单元级） | 采样行能完整往返解析；本进程的线程优先级可以读出；旧格式的行能读；汇总脚本输出新字段。没有在模拟器或真机的扩展里实际采样 |
+| R2-12 | NOT RUN | 本轮没有做 30 分钟持续流量的内存测量，交给第 3 轮的 R3-08（真机）或模拟器。所以阈值保持初值不变（D9） |
+
+**留给后续**：R2-06、R2-12、用户在自己的 Chrome 和 Safari 上观看 30 分钟（U-53）、同一时段的吞吐对比，以及第 1 轮记录里的单条连接偶发低速，都交给第 3 轮的吞吐工具。用户机器上现在装的是本轮的 0.1.1 构建（r2-quic，带补丁 v2）。
