@@ -298,6 +298,10 @@ test('signed in: launcher at once, Crisp after the page settles, one script, cha
   expect((await calls(page)).slice(mark)).toContain('do session:reset');
   expect(await scriptElements(page)).toBe(0);
   await expect(launcher(page)).toHaveCount(0);
+  // The full load does not lose the message, and it is not shown twice (handoff_message.md D12).
+  await expect(page.getByTestId('toast').filter({ hasText: '已退出登录' })).toHaveCount(1);
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId('toast').filter({ hasText: '已退出登录' })).toHaveCount(1);
 
   // The next account in this browser: the old conversation is reset before its own identity.
   mark = (await calls(page)).length;
@@ -509,4 +513,6 @@ test('deleting the account with the chat loaded still ends on the home page, wit
   await expect(page).toHaveURL((url) => url.pathname === '/');
   expect((await calls(page)).slice(mark)).toContain('do session:reset');
   expect(await scriptElements(page)).toBe(0);
+  // The message waited for the home page and is shown once (handoff_message.md B2).
+  await expect(page.getByTestId('toast').filter({ hasText: '账号已删除' })).toHaveCount(1);
 });

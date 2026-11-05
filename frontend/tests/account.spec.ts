@@ -129,7 +129,14 @@ test('changing the password: checks, a wrong current password, success keeps thi
 
   await fillPasswordForm(page, fixture.password, next);
   await submitChange(page).click();
-  await expect(main(page).getByRole('status')).toContainText('密码已修改');
+  // A short message that goes away by itself; nothing stays on the card (handoff_message.md B1).
+  await expect(
+    page
+      .getByTestId('toast')
+      .filter({ hasText: '密码已修改' })
+      .filter({ hasText: '其他设备上的登录已退出' }),
+  ).toBeVisible();
+  await expect(main(page).getByText('密码已修改')).toHaveCount(0);
   await shot(page, 'password-changed');
   expect((await stateOf(email)).auth_version).toBe(2);
 

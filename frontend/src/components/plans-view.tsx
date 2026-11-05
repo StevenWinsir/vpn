@@ -15,9 +15,9 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
 import { IconArrowRight, IconArrowUpRight, IconCheck } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
+import { toast } from '@/lib/toast';
 import { refreshes, tierOf, trafficLabel, yearlyPromo, zhe } from '@/lib/shop';
 import {
   money,
@@ -237,11 +237,8 @@ export function PlansView() {
       });
       setChoice(null);
       requestKey.current = null;
-      notifications.show({
-        title: '测试套餐已开通', // copy-guard: dev-only
-        message: '未发生扣款。',
-        color: 'teal',
-      });
+      // copy-guard-next-line: dev-only (test purchase never runs in production)
+      toast.success('测试套餐已开通', '未发生扣款');
       router.push('/dashboard');
     } catch (e) {
       setPurchaseError(message(e));

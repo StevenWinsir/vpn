@@ -100,11 +100,19 @@ async function register(
   await page.getByLabel('邮箱地址').fill(email);
   await page.getByRole('button', { name: '获取验证码' }).click();
   await expect(page.getByText('如果该邮箱可以注册')).toBeVisible();
+  // handoff_message.md A2, A3: a short message for the code and for the new account, and the
+  // second never mentions the referral code, whatever was typed.
+  await expect(page.getByTestId('toast').filter({ hasText: '验证码已发送' })).toContainText(
+    '请查收邮件',
+  );
   await page.getByLabel('邮箱验证码').fill(await mailCode(email));
   await page.locator('input[type="password"]').fill(registrationPassword);
   if (field !== null) await page.getByLabel('推荐码（选填）').fill(field);
   await page.getByRole('button', { name: '创建账户' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  const welcome = page.getByTestId('toast').filter({ hasText: '注册成功' });
+  await expect(welcome).toContainText('欢迎加入');
+  await expect(welcome).not.toContainText('推荐');
 }
 // The body the browser sent to POST /auth/register, to see exactly what the field contributes.
 function watchRegistration(page: Page) {
@@ -247,11 +255,20 @@ test('R2-01 the example of the plan: B pays 29.00 yuan and A gets 29 GB', async 
   await expect(page.getByTestId('no-plan')).toHaveCount(0);
   await expect(page.getByTestId('referral-empty')).toBeVisible();
   await expect(page.getByText('1 元 = 1 GB')).toBeVisible();
+  // One copy message, replaced and never stacked (handoff_message.md C1, D6).
+  const copied = page.getByTestId('toast').filter({ hasText: '已复制' });
   await page.getByRole('button', { name: '复制推荐码' }).click();
-  await expect(page.getByTestId('copy-notice')).toHaveText('推荐码已复制');
+  await expect(copied).toHaveText('推荐码已复制');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(aCode);
   await page.getByRole('button', { name: '复制邀请链接' }).first().click();
-  await expect(page.getByTestId('copy-notice')).toHaveText('邀请链接已复制');
+  await expect(copied).toHaveText('邀请链接已复制');
+  for (let i = 0; i < 4; i++)
+    await page.getByRole('button', { name: '复制邀请链接' }).first().click();
+  await expect(copied).toHaveCount(1);
+  // The empty state's own button copies the link too.
+  await page.getByTestId('referral-empty').getByRole('button', { name: '复制邀请链接' }).click();
+  await expect(copied).toHaveText('邀请链接已复制');
+  await expect(copied).toHaveCount(1);
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(aLink);
   // The code is stable: a reload shows the same one.
   await page.reload();
@@ -511,7 +528,10 @@ test('R2-06 layout, copy fallback, states and a failing summary', async ({ page,
   });
   await page.goto('/referral');
   await page.getByRole('button', { name: '复制邀请链接' }).first().click();
-  await expect(page.getByTestId('copy-notice')).toContainText('已选中邀请链接，请手动复制');
+  const refused = page.getByTestId('toast').filter({ hasText: '无法自动复制' });
+  await expect(refused).toContainText('无法自动复制');
+  await expect(refused).toContainText('已选中邀请链接，请手动复制');
+  await expect(refused).toHaveAttribute('data-tone', 'warning');
   expect(
     await page.evaluate(() => {
       const input = document.activeElement as HTMLInputElement;

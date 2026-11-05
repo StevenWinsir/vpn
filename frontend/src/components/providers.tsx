@@ -16,10 +16,12 @@ import {
   type CSSVariablesResolver,
   type VariantColorsResolver,
 } from '@mantine/core';
-import { Notifications } from '@mantine/notifications';
 import { api, APIError, message, onSessionEnded } from '@/lib/api';
+import { supportInjected } from '@/lib/support';
 import { colorSchemeKey } from '@/lib/theme';
+import { toastAcrossReload } from '@/lib/toast';
 import type { Impersonation, User } from '@/lib/types';
+import { Toaster } from './toaster';
 
 type Auth = {
   user: User | null;
@@ -97,8 +99,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
+  // Whether an account is signed in right now, for telling an ended session from a signed-out one.
+  const signedIn = useRef(false);
+  // The server ended the session of the account shown here (handoff_message.md D11): say so once.
+  // Signing out, deleting the account and resetting the password clear the user first, so they
+  // never get here with an account still signed in.
+  const sessionEnded = useCallback(() => {
+    if (!signedIn.current) return;
+    signedIn.current = false;
+    toastAcrossReload('session-ended', supportInjected());
+  }, []);
   const setUser = useCallback((next: User | null) => {
     generation.current++;
+    signedIn.current = next !== null;
     setStoredUser(next);
     setImpersonation(null);
     setError(null);
@@ -109,6 +122,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     try {
       const data = await api<{ user: User; impersonation?: Impersonation }>('/auth/me');
       if (revision === generation.current) {
+        signedIn.current = true;
         setStoredUser(data.user);
         setImpersonation(data.impersonation ?? null);
         setError(null);
@@ -116,6 +130,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     } catch (err) {
       if (revision === generation.current) {
         if (err instanceof APIError && err.status === 401) {
+          sessionEnded();
           setStoredUser(null);
           setImpersonation(null);
           setError(null);
@@ -126,13 +141,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
     } finally {
       if (revision === generation.current) setLoading(false);
     }
-  }, []);
+  }, [sessionEnded]);
   useEffect(() => {
     let active = true;
     const revision = ++generation.current;
     void api<{ user: User; impersonation?: Impersonation }>('/auth/me')
       .then((data) => {
         if (active && revision === generation.current) {
+          signedIn.current = true;
           setStoredUser(data.user);
           setImpersonation(data.impersonation ?? null);
           setError(null);
@@ -158,7 +174,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // A final 401 anywhere ends the signed-in state at once. setUser bumps the generation, so a
   // late /auth/me or business response cannot bring the old account back; RequireAuth then
   // unmounts the protected views (and their dialogs and editors) and redirects to login.
-  useEffect(() => onSessionEnded(() => setUser(null)), [setUser]);
+  useEffect(
+    () =>
+      onSessionEnded(() => {
+        sessionEnded();
+        setUser(null);
+      }),
+    [setUser, sessionEnded],
+  );
   const logout = useCallback(async () => {
     await api('/auth/logout', { method: 'POST', body: '{}' }, false);
     setUser(null);
@@ -174,7 +197,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       colorSchemeManager={colorSchemeManager}
       cssVariablesResolver={cssVariablesResolver}
     >
-      <Notifications position="top-right" />
+      <Toaster />
       <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
     </MantineProvider>
   );

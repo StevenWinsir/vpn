@@ -20,6 +20,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconGift, IconLink, IconRefresh } from '@tabler/icons-react';
 import { api, message } from '@/lib/api';
+import { toast } from '@/lib/toast';
 import { formatBytes } from '@/lib/dashboard';
 import {
   isReferralPage,
@@ -92,6 +93,8 @@ function ReferralBody() {
   );
   const { syncing, refresh } = usePolling(load, refreshMs);
   const wide = useMediaQuery('(min-width: 48em)');
+  // The invitation link field of the code card, selected when the browser refuses to copy.
+  const linkField = useRef<HTMLInputElement>(null);
 
   return (
     <Stack gap={24}>
@@ -130,7 +133,7 @@ function ReferralBody() {
               <Link href="/plans"> 去订阅</Link>
             </Alert>
           ) : null}
-          <CodeCard summary={summary} />
+          <CodeCard summary={summary} field={linkField} />
           <SimpleGrid cols={{ base: 2, md: 4 }} spacing={16} data-testid="referral-stats">
             <Stat label="邀请注册" value={`${summary.stats.registered_count}`} unit="人" />
             <Stat label="已消费" value={`${summary.stats.purchased_count}`} unit="人" />
@@ -152,6 +155,7 @@ function ReferralBody() {
             page={page}
             onPage={setPage}
             summary={summary}
+            field={linkField}
           />
         </>
       )}
@@ -170,29 +174,46 @@ function ReferralBody() {
   );
 }
 
-type Copied = 'code' | 'link' | 'select' | null;
+type Copied = 'code' | 'link' | null;
+type Field = React.RefObject<HTMLInputElement | null>;
 
-function CodeCard({ summary }: { summary: ReferralSummary }) {
+const shareLink = (summary: ReferralSummary) => `${window.location.origin}${summary.share_path}`;
+
+// Copies the code or the invitation link and says so in one message (handoff_message.md C1–C3):
+// repeated clicks keep a single message. Without clipboard permission (or a secure context) the
+// link is left selected for copying by hand.
+async function copyReferral(what: 'code' | 'link', summary: ReferralSummary, field: Field) {
+  try {
+    await navigator.clipboard.writeText(what === 'code' ? summary.code : shareLink(summary));
+    toast.success(what === 'code' ? '推荐码已复制' : '邀请链接已复制', undefined, {
+      id: 'referral-copy',
+    });
+    return true;
+  } catch {
+    field.current?.focus();
+    field.current?.select();
+    toast.warning('无法自动复制', '已选中邀请链接，请手动复制', { id: 'referral-copy' });
+    return false;
+  }
+}
+
+// The button that was used shows a tick for as long as the message stays.
+function useCopied() {
   const [copied, setCopied] = useState<Copied>(null);
-  const field = useRef<HTMLInputElement>(null);
   const timer = useRef<number | null>(null);
-  const link = `${window.location.origin}${summary.share_path}`;
-  const flash = (what: Copied) => {
+  const mark = (what: Copied) => {
     setCopied(what);
     if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setCopied(null), 2500);
+    timer.current = window.setTimeout(() => setCopied(null), 3000);
   };
+  return { copied, mark };
+}
+
+function CodeCard({ summary, field }: { summary: ReferralSummary; field: Field }) {
+  const { copied, mark } = useCopied();
+  const link = shareLink(summary);
   async function copy(what: 'code' | 'link') {
-    const text = what === 'code' ? summary.code : link;
-    try {
-      await navigator.clipboard.writeText(text);
-      flash(what);
-    } catch {
-      // No clipboard permission (or no secure context): leave the link selected instead.
-      field.current?.focus();
-      field.current?.select();
-      flash('select');
-    }
+    mark((await copyReferral(what, summary, field)) ? what : null);
   }
   return (
     <Paper withBorder radius="lg" p={{ base: 20, sm: 28 }} data-testid="referral-code-card">
@@ -219,15 +240,6 @@ function CodeCard({ summary }: { summary: ReferralSummary }) {
         >
           复制邀请链接
         </Button>
-        <Text size="sm" c="teal.7" role="status" aria-live="polite" data-testid="copy-notice">
-          {copied === 'code'
-            ? '推荐码已复制'
-            : copied === 'link'
-              ? '邀请链接已复制'
-              : copied === 'select'
-                ? '无法自动复制，已选中邀请链接，请手动复制'
-                : ''}
-        </Text>
       </Group>
       <TextInput
         ref={field}
@@ -321,14 +333,17 @@ function Records({
   page,
   onPage,
   summary,
+  field,
 }: {
   list: ReferralPage | null;
   wide: boolean;
   page: number;
   onPage: (page: number) => void;
   summary: ReferralSummary;
+  field: Field;
 }) {
-  const [copied, setCopied] = useState(false);
+  const { copied: mark, mark: setMark } = useCopied();
+  const copied = mark === 'link';
   if (!list) return <Skeleton height={200} radius="lg" />;
   const size = list.page_size > 0 ? list.page_size : 20;
   return (
@@ -354,13 +369,10 @@ function Records({
             mt="xs"
             leftSection={copied ? <IconCheck size={16} /> : <IconLink size={16} />}
             onClick={() => {
-              void navigator.clipboard
-                .writeText(`${window.location.origin}${summary.share_path}`)
-                .then(() => setCopied(true))
-                .catch(() => setCopied(false));
+              void copyReferral('link', summary, field).then((ok) => setMark(ok ? 'link' : null));
             }}
           >
-            {copied ? '邀请链接已复制' : '复制邀请链接'}
+            复制邀请链接
           </Button>
         </Stack>
       ) : wide ? (
