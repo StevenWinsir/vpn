@@ -154,6 +154,15 @@ func TestCoreSummaryFlagsTheClampOnlyWhenNoThreadIsAbove20(t *testing.T) {
 	}
 }
 
+func TestRetryBacksOff(t *testing.T) {
+	want := []time.Duration{0, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, time.Minute, time.Minute}
+	for failures, d := range want {
+		if got := retryDelay(failures); got != d {
+			t.Errorf("after %d failures: %v, want %v", failures, got, d)
+		}
+	}
+}
+
 func TestValidateAlignsAndRejects(t *testing.T) {
 	o := options{URL: "http://127.0.0.1/x", Streams: 1, Duration: 10 * time.Minute, Warmup: 30 * time.Second, Window: 10 * time.Second,
 		ContentionAt: 4*time.Minute + 3*time.Second, ContentionFor: 2*time.Minute + 7*time.Second}

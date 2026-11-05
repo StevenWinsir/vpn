@@ -18,6 +18,7 @@ import (
 type options struct {
 	URL           string
 	RTTURL        string
+	RTTEvery      time.Duration // probe interval; public test sites may block an exit IP that asks every second
 	Streams       int
 	Duration      time.Duration
 	Warmup        time.Duration
@@ -40,6 +41,7 @@ type run struct {
 	total    atomic.Int64
 	requests atomic.Int64
 	errors   atomic.Int64
+	lastErr  atomic.Value // string: the latest download error, so a window full of errors says why
 	stalls   atomic.Int64
 
 	mu         sync.Mutex
@@ -58,6 +60,7 @@ type row struct {
 	Requests   int64
 	Errors     int64
 	Stalls     int64
+	LastError  string // set only when the window had download errors
 	Core       coreSample
 }
 
@@ -67,6 +70,10 @@ type result struct {
 	ContentionEnd time.Duration
 	Cores         []coreSample
 }
+
+// userAgent names the tool. Some public test sites close the connection on Go's default
+// "Go-http-client/1.1" without answering (seen at Hetzner, 2026-11-05: every request ended EOF).
+const userAgent = "asterlink-throughput/1"
 
 func newClient() *http.Client {
 	transport := &http.Transport{
@@ -98,8 +105,20 @@ func (p progressReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
+// retryDelay backs off after consecutive failed requests: 2 s, 4 s, ... up to 60 s. Public test
+// sites limit connections per IP (Vultr answers 503 beyond two) and block an IP that keeps
+// asking; retrying every second got the node's exit blocked at Vultr and OVH (2026-11-05).
+func retryDelay(failures int) time.Duration {
+	if failures < 1 {
+		return 0
+	}
+	d := time.Second << min(failures, 6)
+	return min(d, time.Minute)
+}
+
 func (r *run) stream(ctx context.Context) {
 	buf := make([]byte, 256<<10)
+	failures := 0
 	for ctx.Err() == nil {
 		reqCtx, cancel := context.WithCancel(ctx)
 		var last atomic.Int64
@@ -129,10 +148,14 @@ func (r *run) stream(ctx context.Context) {
 		default:
 			if err != nil && ctx.Err() == nil {
 				r.errors.Add(1)
+				r.lastErr.Store(redact(err.Error()))
+				failures++
 				select {
 				case <-ctx.Done():
-				case <-time.After(time.Second):
+				case <-time.After(retryDelay(failures)):
 				}
+			} else if err == nil {
+				failures = 0
 			}
 		}
 	}
@@ -144,6 +167,7 @@ func (r *run) fetch(ctx context.Context, buf []byte, last *atomic.Int64) error {
 		return err
 	}
 	req.Header.Set("Cache-Control", "no-store")
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return err
@@ -168,7 +192,11 @@ func (r *run) probeTTFB(ctx context.Context) {
 		url = r.o.URL
 	}
 	client := newClient()
-	tick := time.NewTicker(time.Second)
+	every := r.o.RTTEvery
+	if every <= 0 {
+		every = time.Second
+	}
+	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for {
 		select {
@@ -180,6 +208,7 @@ func (r *run) probeTTFB(ctx context.Context) {
 		req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 		req.Header.Set("Range", "bytes=0-0")
 		req.Header.Set("Cache-Control", "no-store")
+		req.Header.Set("User-Agent", userAgent)
 		start := time.Now()
 		resp, err := client.Do(req)
 		elapsed := time.Since(start)
@@ -309,6 +338,9 @@ func measure(ctx context.Context, o options, onRow func(row)) (result, error) {
 		r.mu.Unlock()
 		req, errs, stalls := r.requests.Load(), r.errors.Load(), r.stalls.Load()
 		rw.Requests, rw.Errors, rw.Stalls = req-lastReq, errs-lastErr, stalls-lastStall
+		if rw.Errors > 0 {
+			rw.LastError, _ = r.lastErr.Load().(string)
+		}
 		lastReq, lastErr, lastStall = req, errs, stalls
 		switch {
 		case w.Warmup:
@@ -336,13 +368,13 @@ func measure(ctx context.Context, o options, onRow func(row)) (result, error) {
 	}
 }
 
-var csvHeader = append([]string{"from_s", "to_s", "phase", "mbit_s", "ttfb_p50_ms", "ttfb_max_ms", "ttfb_failures", "requests", "errors", "stalls"}, coreCSVHeader...)
+var csvHeader = append([]string{"from_s", "to_s", "phase", "mbit_s", "ttfb_p50_ms", "ttfb_max_ms", "ttfb_failures", "requests", "errors", "stalls", "last_error"}, coreCSVHeader...)
 
 func (rw row) csv() []string {
 	f := func(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }
 	return append([]string{
 		strconv.Itoa(int(rw.Start.Seconds())), strconv.Itoa(int((rw.Start + rw.Length).Seconds())), rw.Phase,
 		f(rw.mbps()), f(rw.TTFBP50), f(rw.TTFBMax), strconv.Itoa(rw.ProbeFails),
-		strconv.FormatInt(rw.Requests, 10), strconv.FormatInt(rw.Errors, 10), strconv.FormatInt(rw.Stalls, 10),
+		strconv.FormatInt(rw.Requests, 10), strconv.FormatInt(rw.Errors, 10), strconv.FormatInt(rw.Stalls, 10), rw.LastError,
 	}, rw.Core.csvFields()...)
 }

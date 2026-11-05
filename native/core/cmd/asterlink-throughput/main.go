@@ -69,6 +69,7 @@ func runMeasure(args []string) int {
 	o := options{Thresholds: t}
 	fs.StringVar(&o.URL, "url", "", "file to download repeatedly through the tunnel (required; a large file or the traffic sink's /down)")
 	fs.StringVar(&o.RTTURL, "rtt-url", "", "URL for the 1 s time-to-first-byte probe (default --url with Range 0-0)")
+	fs.DurationVar(&o.RTTEvery, "rtt-interval", time.Second, "how often the time-to-first-byte probe asks (public test sites may block an exit IP that asks too often: use --rtt-url on another host, or a longer interval)")
 	fs.IntVar(&o.Streams, "streams", 4, "parallel download connections")
 	fs.DurationVar(&o.Duration, "duration", 10*time.Minute, "length of the run")
 	fs.DurationVar(&o.Warmup, "warmup", 30*time.Second, "first part that is recorded but not judged")
@@ -122,6 +123,9 @@ func runMeasure(args []string) int {
 		writer.Flush()
 		log.Printf("%4ds-%4ds %-10s %8.2f Mbit/s  ttfb p50 %6.1f ms  core %s", int(rw.Start.Seconds()), int((rw.Start + rw.Length).Seconds()),
 			rw.Phase, rw.mbps(), rw.TTFBP50, coreText(rw.Core))
+		if rw.Errors > 0 {
+			log.Printf("           %d download errors, last: %s", rw.Errors, rw.LastError)
+		}
 	})
 	windows := make([]window, len(res.Rows))
 	for i, rw := range res.Rows {

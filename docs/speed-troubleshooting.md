@@ -39,7 +39,10 @@ cd native/core && go build -o /tmp/asterlink-throughput ./cmd/asterlink-throughp
 /tmp/asterlink-throughput --url <经隧道可达的大文件> --duration 10m --label "<版本、节点、插电或电池>"
 ```
 
-- `--url`：被反复下载的文件。可以用流量接收端 asterlink-trafficsink 的 `/down?bytes=268435456&t=<令牌>`（部署方式见 docs/android-billing-acceptance.md），也可以用公开的测速大文件（例如 OVH 的 `proof.ovh.net/files/1Gb.dat`）。查询串只写进内存，报告里会被抹掉。**优先用自己部署的接收端**：公开测速站会按出口 IP 限制并发或频率，限住以后整段窗口为 0，看起来像隧道断流（2026-11-05 实测：OVH 在 4 条并行连接约 10 s 后对节点出口完全不再应答，Cloudflare 的下载接口返回 403，而同一时刻隧道里的其他网站正常）。跑之前先用 curl 单独确认文件能下；工具的报告里 `stalls` 和 `errors` 很多、首字节探测全部失败时，先怀疑测速源。
+- `--url`：被反复下载的文件。可以用流量接收端 asterlink-trafficsink 的 `/down?bytes=268435456&t=<令牌>`（部署方式见 docs/android-billing-acceptance.md），也可以用公开的测速大文件（例如 OVH 的 `proof.ovh.net/files/1Gb.dat`）。查询串只写进内存，报告里会被抹掉。**优先用自己部署的接收端**：公开测速站会按出口 IP 限制并发或频率，限住以后整段窗口为 0，看起来像隧道断流（2026-11-05 实测：OVH 在 4 条并行连接约 10 s 后对节点出口完全不再应答，Cloudflare 的下载接口返回 403，而同一时刻隧道里的其他网站正常）。跑之前先用 curl 单独确认文件能下；工具的报告里 `stalls` 和 `errors` 很多、首字节探测全部失败时，先怀疑测速源（CSV 的 `last_error` 一栏和日志会写出最后一个错误）。用公开源时：
+  - 首字节探测默认每秒一次，会让下载站一分钟收到 60 个请求。把探测指到另一个轻量地址并放慢，例如 `--rtt-url https://www.cloudflare.com/cdn-cgi/trace --rtt-interval 2s`。
+  - 工具自报 `asterlink-throughput/1` 作为客户端名：Hetzner 的测速站对 Go 的默认客户端名直接断开（每个请求都是 EOF）。
+  - 2026-11-05 在用户节点上实测可用的有 Vultr 洛杉矶（`lax-ca-us-ping.vultr.com/vultr.com.1000MB.bin`）和 Hetzner（`*-speed.hetzner.com/1GB.bin`，较慢）；Linode 不应答。
 - 默认 4 条并行连接、前 30 s 预热不判、第 4 分钟开始 2 分钟的 CPU 竞争（每个核一个忙循环进程，普通优先级，和任何应用一样），共 10 分钟。60 分钟长时观看（R3-03）用 `--duration 60m --contention-for 0`，只判平台期。
 - 每 10 s 一行写进 `artifacts/throughput/<时间>/throughput.csv`：吞吐、1 s 一次的小请求首字节时间（整条路径的往返，不是 TUN 本地的握手）、请求数、出错和“30 s 没动”被切断重试的次数，以及它能从外部读到的 Core 状态：
   - macOS：Core 的线程数和 PRI 最低、最高值。
@@ -107,4 +110,6 @@ cd native/core && go build -o /tmp/asterlink-throughput ./cmd/asterlink-throughp
 
 - 替身对比：第 3.3 节。
 - Android 模拟器的调度核查：docs/android-lifecycle.md 的 Scheduling 一节。
-- 真实节点（用户本机，2026-11-05）：用户事先说明节点当时很慢。经 Helper 拉起的正式 Core（0.1.1 r2-quic，Helper 为 interactive (4)，线程全部 31T，CPU 占用 0.1%）。单条连接约 8 Mbit/s；10 分钟测量开始约 10 s 后，OVH 对节点出口完全不再应答，Cloudflare 下载接口返回 403，Hetzner 只有 0.03～1.4 Mbit/s，而 Cloudflare 的诊断页仍能打开。这一轮因此作废，只说明节点出口和测速源当时的状况，不说明隧道的问题。真实节点上的 10 分钟竞争测量和 60 分钟长测，改在节点恢复正常后再做（handoff_fix.md 第 12 节第 3 轮记录写明了状态）。
+- 真实节点（用户本机，2026-11-05，经 Helper 拉起的正式 Core 0.1.1 r2-quic，Helper 为 interactive (4)）：
+  - 时延：首字节探测指到 Cloudflare 诊断页、每 2 s 一次。10 个核全部占满的竞争期与空闲时相比，中位数 224.3 对 223.4 ms、226.8 对 225.6 ms（两次各 10 分钟），探测没有一次失败，Core 线程全部 31。修复前的 F1 在替身上会让同一探测从 0.6 ms 涨到 84 ms。
+  - 吞吐没有测成：公开测速源对这个出口都不稳定（OVH 不再应答或 unexpected EOF，Cloudflare 下载接口 403，Vultr 只允许 2 条连接后不再应答，Hetzner 只给 1 Mbit/s 左右）。有数据时 13～50 Mbit/s，但大文件长连接反复整段卡住 30 s 以上，同一隧道里的短请求一直正常。分不清是源站在限这个出口还是节点对长连接的处理；客户端一侧没有异常。**下一步**：把 asterlink-trafficsink 部署在一台自己的服务器上，用它的 `/down` 重测 10 分钟竞争和 60 分钟长测（handoff_fix.md 第 12 节第 3 轮记录）。
