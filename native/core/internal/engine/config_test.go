@@ -57,10 +57,12 @@ func TestTemplateIsParsedByPinnedCoreAndStaysLocked(t *testing.T) {
 	if _, ok := cfg.Proxies[ProxyName]; !ok {
 		t.Fatal("the node adapter is missing")
 	}
-	// MATCH to the node, then a final MATCH,REJECT (see TestUDPWithoutSupportIsRejectedNeverDirect).
-	if len(cfg.Rules) != 2 || !strings.EqualFold(cfg.Rules[0].RuleType().String(), "MATCH") || cfg.Rules[0].Adapter() != ProxyName ||
-		!strings.EqualFold(cfg.Rules[1].RuleType().String(), "MATCH") || cfg.Rules[1].Adapter() != "REJECT" {
-		t.Fatalf("routing is not MATCH node then MATCH REJECT: %d rules", len(cfg.Rules))
+	// UDP 443 refused first (TestQUICIsRejectedBeforeTheNode), MATCH to the node, then a final
+	// MATCH,REJECT (see TestUDPWithoutSupportIsRejectedNeverDirect).
+	if len(cfg.Rules) != 3 || !strings.EqualFold(cfg.Rules[0].RuleType().String(), "AND") || cfg.Rules[0].Adapter() != "REJECT" ||
+		!strings.EqualFold(cfg.Rules[1].RuleType().String(), "MATCH") || cfg.Rules[1].Adapter() != ProxyName ||
+		!strings.EqualFold(cfg.Rules[2].RuleType().String(), "MATCH") || cfg.Rules[2].Adapter() != "REJECT" {
+		t.Fatalf("routing is not QUIC REJECT, MATCH node, MATCH REJECT: %d rules", len(cfg.Rules))
 	}
 	for name := range cfg.Providers { // only the core-internal "default" holder may exist
 		if name != "default" {

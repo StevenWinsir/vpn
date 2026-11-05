@@ -95,15 +95,18 @@ func TuneMemory(limitBytes int64, gcPercent int) {
 func FreeMemory() { debug.FreeOSMemory() }
 
 // RuntimeStats is a non-secret diagnostic document for the cycle and memory gates
-// (D-CYCLES, D-MEM): goroutines, Go heap in use and the bytes obtained from the system.
+// (D-CYCLES, D-MEM): goroutines, Go heap in use, the bytes obtained from the system, and
+// the share of the process's CPU time the GC has used since start (handoff_fix.md F5: a
+// tight heap limit shows up here before it shows up as a slow tunnel).
 func RuntimeStats() string {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	body, _ := json.Marshal(struct {
-		Goroutines int    `json:"goroutines"`
-		HeapInUse  uint64 `json:"heap_in_use"`
-		Sys        uint64 `json:"sys"`
-		NumGC      uint32 `json:"num_gc"`
-	}{runtime.NumGoroutine(), stats.HeapInuse, stats.Sys, stats.NumGC})
+		Goroutines int     `json:"goroutines"`
+		HeapInUse  uint64  `json:"heap_in_use"`
+		Sys        uint64  `json:"sys"`
+		NumGC      uint32  `json:"num_gc"`
+		GCCPU      float64 `json:"gc_cpu_fraction"`
+	}{runtime.NumGoroutine(), stats.HeapInuse, stats.Sys, stats.NumGC, stats.GCCPUFraction})
 	return string(body)
 }

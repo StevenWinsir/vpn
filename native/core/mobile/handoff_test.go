@@ -57,8 +57,11 @@ func TestMemoryControls(t *testing.T) {
 		Goroutines int    `json:"goroutines"`
 		HeapInUse  uint64 `json:"heap_in_use"`
 		Sys        uint64 `json:"sys"`
+		// handoff_fix.md F5: present so the iOS sample line can show the GC's CPU share.
+		GCCPU *float64 `json:"gc_cpu_fraction"`
 	}
-	if err := json.Unmarshal([]byte(RuntimeStats()), &stats); err != nil || stats.Goroutines == 0 || stats.Sys == 0 {
+	if err := json.Unmarshal([]byte(RuntimeStats()), &stats); err != nil || stats.Goroutines == 0 || stats.Sys == 0 ||
+		stats.GCCPU == nil || *stats.GCCPU < 0 || *stats.GCCPU > 1 {
 		t.Fatalf("stats %+v %v", stats, err)
 	}
 }

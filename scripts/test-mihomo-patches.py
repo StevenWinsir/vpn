@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Hash-locked patch application and the real sing-tun NAT lifecycle regression.
+"""Hash-locked patch application, the real sing-tun NAT lifecycle regression and the
+REJECT-is-not-billed statistics regression (handoff_fix.md F3).
 
 No root, TUN, database or network changes. Run from any of the three host OSes.
 """
@@ -77,5 +78,6 @@ if __name__ == '__main__':
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(PreparationTests))
     if not result.wasSuccessful():
         raise SystemExit(1)
-    subprocess.run(['go', 'test', '-count=1', '-v', 'github.com/metacubex/mihomo/listener/sing_tun', '-run', '^TestAsterLink'],
+    subprocess.run(['go', 'test', '-count=1', '-v', 'github.com/metacubex/mihomo/listener/sing_tun',
+                    'github.com/metacubex/mihomo/tunnel/statistic', '-run', '^TestAsterLink'],
                    cwd=patch.ROOT / 'native/core', env=dict(os.environ), check=True)

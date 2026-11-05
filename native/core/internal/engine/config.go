@@ -38,10 +38,19 @@ func BuildConfig(profile managed.Profile) ([]byte, error) {
 	return buildConfig(profile, runtime.GOOS)
 }
 
+// RejectQUICRule refuses UDP to port 443 (QUIC, HTTP/3) before anything reaches the node
+// (handoff_fix.md F2, D4, D5). The pinned core's UDP path drops packets silently whenever a
+// queue is full, and cross-border UDP is often shaped, so QUIC through the node collapses
+// and recovers slowly; browsers and apps fall back to TCP (HTTP/2 over TLS) at once when it
+// is refused. Only UDP 443: DNS (hijacked earlier), WebRTC, STUN and game traffic keep the
+// existing policy. REJECT discards without resolving, and the patched statistics module
+// does not bill it (native/third_party/patches, asterlink-mihomo-v2).
+const RejectQUICRule = "AND,((NETWORK,UDP),(DST-PORT,443)),REJECT"
+
 // buildConfig takes the platform explicitly so every platform's document can be tested
 // on any host.
 //
-// The rule list is "MATCH,node" followed by "MATCH,REJECT". The second rule is not
+// The rule list is RejectQUICRule, then "MATCH,node", then "MATCH,REJECT". The last rule is not
 // redundant: when the first matches an adapter without UDP support, the pinned
 // tunnel.match skips it for UDP and, with no rule left, answers DIRECT (see the
 // SupportUDP check and the final proxies["DIRECT"] in Clash.Meta/tunnel/tunnel.go).
@@ -75,7 +84,7 @@ func buildConfig(profile managed.Profile, goos string) ([]byte, error) {
 			"proxy-server-nameserver": []string{"1.1.1.1"},
 		},
 		"proxies": []any{proxy},
-		"rules":   []string{"MATCH," + ProxyName, "MATCH,REJECT"},
+		"rules":   []string{RejectQUICRule, "MATCH," + ProxyName, "MATCH,REJECT"},
 	}
 	if goos == "windows" {
 		// strict-route is what makes Windows capture DNS and IPv6: sing-tun installs a

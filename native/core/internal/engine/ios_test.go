@@ -22,7 +22,7 @@ func iosTun(t *testing.T) tunConfig {
 	if err != nil {
 		t.Fatalf("pinned core rejected the iOS template: %v", err)
 	}
-	if want := []string{"MATCH," + ProxyName, "MATCH,REJECT"}; len(cfg.Rules) != len(want) {
+	if want := []string{RejectQUICRule, "MATCH," + ProxyName, "MATCH,REJECT"}; len(cfg.Rules) != len(want) {
 		t.Fatalf("rules %v", cfg.Rules)
 	}
 	return cfg.General.Tun

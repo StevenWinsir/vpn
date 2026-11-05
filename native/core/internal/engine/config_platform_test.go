@@ -41,13 +41,18 @@ func TestWindowsTemplateAddsStrictRouteAndDeviceOnly(t *testing.T) {
 	// verifyIP6), so presence is host-dependent; the engine reports that as IPv6Absent.
 }
 
-// walk mirrors the pinned tunnel.match for a MATCH-only rule list (Clash.Meta/tunnel/tunnel.go):
-// a rule whose adapter lacks UDP support is skipped for UDP, and with no rule left the
-// answer is DIRECT. The test uses the pinned core's own parsed rules and adapters, so the
-// only duplicated piece is that loop; the real traversal is exercised on Windows (T02).
+// walk mirrors the pinned tunnel.match (Clash.Meta/tunnel/tunnel.go): a rule whose adapter
+// lacks UDP support is skipped for UDP, and with no rule left the answer is DIRECT. The test
+// uses the pinned core's own parsed rules and adapters, so the only duplicated piece is that
+// loop; the real traversal is exercised on Windows (T02). Port 80 stands for "not QUIC".
 func walk(t *testing.T, cfg *configUnderTest, network C.NetWork) string {
 	t.Helper()
-	md := &C.Metadata{NetWork: network}
+	return walkPort(t, cfg, network, 80)
+}
+
+func walkPort(t *testing.T, cfg *configUnderTest, network C.NetWork, port uint16) string {
+	t.Helper()
+	md := &C.Metadata{NetWork: network, DstPort: port}
 	for _, rule := range cfg.rules {
 		matched, name := rule.Match(md, C.RuleMatchHelper{})
 		if !matched {
@@ -101,8 +106,44 @@ func TestUDPWithoutSupportIsRejectedNeverDirect(t *testing.T) {
 	}
 	// Without the trailing rule the old template really would have gone DIRECT:
 	// this guards the guard against being "fixed" by deleting the rule.
-	only := &configUnderTest{rules: noUDP.rules[:1], proxies: noUDP.proxies}
+	only := &configUnderTest{rules: noUDP.rules[:2], proxies: noUDP.proxies}
 	if got := walk(t, only, C.UDP); got != "DIRECT" {
 		t.Fatalf("the single-MATCH list was expected to fall to DIRECT for UDP, got %q", got)
+	}
+}
+
+// QUIC (UDP 443) is refused before the node on every platform, whatever the node supports;
+// TCP 443 and every other UDP port keep the old routing (handoff_fix.md F2, D4, D5).
+func TestQUICIsRejectedBeforeTheNode(t *testing.T) {
+	for _, udp := range []bool{true, false} {
+		cfg := parseForWalk(t, udp)
+		if got := walkPort(t, cfg, C.UDP, 443); got != "REJECT" {
+			t.Fatalf("udp=%v: UDP 443 resolved to %q, want REJECT", udp, got)
+		}
+		if got := walkPort(t, cfg, C.TCP, 443); got != ProxyName {
+			t.Fatalf("udp=%v: TCP 443 resolved to %q, want the node", udp, got)
+		}
+		for _, port := range []uint16{53, 3478, 4433, 8443, 19302} {
+			want := ProxyName
+			if !udp {
+				want = "REJECT"
+			}
+			if got := walkPort(t, cfg, C.UDP, port); got != want {
+				t.Fatalf("udp=%v: UDP %d resolved to %q, want %q (only 443 is special)", udp, port, got, want)
+			}
+		}
+	}
+	for _, goos := range []string{"darwin", "windows", "android", "ios"} {
+		data, err := buildConfig(sampleProfile("n", nil), goos)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := executor.ParseWithBytes(data)
+		if err != nil {
+			t.Fatalf("%s: pinned core rejected the template: %v", goos, err)
+		}
+		if len(cfg.Rules) != 3 || cfg.Rules[0].Adapter() != "REJECT" || cfg.Rules[1].Adapter() != ProxyName {
+			t.Fatalf("%s: the QUIC refusal must come first, before MATCH,node: %d rules", goos, len(cfg.Rules))
+		}
 	}
 }

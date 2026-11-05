@@ -87,17 +87,27 @@ struct GateLogTests {
 
 struct ResourceSampleTests {
     @Test func aLogLineReadsBackExactly() {
-        let sample = ResourceSample(uptimeSeconds: 600, footprint: 31 << 20, peak: 36 << 20, openFiles: 41, threads: 19,
+        var sample = ResourceSample(uptimeSeconds: 600, footprint: 31 << 20, peak: 36 << 20, openFiles: 41, threads: 19,
                                     goroutines: 88, goHeap: 12 << 20, goSys: 25 << 20, gcCount: 140)
+        sample.releases = 3
+        sample.priorityMin = 31
+        sample.priorityMax = 47
+        sample.gcCPUPerMille = 42
         #expect(ResourceSample.parse("2026-10-18 12:00:00 asterlink.tunnel \(sample.logLine)") == sample)
+        // A line from before the round-2 fields still reads, with the new fields at zero.
+        let old = ResourceSample.parse("sample t=600 footprint=1 peak=2 fds=3 threads=4 goroutines=5 heap=6 sys=7 gc=8")
+        #expect(old?.gcCount == 8 && old?.releases == 0 && old?.priorityMin == 0)
         #expect(ResourceSample.parse("stop: reason none") == nil)
         #expect(ResourceSample.parse("sample t=1 footprint=2") == nil)
     }
 
     @Test func aCaptureCountsThisProcess() {
-        let stats = #"{"goroutines":12,"heap_in_use":1000,"sys":2000,"num_gc":3}"#
-        let sample = ResourceSample.capture(uptime: 5, footprint: 100, peak: 120, stats: stats)
+        let stats = #"{"goroutines":12,"heap_in_use":1000,"sys":2000,"num_gc":3,"gc_cpu_fraction":0.0425}"#
+        let sample = ResourceSample.capture(uptime: 5, footprint: 100, peak: 120, stats: stats, releases: 2)
         #expect(sample.goroutines == 12 && sample.goHeap == 1000 && sample.goSys == 2000 && sample.gcCount == 3)
+        #expect(sample.releases == 2 && sample.gcCPUPerMille == 43)
+        // This process's own threads are readable and in a sane band.
+        #expect(sample.priorityMin > 0 && sample.priorityMin <= sample.priorityMax && sample.priorityMax < 128)
         #expect(sample.openFiles >= 3 && sample.threads >= 1)
         #expect(ResourceSample.capture(uptime: 0, footprint: 0, peak: 0, stats: "not json").goroutines == 0)
     }

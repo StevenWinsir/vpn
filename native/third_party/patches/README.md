@@ -1,10 +1,20 @@
-# Mihomo lifecycle patch
+# Mihomo patches (lifecycle and metering)
 
 The submodule **does not move**: `70f0570405c3c2c47bb113b88db95006d239b346`
 from `chen08209/Clash.Meta` (`FlClash`), with `github.com/metacubex/sing-tun v0.4.22`.
 `manifest.json` locks the base commit, patch SHA-256 and every original/resulting
 file SHA-256. The patch and its regression tests are corresponding source retained
 in this repository, not an unrecorded edit to a developer's Go module cache.
+
+`0001-asterlink-mihomo.patch` (id `asterlink-mihomo-v2`) carries two reviewed changes:
+
+1. the sing-tun listener context lifecycle (v1, unchanged, described below);
+2. metering (handoff_fix.md F3): `tunnel/statistic` no longer adds bytes whose chain ends
+   at `REJECT` or `REJECT-DROP` to the proxy totals (`TotalTraffic(true)`), which the client
+   bills. Those outbounds accept writes and discard them, so the bytes never left the device.
+   `DIRECT` stays excluded as before; the all-traffic totals are unchanged.
+   `statistic.AsterLinkRejectPatchVersion` is the compile-time marker, required by
+   `internal/engine/mihomo_patch.go`; `asterlink_reject_test.go` is the regression.
 
 ## Prepare and verify
 
