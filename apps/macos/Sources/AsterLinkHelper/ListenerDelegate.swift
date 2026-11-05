@@ -59,14 +59,16 @@ final class HelperService: NSObject, AsterLinkHelperXPC {
     }
 
     func hello(reply: @escaping (Data) -> Void) {
-        reply(HelperReply(ok: true, helperVersion: helperVersion, workerRunning: supervisor.isRunning).encoded())
+        reply(HelperReply(ok: true, helperVersion: helperVersion, workerRunning: supervisor.isRunning,
+                          schedulingLimited: supervisor.schedulingLimited).encoded())
     }
 
     func startWorker(reply: @escaping (Data) -> Void) {
         DispatchQueue.global().async {
             do {
                 let hello = try self.supervisor.start()
-                reply(HelperReply(ok: true, helperVersion: self.helperVersion, workerRunning: true, core: hello).encoded())
+                reply(HelperReply(ok: true, helperVersion: self.helperVersion, workerRunning: true, core: hello,
+                                  schedulingLimited: self.supervisor.schedulingLimited).encoded())
             } catch let failure as HelperFailure {
                 reply(HelperReply(ok: false, errorCode: failure.code, detail: failure.detail,
                                   helperVersion: self.helperVersion, workerRunning: self.supervisor.isRunning).encoded())

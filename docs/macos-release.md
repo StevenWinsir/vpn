@@ -87,6 +87,13 @@ python3 scripts/test-native-macos.py --suite release
 
 **升级**：先在 App 中断开 → 用新版本替换 `/应用程序/AsterLink.app` → 打开。App 连接前会先向 Helper 握手并比较版本：不一致就**拒绝启动内核**，提示"后台服务需要更新，请在“账户”页重新安装后台服务"（账户页“后台服务”区的“重新安装”按钮，等价于 注销 + 重新注册；用户界面只说“后台服务”，Helper 一词不出现，D11）。连接中、正在断开时这两个按钮禁用（`HelperUpgradePolicy`，有单元测试）。
 
+**后台服务的调度等级（handoff_fix.md F1，2026-11-04 起）**：Helper 的 launchd plist 声明 `ProcessType = Interactive`。不声明时 launchd 对它施加“轻度资源限制”，它拉起的 Core 全部线程只有优先级 20（实用级），CPU 一紧张转发就掉速；Interactive 下 Helper 和 Core 都是 31。要点：
+- launchd 只在**注册时**读 plist。从旧版升级必须“重新安装”后台服务才生效；发布新版必须提升版本号，让版本不一致的提示一定出现。
+- Helper 每次握手都报告自己和 Core 是否仍被限制（`scheduling_limited`，`SchedulingProbe`）。版本相同但仍被限制时，App 给出同样的“重新安装”提示；本版本注册过一次后仍被限制，就不再拦截连接，避免死循环。
+- 在 Helper 里给子进程声明服务质量**突破不了**继承来的限制（实测：utility 限制下声明 userInitiated 的子进程仍是 20），所以唯一有效的是 plist。
+- 开发直连模式和用 sudo 跑的验收工具本来就是 31，看不到这个问题。**性能验收必须用正式安装、经 Helper 拉起的 Core**，并用 `ps -M` 确认 Core 线程不低于 31、`launchctl print system/com.asterlink.vpn.helper` 显示 `spawn type = interactive (4)`。
+- 守护：bundle 套件的 S-PLIST-TYPE（plist 必须是 Interactive）和 S-QOS（把构建出的 Helper 自检作为本用户 launchd 任务运行：发布类型下 Helper 和 Core 都不受限，不设类型的对照组必须受限）。
+
 **卸载**：
 - 推荐：账户页 → “后台服务”下的“故障排查” → “移除后台服务”（二次确认） → 退出 AsterLink（菜单栏图标 → 退出）→ 把 App 拖进废纸篓。仅菜单栏模式的旧进程必须先退出才能替换或卸载（DMG 里的“安装说明.txt”写明了）。
 - 或运行 DMG 内的 `卸载 AsterLink.command`（源码：`scripts/uninstall-asterlink.sh`）。默认**预演**，加 `--apply` 才执行；只处理 AsterLink 自己的 App、偏好、缓存、`/Library/Application Support/AsterLink`、两条钥匙串条目（记住的密码、设备 ID）和 `system/com.asterlink.vpn.helper` 这一个 launchd 标签；系统级项需要 sudo。**不动其他 VPN、路由、DNS。**

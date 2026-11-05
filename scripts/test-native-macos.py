@@ -15,6 +15,7 @@ from pathlib import Path
 import argparse
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -147,6 +148,63 @@ def suite_bundle(run_id):
     text = sh(['plutil', '-p', str(helper_plist)]).stdout
     ok = 'BundleProgram' in text and 'Contents/MacOS/AsterLinkHelper' in text and 'com.asterlink.vpn.helper' in text
     record('S-PLIST', 'launchd plist uses BundleProgram + one Mach service', 'present' if ok else text[:120], 'pass' if ok else 'fail')
+    with open(helper_plist, 'rb') as handle:
+        process_type = plistlib.load(handle).get('ProcessType')
+    record('S-PLIST-TYPE', 'launchd plist declares ProcessType Interactive (handoff_fix.md F1)', repr(process_type),
+           'pass' if process_type == 'Interactive' else 'fail')
+    scheduling_contract(app, process_type)
+
+
+def scheduling_contract(app: Path, process_type):
+    """S-QOS: the shipped ProcessType really keeps the Helper and the Core it spawns out of launchd's clamp.
+
+    The Debug Helper's self-test (verify + install + spawn the real Core + hello) runs as a per-user launchd
+    job with the plist's ProcessType, and once without one as the negative control that proves the check can
+    fail: macOS clamps a job without ProcessType, and every child, to priority 20 (handoff_fix.md 2.2).
+    """
+    uid = os.getuid()
+    domain = None
+    for candidate in ('gui/%d' % uid, 'user/%d' % uid):
+        if subprocess.run(['launchctl', 'print', candidate], capture_output=True).returncode == 0:
+            domain = candidate
+            break
+    if domain is None:
+        record('S-QOS', 'Helper and Core run unclamped under the shipped ProcessType', 'no per-user launchd domain', 'fail')
+        return
+    work = Path(tempfile.mkdtemp(prefix='asterlink-qos-'))
+    results = {}
+    try:
+        for name, kind in (('shipped', process_type), ('control', None)):
+            label = 'com.asterlink.vpn.qos-%s-%d' % (name, os.getpid())
+            output = work / (name + '.json')
+            job = {'Label': label, 'RunAtLoad': True, 'StandardOutPath': str(output), 'StandardErrorPath': '/dev/null',
+                   'ProgramArguments': [str(app / 'Contents/MacOS/AsterLinkHelper'), '--self-test-root', str(work / name / 'Workers')]}
+            if kind:
+                job['ProcessType'] = kind
+            plist = work / (label + '.plist')
+            with open(plist, 'wb') as handle:
+                plistlib.dump(job, handle)
+            boot = subprocess.run(['launchctl', 'bootstrap', domain, str(plist)], capture_output=True, text=True)
+            if boot.returncode != 0:
+                results[name] = {'error': 'bootstrap: ' + boot.stderr.strip()[:120]}
+                continue
+            deadline = time.time() + 60
+            while time.time() < deadline and not (output.exists() and output.read_text().strip()):
+                time.sleep(0.5)
+            subprocess.run(['launchctl', 'bootout', '%s/%s' % (domain, label)], capture_output=True)
+            try:
+                results[name] = json.loads(output.read_text().strip().splitlines()[-1])
+            except (OSError, ValueError, IndexError):
+                results[name] = {'error': 'no self-test reply'}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    shipped, control = results.get('shipped', {}), results.get('control', {})
+    ok = shipped.get('ok') is True and shipped.get('scheduling_limited') is False and control.get('scheduling_limited') is True
+    observed = 'shipped(%s): ok=%s limited=%s; control(no ProcessType): limited=%s' % (
+        process_type, shipped.get('ok'), shipped.get('scheduling_limited', shipped.get('error')),
+        control.get('scheduling_limited', control.get('error')))
+    record('S-QOS', 'Helper and its Core run unclamped under the shipped ProcessType; without one they are clamped', observed,
+           'pass' if ok else 'fail', '' if ok else json.dumps(results)[:400])
 
 
 # The design preview scenarios (handoff_app_standardization.md 5.10 and the round 3 list in section 10).

@@ -168,9 +168,13 @@ def main():
         'AsterLinkChannel': values['APP_ENV'], 'AsterLinkTeamID': team,
         'AsterLinkAPIBase': values['API_BASE_URL'], 'AsterLinkWebsiteBase': values['WEBSITE_BASE_URL'],
     })
+    # ProcessType Interactive (handoff_fix.md F1, D1): without it launchd applies "light resource limits" to the
+    # daemon, and the Core it spawns inherits the clamp (every thread at priority 20, utility), so the whole data path
+    # starves as soon as the CPU is busy. Interactive has no limits; Adaptive would drop to 4 between XPC calls.
     write_plist(contents / 'Library/LaunchDaemons' / (HELPER_ID + '.plist'), {
         'Label': HELPER_ID, 'BundleProgram': 'Contents/MacOS/AsterLinkHelper',
         'MachServices': {HELPER_ID: True}, 'AssociatedBundleIdentifiers': [APP_ID],
+        'ProcessType': 'Interactive',
     })
     core_hash = sha256(contents / 'Resources/asterlink-core')
     (contents / 'Resources/worker-manifest.json').write_text(json.dumps({'version': args.app_version, 'sha256': core_hash}, indent=2) + '\n')

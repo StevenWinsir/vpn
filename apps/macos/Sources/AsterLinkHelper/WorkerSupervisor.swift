@@ -42,6 +42,22 @@ final class WorkerSupervisor {
         return running && activeProcess?.isRunning == true
     }
 
+    /// The running Core's process id, for the scheduling check (SchedulingProbe).
+    var workerPID: pid_t? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        guard running, let process = activeProcess, process.isRunning else { return nil }
+        return process.processIdentifier
+    }
+
+    /// Whether this Helper, or the Core it runs, is held below the normal scheduling band
+    /// (handoff_fix.md F1): true if either is; nil if neither could be read.
+    var schedulingLimited: Bool? {
+        let own = SchedulingProbe.isLimited()
+        let worker = workerPID.flatMap { SchedulingProbe.isLimited(pid: $0) }
+        if own == true || worker == true { return true }
+        return own == nil && worker == nil ? nil : false
+    }
+
     private func publish(_ child: Process?) {
         stateLock.lock()
         activeProcess = child

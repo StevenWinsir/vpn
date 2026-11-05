@@ -34,11 +34,15 @@ if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--self-test-ro
     do {
         let hello = try supervisor.start()
         let running = supervisor.isRunning
+        // Read while the Core runs: the bundle suite runs this self-test as a launchd job of the
+        // shipped ProcessType and checks both the Helper and its Core (handoff_fix.md F1).
+        let scheduling = supervisor.schedulingLimited
         // A second start must be refused deterministically.
         var secondRefused = false
         do { _ = try supervisor.start() } catch let failure as HelperFailure { secondRefused = failure.code == .workerBusy } catch {}
         supervisor.stop()
-        let reply = HelperReply(ok: running && secondRefused, helperVersion: helperVersion, workerRunning: supervisor.isRunning, core: hello)
+        let reply = HelperReply(ok: running && secondRefused, helperVersion: helperVersion, workerRunning: supervisor.isRunning, core: hello,
+                                schedulingLimited: scheduling)
         print(String(decoding: reply.encoded(), as: UTF8.self))
         exit(running && secondRefused ? 0 : 1)
     } catch let failure as HelperFailure {

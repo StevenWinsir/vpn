@@ -96,6 +96,27 @@ public class WorkerTests
     }
 
     [CoreFact]
+    public async Task The_core_is_opted_out_of_power_throttling_before_it_runs()
+    {
+        // handoff_fix.md F4 / R1-10: Windows 11 22H2+ would otherwise give the windowless Core Utility QoS
+        // (efficiency cores, lowest frequency on battery). The policy must be set and must not throttle.
+        using var worker = Launch();
+        Assert.Equal(0, worker.PowerThrottlingError);
+        Assert.True((await Exchange(worker, IpcCommands.Hello, "h1")).Ok);
+        var policy = worker.ReadPowerThrottling();
+        Assert.NotNull(policy);
+        Assert.True(policy!.Managed, "the Core must not be left to the system's throttling heuristics");
+        Assert.False(policy.Throttled, "the Core must not run at EcoQoS");
+    }
+
+    [WindowsFact]
+    public void A_failed_power_throttling_opt_out_is_reported_not_thrown()
+    {
+        // R1-12: the launcher only logs this; a Core that cannot be opted out still starts.
+        Assert.NotEqual(0, PowerThrottling.OptOut(IntPtr.Zero));
+    }
+
+    [CoreFact]
     public void The_core_started_by_hand_without_handles_exits_with_one()
     {
         var info = new System.Diagnostics.ProcessStartInfo(Core) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };

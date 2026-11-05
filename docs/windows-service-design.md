@@ -68,6 +68,11 @@ SYSTEM. Only then is `hello` (and later a password) sent.
 * `CreateProcess` **suspended** with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` (only NUL + the two pipe ends are inherited), an explicit
   environment (`SystemRoot`, `windir`, `SystemDrive`, `PATH`, `TEMP`/`TMP` = `%ProgramData%\AsterLink\run`, `ProgramData`, two IPC handles),
   no window, command line = the quoted path only. It is assigned to a Job Object with `KILL_ON_JOB_CLOSE` while still suspended.
+* Still suspended, it is opted out of execution-speed power throttling (`PowerThrottling.OptOut`: `SetProcessInformation`
+  `ProcessPowerThrottling`, control bit set, state bit clear = High QoS). Windows 11 22H2+ otherwise treats a windowless child of a
+  service as a background service (Utility QoS): on battery, most efficient frequency and efficiency cores (handoff_fix.md F4, quoting
+  Microsoft's "Quality of Service" page). The priority class stays Normal. A failure is logged (`PowerThrottlingError`) and the Core
+  still starts. `WorkerTests` reads the policy back from the running Core. Performance acceptance on a laptop must include a run on battery.
 * The recovery record is written (atomic replace, flushed to disk) **while the Core is still suspended**; if that fails the Core is
   killed unrun.
 * The Core's `hello` must report `asterlink-core`, protocol 1 and the manifest version.
