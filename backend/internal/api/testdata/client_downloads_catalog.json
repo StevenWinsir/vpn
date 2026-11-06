@@ -1,0 +1,47 @@
+{
+  "platforms": [
+    {
+      "platform": "windows",
+      "archs": ["x64", "arm64"],
+      "formats": ["exe", "msi", "zip"]
+    },
+    {
+      "platform": "macos",
+      "archs": ["arm64", "x64", "universal"],
+      "formats": ["dmg", "pkg"]
+    },
+    {
+      "platform": "android",
+      "archs": ["arm64-v8a", "armeabi-v7a", "x86_64", "universal"],
+      "formats": ["apk"]
+    },
+    {
+      "platform": "ios",
+      "archs": ["arm64"],
+      "formats": ["ipa", "app_store", "testflight"]
+    },
+    {
+      "platform": "linux",
+      "archs": ["x64", "arm64"],
+      "formats": ["appimage", "deb", "rpm", "tar.gz"]
+    }
+  ],
+  "suffixes": {
+    "apk": ".apk",
+    "appimage": ".appimage",
+    "deb": ".deb",
+    "dmg": ".dmg",
+    "exe": ".exe",
+    "ipa": ".ipa",
+    "msi": ".msi",
+    "pkg": ".pkg",
+    "rpm": ".rpm",
+    "tar.gz": ".tar.gz",
+    "zip": ".zip"
+  },
+  "store_hosts": {
+    "app_store": "apps.apple.com",
+    "testflight": "testflight.apple.com"
+  },
+  "limit": 60
+}

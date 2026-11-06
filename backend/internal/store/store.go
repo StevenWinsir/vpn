@@ -52,7 +52,7 @@ func Migrate(db *gorm.DB, c config.Config) error {
 		if err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}, &model.PaymentNotification{}, &model.Coupon{}, &model.LoginEvent{}, &model.IPGeoCache{}, &model.Announcement{}, &model.AnnouncementRead{}, &model.ShopSettings{}, &model.Referral{}, &model.Ticket{}, &model.TicketMessage{}); err != nil {
+		if err := tx.AutoMigrate(&model.User{}, &model.Plan{}, &model.Session{}, &model.Subscription{}, &model.Order{}, &model.Node{}, &model.NativeSession{}, &model.ClientTrafficReport{}, &model.NodeConfig{}, &model.AdminAudit{}, &model.NodeAgent{}, &model.SubscriptionPeriod{}, &model.ConnectionGrant{}, &model.NodeUsageReport{}, &model.EmailAuthChallenge{}, &model.AuthMailJob{}, &model.AuthRateBucket{}, &model.NodeGroup{}, &model.ConnectionLease{}, &model.NodeAssignment{}, &model.UsageBucket{}, &model.NodeHealthEvent{}, &model.PaymentNotification{}, &model.Coupon{}, &model.LoginEvent{}, &model.IPGeoCache{}, &model.Announcement{}, &model.AnnouncementRead{}, &model.ShopSettings{}, &model.Referral{}, &model.Ticket{}, &model.TicketMessage{}, &model.ClientDownload{}); err != nil {
 			return err
 		}
 		s := `"` + c.Schema + `".`
