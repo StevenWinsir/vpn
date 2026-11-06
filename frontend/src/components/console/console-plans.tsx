@@ -17,7 +17,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { notifications } from '@mantine/notifications';
+import { toast, toastDurations } from '@/lib/toast';
 import { api, APIError } from '@/lib/api';
 import { gib, money } from '@/lib/types';
 import type { AdminPlan, AdminPlansResponse, ShopSettings } from '@/lib/console';
@@ -143,7 +143,7 @@ export function ConsolePlans() {
           onRefresh={refresh}
           onDone={(name) => {
             refresh();
-            notifications.show({ color: 'teal', title: '套餐已删除', message: name });
+            toast.success('套餐已删除', name);
           }}
         />
       ) : null}
@@ -396,10 +396,8 @@ function UpgradeBar({ settings, onSaved }: { settings: ShopSettings; onSaved: ()
           version: settings.version,
         }),
       });
-      notifications.show({
-        color: 'teal',
-        title: '升级设置已保存',
-        message: '对下一次升级报价立即生效；已创建的升级订单不受影响',
+      toast.success('升级设置已保存', '对下一次升级报价立即生效；已创建的升级订单不受影响', {
+        duration: toastDurations.note,
       });
       onSaved();
     } catch (e) {
@@ -474,10 +472,8 @@ function DiscountConfirm({
         method: 'POST',
         body: JSON.stringify({ yearly_discount_percent: next, version: settings.version }),
       });
-      notifications.show({
-        color: 'teal',
-        title: '全局年付折扣已保存',
-        message: `${foldText(next)}，对下一次报价立即生效`,
+      toast.success('全局年付折扣已保存', `${foldText(next)}，对下一次报价立即生效`, {
+        duration: toastDurations.note,
       });
       onSaved();
     } catch (e) {

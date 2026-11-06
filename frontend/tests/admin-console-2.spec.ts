@@ -89,6 +89,14 @@ test('coupons: create, generate, edit, disable, delete; a used one is only hidde
   await expect(row('E2E-OFF10')).toContainText('立减 10%');
   await expect(row('E2E-OFF10')).toContainText('全部套餐');
   await expect(row('E2E-OFF10')).toContainText('有效');
+  const toast = (text: string) => page.getByTestId('toast').filter({ hasText: text });
+  await expect(toast('优惠码已创建')).toBeVisible();
+  // The switch says what it did (handoff_message.md M5), both ways.
+  await row('E2E-OFF10').getByRole('button', { name: '停用 E2E-OFF10' }).click();
+  await expect(toast('优惠码已停用')).toContainText('E2E-OFF10');
+  await row('E2E-OFF10').getByRole('button', { name: '启用 E2E-OFF10' }).click();
+  await expect(toast('优惠码已启用')).toContainText('E2E-OFF10');
+  await expect(row('E2E-OFF10')).toContainText('有效');
 
   // A duplicate is refused with a reason.
   await page.getByRole('button', { name: '新建优惠码' }).click();

@@ -1,7 +1,8 @@
 // The cross-page message (handoff_message.md D5, M1-14): only fixed keys, read once, dropped
 // when old, malformed or unreadable; and the copy rules of D9 for every fixed message.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import {
   isNextPageToast,
@@ -107,20 +108,23 @@ test('the fixed messages follow the copy rules', () => {
   }
 });
 
-// Every message on the user pages goes through src/lib/toast.tsx (handoff_message.md 4.1); the
-// administration is moved over in round 2.
-test('user pages do not call Mantine notifications directly', () => {
-  const files = [
-    'components/providers.tsx',
-    'components/site-shell.tsx',
-    'components/auth-form.tsx',
-    'components/account-view.tsx',
-    'components/plans-view.tsx',
-    'components/referral-view.tsx',
-    'components/tickets-view.tsx',
-  ];
-  for (const file of files) {
-    const text = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
-    assert.ok(!text.includes('@mantine/notifications'), file);
-  }
+// Every message goes through src/lib/toast.tsx (handoff_message.md 4.1, M2-06): only it and the one
+// container may import Mantine's notifications. The stylesheet import in the root layout is no call.
+test('nothing but the toast module calls Mantine notifications', () => {
+  const src = new URL('../src/', import.meta.url).pathname;
+  const allowed = new Set(['lib/toast.tsx', 'components/toaster.tsx']);
+  const walk = (dir) =>
+    readdirSync(dir).flatMap((name) => {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) return walk(path);
+      return /\.(ts|tsx|js|jsx|mjs)$/.test(name) ? [path] : [];
+    });
+  const importer = /(?:from\s*|import\s*\(\s*|require\s*\(\s*)['"]@mantine\/notifications['"]/;
+  const offenders = walk(src)
+    .map((path) => relative(src, path))
+    .filter((file) => !allowed.has(file))
+    .filter((file) => importer.test(readFileSync(join(src, file), 'utf8')));
+  assert.deepEqual(offenders, []);
+  // The guard itself still sees the two allowed importers.
+  for (const file of allowed) assert.ok(importer.test(readFileSync(join(src, file), 'utf8')), file);
 });

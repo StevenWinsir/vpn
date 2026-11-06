@@ -237,6 +237,8 @@ test('T2-01 / T2-05 / T2-09: submit, the console sees it, support replies, the u
   await expect(
     drawer(admin.page).getByTestId('console-ticket-message').filter({ hasText: '已核实订单' }),
   ).toContainText(`客服 · ${fixture.emails.ticketroot}`);
+  // handoff_message.md M6.
+  await expect(admin.page.getByTestId('toast').filter({ hasText: '回复已发送' })).toBeVisible();
   await expect(admin.page.getByTestId('console-ticket-badge')).toHaveCount(0);
   await shot(admin.page, 'console-ticket-drawer-1440');
 

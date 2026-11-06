@@ -20,7 +20,7 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { toast, toastDurations } from '@/lib/toast';
 import { api, APIError } from '@/lib/api';
 import {
   gib,
@@ -854,11 +854,7 @@ function PasswordModal({ user, onClose, onDone }: ModalProps) {
         method: 'POST',
         body: JSON.stringify({ admin_password: adminPassword, new_password: next, notify }),
       });
-      notifications.show({
-        color: 'teal',
-        title: '密码已修改',
-        message: '该用户所有设备已退出登录。',
-      });
+      toast.success('密码已修改', '该用户所有设备已退出登录。', { duration: toastDurations.note });
       onDone();
       onClose();
     } catch (e) {
@@ -937,7 +933,7 @@ function SubscriptionModal({ user, plans, onClose, onDone }: ModalProps & { plan
         method: 'POST',
         body: JSON.stringify(body),
       });
-      notifications.show({ color: 'teal', title: '套餐已保存', message: user.email });
+      toast.success('套餐已保存', user.email);
       onDone();
       onClose();
     } catch (e) {
@@ -1057,7 +1053,7 @@ function EndModal({ user, onClose, onDone }: ModalProps) {
         method: 'POST',
         body: JSON.stringify({ version: user.subscription?.version ?? 0 }),
       });
-      notifications.show({ color: 'teal', title: '订阅已结束', message: user.email });
+      toast.success('订阅已结束', user.email);
       onDone();
       onClose();
     } catch (e) {
@@ -1142,10 +1138,8 @@ function DeleteModal({ user, onClose, onDone }: ModalProps) {
         method: 'POST',
         body: JSON.stringify({ admin_password: adminPassword, email }),
       });
-      notifications.show({
-        color: 'teal',
-        title: '账号已删除',
-        message: '关联数据将在节点结清后自动清除。',
+      toast.success('账号已删除', '关联数据将在节点结清后自动清除。', {
+        duration: toastDurations.note,
       });
       onDone();
       onClose();

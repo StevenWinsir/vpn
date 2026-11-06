@@ -24,6 +24,7 @@ import {
   Title,
 } from '@mantine/core';
 import { api, message } from '@/lib/api';
+import { toast, toastDurations } from '@/lib/toast';
 import { nodeRate } from '@/lib/node-list';
 import type { AdminPlan, AdminPlansResponse } from '@/lib/console';
 import { planNameOf, planOptions } from '@/lib/plan-math';
@@ -177,7 +178,6 @@ function GroupManager() {
   const [plans, setPlans] = useState<AdminPlan[]>([]);
   const [protocols, setProtocols] = useState<string[]>([]);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [filter, setFilter] = useState(ALL);
   const [busy, setBusy] = useState(false);
   const [groupForm, setGroupForm] = useState<GroupForm | null>(null);
@@ -232,6 +232,11 @@ function GroupManager() {
   const alive = () => !lifetime.current?.signal.aborted;
 
   // Runs one administrator write; the poll is fenced off until the list is reloaded.
+  // A result says what changed and what follows from it, and goes away by itself
+  // (handoff_message.md M2); failures stay on the page until dismissed.
+  const done = (title: string, text: string) =>
+    toast.success(title, text, { id: 'admin-nodes', duration: toastDurations.note });
+
   const mutate = async (action: () => Promise<void>, onError: (text: string) => void) => {
     if (pending.current) return;
     pending.current = true;
@@ -331,7 +336,8 @@ function GroupManager() {
       });
       if (!alive()) return;
       setGroupForm(null);
-      setNotice(
+      done(
+        form.id ? '节点组已保存' : '节点组已创建',
         form.id
           ? `节点组「${form.name.trim()}」已保存。改名、倍率、线路或套餐会让该组在线设备重新读取配置。`
           : `节点组「${form.name.trim()}」已创建。请向组内导入服务器，组内至少一台已启用的服务器后用户才会看到此线路。`,
@@ -353,7 +359,8 @@ function GroupManager() {
         ),
       });
       if (alive())
-        setNotice(
+        done(
+          group.enabled ? '节点组已停用' : '节点组已启用',
           group.enabled
             ? `节点组「${group.name}」已停用，组内在线设备已断开，用户目录中不再显示此线路。`
             : `节点组「${group.name}」已启用。`,
@@ -432,7 +439,8 @@ function GroupManager() {
       );
       if (!alive()) return;
       setServerForm(null);
-      setNotice(
+      done(
+        form.id ? '服务器已保存' : '服务器已导入',
         form.id
           ? '服务器已保存。修改 YAML、停用或移组时，其上设备会自动改连同组其他服务器；只改容量或备注不影响在线设备。'
           : `已导入 ${result.nodes.length} 台服务器。容量在设备实际连接时生效。`,
@@ -447,7 +455,7 @@ function GroupManager() {
         signal: lifetime.current?.signal,
         body: '{}',
       });
-      if (alive()) setNotice(`已清除「${serverName(server)}」的冷却状态。`);
+      if (alive()) done('冷却已清除', `已清除「${serverName(server)}」的冷却状态。`);
     }, setError);
 
   const remove = () => {
@@ -468,7 +476,8 @@ function GroupManager() {
       });
       if (!alive()) return;
       setRemoval(null);
-      setNotice(
+      done(
+        target.kind === 'group' ? '节点组已删除' : '服务器已删除',
         target.kind === 'group'
           ? `节点组「${target.group.name}」已删除。`
           : `服务器「${serverName(target.server)}」已删除，其上设备会自动改连同组其他服务器。`,
@@ -512,11 +521,6 @@ function GroupManager() {
       {error && (
         <Alert color="red" title="操作失败" withCloseButton onClose={() => setError('')}>
           {error}
-        </Alert>
-      )}
-      {notice && (
-        <Alert color="teal" title="已更新" withCloseButton onClose={() => setNotice('')}>
-          {notice}
         </Alert>
       )}
       <Paper withBorder radius="md" p="md">
