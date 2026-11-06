@@ -24,6 +24,15 @@ const config: NextConfig = {
           { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
         ],
       },
+      {
+        // The download redirects (handoff_download.md 6.3): the file host never learns which page
+        // sent the browser. This rule comes after the site-wide one, which it overrides.
+        source: '/download/get/:path*',
+        headers: [
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'X-Robots-Tag', value: 'noindex' },
+        ],
+      },
     ];
   },
 };

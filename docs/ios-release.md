@@ -95,8 +95,8 @@ python3 scripts/test-native-ios.py --suite release
      --ipa-url https://test.hyshentou.cn/downloads/AsterLink-0.1.0-ios.ipa
    ```
 
-   工具会先检查：描述文件是否对应该包 ID、是否带 Network Extension 能力、是否过期、两个是否同一团队；然后先签扩展再签 App，用 `codesign` 验证，输出 `*-signed.ipa`、`manifest.plist` 和一段 `IOS_*` 配置。
-6. 把签好的 IPA 和 `manifest.plist` **用 HTTPS** 放到 `--ipa-url` 所在的目录（文件名要和 URL 一致），把打印出的 `IOS_*` 行写进服务器的 `frontend/.env`，重启 Next.js（不需要重新构建）。
+   工具会先检查：描述文件是否对应该包 ID、是否带 Network Extension 能力、是否过期、两个是否同一团队；然后先签扩展再签 App，用 `codesign` 验证，输出 `*-signed.ipa` 和旁边的后台录入单 `download-entry.txt`（带了 `--ipa-url` 时另写一个 `manifest.plist`，只供网站以外的安装方式使用）。
+6. 把签好的 IPA **用 HTTPS** 上传到公网地址，然后在 **管理后台 → 客户端下载** 添加 iOS 条目（架构 arm64、格式“网页安装 .ipa”），按 `download-entry.txt` 填写版本号、SHA-256、大小和 Bundle ID，“下载地址”填 IPA 的地址，打开“上架”。安装清单由网站生成（`/download/get/ios/arm64/ipa/manifest.plist`），不用上传；`frontend/.env` 不再有 `IOS_*` 配置（docs/client-downloads.md）。
 7. 用已登记的 iPhone 的 Safari 打开 `https://test.hyshentou.cn/download`，点“在 iPhone 上安装”。
 
 **首次真机验收**：按 `docs/ios-tun-design.md` 第 9 节、`docs/ios-billing-acceptance.md` 第 3 节、`docs/ios-lifecycle.md` 第 5 节的顺序跑 D 项，再做 R01/R02。把结果写进 `handoff_app_ios.md` 第 15 节。

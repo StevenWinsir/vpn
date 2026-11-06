@@ -28,7 +28,7 @@ The release run
        SOURCE.txt + two source archives        the corresponding source (engine + this repository)
        release-info.json                       version, versionCode, per-APK hashes, certificate, open gates
        mapping-<version>.txt                   the R8 mapping for crash stack traces
-       website-env.txt                         the lines for frontend/.env that make /download offer the APK
+       download-entry.txt                      the console entry sheet (管理后台 → 客户端下载), one block per APK
        SHA256SUMS, README-内部资料.txt
      The release Core AAR carries no engine revision.
 
@@ -57,6 +57,7 @@ ANDROID = ROOT / 'apps' / 'android'
 CORE = ROOT / 'native' / 'core'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_env  # noqa: E402
+import download_entry  # noqa: E402
 import release_scrub  # noqa: E402
 import windows_release  # noqa: E402  (platform-neutral helpers: source archives, SHA256SUMS)
 
@@ -425,11 +426,11 @@ def package(args) -> int:
         mapping = ANDROID / 'app' / 'build' / 'outputs' / 'mapping' / 'release' / 'mapping.txt'
         if mapping.is_file():
             shutil.copy2(mapping, private / ('mapping-%s.txt' % version))
-        main_apk = next((a for a in apks if a['abi'] == 'arm64-v8a'), apks[0])
-        website = ('# frontend/.env (server-side; restart Next.js after editing). Upload the APK to the URL first.\n'
-                   'ANDROID_APK_URL=%s/downloads/%s\nANDROID_APK_VERSION=%s\nANDROID_APK_SHA256=%s\nANDROID_APK_SIZE_BYTES=%d\nANDROID_CERT_SHA256=%s\n'
-                   % (env_values['WEBSITE_BASE_URL'].rstrip('/'), main_apk['file'], version, main_apk['sha256'], main_apk['bytes'], key.certificate))
-        (private / 'website-env.txt').write_text(website)
+        # The console entry sheet (handoff_download.md D17): /download reads the backend, not .env.
+        entries = [{'platform': 'android', 'arch': a['abi'], 'format': 'apk', 'app_version': version, 'file': a['file'],
+                    'sha256': a['sha256'], 'size_bytes': a['bytes'], 'signing_cert_sha256': key.certificate}
+                   for a in apks]
+        website = download_entry.write(private, entries).read_text(encoding='utf-8')
         release_scrub.write_private_note(private)
         for folder in (out, private):
             windows_release.write_checksums(folder)

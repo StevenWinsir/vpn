@@ -84,12 +84,13 @@ def main():
                     raise RuntimeError('Fixture readiness failed; see fixture.log')
                 time.sleep(0.1)
             metadata = json.loads(ready.read_text())
-            # The home page spec (handoff_ui.md 8) needs one published client and one not: Android is
-            # "released" (a link only, nothing is fetched), iOS is not. The footer shows the optional
-            # filing number and service address. Next.js reads these on every request.
+            # Client downloads come from the backend (handoff_download.md round 3): the fixture publishes
+            # Android arm64-v8a and nothing else, so the home page spec still sees one released client and
+            # one not. E2E_ISOLATED marks this website process as the fixture's, which alone lets
+            # DOWNLOADS_CACHE_MS shorten the 30-second download cache to one second. The footer shows the
+            # optional filing number and service address. Next.js reads these on every request.
             frontend_env = dict(env, API_INTERNAL_URL=metadata['api'] + '/api/v1',
-                ANDROID_APK_URL='https://downloads.example.test/AsterLink-1.2.3-android-arm64-v8a.apk',
-                ANDROID_APK_VERSION='1.2.3', ANDROID_APK_SHA256='ab' * 32,
+                E2E_ISOLATED='private-postgres', DOWNLOADS_CACHE_MS='1000',
                 SITE_SUPPORT_EMAIL='support@example.test', SITE_ICP_RECORD='京ICP备00000000号-1')
             if not args.skip_build:
                 run('frontend-build', ['node', 'node_modules/next/dist/bin/next', 'build'], ROOT / 'frontend', frontend_env)
@@ -106,7 +107,25 @@ def main():
                             break
                 except OSError:
                     time.sleep(0.1)
+            # A second website process whose backend address answers nothing (a port nobody listens on):
+            # the download page spec checks that /download and the home page still render and say the
+            # list cannot be read (handoff_download.md D9, DL3-06).
+            offline_port = free_port()
+            offline_url = f'http://127.0.0.1:{offline_port}'
+            offline = spawn('frontend-offline', ['node', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1',
+                '-p', str(offline_port)], ROOT / 'frontend', dict(frontend_env, API_INTERNAL_URL=f'http://127.0.0.1:{free_port()}/api/v1'))
+            deadline = time.monotonic() + 60
+            while True:
+                if offline.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError('Offline Next.js readiness failed; see frontend-offline.log')
+                try:
+                    with opener.open(offline_url + '/download', timeout=10) as response:
+                        if response.status == 200:
+                            break
+                except OSError:
+                    time.sleep(0.2)
             browser_env = dict(frontend_env, E2E_ISOLATED='private-postgres', PLAYWRIGHT_BASE_URL=web_url,
+                DOWNLOAD_OFFLINE_URL=offline_url,
                 PAYMENT_FIXTURE=str(ready), PAYMENT_OUTPUTS=str(output / 'browser-artifacts'))
             chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
             if Path(chrome).is_file():

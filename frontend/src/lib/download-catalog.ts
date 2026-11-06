@@ -49,6 +49,44 @@ export type DownloadInput = {
 export type DownloadField = keyof Omit<DownloadInput, 'published' | 'version'>;
 export type FieldError = { field: DownloadField; message: string };
 
+// The website's own copy of the catalogue (handoff_download.md 4.2). The public page, the redirect
+// route and the manifest route use it to drop anything unknown; the console uses the copy the API
+// sends. scripts/download-catalog.test.mjs keeps it equal to the backend snapshot.
+export const downloadCatalog: Catalog = {
+  platforms: [
+    { platform: 'windows', archs: ['x64', 'arm64'], formats: ['exe', 'msi', 'zip'] },
+    { platform: 'macos', archs: ['arm64', 'x64', 'universal'], formats: ['dmg', 'pkg'] },
+    {
+      platform: 'android',
+      archs: ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'universal'],
+      formats: ['apk'],
+    },
+    { platform: 'ios', archs: ['arm64'], formats: ['ipa', 'app_store', 'testflight'] },
+    { platform: 'linux', archs: ['x64', 'arm64'], formats: ['appimage', 'deb', 'rpm', 'tar.gz'] },
+  ],
+  suffixes: {
+    apk: '.apk',
+    appimage: '.appimage',
+    deb: '.deb',
+    dmg: '.dmg',
+    exe: '.exe',
+    ipa: '.ipa',
+    msi: '.msi',
+    pkg: '.pkg',
+    rpm: '.rpm',
+    'tar.gz': '.tar.gz',
+    zip: '.zip',
+  },
+  store_hosts: { app_store: 'apps.apple.com', testflight: 'testflight.apple.com' },
+  limit: 60,
+};
+
+/** Whether platform, architecture and format form a combination the catalogue knows. */
+export function knownVariant(catalog: Catalog, platform: string, arch: string, format: string) {
+  const p = platformOf(catalog, platform);
+  return !!p && p.archs.includes(arch) && p.formats.includes(format);
+}
+
 export const platformLabels: Record<string, string> = {
   windows: 'Windows',
   macos: 'macOS',
@@ -130,7 +168,8 @@ export function parseSize(text: string): number | null | 'invalid' {
   return n >= 1 && n <= maxDownloadBytes ? n : 'invalid';
 }
 
-function checkURL(catalog: Catalog, raw: string, format: string): string | null {
+/** D7 on an address: null when it is acceptable for the format, else what is wrong with it. */
+export function checkURL(catalog: Catalog, raw: string, format: string): string | null {
   if (!raw) return '请填写下载地址';
   if (raw.length > 1024) return '下载地址最多 1024 个字符';
   let u: URL;

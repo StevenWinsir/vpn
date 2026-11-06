@@ -81,7 +81,7 @@ python3 scripts/test-native-android.py --suite release --allow-network-changes
 | `SOURCE.txt` + `asterlink-source-*.tar.gz` + `mihomo-source-*.tar.gz` | 本仓库与内核的对应源代码 |
 | `release-info.json` | 版本、versionCode、各 APK 的哈希与签名、证书指纹、Core/补丁身份（含 `revision_stamped:false`）、`trusted_release=false` 与未关闭门槛 |
 | `mapping-<版本>.txt` | R8 映射，还原崩溃堆栈用，每个版本都要保存 |
-| `website-env.txt` | 下载页配置，见第 4 节 |
+| `download-entry.txt` | 后台录入单（每个 ABI 一块），见第 4 节 |
 | `SHA256SUMS`、`README-内部资料.txt` | 内部目录自身的哈希与“不得发布”说明 |
 
 ### 版本号
@@ -136,26 +136,17 @@ Core 的 Verify 经测试节点访问公网探测地址，这一步经过本机�
 
 ## 4. 网站下载页
 
-网站新增 `/download`（公开页面，顶部导航“下载客户端”）。它在每次请求时读取 `frontend/.env` 的服务端变量，
-**改完只需重启 Next.js，不需要重新构建**；任一必填值缺失或格式错误时页面显示“暂未发布”而不是错误链接。
+`/download`（公开页面，顶部导航“下载客户端”）读取后端数据库里的下载条目，`frontend/.env` 不再有下载配置
+（handoff_download.md 第 3 轮，完整说明见 docs/client-downloads.md）。
 
-1. 把 APK 上传到网站服务器，例如 `https://test.hyshentou.cn/downloads/AsterLink-0.1.0-android-arm64-v8a.apk`
+1. 把 APK 上传到公网 https 地址，例如 `https://test.hyshentou.cn/downloads/AsterLink-0.1.0-android-arm64-v8a.apk`
    （Nginx 静态目录或 `frontend/public/downloads/`；需为 `.apk` 设置 `Content-Type: application/vnd.android.package-archive`）。
-2. 把 `artifacts/native-android/release-private/website-env.txt` 的几行写入服务器的 `frontend/.env`：
+2. 打开 **管理后台 → 客户端下载**，按 `artifacts/native-android/release-private/download-entry.txt` 添加或编辑 Android 条目：
+   架构、版本号、SHA-256、文件大小和签名证书 SHA-256 照抄，“下载地址”填第 1 步的地址。多个 ABI 各录一条，arm64-v8a 是下载页上的推荐按钮。
+3. 打开“上架”，约 30 秒后下载页显示新版本。不需要重启 Next.js。
 
-```dotenv
-ANDROID_APK_URL=https://test.hyshentou.cn/downloads/AsterLink-0.1.0-android-arm64-v8a.apk
-ANDROID_APK_VERSION=0.1.0
-ANDROID_APK_SHA256=<64 位十六进制>
-ANDROID_APK_SIZE_BYTES=<字节数>
-ANDROID_CERT_SHA256=<发布证书指纹>
-ANDROID_SOURCE_URL=   # 可选：公开 THIRD_PARTY_LICENSES.txt / SOURCE.txt / 源码包的目录地址
-```
-
-3. 重启 Next.js。App 中“需要更新”（服务端返回 `client_upgrade_required`）与“我的 → 开源许可与源代码”都跳到这个页面。
-
-GPL 要求：随 APK 一起公开 `THIRD_PARTY_LICENSES.txt`、`SOURCE.txt` 与两个源码包（填 `ANDROID_SOURCE_URL`），
-或至少能按要求提供；最终方式由法务确认。
+App 中“需要更新”（服务端返回 `client_upgrade_required`）跳到这个页面。许可文本、源码说明和源码包只保存在
+`release-private/`，不放到网站上（handoff_app_standardization.md D9、D10；handoff_download.md D15）。
 
 ## 5. 安装、升级、卸载、回退（给用户与运维）
 

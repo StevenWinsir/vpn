@@ -171,7 +171,7 @@ test('every platform has the full outline; the package hint follows the release'
     await expect(
       page.getByTestId('guide-faq').locator('.mantine-Accordion-item').first(),
     ).toBeVisible();
-    // Android is released on this fixture; iPhone and the desktop clients are not.
+    // Android is published on this fixture; iPhone and the desktop clients are not.
     const download = page.getByTestId('guide-download');
     await expect(download).toHaveCount(1);
     if (id === 'android') {
@@ -196,13 +196,14 @@ test('every platform has the full outline; the package hint follows the release'
 
 test('the download page links to the matching guide and keeps its anchors', async ({ page }) => {
   await page.goto('/download');
+  // Windows, macOS, Android, iPhone each link to their guide; Linux has none yet (handoff_download.md D12).
   const links = page.getByTestId('download-guide-link');
-  await expect(links).toHaveCount(2);
-  await expect(links.nth(0)).toHaveAttribute('href', '/guide?platform=android');
-  await expect(links.nth(1)).toHaveAttribute('href', '/guide?platform=ios');
-  await expect(page.locator('#android')).toHaveCount(1);
-  await expect(page.locator('#ios')).toHaveCount(1);
-  await links.nth(1).click();
+  await expect(links).toHaveCount(4);
+  for (const [i, id] of ['windows', 'macos', 'android', 'ios'].entries())
+    await expect(links.nth(i)).toHaveAttribute('href', `/guide?platform=${id}`);
+  for (const id of ['windows', 'macos', 'android', 'ios', 'linux'])
+    await expect(page.locator(`#${id}`)).toHaveCount(1);
+  await links.nth(3).click();
   await expect(platform(page)).toHaveAttribute('data-platform', 'ios');
 });
 

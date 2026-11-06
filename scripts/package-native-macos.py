@@ -30,6 +30,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
+import download_entry  # noqa: E402
 import release_scrub  # noqa: E402
 VOLUME = 'AsterLink'
 
@@ -234,6 +235,10 @@ def main():
         ],
     }
     (private / 'release-manifest.json').write_text(json.dumps(release, indent=2) + '\n')
+    # The console entry sheet (handoff_download.md D17): /download reads the backend, not .env.
+    entry = download_entry.write(private, [{'platform': 'macos', 'arch': 'arm64', 'format': 'dmg', 'app_version': version,
+                                            'file': dmg.name, 'sha256': sha256(dmg), 'size_bytes': dmg.stat().st_size}])
+    files.append(entry)
     release_scrub.write_private_note(private)
     # Integrity of the internal copy (the DMG is listed in the public SHA256SUMS and in the manifest).
     (private / 'SHA256SUMS').write_text(''.join('%s  %s\n' % (sha256(f), f.name) for f in files[1:] + [private / 'release-manifest.json']))

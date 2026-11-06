@@ -106,7 +106,8 @@ windows/amd64, the .NET runtime version, Wintun, Mihomo; there are no third-part
 windows/amd64 module set; a module whose published archive has no license file uses the reviewed upstream copy in
 `scripts/third_party_licenses/`, which names its source),
 `SOURCE.txt` and the two GPL source archives (`git archive` of this repository and of the pinned Mihomo commit, with rebuild
-instructions), `README-内部资料.txt` and a `SHA256SUMS` of the folder. `release-check.ps1` (`-PrivateDir`, default `<ReleaseDir>-private`)
+instructions), `download-entry.txt` (the values to enter under 管理后台 → 客户端下载 once the installer is uploaded; see
+docs/client-downloads.md), `README-内部资料.txt` and a `SHA256SUMS` of the folder. `release-check.ps1` (`-PrivateDir`, default `<ReleaseDir>-private`)
 re-reads both `SHA256SUMS` independently, requires the public folder to hold only the installer, and scans the text files for
 secret-looking content; `test-native-windows.py --suite release` additionally scans the stage the installer carries
 (`release.scrub_*`: no private-only file, no engine marker in a text file, binaries within `scripts/release-scrub-baseline.json`).

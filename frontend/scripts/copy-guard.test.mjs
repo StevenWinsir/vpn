@@ -151,3 +151,20 @@ test('the four removed items stay removed (handoff_ui.md R2–R5)', () => {
     assert.ok(!all.some((text) => text.includes(phrase)), phrase);
   assert.ok(!userFiles.includes('components/referral-card.tsx'));
 });
+
+// The download page shows no licence, source or engine wording (handoff_download.md D15): the
+// "开源许可与源代码" card is gone and stays gone. The words are checked in everything the page
+// renders from: its route, its view and the modules that shape its data.
+test('the download page says nothing about licences, source code or the engine', () => {
+  const words = ['开源', '许可', '源代码', 'GPL', 'Mihomo', '内核', 'THIRD_PARTY', 'SOURCE_URL'];
+  for (const file of [
+    'app/download/page.tsx',
+    'components/download-view.tsx',
+    'lib/downloads.ts',
+    'lib/download-catalog.ts',
+  ]) {
+    assert.ok(userFiles.includes(file), file);
+    const text = readFileSync(join(root, file), 'utf8');
+    for (const word of words) assert.ok(!text.includes(word), `${file}: ${word}`);
+  }
+});

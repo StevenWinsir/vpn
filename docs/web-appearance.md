@@ -56,7 +56,7 @@ docs/deployment.md "在线客服".
 
 The home page (`src/app/page.tsx`, handoff_ui.md section 8, round 3) does not use the workspace shell: `SiteShell` hands `/` straight through, and the page brings its own sticky marketing header (`src/components/home/`), main content and footer.
 
-- It is rendered on every request (`force-dynamic`), like `/download`, because it reads `ANDROID_*`, `IOS_*`, `SITE_ICP_RECORD` and `SITE_SUPPORT_EMAIL` from the server environment. Rendering reads no database and calls no API.
+- It is rendered on every request (`force-dynamic`), like `/download`: it reads `SITE_ICP_RECORD` and `SITE_SUPPORT_EMAIL` from the server environment and the client download status from the backend's public list through the 30-second cache shared with `/download` and `/guide` (docs/client-downloads.md). It reads no database.
 - In the browser, one `/meta` request and the signed-in state decide the account actions (sign in / free registration / user centre). They stay blank until both are known, so a visitor never sees one label turn into another. `/plans` feeds the plan preview (at most three plans, featured first); a failure or an empty shop hides the cards silently.
 - The hero illustration is HTML, CSS and inline SVG, colours from the tokens. The page loads no font, image, CDN or analytics from another host (`tests/home.spec.ts` checks every request).
 - Motion: sections below the fold fade in once (`Reveal`, IntersectionObserver), and the illustration's status dot breathes. With `prefers-reduced-motion: reduce` there is no animation and anchor scrolling is instant.
