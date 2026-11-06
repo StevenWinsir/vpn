@@ -17,6 +17,7 @@ There is no Apple Developer team yet, and nothing here needs one. The run
        dependencies.cdx.json                  CycloneDX-shaped inventory (Go modules, engine, Apple frameworks)
        SOURCE.txt + two source archives       the corresponding source (engine + this repository)
        release-info.json                      version, hashes, bundle ids, Core identity, open gates
+       download-entry.txt                     the console entry sheet (for reference: the signed IPA's sheet is the one to enter)
        dSYMs-<version>.zip                    crash symbolication
        SHA256SUMS, README-内部资料.txt
   The shipped AsterCore is a release bind: it carries no engine revision.
@@ -44,6 +45,7 @@ IOS = ROOT / 'apps' / 'ios'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import ios_release  # noqa: E402
 import native_env  # noqa: E402
+import download_entry  # noqa: E402
 import release_scrub  # noqa: E402
 import windows_release  # noqa: E402  (platform-neutral helpers: source archives, SHA256SUMS)
 
@@ -209,6 +211,11 @@ def package(args) -> int:
         'source_archives': [a.name for a in archives], 'open_gates': OPEN_GATES,
     }
     (private / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
+    # The console entry sheet (handoff_download.md D17). This IPA is unsigned and installs nowhere: the sheet
+    # resign-ipa.py writes for the signed file is the one to enter.
+    download_entry.write(private, [{'platform': 'ios', 'arch': 'arm64', 'format': 'ipa', 'app_version': version, 'file': ipa.name,
+                                    'sha256': ios_release.sha256(ipa), 'size_bytes': ipa.stat().st_size, 'bundle_id': app_id}],
+                         note='注意：此 IPA 未签名，不能上架。用 scripts/ios/resign-ipa.py 签名后，以它在签名文件旁写出的 download-entry.txt 为准。')
     release_scrub.write_private_note(private)
     for folder in (out, private):
         windows_release.write_checksums(folder)

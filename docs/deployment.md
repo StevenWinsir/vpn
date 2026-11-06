@@ -56,7 +56,7 @@ SITE_ICP_RECORD=京ICP备12345678号-1
 SITE_SUPPORT_EMAIL=support@example.com
 ```
 
-两项都只由 Next.js 服务端按请求读取，修改后重启 Next.js 即可，无需重新构建。`SITE_ICP_RECORD` 设置后首页页脚显示备案号并链接到工信部备案查询网站（https://beian.miit.gov.cn/）；`SITE_SUPPORT_EMAIL` 设置后页脚和常见问题中显示客服邮箱。未设置或格式不合法（备案号只允许汉字、字母、数字、空格和连字符，最长 40 字；邮箱须为普通地址）时不显示对应内容。首页的 Android、iOS 下载状态与 `/download` 共用 `ANDROID_*`、`IOS_*` 配置。`SITE_SUPPORT_EMAIL` 同时用作在线客服连接失败时提示里的邮箱。
+两项都只由 Next.js 服务端按请求读取，修改后重启 Next.js 即可，无需重新构建。`SITE_ICP_RECORD` 设置后首页页脚显示备案号并链接到工信部备案查询网站（https://beian.miit.gov.cn/）；`SITE_SUPPORT_EMAIL` 设置后页脚和常见问题中显示客服邮箱。未设置或格式不合法（备案号只允许汉字、字母、数字、空格和连字符，最长 40 字；邮箱须为普通地址）时不显示对应内容。首页的客户端下载状态与 `/download`、使用教程一样读取后端的下载条目（管理后台 → 客户端下载），`frontend/.env` 不再有下载配置，见 docs/client-downloads.md。`SITE_SUPPORT_EMAIL` 同时用作在线客服连接失败时提示里的邮箱。
 
 ### 前端：在线客服（Crisp）
 

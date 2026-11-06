@@ -40,6 +40,7 @@ WINDOWS = ROOT / 'apps' / 'windows'
 CORE = ROOT / 'native' / 'core'
 sys.path.insert(0, str(ROOT / 'scripts'))
 import native_env  # noqa: E402
+import download_entry  # noqa: E402
 import release_scrub  # noqa: E402
 import windows_release  # noqa: E402
 
@@ -188,6 +189,9 @@ def release(args, stage, ver):
                        'managed node with authoritative metering (round 7)', 'Wintun redistribution legal review', 'website operations'],
     }
     (private / 'release-info.json').write_text(json.dumps(info, indent=2) + '\n')
+    # The console entry sheet (handoff_download.md D17): /download reads the backend, not .env.
+    download_entry.write(private, [{'platform': 'windows', 'arch': 'x64', 'format': 'exe', 'app_version': ver,
+                                    'file': setup.name, 'sha256': windows_release.sha256(setup), 'size_bytes': setup.stat().st_size}])
     release_scrub.write_private_note(private)
     for folder in (out, private):
         lines = windows_release.write_checksums(folder)

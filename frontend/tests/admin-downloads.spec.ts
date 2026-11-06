@@ -5,7 +5,12 @@ import { overflowing } from './layout';
 // Browser acceptance for the console's "客户端下载" tab (handoff_download.md 7 and 9, DL2-01 …
 // DL2-08), against the real API on the private PostgreSQL that scripts/test-payment-web.py starts.
 // Every address is on downloads.example.test, which nothing ever fetches.
-type Fixture = { password: string; emails: Record<'dlroot' | 'dla', string> };
+type Fixture = {
+  api: string;
+  control: string;
+  password: string;
+  emails: Record<'dlroot' | 'dla', string>;
+};
 
 let fixture: Fixture;
 test.beforeAll(async () => {
@@ -13,7 +18,18 @@ test.beforeAll(async () => {
   if (!filename?.startsWith('/tmp/vpn-payment-'))
     throw new Error('Private payment fixture required');
   fixture = JSON.parse(await readFile(filename, 'utf8')) as Fixture;
+  // The fixture publishes an Android build for the other specs; this one starts from nothing.
+  await downloads('empty');
 });
+
+// Switches the fixture's download entries (empty, base, multi; handoff_download.md round 3).
+async function downloads(set: 'empty' | 'base') {
+  const response = await fetch(`${fixture.api}/fixture/downloads?set=${set}`, {
+    method: 'POST',
+    headers: { 'X-Acceptance-Control': fixture.control },
+  });
+  if (response.status !== 204) throw new Error(`fixture downloads ${set}: ${response.status}`);
+}
 
 async function shot(page: Page, name: string) {
   const dir = `${process.env.PAYMENT_OUTPUTS ?? 'test-results'}/screens`;
@@ -302,22 +318,7 @@ test('client downloads: light and dark, 1280 and 768 wide, nothing sticks out', 
   }
 });
 
-// Nothing this spec added stays behind for the download page specs that run later.
-test.afterAll(async ({ browser }) => {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await signIn(page, fixture.emails.dlroot);
-  await page.goto('/admin/console/downloads');
-  const remove = page.getByRole('button', { name: /^删除 / });
-  await expect(page.getByTestId('download-count')).toBeVisible();
-  while ((await remove.count()) > 0) {
-    await remove.first().click();
-    await page
-      .getByRole('dialog', { name: '删除下载条目' })
-      .getByRole('button', { name: '确认删除' })
-      .click();
-    await expect(page.getByRole('dialog', { name: '删除下载条目' })).toBeHidden();
-  }
-  await expect(page.getByTestId('download-count')).toContainText('共 0 条');
-  await context.close();
+// The other specs expect the fixture's published Android build back, whatever happened above.
+test.afterAll(async () => {
+  await downloads('base');
 });

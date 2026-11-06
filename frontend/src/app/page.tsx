@@ -22,15 +22,16 @@ import { HomeStateProvider } from '@/components/home/home-state';
 import { PlanPreview } from '@/components/home/plan-preview';
 import { ProductVisual } from '@/components/home/product-visual';
 import { Reveal } from '@/components/home/reveal';
-import { androidDownload, iosDownload } from '@/lib/downloads';
+import { homeStatus, type PlatformId } from '@/lib/downloads';
+import { loadDownloads } from '@/lib/server/downloads';
 import { icpLookupUrl, siteFacts } from '@/lib/site';
 import { crispSetting } from '@/lib/support-config';
 import { appName } from '@/lib/types';
 
-// The download status and the operator facts come from the server environment on every request,
-// exactly like /download (handoff_ui.md 8.3): a new release or a filing number needs a restart,
-// not a rebuild. Rendering reads no database and calls no API, so the first byte stays fast; the
-// plan preview and the account actions load in the browser.
+// The operator facts come from the server environment on every request (handoff_ui.md 8.3). The
+// download status comes from the backend's public list through the same 30-second cache as
+// /download (handoff_download.md D9, D14): at most one short request every half minute. The plan
+// preview and the account actions load in the browser.
 export const dynamic = 'force-dynamic';
 
 const features = [
@@ -72,17 +73,19 @@ const steps = [
   { title: '下载客户端', text: '在手机或电脑上安装客户端，登录同一账户即可一键连接。' },
 ];
 
-export default function Home() {
-  const android = androidDownload(process.env) !== null;
-  const ios = iosDownload(process.env) !== null;
+export default async function Home() {
+  const downloads = await loadDownloads();
   const { icpRecord, supportEmail } = siteFacts(process.env);
   const chat = crispSetting(process.env).websiteId !== null;
-  const platforms = [
-    { name: 'macOS', note: 'Mac 电脑', icon: IconDeviceLaptop, ready: false },
-    { name: 'Windows', note: 'Windows 电脑', icon: IconBrandWindows, ready: false },
-    { name: 'Android', note: 'Android 手机', icon: IconBrandAndroid, ready: android },
-    { name: 'iOS', note: 'iPhone', icon: IconBrandApple, ready: ios },
-  ];
+  // Four cards in the download page's order; Linux stays off the home page (D14).
+  const platforms = (
+    [
+      { id: 'windows', name: 'Windows', note: 'Windows 电脑', icon: IconBrandWindows },
+      { id: 'macos', name: 'macOS', note: 'Mac 电脑', icon: IconDeviceLaptop },
+      { id: 'android', name: 'Android', note: 'Android 手机', icon: IconBrandAndroid },
+      { id: 'ios', name: 'iOS', note: 'iPhone', icon: IconBrandApple },
+    ] as const
+  ).map((p) => ({ ...p, status: homeStatus(downloads, p.id as PlatformId) }));
   const year = new Date().getFullYear();
   return (
     <HomeStateProvider>
@@ -211,28 +214,39 @@ export default function Home() {
                 <p>套餐、线路与流量在各设备间实时同步，登录即可连接。</p>
               </div>
               <div className="home-platforms" data-reveal="" data-testid="home-platforms">
-                {platforms.map(({ name, note, icon: Icon, ready }) => (
+                {platforms.map(({ id, name, note, icon: Icon, status }) => (
                   <article
                     key={name}
                     className="home-platform"
                     data-testid="home-platform"
                     data-platform={name}
-                    data-ready={ready ? 'true' : 'false'}
+                    data-ready={
+                      status === 'ready' ? 'true' : status === 'soon' ? 'false' : 'unknown'
+                    }
                   >
                     <Icon size={30} stroke={1.5} aria-hidden />
                     <h3>{name}</h3>
                     <p>{note}</p>
-                    {ready ? (
+                    {status === 'ready' ? (
                       <Link
-                        href="/download"
+                        href={`/download#${id}`}
                         className="home-btn home-btn-primary home-btn-sm"
                         aria-label={`立即下载 ${name} 客户端`}
                       >
                         <IconDownload size={16} aria-hidden />
                         立即下载
                       </Link>
-                    ) : (
+                    ) : status === 'soon' ? (
                       <span className="home-soon">即将上线</span>
+                    ) : (
+                      // The list could not be read: never call a released client "coming soon".
+                      <Link
+                        href="/download"
+                        className="home-btn home-btn-ghost home-btn-sm"
+                        aria-label={`前往下载页查看 ${name} 客户端`}
+                      >
+                        前往下载页
+                      </Link>
                     )}
                   </article>
                 ))}

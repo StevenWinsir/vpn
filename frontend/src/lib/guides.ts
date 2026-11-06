@@ -57,8 +57,8 @@ export type Platform = {
   icon: 'windows' | 'apple' | 'android' | 'phone';
   /** One line: the system and chip the client needs. */
   device: string;
-  /** Which entry of the download page answers for this platform (null: no public package yet, D6). */
-  downloadKey: 'android' | 'ios' | null;
+  /** Which card of the download page answers for this platform (handoff_download.md 6.4). */
+  downloadKey: 'windows' | 'macos' | 'android' | 'ios';
   sections: Section[];
   faq: Faq[];
 };
@@ -98,7 +98,7 @@ const windows: Platform = {
   icon: 'windows',
   device:
     'Windows 10（2004，版本号 19041）及以上，或 Windows 11；仅支持 64 位 Intel / AMD 电脑（x64）',
-  downloadKey: null,
+  downloadKey: 'windows',
   sections: [
     {
       id: 'device',
@@ -315,7 +315,7 @@ const macos: Platform = {
   name: 'macOS',
   icon: 'apple',
   device: 'macOS 15 及以上，Apple 芯片的 Mac（M 系列）',
-  downloadKey: null,
+  downloadKey: 'macos',
   sections: [
     {
       id: 'device',
@@ -1037,12 +1037,11 @@ export function choosePlatform(param: string | null | undefined, userAgent: stri
 }
 
 /** What the page knows about a released client (the version only; nothing else leaves the server). */
-export type GuideDownloads = {
-  android: { version: string } | null;
-  ios: { version: string } | null;
-};
+export type GuideDownloads = Record<
+  'windows' | 'macos' | 'android' | 'ios',
+  { version: string } | null
+>;
 
 export function downloadAvailable(id: PlatformId, downloads: GuideDownloads): boolean {
-  const key = platforms[id].downloadKey;
-  return key !== null && downloads[key] !== null;
+  return downloads[platforms[id].downloadKey] !== null;
 }

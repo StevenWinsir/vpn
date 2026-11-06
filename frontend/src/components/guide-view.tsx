@@ -83,8 +83,8 @@ function Rich({ text }: { text: string }) {
 
 function DownloadAction({ id, downloads }: { id: PlatformId; downloads: GuideDownloads }) {
   const key = platforms[id].downloadKey;
-  const version = key ? downloads[key]?.version : null;
-  if (key && version)
+  const version = downloads[key]?.version;
+  if (version)
     return (
       <Group gap="sm" mt="sm" data-testid="guide-download" data-available="true">
         <Button

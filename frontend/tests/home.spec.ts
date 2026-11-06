@@ -314,20 +314,27 @@ test('the client cards match the download page', async ({ page }) => {
   await settle(page);
   const card = (name: string) =>
     page.locator(`[data-testid="home-platform"][data-platform="${name}"]`);
-  // Android is released on this fixture, iOS is not; the desktop clients are not offered yet.
+  // The fixture publishes Android arm64-v8a only (handoff_download.md D14): four cards in the
+  // download page's order, the released one links to its own card.
+  expect(
+    await page
+      .locator('[data-testid="home-platform"]')
+      .evaluateAll((all) => all.map((a) => a.getAttribute('data-platform'))),
+  ).toEqual(['Windows', 'macOS', 'Android', 'iOS']);
   await expect(card('Android')).toHaveAttribute('data-ready', 'true');
   await expect(
     card('Android').getByRole('link', { name: '立即下载 Android 客户端' }),
-  ).toHaveAttribute('href', '/download');
+  ).toHaveAttribute('href', '/download#android');
   for (const name of ['iOS', 'macOS', 'Windows']) {
     await expect(card(name)).toHaveAttribute('data-ready', 'false');
     await expect(card(name)).toContainText('即将上线');
     await expect(card(name).getByRole('link')).toHaveCount(0);
   }
   await page.goto('/download');
+  // The button goes through the site's own redirect path, never to the file address (D4).
   await expect(page.getByRole('link', { name: /下载 APK/ })).toHaveAttribute(
     'href',
-    /^https:\/\/downloads\.example\.test\//,
+    '/download/get/android/arm64-v8a/apk',
   );
   await expect(page.getByText('iPhone 版本暂未发布，请稍后再来。')).toBeVisible();
 });

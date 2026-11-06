@@ -47,24 +47,26 @@ test('four platforms, each with every required section in order', () => {
   }
 });
 
-test('exactly one download step per platform and only Android and iPhone have a package key', () => {
+test('exactly one download step per platform, each pointing at its own download card', () => {
   for (const id of platformIds) {
     const steps = platforms[id].sections.flatMap((section) =>
       section.steps.filter((step) => step.download),
     );
     assert.equal(steps.length, 1, id);
+    assert.equal(platforms[id].downloadKey, id);
   }
-  assert.equal(platforms.windows.downloadKey, null);
-  assert.equal(platforms.macos.downloadKey, null);
-  assert.equal(platforms.android.downloadKey, 'android');
-  assert.equal(platforms.ios.downloadKey, 'ios');
 });
 
-test('download availability follows the release facts, never the desktop', () => {
-  const downloads = { android: { version: '1.2.3' }, ios: null };
+test('download availability follows the published entries, the desktop included', () => {
+  const downloads = {
+    windows: { version: '1.2.4' },
+    macos: null,
+    android: { version: '1.2.3' },
+    ios: null,
+  };
   assert.equal(downloadAvailable('android', downloads), true);
   assert.equal(downloadAvailable('ios', downloads), false);
-  assert.equal(downloadAvailable('windows', downloads), false);
+  assert.equal(downloadAvailable('windows', downloads), true);
   assert.equal(downloadAvailable('macos', downloads), false);
 });
 

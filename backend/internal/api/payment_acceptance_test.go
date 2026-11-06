@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"vpn/backend/internal/config"
 	"vpn/backend/internal/maintenance"
 	"vpn/backend/internal/model"
@@ -145,6 +146,11 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 		if err = db.Create(&c).Error; err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Client downloads (handoff_download.md round 3): Android arm64-v8a is published, nothing else,
+	// as the .env variables used to say; /fixture/downloads switches between the sets the specs need.
+	if err = seedFixtureDownloads(db, "base", now); err != nil {
+		t.Fatal(err)
 	}
 	router := newServerAt(db, cfg, mail.service, clock.Now)
 	stop := make(chan struct{})
@@ -367,6 +373,15 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 				return
 			}
 			reply(map[string]any{"actor_id": row.ActorID, "version": row.Version, "detail": json.RawMessage(row.Detail)})
+		case "/fixture/downloads":
+			// empty: no entry at all (the console spec starts from nothing); base: the published
+			// Android build every other spec expects; multi: several platforms and architectures
+			// for the download page spec.
+			if e := seedFixtureDownloads(db, r.URL.Query().Get("set"), clock.Now()); e != nil {
+				w.WriteHeader(400)
+				return
+			}
+			w.WriteHeader(204)
 		case "/fixture/archive-announcements":
 			// Cleanup for the announcement spec: a failed run must not leave notices that
 			// block every later spec's pages.
@@ -481,4 +496,59 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 			t.Fatal("payment acceptance driver did not stop fixture")
 		}
 	}
+}
+
+// fixtureDownloads are the download entries of the browser fixture, by set. Every address is on
+// downloads.example.test, which nothing fetches.
+func fixtureDownloads(set string) ([]model.ClientDownload, bool) {
+	hash := func(b string) *string { v := strings.Repeat(b, 32); return &v }
+	size := func(n int64) *int64 { return &n }
+	text := func(v string) *string { return &v }
+	android := model.ClientDownload{Platform: "android", Arch: "arm64-v8a", Format: "apk", AppVersion: "1.2.3",
+		URL: "https://downloads.example.test/AsterLink-1.2.3-android-arm64-v8a.apk", SHA256: hash("ab"), SizeBytes: size(48128121),
+		SigningCertSHA256: hash("f5"), Published: true}
+	switch set {
+	case "empty":
+		return nil, true
+	case "base":
+		return []model.ClientDownload{android}, true
+	case "multi":
+		return []model.ClientDownload{
+			{Platform: "windows", Arch: "x64", Format: "exe", AppVersion: "1.2.3", URL: "https://downloads.example.test/AsterLink-Setup-x64-1.2.3.exe",
+				SHA256: hash("01"), SizeBytes: size(73400320), Published: true},
+			{Platform: "windows", Arch: "arm64", Format: "exe", AppVersion: "1.2.4", URL: "https://downloads.example.test/AsterLink-Setup-arm64-1.2.4.exe",
+				SHA256: hash("02"), SizeBytes: size(70254592), Published: true},
+			{Platform: "macos", Arch: "arm64", Format: "dmg", AppVersion: "1.2.3", URL: "https://downloads.example.test/AsterLink-1.2.3-arm64.dmg",
+				SHA256: hash("03"), SizeBytes: size(83886080), Published: true},
+			// Not published: the page must not show it, and its path leads back to the card.
+			{Platform: "macos", Arch: "x64", Format: "dmg", AppVersion: "1.2.3", URL: "https://downloads.example.test/AsterLink-1.2.3-x64.dmg",
+				SHA256: hash("04"), Published: false},
+			android,
+			{Platform: "android", Arch: "armeabi-v7a", Format: "apk", AppVersion: "1.2.3", URL: "https://downloads.example.test/AsterLink-1.2.3-android-armeabi-v7a.apk",
+				SHA256: hash("05"), SizeBytes: size(45088768), SigningCertSHA256: hash("f5"), Published: true},
+			{Platform: "ios", Arch: "arm64", Format: "ipa", AppVersion: "1.2.3", URL: "https://downloads.example.test/AsterLink-1.2.3.ipa?sig=a&b=c",
+				SHA256: hash("06"), SizeBytes: size(52428800), BundleID: text("com.example.asterlink"), Published: true},
+			{Platform: "ios", Arch: "arm64", Format: "testflight", AppVersion: "1.2.3", URL: "https://testflight.apple.com/join/AbCdEf", Published: true},
+		}, true
+	}
+	return nil, false
+}
+
+func seedFixtureDownloads(db *gorm.DB, set string, now time.Time) error {
+	rows, ok := fixtureDownloads(set)
+	if !ok {
+		return fmt.Errorf("unknown download set %q", set)
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("1 = 1").Delete(&model.ClientDownload{}).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			row.ID, row.Version, row.ReleasedAt, row.CreatedAt, row.UpdatedAt = uuid.NewString(), 1, now, now, now
+			if err := tx.Select("*").Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

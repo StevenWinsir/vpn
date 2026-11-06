@@ -25,11 +25,14 @@ the app finds its extension as "<its own id>.tunnel", so nothing else changes. T
 the profiles (Apple's own answer to "what may this app do"), the extension is signed first, and the
 result is verified with codesign before the output file is written.
 
-With --ipa-url the tool also writes manifest.plist next to the output: the file iOS needs to install an
-IPA from a web page (itms-services). Upload both files over HTTPS, then open
-itms-services://?action=download-manifest&url=<https url of manifest.plist> on the iPhone, which is what
-the website's /download page does once the IOS_* lines printed below are in frontend/.env. Over-the-air
-install only works for Ad Hoc (registered devices) and Enterprise signing.
+Next to the signed IPA the tool writes download-entry.txt: the values to enter in the console
+(管理后台 → 客户端下载, iOS, arm64, format ipa) once the IPA is uploaded over HTTPS. The website then generates
+the over-the-air manifest itself (/download/get/ios/arm64/ipa/manifest.plist) and its /download page offers the
+install; nothing goes into frontend/.env (handoff_download.md D6, D17). Over-the-air install only works for
+Ad Hoc (registered devices) and Enterprise signing.
+
+With --ipa-url the tool also writes a manifest.plist next to the output, for installing from somewhere other
+than the website (for example a device management system); the website does not need it.
 
 --identity - signs ad hoc with no profiles. That output installs nowhere; it exists to test this tool.
 
@@ -42,6 +45,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import download_entry  # noqa: E402
 import ios_release  # noqa: E402
 
 EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 3
@@ -65,7 +69,7 @@ def main():
     parser.add_argument('--bundle-prefix', help='reverse-DNS prefix registered in your team, for example cn.example')
     parser.add_argument('--keychain', help='keychain holding the identity (default: the search list)')
     parser.add_argument('--output', type=Path, help='default: <name>-signed.ipa beside the input')
-    parser.add_argument('--ipa-url', help='https URL the signed IPA will be published at; also writes manifest.plist')
+    parser.add_argument('--ipa-url', help='https URL of the signed IPA, to also write a manifest.plist (not needed for the website)')
     args = parser.parse_args()
     if not args.ipa.is_file():
         print('FAIL: %s does not exist' % args.ipa)
@@ -94,21 +98,19 @@ def main():
     if args.identity == '-':
         print('  NOTE: ad hoc, no profiles: this file cannot be installed on an iPhone.')
         return EXIT_OK
+    import tempfile
+    with tempfile.TemporaryDirectory() as scratch:
+        app = ios_release.unpack_ipa(output, Path(scratch))
+        version = ios_release.read_plist(app / 'Info.plist')['CFBundleShortVersionString']
+    # The console entry sheet (handoff_download.md D17), beside the signed file: never published.
+    entry = download_entry.write(output.parent, [{
+        'platform': 'ios', 'arch': 'arm64', 'format': 'ipa', 'app_version': version, 'file': output.name,
+        'sha256': digest, 'size_bytes': output.stat().st_size, 'bundle_id': result['app_id']}])
+    print('  wrote %s (values for 管理后台 → 客户端下载; keep it private)' % entry)
     if args.ipa_url:
-        import tempfile
-        with tempfile.TemporaryDirectory() as scratch:
-            app = ios_release.unpack_ipa(output, Path(scratch))
-            version = ios_release.read_plist(app / 'Info.plist')['CFBundleShortVersionString']
         manifest = output.with_name('manifest.plist')
         write_manifest(manifest, args.ipa_url, result['app_id'], version)
-        base = args.ipa_url.rsplit('/', 1)[0] + '/manifest.plist'
-        print('  wrote %s (upload it next to the IPA)' % manifest)
-        print('\nfrontend/.env lines for the /download page:')
-        print('IOS_IPA_URL=%s' % args.ipa_url)
-        print('IOS_MANIFEST_URL=%s' % base)
-        print('IOS_IPA_VERSION=%s' % version)
-        print('IOS_IPA_SHA256=%s' % digest)
-        print('IOS_IPA_SIZE_BYTES=%d' % output.stat().st_size)
+        print('  wrote %s (only for installs outside the website)' % manifest)
     return EXIT_OK
 
 

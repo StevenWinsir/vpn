@@ -339,7 +339,7 @@
 
 遗留问题：无。第 2 轮可以开工（message 第 2 轮 #115 已合并）。
 
-### 第 2 轮：管理后台板块（2026-11-05，分支 worktree-download-round2-console，基线 78c56c0）
+### 第 2 轮：管理后台板块（2026-11-05，分支 worktree-download-round2-console，基线 78c56c0，PR #117，squash 合并为 f31eecf）
 
 实现位置：
 - frontend/src/lib/download-catalog.ts：平台、架构、格式的中文名称；与后端 validateDownload 同顺序、同文案的即时校验；已占用组合、首个可用组合、字节数解析、把一行转回提交体（只含后端接受的键）。不依赖 React，第 3 轮的下载页可以直接复用这些名称。
@@ -362,7 +362,7 @@
 | DL2-06 | PASS | 打开开关出现“已上架”提示，经网站代理请求公开列表，可以看到 windows 条目且响应中没有地址域名；关闭开关出现“已下架”提示；删除 Linux 时确认框写明“Linux · x64 · AppImage”和版本 1.2.3，确认后出现“已删除”提示，该组回到“尚未添加” |
 | DL2-07 | PASS | 文件大小输入 48128121 时旁边实时显示“约 45.9 MB”，列表中显示 45.9 MB；SHA-256 列显示前 8 位，title 为完整值；“打开地址”的 href 为登记的地址，target=_blank，rel 含 noopener |
 | DL2-08 | PASS | 浅色、深色 × 1280、768 共 4 张截图（downloads-light-1280.png 等），layout.ts 的 overflowing 检查都为空；768 宽时表格在卡片内横向滚动 |
-| DL2-09 | PASS（本地）/ CI 见 PR | lint、typecheck（tsc --noEmit）、test:toast（7）、test:copy（3）、test:theme（5）、test:downloads（14）本地通过；next build 成功。admin-downloads.spec.ts 单独运行 3 passed（/tmp/dl-round2-web-2）；完整支付夹具浏览器套件 115 passed（10.3 分钟，含 admin-console、admin-console-2、admin-console-plans，/tmp/dl-round2-web-full）。本 spec 约 18 秒，CI 浏览器 job 的 25 分钟上限仍有余量 |
+| DL2-09 | PASS | lint、typecheck（tsc --noEmit）、test:toast（7）、test:copy（3）、test:theme（5）、test:downloads（14）本地通过；next build 成功。admin-downloads.spec.ts 单独运行 3 passed（/tmp/dl-round2-web-2）；完整支付夹具浏览器套件 115 passed（10.3 分钟，含 admin-console、admin-console-2、admin-console-plans，/tmp/dl-round2-web-full）。本 spec 约 18 秒，CI 浏览器 job 的 25 分钟上限仍有余量。PR #117 的 CI 16 个 job 全部通过。合并后 main 上的浏览器 job 两次因 Ubuntu 软件源下载过慢（约 40 kB/s，安装浏览器依赖用了 8–9 分钟）触到 25 分钟上限被取消，日志中没有失败用例，与代码无关 |
 
 本地证据：截图在 /tmp/dl-round2-web-2/browser-artifacts/screens/（downloads-empty、downloads-list、downloads-{light,dark}-{1280,768}）。
 
@@ -370,3 +370,46 @@
 1. 后端字段错误的浏览器验证没有拦截请求，用的是前后端解析差异的真实情况（%ZZ）。
 2. 上架开关失败时用 toast.error 提示并刷新列表，没有单独的页内错误框；表单内的错误仍按 D16 显示在表单里。
 3. 冲突后点“刷新”不关闭弹窗，而是用最新数据重新填充表单，管理员可以直接继续编辑。
+
+### 第 3 轮：下载页、首页、教程与收尾（2026-11-06，分支 worktree-download-round3-site，基线 f31eecf）
+
+实现位置：
+- 网站数据：src/lib/downloads.ts 改写为不读环境变量的纯函数（按白名单逐字段重建公开列表、按钮文案、推荐架构、版本徽章合并、首页状态、教程版本、iOS 清单生成与 XML 转义）；src/lib/download-source.ts（30 秒缓存、3 秒超时、失败时沿用上次结果最长 24 小时、请求合并、跳转查询与地址再校验、只转发可信头里的一个 IP）；src/lib/server/downloads.ts（每个网站进程一个缓存）；src/lib/download-catalog.ts 增加网站自带的白名单常量。
+- 路由：src/app/download/get/[platform]/[arch]/[format]/route.ts（302 跳转）与 …/manifest.plist/route.ts（iOS 清单）；next.config.ts 为 /download/get/ 覆盖 Referrer-Policy 为 no-referrer。
+- 页面：download-view.tsx 按 Windows、macOS、Android、iPhone、Linux 排列，多架构按钮、每个文件的 SHA-256、iOS 三种格式说明、Linux“即将推出”、读取失败提示；“安装、升级与卸载”新增 Windows、macOS 两张；删除“开源许可与源代码”卡片。首页四张卡改为 Windows、macOS、Android、iOS，链接到各自锚点，读取失败时显示“前往下载页”。教程的 Windows、macOS 改用 windows、macos 下载键。
+- 去掉环境变量：.env.example 删除 ANDROID_*、IOS_* 段落；网站代码不再读取这些变量。
+- 打包：scripts/download_entry.py；package-native-android/windows/macos/ios.py 和 ios/resign-ipa.py 写出 download-entry.txt，不再输出 .env 行；release_scrub 把它列为只能在 private 目录的文件。
+- 夹具：payment_acceptance_test.go 启动时录入 Android arm64-v8a（取代原来的 .env），/fixture/downloads?set=empty|base|multi；test-payment-web.py 去掉 ANDROID_* 变量，给网站进程加 E2E_ISOLATED 与 DOWNLOADS_CACHE_MS=1000，并另起一个连不上后端的网站进程。
+- 文档：新增 docs/client-downloads.md；android-release.md 第 4 节、ios-release.md、macos-release.md、windows-release.md、deployment.md、web-appearance.md 改为“录入后台”。
+
+测试：
+- scripts/downloads.test.mjs 改写（12 项）与 download-catalog.test.mjs（9 项，含网站白名单与后端快照逐项相等），合计 test:downloads 21 项。
+- copy-guard.test.mjs 新增 D15 守卫：下载页的路由、组件和数据模块不得出现“开源、许可、源代码、GPL、Mihomo、内核”等字样。
+- guide.test.mjs 更新为四个平台都有下载键。
+- tests/download.spec.ts（新，5 个用例）；home.spec、guide.spec、admin-downloads.spec 随数据来源调整。
+- scripts/test-download-entry.py（新，已加入 CI 的 Native Core job）。
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| DL3-01 | PASS | download.spec：平台卡 id 与顺序为 windows、macos、android、ios、linux；“安装、升级与卸载”依次为 Windows、macOS、Android、iPhone |
+| DL3-02 | PASS | 服务端返回的 HTML 和浏览器中的页面内容都不含 downloads.example.test 和 testflight.apple.com；所有下载按钮的 href 都以 /download/get/ 开头，或是只引用本站清单路由的 itms-services 链接 |
+| DL3-03 | PASS | 站内路由 302 的 Location 等于登记地址，带 no-store、no-referrer、noindex；点击 Windows ARM64 按钮后浏览器请求了登记的文件地址（已拦截）；未上架的 macOS x64、不存在的 Linux、跨平台组合都跳回 /download#平台，未知平台跳回 /download；夹具改为 base 后，同一 TestFlight 和 Windows ARM64 路径跳回卡片 |
+| DL3-04 | PASS | Windows x64 1.2.3 与 ARM64 1.2.4：x64 为实心按钮，没有卡片徽章，每个按钮旁各自显示版本；Android 两个架构同为 1.2.3：一个徽章，两段 SHA-256 分别标明架构和格式，签名证书指纹显示一次；未上架的 macOS x64 不显示 |
+| DL3-05 | PASS | 清单路由返回 application/xml、no-store；浏览器 DOMParser 解析无错误，url（含 & 的地址已转义）、bundle-identifier、bundle-version、kind、title 都正确；其他路径的 manifest.plist 返回 404，下架后返回 404。TestFlight 按钮文案“通过 TestFlight 安装”，跳转到 testflight.apple.com。plist 转义另有单元测试 |
+| DL3-06 | PASS | Linux 显示“Linux 版本即将推出，敬请期待。”；未发布的平台显示“暂未发布”；连不上后端的网站进程：/download 返回 200，五张卡都显示“下载信息暂时无法获取，请稍后刷新。”，跳转路径回到 /download#android，首页四张卡为 unknown 并显示“前往下载页”。后端恢复、缓存过期后自动恢复由单元测试覆盖（注入时钟） |
+| DL3-07 | PASS | 页面上没有“开源许可与源代码”；test:copy 新增的守卫通过 |
+| DL3-08 | PASS | home.spec：四张卡顺序为 Windows、macOS、Android、iOS，Android 的“立即下载”指向 /download#android；download.spec：multi 数据下四张都可下载，macOS 指向 /download#macos；Windows 上架前教程显示“联系客服获取”，上架后显示“前往下载”（/download#windows）和“当前版本 1.2.3” |
+| DL3-09 | PASS | 在后台把 Android 版本改为 1.2.5，网站缓存（夹具为 1 秒）过期后下载页徽章、教程“当前版本”都变为 1.2.5 |
+| DL3-10 | PASS（单元）/ 部署后实测 | 跳转查询与 /api/v1 代理用同一规则：只从 CLIENT_IP_HEADER 取最后一个 IP，以 X-Forwarded-For 转发，其他请求头（Cookie、Authorization）都不转发；单元测试覆盖。夹具没有可信反向代理，后端限流桶按浏览器 IP 计数需要在真实部署中确认（并入 U-69） |
+| DL3-11 | PASS | 375px 浅色、深色：overflowing 检查为空；按钮文字不被截断（检查 label 的 scrollWidth）；SHA-256 代码块不超出屏幕宽度；按钮、提示和小标题的对比度都不低于 4.5:1。第一次截图发现长按钮文字在手机上被截断，已改为可换行并加入断言 |
+| DL3-12 | PASS | 仓库中除交接文档、.env.example 的迁移说明、docs/client-downloads.md 和守卫测试外，没有 ANDROID_APK_*、IOS_IPA_*、IOS_MANIFEST_URL、*_SOURCE_URL、website-env.txt 的引用；test-payment-web.py 改为由夹具录入 |
+| DL3-13 | PASS（脚本检查）/ 真实打包未运行 | test-download-entry.py：录入单字段与后台表单标签逐一对应，缺字段、大写或带冒号的哈希都被拒绝；五个脚本都写录入单、都不再输出 .env 行；release_scrub 把它视为只能在 private 目录的文件，放进公开目录会被报告；release_scrub --self-test 通过；五个脚本 py_compile 通过。本机没有运行真实打包（需要签名材料、Xcode 归档或 Windows 工具链），各平台的 release 套件由 CI 运行 |
+| DL3-14 | PASS | docs/client-downloads.md 新增；android-release.md 第 4 节、ios-release.md 第 5–6 步、macos-release.md 第 4 节第 8 步、windows-release.md 第 5 节、deployment.md、web-appearance.md 已更新 |
+| DL3-15 | PASS（本地）/ CI 见 PR | lint、tsc --noEmit、test:downloads（21）、test:home（3）、test:guide（14）、test:copy（4）、test:theme（5）、test:toast（7）通过；test:api-proxy 用本机 Chrome 运行 17 项全部通过（本机没有 Playwright 自带的 headless shell，不指定时 4 项因无法启动浏览器而失败，与改动无关）；next build 成功。完整支付夹具浏览器套件 120 passed（10.5 分钟，/tmp/dl3-web-full，含新的 download.spec 和更新后的 home、guide、admin-downloads、theme、ui-copy）。节点目录套件（test-node-catalog.py）的浏览器部分 10 passed；其后的 TestCatalogBackendMihomoAcceptance 在本地 worktree 因没有 Mihomo 子模块（native/third_party/Clash.Meta）无法编译，记为本地 BLOCKED，由 CI 运行 |
+
+与规划的差异：
+1. iPhone 安装链接中的站点地址由浏览器根据当前页面生成，服务端不需要新增站点地址配置，也不信任 Host 头；服务端渲染时按钮先指向 #ios，页面加载完成后换成 itms-services 链接。
+2. 测试用的短缓存只在网站进程带有夹具标记 E2E_ISOLATED=private-postgres 时读取 DOWNLOADS_CACHE_MS（500–30000 毫秒）；网站没有“生产环境”的概念，所以用夹具标记代替。
+3. tsconfig 打开 allowImportingTsExtensions，让 node --test 能直接加载互相引用的 .ts 模块。
+4. resign-ipa.py 不再打印 IOS_* 行，改为在签名文件旁写录入单；--ipa-url 仍可写 manifest.plist，供网站以外的安装方式使用。
+5. iOS 未签名包也写录入单，并注明“未签名，不能上架”，以签名后的录入单为准。

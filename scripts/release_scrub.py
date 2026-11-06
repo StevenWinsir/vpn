@@ -32,7 +32,7 @@ BASELINE = ROOT / 'scripts' / 'release-scrub-baseline.json'
 
 # Files that belong in the private folder only (any platform). The source archives are matched by pattern.
 PRIVATE_ONLY_NAMES = ('THIRD_PARTY_LICENSES.txt', 'SOURCE.txt', 'dependencies.cdx.json', 'release-info.json',
-                      'release-manifest.json', 'release.json', 'manifest.json', 'build-manifest.json')
+                      'release-manifest.json', 'release.json', 'manifest.json', 'build-manifest.json', 'download-entry.txt')
 SOURCE_ARCHIVE = re.compile(r'.*-source-[0-9a-f]+\.tar\.gz$')
 PRIVATE_NOTE = 'README-内部资料.txt'
 PRIVATE_NOTE_TEXT = (

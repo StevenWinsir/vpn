@@ -82,6 +82,7 @@ python3 scripts/test-native-macos.py --suite release
 5. 在**干净用户/另一台 Mac** 上从下载的 DMG 安装并完成首次 Helper 授权（矩阵 R01）。
 6. `.github/workflows/release-macos.yml` 是配好的手动发布流水线，**从未运行过**（见文件头注释）。第一次跑通前，以本节手动步骤为准。
 7. release 通道的 Helper 授权、XPC 调用方校验（Team ID 级）、伪造调用方被拒——这些只有 Developer ID 包才能真正验收（S01 的剩余部分）。
+8. 发布到网站：把 DMG 上传到公网 https 地址，在 **管理后台 → 客户端下载** 按 `release-private/download-entry.txt` 添加 macOS 条目（arm64、DMG）并上架，约 30 秒后 `/download` 显示（docs/client-downloads.md）。
 
 ## 5. 升级、卸载、回滚
 

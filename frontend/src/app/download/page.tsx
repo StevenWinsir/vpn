@@ -1,11 +1,12 @@
 import { DownloadView } from '@/components/download-view';
-import { androidDownload, iosDownload } from '@/lib/downloads';
+import { loadDownloads } from '@/lib/server/downloads';
 
-// Read the release facts on every request: a new APK needs a .env edit and a restart, not a rebuild.
+// Read on every request through the 30-second cache (handoff_download.md D9): a change in the
+// console shows here within half a minute, no restart and no rebuild.
 export const dynamic = 'force-dynamic';
 
 export const metadata = { title: '下载客户端' };
 
-export default function DownloadPage() {
-  return <DownloadView android={androidDownload(process.env)} ios={iosDownload(process.env)} />;
+export default async function DownloadPage() {
+  return <DownloadView state={await loadDownloads()} />;
 }

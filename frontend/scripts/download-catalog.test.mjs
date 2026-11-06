@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   archLabels,
+  downloadCatalog,
   firstFree,
   formatLabels,
   normalizeHex,
@@ -40,6 +41,10 @@ const base = (platform, arch, format) => {
     published: false,
   };
 };
+
+test("the website's own catalogue is the backend's, entry for entry", () => {
+  assert.deepEqual(downloadCatalog, catalog);
+});
 
 test('every platform, architecture and format of the catalogue has a name, in page order', () => {
   assert.deepEqual(
