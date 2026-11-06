@@ -20,6 +20,7 @@ export default defineConfig({
     'admin-console.spec.ts',
     'admin-console-2.spec.ts',
     'admin-console-plans.spec.ts',
+    'admin-downloads.spec.ts',
     'shop.spec.ts',
     'plans-upgrade.spec.ts',
     'referral.spec.ts',
