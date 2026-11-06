@@ -242,6 +242,19 @@ CI 使用 Go 1.26.6，可优先保持一致；不要盲目升级依赖或删除 
 - **诊断**：`bin/doctor` 的 `shop` 段增加 `upgrade_enabled`、`upgrade_min_charge_cents`、`upgrade_review_orders` 和 `upgrade_group_gaps`（“A>B:组名”）；警告 `upgrade_orders_need_review`、`plans_upgrade_group_gap`、`shop_upgrade_settings_invalid`。只输出数量、套餐 ID 和线路组名。
 - **回滚**：可以直接回滚二进制，新列留在库里无害。升级订单卖 0 天、0 流量，旧版本的履约一定失败，回调和人工确认都只会转为待核对，不会被当成普通订单开通；旧版本写下的订单没有覆盖区间，再升级后按 [付款时刻, 付款时刻 + 天数] 兜底计算抵扣（只会少抵）。规则、人工审核处理、回滚细节、实测清单（U-41 … U-46）和安全审查结论见 [docs/payment-operations.md](../docs/payment-operations.md) 第十一、十二节；发布演练见 `scripts/test-release-rehearsal.py` 的“套餐升级”阶段（第八个二进制 dbe75ca）。
 
+## 客户端下载（handoff_download.md 第 1 轮）
+
+- **迁移**：只增不删，可重复执行。新表 `client_downloads`，每行对应一个“平台 + 架构 + 格式”，有唯一索引 `idx_client_download_variant`，不修改任何已有表。新条目默认不上架。
+- **配置**：没有新的环境变量。平台、架构、格式的白名单是代码常量（`internal/api/downloads.go`），`internal/api/testdata/client_downloads_catalog.json` 是同一份白名单给网站用的快照，测试保证两者一致。
+- **接口**：
+  - 管理接口 `/api/v1/admin/console/downloads`：列表（带白名单）、新增、`POST :id` 修改（乐观锁 `version`）、`DELETE :id` 删除。只要求管理员角色，写操作都有审计（`admin.download_create/update/delete`）。审计里的地址只记录主机名和文件名，不记录查询参数。
+  - 公开接口 `GET /api/v1/downloads`：只列已上架条目，**不含地址和 id**，带 `Cache-Control: public, max-age=30`。
+  - 公开接口 `GET /api/v1/downloads/{platform}/{arch}/{format}`：302 到登记的地址，带 `no-store` 和 `no-referrer`；未上架、不存在或地址不再合法时返回 404。
+  - 两个公开接口都受全局 API 限流约束。
+- **地址规则**：文件类地址必须是 https、不带账号密码、不带 `#`，文件名后缀与格式一致（不区分大小写，可以带查询参数）。非生产环境额外允许回环地址的 http，供本地测试用。App Store 和 TestFlight 只接受 `apps.apple.com` 和 `testflight.apple.com`，不填 SHA-256 和大小。
+- **发布顺序**：先后端（迁移），用 `bin/doctor` 确认 `missing_tables` 为空。然后在后台录入现有的 Android/iOS 条目（取值见旧的 `frontend/.env` 下载变量或打包输出）并上架，再发布第 3 轮的网站。第 1 轮本身对网站没有可见变化。
+- **回滚**：旧二进制忽略新表，公开下载路由不存在（404），数据不受影响；再次升级后条目照常可用。发布演练见 `scripts/test-release-rehearsal.py` 的“套餐升级”阶段中的客户端下载检查。
+
 ## 开发者维护：校验逻辑不能分叉
 
 唯一手工维护源仍为 `shared/nodepolicy`。`backend/nodepolicy` 是提交到仓库的精确快照，不是独立实现。修改源规则或共享原生 API 测试契约后，在完整仓库中运行：

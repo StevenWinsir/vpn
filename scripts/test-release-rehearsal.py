@@ -44,6 +44,7 @@ from pathlib import Path
 import argparse
 import base64
 import hashlib
+import http.client
 import http.cookiejar
 import json
 import os
@@ -67,7 +68,9 @@ ALL_TABLES = WEB_TABLES + ['native_sessions', 'client_traffic_reports', 'node_co
     'node_groups', 'connection_leases', 'node_assignments', 'usage_buckets', 'node_health_events',
     'payment_notifications', 'coupons', 'login_events', 'ip_geo_caches', 'announcements', 'announcement_reads', 'shop_settings', 'referrals',
     # Support tickets (handoff_ticket.md 5); their rollback drill is the last stage.
-    'tickets', 'ticket_messages']
+    'tickets', 'ticket_messages',
+    # Client downloads (handoff_download.md 4.1); drilled within the plans rollback stage.
+    'client_downloads']
 # main before handoff_auth.md round 1: open registration, no mailbox verification.
 LEGACY_REF = '67e7b37f935e654e4378c14a32bc888ccff2065f'
 # PR #49 merge, the last release before node groups (presence plan 14 step 5); it also has
@@ -98,6 +101,21 @@ PAYMENT_TABLES = ['orders', 'payment_notifications', 'coupons', 'announcements',
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise RuntimeError('Unexpected redirect from isolated fixture')
+
+
+def redirect_of(url, route):
+    """Status and Location of a GET that must not be followed (the public download redirect)."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or not parsed.port:
+        raise ValueError('Loopback fixture URL required')
+    connection = http.client.HTTPConnection('127.0.0.1', parsed.port, timeout=15)
+    try:
+        connection.request('GET', '/api/v1' + route)
+        response = connection.getresponse()
+        response.read()
+        return response.status, response.getheader('Location')
+    finally:
+        connection.close()
 
 
 class Client:
@@ -1494,6 +1512,15 @@ def main():
             # R3-02, new backend + old website: the dbe75ca website against this binary.
             old_site, summary['plans_rollback_website_commit'] = build_site('pre-upgrade-website', args.plans_rollback_ref, 'src/components/upgrade-modal.tsx')
             plans_compat('browser-plans-old-website', old_site, plans_now.url, 'old-website', up_a, pro, [starter, top])
+            # Client downloads (handoff_download.md DL1-01): one published entry on the current binary, then the
+            # same rollback must leave it alone and the re-upgraded binary must offer it again.
+            dl_url = 'https://downloads.example.test/AsterLink-Setup-x64-1.2.3.exe'
+            dl_admin = signed_in(plans_now.url, (admin_email, admin_password))
+            dl_admin.call('/admin/console/downloads', {'platform': 'windows', 'arch': 'x64', 'format': 'exe', 'app_version': '1.2.3', 'url': dl_url,
+                'sha256': 'ab' * 32, 'size_bytes': 1048576, 'published': True}, origin=web_url, expected=201)
+            assert [(d['platform'], d['app_version']) for d in plans_now.call('/downloads')['downloads']] == [('windows', '1.2.3')]
+            assert redirect_of(plans_now.url, '/downloads/windows/x64/exe') == (302, dl_url)
+            downloads_before = fingerprint(up_db, ['client_downloads'])
             stop(process)
             summary['checks'].append('mid-period upgrades on the current binary: three accounts buy starter and every paid order records its value window; upgrade-options relates every plan (starter current, pro and max upgrades, the administrator-defined cheaper plan a downgrade with the no-refund words); the ordinary purchase request of a website from before upgrades is refused as before (409 plan_change_not_supported) with words naming the upgrade or the no-refund downgrade; one upgrade to pro is quoted exactly as the algorithm computes from the rows, paid by callback and keeps the subscription id, start and expiry while adding the granted traffic; two more upgrades stay pending and block any other order (409 pending_order_exists); the doctor sees no upgrade under review and warns that pro>max loses group JP1')
             summary['checks'].append('mixed deployment, the website of the release before upgrades (dbe75ca, built from its own tree) against the current backend: the other plans still read "当前套餐有效期内不能更换套餐，到期后可购买。" and stay disabled, renewal works, the order list shows the upgrade order as the plan with 0 days (display only), no request to an upgrade route and no page error')
@@ -1530,7 +1557,10 @@ def main():
             plans_compat('browser-plans-old-backend', stage, plans_old.url, 'old-backend', up_a, pro, [starter, top])
             assert untouched_orders() == orders_kept, 'the old binary changed an order it must not touch'
             assert fingerprint(up_db, ['plans', 'shop_settings', 'coupons']) == shop_before
+            assert redirect_of(plans_old.url, '/downloads/windows/x64/exe')[0] == 404
+            assert fingerprint(up_db, ['client_downloads']) == downloads_before, 'the old binary changed client_downloads'
             stop(process)
+            summary['checks'].append('client downloads across the plans rollback: the current binary publishes one Windows entry (public list without the address, 302 to it); dbe75ca has no download route (404) and leaves client_downloads byte-identical; after the re-upgrade the same redirect answers again')
             summary['checks'].append('rollback to the release just before upgrades (dbe75ca, no down migration) over the new columns: no plan_upgrade_supported; a callback for a pending upgrade order puts it under review (state_conflict) and a person confirming it on the old console is refused (409 fulfil_conflict), the subscription untouched; the old binary renews the upgraded plan (30 more days) and sells starter to a new account, both orders without a value window (kind purchase); every other order, every other subscription and the plans, shop settings and coupons are byte-identical')
             summary['checks'].append('mixed deployment, this website against the real dbe75ca binary: the plans page uses its local rule ("到期后可购买", "当前套餐有效期内不能更换，到期后可购买。", rules without "升级"), no upgrade button and no request to an upgrade route, the order list renders and no page error')
 
@@ -1575,6 +1605,8 @@ def main():
             settle_at(plans_back.url, order_d)
             assert sub_state(up_d[2])[1] == 'pro' and up_sql(f"SELECT status FROM rehearsal.orders WHERE id = '{order_d['id']}'") == 'paid'
             assert fingerprint(up_db, ['plans', 'shop_settings', 'coupons']) == shop_before
+            assert redirect_of(plans_back.url, '/downloads/windows/x64/exe') == (302, dl_url)
+            assert fingerprint(up_db, ['client_downloads']) == downloads_before
             stop(process)
             plan_people = [person[0] for person in (up_a, up_b, up_c, up_d)]
             for log_name in ['api-plans', 'api-plans-rollback', 'api-plans-reupgraded']:
