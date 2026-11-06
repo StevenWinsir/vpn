@@ -299,7 +299,7 @@
 
 （每轮完成后追加：日期、分支、PR、合并提交、验收结果表、证据目录 artifacts/download-roundN、遗留问题。）
 
-### 第 1 轮：后端数据、接口与审计（2026-11-05，分支 worktree-download-round1-backend，基线 c6a48e0，PR 见合并记录）
+### 第 1 轮：后端数据、接口与审计（2026-11-05，分支 worktree-download-round1-backend，基线 c6a48e0，PR #116，squash 合并为 78c56c0）
 
 实现位置：
 - backend/internal/model/download.go：ClientDownload 模型。
@@ -319,7 +319,7 @@
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| DL1-01 | PASS（本地）/ 演练待 CI | TestClientDownloadMigrationOverExistingData：在已迁移的库上删表后重新迁移两次，其他表指纹不变；唯一索引 idx_client_download_variant (platform, arch, format) 存在；重复组合被数据库拒绝；默认 published=false、version=1；再次迁移后行数不变。发布演练脚本已加入新表和回滚检查（dbe75ca 上 404、表指纹不变、再升级后 302 恢复），本地只做了 py_compile，完整演练由 CI 的 “Upgrade, payments, … rollbacks” 步骤运行 |
+| DL1-01 | PASS | TestClientDownloadMigrationOverExistingData：在已迁移的库上删表后重新迁移两次，其他表指纹不变；唯一索引 idx_client_download_variant (platform, arch, format) 存在；重复组合被数据库拒绝；默认 published=false、version=1；再次迁移后行数不变。发布演练脚本已加入新表和回滚检查（dbe75ca 上 404、表指纹不变、再升级后 302 恢复），本地只做了 py_compile，完整演练由 CI 的 “Upgrade, payments, … rollbacks” 步骤运行，PR #116 的 “Release rehearsal / migration / rollback” job 通过 |
 | DL1-02 | PASS | TestValidateClientDownload：白名单内全部 27 个组合都能通过；未知平台、跨平台的架构或格式都返回对应字段错误 |
 | DL1-03 | PASS | 同上，覆盖以下情况：生产环境的 http、回环 http（生产环境拒绝，非生产允许，IPv6 回环也允许）、账号密码、javascript:、# 片段、后缀不符、后缀只出现在查询参数里、超长、商店外域名、商店 http。.AppImage 大写后缀和带查询参数的地址可以通过 |
 | DL1-04 | PASS | 大写或带冒号空格的 SHA-256、证书指纹都会被规范化；文件类缺少 SHA-256 时拒绝；商店类填写 SHA-256 或大小时拒绝；非 apk 填证书指纹、非 ipa 填 bundle id、ipa 缺少 bundle id 时都拒绝 |
@@ -329,7 +329,7 @@
 | DL1-08 | PASS | 匿名访问返回 401，普通用户 403 admin_required；TestSecurityRouteAccessMatrix 通过（新的管理路由自动纳入检查：只读查看用户期间所有写接口都返回 403） |
 | DL1-09 | PASS | 公开列表只含已上架条目，顺序为 windows/exe、android/apk、ios/ipa；JSON 中没有 url、id 键，响应正文中也没有地址域名和 token；Cache-Control 为 public, max-age=30；白名单中已不存在的组合（模拟“退役”的平台）不会出现 |
 | DL1-10 | PASS | 已上架时返回 302，Location 为登记地址，并带 no-store 和 no-referrer；未上架、跨平台组合、未知平台、不存在的条目返回 404 not_found，且没有 Location；手工把数据库中的地址改成 javascript: 后返回 404；删除后返回 404 |
-| DL1-11 | PASS（本地）/ CI 见 PR | go vet ./... 与 gofmt 通过；`go test -race -count=1 ./...` 全部 ok（api 包 479 秒），EXIT 0；日志在本机 /tmp/dl-round1-gotest.log。改动 doctor 的表清单后，又单独跑了 TestConsoleReadinessAndAdministratorPostgres 和 TestTicket*，都通过 |
+| DL1-11 | PASS | go vet ./... 与 gofmt 通过；`go test -race -count=1 ./...` 全部 ok（api 包 479 秒），EXIT 0；日志在本机 /tmp/dl-round1-gotest.log。改动 doctor 的表清单后，又单独跑了 TestConsoleReadinessAndAdministratorPostgres 和 TestTicket*，都通过。PR #116 的 CI 16 个 job 全部通过，其中 “Backend / PostgreSQL / race” 实际运行 |
 
 与规划的差异：
 1. 前后端白名单一致性改为“后端 Go 常量 + backend/internal/api/testdata/client_downloads_catalog.json 快照”，由 TestClientDownloadCatalogSnapshot 保证两者相同；第 3 轮的前端测试直接比对这份快照，不走 shared 和 sync-backend-shared.py 的同步机制（那套机制面向 nodepolicy 和原生契约，接入成本高于收益）。
@@ -338,3 +338,35 @@
 4. 白名单最多只有 27 个组合，60 条上限现在不会触发，只作为白名单扩展后的防线，测试中用直接写库的方式验证。
 
 遗留问题：无。第 2 轮可以开工（message 第 2 轮 #115 已合并）。
+
+### 第 2 轮：管理后台板块（2026-11-05，分支 worktree-download-round2-console，基线 78c56c0）
+
+实现位置：
+- frontend/src/lib/download-catalog.ts：平台、架构、格式的中文名称；与后端 validateDownload 同顺序、同文案的即时校验；已占用组合、首个可用组合、字节数解析、把一行转回提交体（只含后端接受的键）。不依赖 React，第 3 轮的下载页可以直接复用这些名称。
+- frontend/src/components/console/console-downloads.tsx：五个平台分组的表格、新增/编辑弹窗、上架开关、删除确认。
+- frontend/src/app/admin/console/downloads/page.tsx：路由。
+- console-shell.tsx：在“公告”之后加入“客户端下载”标签，并更新页首说明。
+
+测试：
+- frontend/scripts/download-catalog.test.mjs（并入 test:downloads，8 项）：读取后端快照 testdata/client_downloads_catalog.json，检查每个平台、架构、格式都有名称且平台顺序为 Windows、macOS、Android、iOS、Linux；27 个组合全部通过；与后端相同的拒绝和放行表格；十六进制规范化；字节数解析；已占用组合；提交体的键。
+- frontend/tests/admin-downloads.spec.ts（加入 playwright.payment.config.ts）：3 个用例，并在结束时通过界面删除本 spec 添加的全部条目。
+- 夹具 payment_acceptance_test.go 新增账号 dlroot（管理员）和 dla（普通用户），排在最早创建的一组，不影响用户列表前 20 条。
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| DL2-01 | PASS | dla 打开 /admin/console/downloads 显示“无权访问”；dlroot 看到“客户端下载”标签处于选中状态，五组顺序为 windows、macos、android、ios、linux，每组显示“尚未添加”（截图 downloads-empty.png） |
+| DL2-02 | PASS | 依次添加 Windows x64 exe、macOS arm64 dmg、Android arm64-v8a apk（带签名证书指纹）、iOS arm64 ipa（带 Bundle ID）、Linux x64 AppImage，每次出现“已添加”提示，行立即出现且显示“未上架”，计数为 5 |
+| DL2-03 | PASS | 再次添加 Windows 时默认选中 x64 + MSI，格式下拉中的“安装程序 .exe（已添加）”不可选；添加 iOS 时默认 App Store，SHA-256、文件大小、Bundle ID 输入框都不出现，提示 apps.apple.com，切换到 TestFlight 后提示 testflight.apple.com |
+| DL2-04 | PASS | 前端即时校验依次给出版本号、https、后缀、SHA-256 的错误，文案与后端一致；带冒号的大写 SHA-256 规范化后保存。后端字段错误：地址中的 %ZZ 是浏览器能接受、后端解析会拒绝的转义，保存后“下载地址格式不正确”显示在地址输入框下方，修改地址后消失。商店域名不符时的错误也显示在地址框下 |
+| DL2-05 | PASS | 把 Windows 版本改为 1.2.4，出现“已保存”提示；第一个页面打开编辑后，第二个浏览器上下文先保存为 1.2.5，第一个页面保存时表单内显示“已被其他管理员修改，请刷新后重试”；点“刷新”后表单换成 1.2.5，再改为 1.2.6 保存成功 |
+| DL2-06 | PASS | 打开开关出现“已上架”提示，经网站代理请求公开列表，可以看到 windows 条目且响应中没有地址域名；关闭开关出现“已下架”提示；删除 Linux 时确认框写明“Linux · x64 · AppImage”和版本 1.2.3，确认后出现“已删除”提示，该组回到“尚未添加” |
+| DL2-07 | PASS | 文件大小输入 48128121 时旁边实时显示“约 45.9 MB”，列表中显示 45.9 MB；SHA-256 列显示前 8 位，title 为完整值；“打开地址”的 href 为登记的地址，target=_blank，rel 含 noopener |
+| DL2-08 | PASS | 浅色、深色 × 1280、768 共 4 张截图（downloads-light-1280.png 等），layout.ts 的 overflowing 检查都为空；768 宽时表格在卡片内横向滚动 |
+| DL2-09 | PASS（本地）/ CI 见 PR | lint、typecheck（tsc --noEmit）、test:toast（7）、test:copy（3）、test:theme（5）、test:downloads（14）本地通过；next build 成功。admin-downloads.spec.ts 单独运行 3 passed（/tmp/dl-round2-web-2）；完整支付夹具浏览器套件 115 passed（10.3 分钟，含 admin-console、admin-console-2、admin-console-plans，/tmp/dl-round2-web-full）。本 spec 约 18 秒，CI 浏览器 job 的 25 分钟上限仍有余量 |
+
+本地证据：截图在 /tmp/dl-round2-web-2/browser-artifacts/screens/（downloads-empty、downloads-list、downloads-{light,dark}-{1280,768}）。
+
+与规划的差异：
+1. 后端字段错误的浏览器验证没有拦截请求，用的是前后端解析差异的真实情况（%ZZ）。
+2. 上架开关失败时用 toast.error 提示并刷新列表，没有单独的页内错误框；表单内的错误仍按 D16 显示在表单里。
+3. 冲突后点“刷新”不关闭弹窗，而是用最新数据重新填充表单，管理员可以直接继续编辑。

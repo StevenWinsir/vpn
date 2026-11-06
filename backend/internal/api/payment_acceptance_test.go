@@ -79,10 +79,11 @@ func TestPaymentAcceptanceFixture(t *testing.T) {
 	// pending order, upgh pays an upgrade with a line group lost and upgroot is the administrator.
 	// The short-message spec's accounts (handoff_message.md 8) are the oldest of all: toasta signs in
 	// and out, toastb has its session ended from another browser, toastdel deletes itself and
-	// toastroot (an administrator) views toasta read-only and returns.
-	for _, kind := range []string{"toastroot", "toasta", "toastb", "toastdel", "upgroot", "upga", "upgb", "upgc", "upgd", "upge", "upgf", "upgg", "upgh"} {
+	// toastroot (an administrator) views toasta read-only and returns. The client download console
+	// spec (handoff_download.md 7) has dlroot, an administrator, and dla, who may not open it.
+	for _, kind := range []string{"dlroot", "dla", "toastroot", "toasta", "toastb", "toastdel", "upgroot", "upga", "upgb", "upgc", "upgd", "upge", "upgf", "upgg", "upgh"} {
 		role := "user"
-		if kind == "upgroot" || kind == "toastroot" {
+		if kind == "upgroot" || kind == "toastroot" || kind == "dlroot" {
 			role = "admin"
 		}
 		u := model.User{ID: uuid.NewString(), Email: kind + "-" + uuid.NewString()[:8] + "@example.invalid", Name: "Pay " + kind, PasswordHash: string(hash), Role: role, Status: "active", AuthVersion: 1}

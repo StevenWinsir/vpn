@@ -18,6 +18,7 @@ const tabs = [
   { href: '/admin/console/logins', label: '登录记录' },
   { href: '/admin/console/coupons', label: '优惠码' },
   { href: '/admin/console/announcements', label: '公告' },
+  { href: '/admin/console/downloads', label: '客户端下载' },
 ];
 
 export function ConsoleShell({ children }: { children: React.ReactNode }) {
@@ -51,7 +52,7 @@ function ConsoleGate({ children }: { children: React.ReactNode }) {
         管理后台
       </Title>
       <Text size="sm" c="dimmed" mt={8} mb="lg">
-        用户、订单与支付、工单、套餐、登录记录、优惠码、公告。节点与线路请在“节点管理”中维护。
+        用户、订单与支付、工单、套餐、登录记录、优惠码、公告、客户端下载。节点与线路请在“节点管理”中维护。
       </Text>
       <Group gap="xs" mb="xl" component="nav" aria-label="管理后台导航">
         {tabs.map(({ href, label }) => (
