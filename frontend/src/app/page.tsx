@@ -24,6 +24,7 @@ import { ProductVisual } from '@/components/home/product-visual';
 import { Reveal } from '@/components/home/reveal';
 import { homeStatus, type PlatformId } from '@/lib/downloads';
 import { loadDownloads } from '@/lib/server/downloads';
+import { currentSiteConfig, indexableMetadata, verificationMetadata } from '@/lib/server/seo';
 import { icpLookupUrl, siteFacts } from '@/lib/site';
 import { crispSetting } from '@/lib/support-config';
 import { appName } from '@/lib/types';
@@ -33,6 +34,11 @@ import { appName } from '@/lib/types';
 // /download (handoff_download.md D9, D14): at most one short request every half minute. The plan
 // preview and the account actions load in the browser.
 export const dynamic = 'force-dynamic';
+
+// The title stays the site default; the search engine verification tags live here (handoff_seo.md D15).
+export function generateMetadata() {
+  return indexableMetadata('/', verificationMetadata(currentSiteConfig()));
+}
 
 const features = [
   {

@@ -12,6 +12,8 @@ const name = process.env.NEXT_PUBLIC_APP_NAME || 'AsterLink';
 export const metadata: Metadata = {
   title: { default: `${name} · 连接，自有边界`, template: `%s · ${name}` },
   description: '稳定、透明的全平台安全连接服务。多端客户端，线路倍率公开，按量计费清晰可查。',
+  // The default for every page (handoff_seo.md D4): only the pages of the policy table in
+  // src/lib/seo.ts that may be indexed replace it, per request, through indexableMetadata.
   robots: { index: false, follow: false },
 };
 // The browser bar follows the system appearance (a manual choice against it is not reflected).

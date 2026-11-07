@@ -94,6 +94,9 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("Cache-Control", "no-store")
+		// The API host is reached by the clients, never meant for search engines (handoff_seo.md
+		// D16): every answer, errors included, says so.
+		c.Header("X-Robots-Tag", "noindex, nofollow")
 		defer func() {
 			if recover() != nil {
 				fail(c, 500, "internal_error", "服务暂时不可用，请稍后重试")
@@ -118,6 +121,7 @@ func newServerWith(db *gorm.DB, cfg config.Config, mail *authmail.Service, clock
 		c.Next()
 	})
 	r.Use(s.corsAndCSRF())
+	r.GET("/robots.txt", robotsTxt)
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.GET("/readyz", func(c *gin.Context) {
 		sqlDB, err := s.db.DB()

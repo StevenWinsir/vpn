@@ -142,6 +142,8 @@ function PlatformCard({ state, view }: { state: DownloadState; view: PlatformVie
                 <Button
                   component="a"
                   href={b.ios ? (origin ? iosInstallLink(origin) : `#${view.platform}`) : b.href}
+                  // Crawlers stay off the file redirects (handoff_seo.md D10).
+                  rel="nofollow"
                   variant={b.solid ? 'filled' : 'light'}
                   leftSection={<IconDownload size={18} />}
                   size="md"
