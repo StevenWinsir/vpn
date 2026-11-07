@@ -203,7 +203,7 @@ func TestSecurityRouteAccessMatrix(t *testing.T) {
 	victim := e.user("matrix-victim", "user")
 	routes := e.engine().Routes()
 	public := map[string]bool{
-		"GET /healthz": true, "GET /readyz": true, "GET /api/v1/meta": true, "GET /api/v1/plans": true,
+		"GET /robots.txt": true, "GET /healthz": true, "GET /readyz": true, "GET /api/v1/meta": true, "GET /api/v1/plans": true,
 		"GET /api/v1/downloads": true, "GET /api/v1/downloads/:platform/:arch/:format": true,
 		"POST /api/v1/auth/register-code": true, "POST /api/v1/auth/register": true, "POST /api/v1/auth/forgot-password": true,
 		"POST /api/v1/auth/reset-password/validate": true, "POST /api/v1/auth/reset-password": true, "POST /api/v1/auth/login": true,

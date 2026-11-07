@@ -23,7 +23,8 @@
     "test:support": "node --experimental-strip-types --test scripts/support.test.mjs",
     "test:tickets": "node --experimental-strip-types --test scripts/tickets.test.mjs",
     "test:guide": "node --experimental-strip-types --test scripts/guide.test.mjs",
-    "test:toast": "node --experimental-strip-types --test scripts/toast.test.mjs"
+    "test:toast": "node --experimental-strip-types --test scripts/toast.test.mjs",
+    "test:seo": "node --experimental-strip-types --test scripts/seo.test.mjs"
   },
   "engines": {
     "node": ">=22"

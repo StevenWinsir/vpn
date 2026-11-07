@@ -114,18 +114,26 @@ def main():
             offline_url = f'http://127.0.0.1:{offline_port}'
             offline = spawn('frontend-offline', ['node', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1',
                 '-p', str(offline_port)], ROOT / 'frontend', dict(frontend_env, API_INTERNAL_URL=f'http://127.0.0.1:{free_port()}/api/v1'))
-            deadline = time.monotonic() + 60
-            while True:
-                if offline.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError('Offline Next.js readiness failed; see frontend-offline.log')
-                try:
-                    with opener.open(offline_url + '/download', timeout=10) as response:
-                        if response.status == 200:
-                            break
-                except OSError:
-                    time.sleep(0.2)
+            # A third process of the same build with search engine indexing switched on (handoff_seo.md
+            # S1-03): its own address is its SITE_URL, so seo.spec can compare both switch positions.
+            indexed_port = free_port()
+            indexed_url = f'http://127.0.0.1:{indexed_port}'
+            indexed = spawn('frontend-indexed', ['node', 'node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1',
+                '-p', str(indexed_port)], ROOT / 'frontend', dict(frontend_env, SITE_URL=indexed_url, SITE_INDEXING='on',
+                SITE_VERIFICATION_GOOGLE='fixture-google-token', SITE_VERIFICATION_BING='FIXTUREBINGTOKEN'))
+            for name, process, url in (('Offline', offline, offline_url + '/download'), ('Indexed', indexed, indexed_url + '/robots.txt')):
+                deadline = time.monotonic() + 60
+                while True:
+                    if process.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError(f'{name} Next.js readiness failed; see frontend-{name.lower()}.log')
+                    try:
+                        with opener.open(url, timeout=10) as response:
+                            if response.status == 200:
+                                break
+                    except OSError:
+                        time.sleep(0.2)
             browser_env = dict(frontend_env, E2E_ISOLATED='private-postgres', PLAYWRIGHT_BASE_URL=web_url,
-                DOWNLOAD_OFFLINE_URL=offline_url,
+                DOWNLOAD_OFFLINE_URL=offline_url, SEO_INDEXED_URL=indexed_url,
                 PAYMENT_FIXTURE=str(ready), PAYMENT_OUTPUTS=str(output / 'browser-artifacts'))
             chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
             if Path(chrome).is_file():
