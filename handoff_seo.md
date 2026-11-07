@@ -560,13 +560,13 @@ robots.txt 内容（收录开启时）：允许全部；Disallow /api/ 和 /down
 | S3-08 | PASS | test:seo：有/无客服邮箱、有/无在线客服、有/无工单、支持/不支持升级，共 16 种组合下 FAQPage 与问答数据逐条一致，“如何联系客服”的 8 种写法各不相同。seo.spec：首页服务端 HTML 中可见的问题和答案（含隐藏面板）与 FAQPage 逐字一致 |
 | S3-09 | PASS | test:seo：只列已上架平台，取推荐架构的版本，不含 downloadUrl、offers、哈希和下载地址。seo.spec：夹具为“只上架 Android”时只有 AsterLink for Android；切换到“全部未上架”后没有 SoftwareApplication；最后恢复夹具 |
 | S3-10 | PASS | test:seo：全部构造结果和源码中都没有 aggregateRating、review、HowTo、SearchAction、potentialAction |
-| S3-11 | 代码 PASS；文字待用户确认（BLOCKED） | seo.spec：/terms、/privacy 返回 200，可收录（S1-03），在 sitemap 中（S1-04）。每一节的标题和正文、两个日期都在服务端 HTML 中，没有禁用词和 VPN。首页页脚有两个链接。注册页的说明文字和两个链接正确，点击后进入隐私政策页，表单仍只有“记住登录状态”一个勾选框。test:seo 检查内联标记、链接白名单和技术词。**按 D17，用户在 PR 中确认文字之前不合并** |
+| S3-11 | PASS（用户 2026-11-07 确认文字） | seo.spec：/terms、/privacy 返回 200，可收录（S1-03），在 sitemap 中（S1-04）。每一节的标题和正文、两个日期都在服务端 HTML 中，没有禁用词和 VPN。首页页脚有两个链接。注册页的说明文字和两个链接正确，点击后进入隐私政策页，表单仍只有“记住登录状态”一个勾选框。test:seo 检查内联标记、链接白名单和技术词。用户于 2026-11-07 在会话中确认 /terms 和 /privacy 的文字无误（“文字确认无误”），包括下列运营承诺和跨境说明（U-79 完成） |
 | S3-12 | PASS | test:seo 和 seo.spec：开启收录时 sitemap 正好是第 4 节的 10 个地址，顺序固定，不多也不少（见偏离第 3 项） |
 | S3-13 | 本地 PASS，CI 见 PR | scripts/test-payment-web.py 全量 145/145 通过，用时 10.7 分钟（第 2 轮为 137 个用例、10.6 分钟）。第一次全量为 142/143：plans-upgrade R2-07 暴露了第 2 轮遗留的时序问题（见偏离第 9 项），修复后重新构建，plans-upgrade、plans-compat、shop、seo 四个文件 44/44 通过，第二次全量 145/145 通过。网站 node 测试全部通过：seo 24、guide 14、api-proxy 17（本机需 PLAYWRIGHT_CHROME_PATH）、nodes 3、downloads 21、dashboard 6、referral 5、copy 4、theme 5、home 3、support 6、tickets 12、toast 7。tsc、eslint、生产构建均通过，改动文件已按 prettier 格式化。总览页、Windows 教程页、服务条款、隐私政策和首页页脚在浅色、深色、1440 宽和手机宽度下截图检查过；检查中修正了两处：加粗文字中的链接显示为原始标记，以及深色主题下设备切换的当前项对比度不足 |
 
 需要用户留意：
 
-- 请在 PR 中审阅 /terms 和 /privacy 的全文（U-79），尤其是以下运营承诺：
+- 用户已于 2026-11-07 确认 /terms 和 /privacy 的全文（U-79），包括以下运营承诺：
   - 15 个工作日内答复；
   - 重复付款时“补开通或协商处理”；
   - 因服务自身原因长时间无法使用时“协商处理”；
