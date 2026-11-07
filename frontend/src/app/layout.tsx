@@ -5,12 +5,13 @@ import '@mantine/notifications/styles.css';
 import './globals.css';
 import { Providers } from '@/components/providers';
 import { SiteShell } from '@/components/site-shell';
+import { pageCopy } from '@/lib/seo-copy';
 import { colorSchemeFallbackScript, colorSchemeKey } from '@/lib/theme';
 const name = process.env.NEXT_PUBLIC_APP_NAME || 'AsterLink';
 // Icons come from the files next to this layout (icon.svg, favicon.ico, apple-icon.png,
 // manifest.ts) for every route; no page sets its own (handoff_ui.md 7.4).
 export const metadata: Metadata = {
-  title: { default: `${name} · 连接，自有边界`, template: `%s · ${name}` },
+  title: { default: pageCopy['/'].title, template: `%s · ${name}` },
   description: '稳定、透明的全平台安全连接服务。多端客户端，线路倍率公开，按量计费清晰可查。',
   // The default for every page (handoff_seo.md D4): only the pages of the policy table in
   // src/lib/seo.ts that may be indexed replace it, per request, through indexableMetadata.

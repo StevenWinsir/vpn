@@ -1,6 +1,7 @@
-// Search engine rules (handoff_seo.md round 1): SITE_URL and SITE_INDEXING, the policy table
+// Search engine rules (handoff_seo.md): round 1, SITE_URL and SITE_INDEXING, the policy table
 // against the page files, robots.txt, sitemap.xml and the canonical host rule (S1-01, S1-02,
-// S1-11). The HTTP side runs in tests/seo.spec.ts.
+// S1-11); round 2, the page copy, the share image and the plans in the first HTML (S2-01, S2-03,
+// S2-05, S2-06). The HTTP side runs in tests/seo.spec.ts.
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -17,6 +18,23 @@ import {
   sitemapRoutes,
   sitemapXml,
 } from '../src/lib/seo.ts';
+import {
+  downloadDescription,
+  pageCopy,
+  releasedPlatforms,
+  shareText,
+} from '../src/lib/seo-copy.ts';
+import { shareImage } from '../src/lib/share-image.ts';
+import {
+  createCachedSource,
+  fetchPublicJSON,
+  publicStaleForMs,
+  publicTTL,
+  sanitizeMeta,
+  sanitizePlans,
+} from '../src/lib/public-source.ts';
+import { shareModule } from './brand-icons.mjs';
+import { bannedIn } from '../tests/copy-words.ts';
 
 const frontend = new URL('..', import.meta.url).pathname;
 const app = join(frontend, 'src', 'app');
@@ -251,3 +269,248 @@ test(
     assert.deepEqual(hits, []);
   },
 );
+
+// ---- Round 2 (handoff_seo.md 5): copy, share image, the plans in the first HTML ----
+
+test('every indexable page has its own title and description within D7 (S2-01)', () => {
+  const routes = Object.keys(policies).filter((r) => policies[r].index);
+  assert.deepEqual(
+    Object.keys(pageCopy).sort(),
+    routes.sort(),
+    'copy for exactly the indexable pages',
+  );
+  const len = (s) => [...s].length;
+  const entries = Object.entries(pageCopy).map(([route, c]) => [
+    route,
+    route === '/download' ? { ...c, description: downloadDescription(released([])) } : c,
+  ]);
+  for (const [route, { title, description }] of entries) {
+    assert.ok(len(title) <= 30, `${route} title has ${len(title)} characters`);
+    if (route === '/') assert.match(title, /^AsterLink · /);
+    else assert.match(title, / · AsterLink$/, route);
+    assert.ok(
+      len(description) >= 60 && len(description) <= 120,
+      `${route} description has ${len(description)}`,
+    );
+    for (const text of [title, description]) {
+      assert.deepEqual(bannedIn(text), [], `${route}: ${text}`);
+      assert.doesNotMatch(text, /vpn|翻墙|科学上网/i, route);
+    }
+  }
+  const titles = entries.map(([, c]) => c.title);
+  const descriptions = entries.map(([, c]) => c.description);
+  assert.equal(new Set(titles).size, titles.length, 'titles are unique');
+  assert.equal(new Set(descriptions).size, descriptions.length, 'descriptions are unique');
+  assert.deepEqual(bannedIn(Object.values(shareText).join(' ')), []);
+});
+
+const entry = (platform) => ({ platform, arch: 'x', format: 'y', version: '1.0.0' });
+const released = (platforms) => ({ status: 'ok', entries: platforms.map(entry) });
+
+test('the download description names exactly the released clients (S2-06)', () => {
+  const len = (s) => [...s].length;
+  const all = ['windows', 'macos', 'android', 'ios', 'linux'];
+  const generic = downloadDescription(released([]));
+  assert.equal(downloadDescription({ status: 'unavailable', entries: [] }), generic);
+  assert.doesNotMatch(generic, /Windows|macOS|Android|iPhone|Linux/);
+  const names = {
+    windows: 'Windows',
+    macos: 'macOS',
+    android: 'Android',
+    ios: 'iPhone',
+    linux: 'Linux',
+  };
+  for (let mask = 1; mask < 1 << all.length; mask++) {
+    const on = all.filter((_, i) => mask & (1 << i));
+    const text = downloadDescription(released([...on].reverse()));
+    assert.deepEqual(releasedPlatforms(released(on)), on);
+    for (const p of all) assert.equal(text.includes(names[p]), on.includes(p), `${on}: ${p}`);
+    assert.ok(text.includes(on.map((p) => names[p]).join('、')), 'in the page order');
+    assert.ok(len(text) >= 60 && len(text) <= 120, `${on}: ${len(text)}`);
+    assert.deepEqual(bannedIn(text), []);
+  }
+});
+
+test('the share image is a committed 1200 x 630 PNG under 150 KB, versioned by its content (S2-05)', () => {
+  const png = readFileSync(join(frontend, 'public', 'share', 'asterlink-share.png'));
+  assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  assert.equal(png.subarray(12, 16).toString(), 'IHDR');
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1200, 630]);
+  assert.ok(png.length < 150 * 1024, `${png.length} bytes`);
+  assert.equal(
+    readFileSync(join(frontend, 'src', 'lib', 'share-image.ts'), 'utf8'),
+    shareModule(png),
+    'src/lib/share-image.ts is current: run npm run brand:icons',
+  );
+  assert.deepEqual(shareImage, {
+    path: '/share/asterlink-share.png',
+    version: shareImage.version,
+    width: 1200,
+    height: 630,
+  });
+});
+
+const tier = (price, extra = {}) => ({
+  price_cents: price,
+  original_cents: price,
+  saving_cents: 0,
+  discount_percent: 100,
+  duration_days: 30,
+  traffic_bytes: 50 * 1024 ** 3,
+  monthly_equivalent_cents: price,
+  ...extra,
+});
+const rawPlan = (id, extra = {}) => ({
+  id,
+  name: `计划 ${id}`,
+  description: '说明',
+  price_cents: 1500,
+  duration_days: 30,
+  traffic_bytes: 50 * 1024 ** 3,
+  max_devices: 3,
+  allow_dedicated: false,
+  featured: false,
+  monthly: tier(1500),
+  yearly: tier(16200, {
+    duration_days: 365,
+    quota_cycle_days: 30,
+    quota_cycle_bytes: 50 * 1024 ** 3,
+  }),
+  ...extra,
+});
+
+test('the plans for the first HTML are rebuilt field by field (D8, 5.3)', () => {
+  const answer = sanitizePlans({
+    plans: [
+      rawPlan('a', { secret_cost: 1, name: '名称 </script><b>"x"</b>' }),
+      rawPlan('b', { yearly: null }),
+      rawPlan('a'),
+      rawPlan('bad id!'),
+      rawPlan('c', { price_cents: -1 }),
+      rawPlan('d', { monthly: { price_cents: 1 } }),
+      'nonsense',
+    ],
+    yearly_discount_percent: 90,
+    max_yearly_saving_percent: 10,
+    merchant: 'x',
+  });
+  assert.deepEqual(
+    answer.plans.map((p) => p.id),
+    ['a', 'b'],
+  );
+  assert.equal(
+    answer.plans[0].name,
+    '名称 </script><b>"x"</b>',
+    'text is kept as is; React escapes it',
+  );
+  assert.equal('secret_cost' in answer.plans[0], false);
+  assert.equal('merchant' in answer, false);
+  assert.equal(answer.plans[1].yearly, null, 'no yearly tier stays null');
+  assert.equal(answer.plans[0].yearly.quota_cycle_days, 30);
+  // A backend from before the yearly tier: the fields stay absent, not null.
+  const before = rawPlan('o');
+  delete before.monthly;
+  delete before.yearly;
+  delete before.featured;
+  const old = sanitizePlans({ plans: [before] });
+  assert.equal(old.plans.length, 1);
+  assert.equal('yearly' in old.plans[0] || 'monthly' in old.plans[0], false);
+  assert.equal('max_yearly_saving_percent' in old, false);
+  for (const raw of [null, 'x', {}, { plans: 'x' }]) assert.equal(sanitizePlans(raw), null);
+  assert.deepEqual(sanitizePlans({ plans: [] }).plans, []);
+});
+
+test('the public capabilities are rebuilt from the known fields only', () => {
+  const meta = sanitizeMeta({
+    test_purchase_enabled: false,
+    proxy_service_ready: true,
+    currency: 'CNY',
+    traffic_unit: 'GB',
+    payment_enabled: true,
+    payment_methods: ['alipay', 'wxpay'],
+    plan_upgrade_supported: 'yes',
+    merchant_key: 'secret',
+  });
+  assert.deepEqual(meta, {
+    test_purchase_enabled: false,
+    proxy_service_ready: true,
+    currency: 'CNY',
+    traffic_unit: 'GB',
+    payment_enabled: true,
+    payment_methods: ['alipay', 'wxpay'],
+  });
+  assert.equal(sanitizeMeta({ proxy_service_ready: true }), null);
+});
+
+test('the plan cache: a minute fresh, the last good copy for a day, a short pause after a failure (S2-03)', async () => {
+  let clock = 0;
+  let calls = 0;
+  let answer = () => ({ plans: [rawPlan('a')] });
+  const source = createCachedSource({
+    fetchJSON: async () => {
+      calls++;
+      return answer();
+    },
+    parse: sanitizePlans,
+    now: () => clock,
+  });
+  const [x, y] = await Promise.all([source.get(), source.get()]);
+  assert.equal(calls, 1, 'one request for concurrent pages');
+  assert.equal(x, y);
+  clock += publicTTL - 1;
+  await source.get();
+  assert.equal(calls, 1);
+  clock += 1;
+  answer = () => {
+    throw new Error('503');
+  };
+  assert.deepEqual(
+    (await source.get()).plans.map((p) => p.id),
+    ['a'],
+    'the last good copy',
+  );
+  assert.equal(calls, 2);
+  await source.get();
+  assert.equal(calls, 2, 'not asked again within five seconds');
+  clock += 5000;
+  answer = () => ({ unexpected: true });
+  assert.deepEqual(
+    (await source.get()).plans.map((p) => p.id),
+    ['a'],
+    'an unexpected answer is a failure',
+  );
+  assert.equal(calls, 3);
+  clock += publicStaleForMs;
+  assert.equal(await source.get(), null, 'nothing older than a day');
+  const empty = createCachedSource({
+    fetchJSON: async () => {
+      throw new Error('down');
+    },
+    parse: sanitizePlans,
+    now: () => 0,
+  });
+  assert.equal(await empty.get(), null, 'never read: the page loads the plans itself');
+});
+
+test('a request for the public answers has a timeout, no redirects and no cache', async () => {
+  const seen = [];
+  const fake = async (url, init) => {
+    seen.push({ url, init });
+    return new Response('{"plans":[]}', { status: 200 });
+  };
+  assert.deepEqual(
+    await fetchPublicJSON(fake, new URL('http://127.0.0.1:8080/api/v1/'), '/plans'),
+    { plans: [] },
+  );
+  assert.equal(seen[0].url, 'http://127.0.0.1:8080/api/v1/plans');
+  assert.equal(seen[0].init.redirect, 'error');
+  assert.equal(seen[0].init.cache, 'no-store');
+  assert.ok(seen[0].init.signal instanceof AbortSignal);
+  await assert.rejects(
+    fetchPublicJSON(
+      async () => new Response('x', { status: 503 }),
+      new URL('http://h/api/v1'),
+      '/plans',
+    ),
+  );
+});

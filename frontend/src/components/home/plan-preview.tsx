@@ -12,25 +12,29 @@ type State =
   | { kind: 'hidden' }
   | { kind: 'ready'; plans: Plan[]; saving: number | null };
 
+function shown(response: PlansResponse): State {
+  const plans = previewPlans(response.plans);
+  return plans.length
+    ? { kind: 'ready', plans, saving: yearlySavingPercent(response) }
+    : { kind: 'hidden' };
+}
+
 // Live plan preview (handoff_ui.md 8.2, 8.3): the plan page's own data, monthly terms, at most three
-// plans. Skeletons while loading; on failure or with nothing on sale the cards disappear without
-// a message and only the link to the plan page stays.
-export function PlanPreview() {
-  const [state, setState] = useState<State>({ kind: 'loading' });
+// plans. The server's copy (handoff_seo.md D8) is in the first HTML; the browser asks again after
+// loading and a different answer replaces it, a failed one keeps it. Without the server's copy:
+// skeletons while loading; on failure or with nothing on sale the cards disappear without a
+// message and only the link to the plan page stays.
+export function PlanPreview({ initial }: { initial: PlansResponse | null }) {
+  const [state, setState] = useState<State>(() => (initial ? shown(initial) : { kind: 'loading' }));
   useEffect(() => {
     let active = true;
     api<PlansResponse>('/plans', {}, false)
       .then((response) => {
-        if (!active) return;
-        const plans = previewPlans(response.plans);
-        setState(
-          plans.length
-            ? { kind: 'ready', plans, saving: yearlySavingPercent(response) }
-            : { kind: 'hidden' },
-        );
+        if (active) setState(shown(response));
       })
       .catch(() => {
-        if (active) setState({ kind: 'hidden' });
+        if (active)
+          setState((current) => (current.kind === 'loading' ? { kind: 'hidden' } : current));
       });
     return () => {
       active = false;

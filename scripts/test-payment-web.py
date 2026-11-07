@@ -87,10 +87,12 @@ def main():
             # Client downloads come from the backend (handoff_download.md round 3): the fixture publishes
             # Android arm64-v8a and nothing else, so the home page spec still sees one released client and
             # one not. E2E_ISOLATED marks this website process as the fixture's, which alone lets
-            # DOWNLOADS_CACHE_MS shorten the 30-second download cache to one second. The footer shows the
-            # optional filing number and service address. Next.js reads these on every request.
+            # DOWNLOADS_CACHE_MS shorten the 30-second download cache to one second, and PLANS_CACHE_MS the
+            # one-minute cache of the plans in the first HTML (handoff_seo.md D8), so a plan changed in a
+            # spec shows at once. The footer shows the optional filing number and service address.
+            # Next.js reads these on every request.
             frontend_env = dict(env, API_INTERNAL_URL=metadata['api'] + '/api/v1',
-                E2E_ISOLATED='private-postgres', DOWNLOADS_CACHE_MS='1000',
+                E2E_ISOLATED='private-postgres', DOWNLOADS_CACHE_MS='1000', PLANS_CACHE_MS='1000',
                 SITE_SUPPORT_EMAIL='support@example.test', SITE_ICP_RECORD='京ICP备00000000号-1')
             if not args.skip_build:
                 run('frontend-build', ['node', 'node_modules/next/dist/bin/next', 'build'], ROOT / 'frontend', frontend_env)
