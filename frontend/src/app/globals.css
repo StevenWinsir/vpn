@@ -505,14 +505,16 @@ a:focus-visible {
 .auth-story .brand small {
   color: var(--al-story-muted);
 }
-.auth-story-copy h2 {
+.auth-story-copy .auth-story-title {
+  /* The browser margin of the h2 this slogan used to be. */
+  margin-top: 0.83em;
   font-size: clamp(36px, 4vw, 55px);
   font-weight: 550;
   line-height: 1.3;
   letter-spacing: -1.8px;
   margin-bottom: 25px;
 }
-.auth-story-copy > p {
+.auth-story-copy > p:not(.auth-story-title) {
   font-size: 15px;
   line-height: 1.9;
   color: var(--al-story-copy);
@@ -1720,6 +1722,19 @@ a:focus-visible {
   font-size: 14px;
   line-height: 1.8;
   color: var(--al-text-2);
+}
+.home-step-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--al-brand);
+  text-decoration: none;
+}
+.home-step-link:hover {
+  text-decoration: underline;
 }
 
 /* Plan preview */

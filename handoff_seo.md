@@ -407,3 +407,69 @@ robots.txt 内容（收录开启时）：允许全部；Disallow /api/ 和 /down
 
 - 上线时 Nginx 必须原样透传 Host（docs/deployment.md 现有片段 proxy_set_header Host $http_host 符合）。否则即使 SITE_INDEXING=on，所有页面也会是 noindex，日志里会有一条“host other than SITE_URL”的告警。U-71 会检查这一点。
 - 本轮没有动标题和描述（第 2 轮），也没有动 /guide 的结构（第 3 轮）。
+
+### 第 2 轮：页面元数据与可抓取内容（2026-11-07，分支 worktree-seo-round2-metadata，基线 e237e51）
+
+实施内容：
+
+- 文案模块 frontend/src/lib/seo-copy.ts：纯数据，在 copy-guard 的扫描范围内（不在 lib/server 下）。
+  - 6 个可收录页面的标题和描述按第 5.1 节定稿：
+    - 首页：“AsterLink · 住宅原生 IP 与专线稳定连接”；
+    - /plans：“套餐价格与订阅 · AsterLink”；
+    - /download：“下载客户端 · AsterLink”；
+    - /guide：“使用教程 · AsterLink”；
+    - /login：“登录 · AsterLink”；
+    - /register：“注册账户 · AsterLink”。
+  - 标题用 absolute 写法，不经过根布局的模板；根布局的默认标题改为首页标题。
+  - /download 的描述由 downloadDescription 按请求生成，只列下载列表中已上架的平台，顺序与下载页一致；一个都没有或列表读不到时用不提平台的通用句。
+- indexableMetadata（src/lib/server/seo.ts）统一输出以下内容：
+  - title、description、robots、canonical、metadataBase；
+  - Open Graph：type website、site_name、locale zh_CN、title、description、url、image 及其宽高、alt 和类型；
+  - Twitter 卡片。
+  - 页面文件只写路由，/download 另外传入它的描述。
+- 分享图 public/share/asterlink-share.png：
+  - 1200×630 PNG，47 KB，浅色底，品牌标志、AsterLink、“住宅原生 IP · 专线稳定连接”和一句副标题。
+  - 由 scripts/brand-icons.mjs（npm run brand:icons）从 brand/mark.svg 和 seo-copy 的 shareText 生成，同时生成 src/lib/share-image.ts（路径、内容哈希前 12 位作为 ?v= 版本、尺寸）。
+  - 重新生成后，原有图标逐字节不变。
+- 套餐服务端渲染（D8）：
+  - 新增纯模块 src/lib/public-source.ts：可注入 fetch 和时钟，缓存 60 秒，超时 3 秒；失败时用上次成功的结果，最长 24 小时；失败后 5 秒内不再请求；并发请求只发一次。
+  - 后端的 /plans 和 /meta 按字段重建，只保留已知字段。“没有年付档位”的 null 与旧后端“没有这个字段”的区别保持不变。
+  - 服务端模块 src/lib/server/shop.ts。
+  - 首页 PlanPreview 和 PlansView 接收初始数据。浏览器加载后照常再请求一次：结果不同时以新结果为准，请求失败时保留服务端的那份，不弹错误。服务端没有数据时，行为与原来完全相同（骨架屏，之后由浏览器取数）。
+- /plans 的按钮在首屏已经可见，但在“浏览器的那次请求完成、账户状态已知”之前保持 aria-disabled，点击不生效。目的是避免页面还不能响应时点击丢失，或已登录的用户被当作未登录送去登录页。外观不变；包括购买、续费、升级、查看月付、年付横幅和周期切换。
+- 标题层级（5.4）：登录、注册、找回密码页左栏的口号“你的连接。你的掌控。”原来是 h2，排在表单的 h1 之前。现改为段落，样式和外边距保持原样。其他可收录页面原本就符合要求。
+- 内部链接（5.4）：首页页脚“产品”栏加“使用教程”；“三步开始使用”第三步加“查看使用教程”链接到 /guide，样式为品牌色小链接。
+- frontend/.env.example 说明：分享卡片的地址和图片也依赖 SITE_URL（与是否开启收录无关）。
+- 测试：
+  - test:seo 新增 7 项：文案规则、下载描述的 31 种平台组合、分享图文件与生成模块一致、套餐和 meta 的字段重建、缓存与回退、请求参数。
+  - seo.spec 新增 S2-01 至 S2-08，其中 S2-04 用浏览器测首次绘制。
+  - home.spec 和 ui-copy.spec 按新标题、页脚链接和“套餐失败需在服务端发生”修改。
+  - test-payment-web.py 给网站进程加 PLANS_CACHE_MS=1000（只在 E2E_ISOLATED 夹具下生效，与 DOWNLOADS_CACHE_MS 相同）。
+
+偏离规划之处：
+
+1. 5.2 写“根布局提供站点级默认 og 标签”。实际只由可收录页面输出完整的分享卡片，原因有二：Next 的元数据按顶层键浅合并，页面一旦写 openGraph，就会整体替换根布局的；根布局是静态的，拿不到运行时的 SITE_URL，也就给不出绝对地址的图片。私有页面因此没有分享卡片，它们本来就不是分享入口。
+2. 没有设置合法的 SITE_URL 时，分享卡片只有标题和描述，没有 og:url 和 og:image，twitter:card 降为 summary，绝不用请求的 Host 拼地址（D2）。设置了 SITE_URL 但没有开启收录时，分享卡片完整。
+3. D8 只写了读取 /plans。/plans 页另外在服务端读取公开的 /meta，使用同样的缓存，这样首屏按钮文字（如“登录后购买”“暂未开放”）和提示条与浏览器取数后一致，不闪烁。两者有一个读不到时，/plans 按原来的方式由浏览器加载。
+4. 5.2 写“CI 现有的品牌资产检查扩展为同时检查分享图”。分享图的检查实际放在 test:seo（CI 的 Web validation 会执行）：PNG 头、1200×630、小于 150 KB、src/lib/share-image.ts 与文件内容一致。scripts/test-brand-assets.py 管的是四个客户端的图标清单，没有改动。
+5. 分享图里的中文用的是本机字体。本机没有开源中文字体（Noto Sans SC 或思源黑体），所以提交的图片是用 macOS 系统字体苹方（PingFang SC）渲染的。生成脚本支持 SHARE_FONT_FILE 指定字体文件，换成开源字体只需重新运行一次 brand:icons 并提交。
+6. 首页的 og:url 与第 1 轮的 canonical 一样，由 Next 输出为不带结尾斜杠的来源地址，用例按 URL 规范化后比较。
+
+验收结果：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| S2-01 | PASS | test:seo：6 个可收录页面的标题都不超过 30 字，描述在 60 到 120 字之间（按字符计；/download 的 31 种平台组合也都在范围内）；标题和描述全站唯一，不含 copy-words 的禁用词和 VPN、翻墙、科学上网。test:copy 4/4 通过（seo-copy.ts 在扫描范围内）。seo.spec 核对两个进程渲染出的 title 和 description 与文案模块一致 |
+| S2-02 | PASS | seo.spec：用 node:http 直接取 HTML（不执行 JavaScript），去掉 script 后的正文含每个在售套餐的名称、月付价格、“X GB 计费流量”和“最多 N 台设备同时在线”，与 /api/v1/plans 逐个一致；/plans 的卡片数等于在售套餐数，首页卡片与 previewPlans 一致；两处都没有骨架屏；/plans?cycle=yearly 的 HTML 含每个年付价格 |
+| S2-03 | PASS | seo.spec：后端不可达的网站进程中，首页和 /plans 都返回 200，首页没有套餐卡，“查看全部套餐”链接还在；/plans 显示加载态。home.spec：在同一进程中，浏览器端也读不到套餐时，预览整块隐藏且没有错误提示；套餐为空时预览隐藏。test:seo：缓存读不到时用上次的结果，最长 24 小时；返回意外内容按失败处理；从未读到过时返回 null |
+| S2-04 | PASS | seo.spec（Chrome）：页面开始加载前装好 MutationObserver。首页和 /plans 的加载过程中从未出现骨架屏，套餐卡出现的时间不晚于 first-contentful-paint |
+| S2-05 | PASS | seo.spec：开启收录的进程中，6 个页面的 og:title、og:description（与 description 相同）、og:url（绝对地址）、og:image（绝对地址，带 ?v=）、宽高 1200/630、og:locale zh_CN、og:type、og:site_name、twitter:card summary_large_image、twitter:image 都正确；图片可以访问，返回 image/png，读出的尺寸为 1200×630。没有 SITE_URL 的进程中只有文字卡片。/dashboard 没有分享图。test:seo 检查文件和生成模块 |
+| S2-06 | PASS | seo.spec：夹具为“只上架 Android”时，/download 的描述只提 Android，页面上有 Android 的下载按钮；切换到“全部未上架”后，描述变为通用句，页面没有下载按钮；最后恢复夹具。test:seo 覆盖全部 31 种平台组合 |
+| S2-07 | PASS | seo.spec：两个进程中 6 个可收录页面都恰好有一个 h1，并且第一个标题就是 h1，相邻标题之间不跳级（修正登录和注册页之后） |
+| S2-08 | PASS | home.spec：页脚“使用教程”指向 /guide，第三步的“查看使用教程”指向 /guide。seo.spec：不执行 JavaScript 的首页 HTML 中，有指向 /plans、/download、/guide、/register 的普通 a 链接 |
+| S2-09 | 本地 PASS，CI 见 PR | scripts/test-payment-web.py 全量 137/137 通过，用时 10.6 分钟（第 1 轮为 129 个用例、10.6 分钟），其中 seo.spec、home.spec、ui-copy.spec 单独运行 29/29、42 秒。网站 node 测试全部通过：seo 16、api-proxy 17（本机需 PLAYWRIGHT_CHROME_PATH）、nodes 3、downloads 21、dashboard 6、referral 5、copy 4、theme 5、home 3、support 6、tickets 12、guide 14、toast 7；tsc、eslint 通过，改动文件已按 prettier 格式化；scripts/test-brand-assets.py 通过。登录页截图（1440 宽）确认口号改为段落后字号、颜色和位置不变 |
+
+需要用户留意：
+
+- 分享图字体（偏离第 5 项）：如果希望图里的中文使用开源字体，提供 Noto Sans SC 一类的字体文件后，运行 SHARE_FONT_FILE=字体路径 npm run brand:icons，再提交生成的两个文件即可。
+- 上线后可以用 U-76 检查微信和 Telegram 的分享预览。

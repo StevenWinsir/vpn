@@ -68,7 +68,7 @@ test('structure, copy and footer of the home page', async ({ page }) => {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
   await settle(page);
-  await expect(page).toHaveTitle(/^AsterLink · 连接，自有边界$/);
+  await expect(page).toHaveTitle(/^AsterLink · 住宅原生 IP 与专线稳定连接$/);
   // Landmarks: the marketing header (not the workspace shell), one main, the footer.
   await expect(page.locator('.mantine-AppShell-root')).toHaveCount(0);
   await expect(page.getByRole('main')).toHaveCount(1);
@@ -107,6 +107,10 @@ test('structure, copy and footer of the home page', async ({ page }) => {
     await expect(page.getByRole('heading', { level: 2, name: heading })).toBeVisible();
   await expect(page.locator('.home-feature')).toHaveCount(6);
   await expect(page.locator('.home-step')).toHaveCount(3);
+  // The third step leads to the guide with a plain link (handoff_seo.md 5.4, S2-08).
+  await expect(
+    page.locator('.home-step').nth(2).getByRole('link', { name: '查看使用教程' }),
+  ).toHaveAttribute('href', '/guide');
 
   // Copy: the visible text and every FAQ answer, against the development and D12 vocabulary.
   const faq = page.getByTestId('home-faq').getByRole('button');
@@ -132,6 +136,7 @@ test('structure, copy and footer of the home page', async ({ page }) => {
   for (const [label, href] of [
     ['套餐价格', '/plans'],
     ['下载客户端', '/download'],
+    ['使用教程', '/guide'],
     ['登录', '/login'],
     ['注册', '/register'],
     ['找回密码', '/forgot-password'],
@@ -212,24 +217,28 @@ test('the plan preview disappears quietly when the plans fail or none are on sal
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  // The plans come with the first HTML (handoff_seo.md D8), so a failure must happen on the
+  // server: the website process whose backend answers nothing (scripts/test-payment-web.py) has
+  // no copy and its browser request fails too. Nothing on sale: the browser's answer replaces
+  // the server's copy.
+  const offline = process.env.DOWNLOAD_OFFLINE_URL;
+  if (!offline) throw new Error('DOWNLOAD_OFFLINE_URL required (scripts/test-payment-web.py)');
   for (const answer of [
+    { at: `${offline}/`, body: null },
     {
-      status: 503,
-      body: { error: { code: 'database_unavailable', message: '套餐暂时不可用' } },
-    },
-    {
-      status: 200,
+      at: '/',
       body: { plans: [], yearly_discount_percent: 100, max_yearly_saving_percent: 0 },
     },
   ]) {
-    await page.route('**/api/v1/plans', (route) =>
-      route.fulfill({
-        status: answer.status,
-        contentType: 'application/json',
-        body: JSON.stringify(answer.body),
-      }),
-    );
-    await page.goto('/');
+    if (answer.body)
+      await page.route('**/api/v1/plans', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(answer.body),
+        }),
+      );
+    await page.goto(answer.at);
     await settle(page);
     const pricing = page.locator('#pricing');
     await expect(pricing.getByTestId('home-plans')).toHaveCount(0);

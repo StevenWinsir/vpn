@@ -45,11 +45,12 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
       <section className="auth-story">
         <Logo />
         <div className="auth-story-copy">
-          <h2>
+          {/* A slogan, not a heading: the form's own h1 is the page's first heading (handoff_seo.md 5.4). */}
+          <p className="auth-story-title">
             你的连接。
             <br />
             你的掌控。
-          </h2>
+          </p>
           <p>一个账户，手机与电脑随时安全连接；线路、流量与订阅一目了然。</p>
           <div className="auth-promises">
             {[
