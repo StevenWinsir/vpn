@@ -39,17 +39,32 @@ import { UpgradeModal } from './upgrade-modal';
 // that cannot be upgraded to (a downgrade or a lateral change); it waits for the expiry.
 type CardState = 'new' | 'renew' | 'upgrade' | 'closed';
 
-export function PlansView() {
-  const { user } = useAuth();
+const shopOf = (p: PlansResponse) => ({
+  maxSavingPercent: p.max_yearly_saving_percent ?? 0,
+  // The order guard (expected_amount_cents) is only sent to a backend that knows the yearly
+  // fields; an older one rejects unknown fields.
+  yearlyAware: p.plans.some((x) => x.yearly !== undefined),
+});
+
+// initial: the server's copy of the plans and the public capabilities (handoff_seo.md D8), so the
+// cards are in the first HTML. The page asks again after loading, as before; the answer replaces
+// the copy, a failure keeps it without an error. Until that answer and the account are known the
+// controls are inert (aria-disabled): a click before the page can act on it is never lost or sent
+// to the wrong place.
+export function PlansView({ initial }: { initial: { plans: PlansResponse; meta: Meta } | null }) {
+  const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [shop, setShop] = useState<{ maxSavingPercent: number; yearlyAware: boolean }>({
-    maxSavingPercent: 0,
-    yearlyAware: false,
-  });
-  const [meta, setMeta] = useState<Meta | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [plans, setPlans] = useState<Plan[]>(() => initial?.plans.plans ?? []);
+  const [shop, setShop] = useState<{ maxSavingPercent: number; yearlyAware: boolean }>(() =>
+    initial ? shopOf(initial.plans) : { maxSavingPercent: 0, yearlyAware: false },
+  );
+  const [meta, setMeta] = useState<Meta | null>(() => initial?.meta ?? null);
+  const [loading, setLoading] = useState(!initial);
+  const seeded = useRef(initial !== null);
+  const [settled, setSettled] = useState(false);
+  const ready = settled && !authLoading;
+  const inert = ready ? undefined : true;
   const [error, setError] = useState<string | null>(null);
   // The confirmation belongs to the account that opened it: when the session ends (or another
   // account signs in) it disappears instead of submitting for whoever is current.
@@ -84,6 +99,7 @@ export function PlansView() {
   const cycle: BillingCycle = hasYearly && params.get('cycle') === 'yearly' ? 'yearly' : 'monthly';
   const yearly = cycle === 'yearly';
   function setCycle(next: BillingCycle) {
+    if (!ready) return;
     const query = new URLSearchParams(params.toString());
     if (next === 'yearly') query.set('cycle', 'yearly');
     else query.delete('cycle');
@@ -93,12 +109,7 @@ export function PlansView() {
 
   const accept = useCallback((p: PlansResponse) => {
     setPlans(p.plans);
-    // The order guard (expected_amount_cents) is only sent to a backend that knows the yearly
-    // fields; an older one rejects unknown fields.
-    setShop({
-      maxSavingPercent: p.max_yearly_saving_percent ?? 0,
-      yearlyAware: p.plans.some((x) => x.yearly !== undefined),
-    });
+    setShop(shopOf(p));
   }, []);
   const load = useCallback(async () => {
     try {
@@ -123,10 +134,13 @@ export function PlansView() {
         }
       })
       .catch((e) => {
-        if (active) setError(message(e));
+        if (active && !seeded.current) setError(message(e));
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setSettled(true);
+        }
       });
     return () => {
       active = false;
@@ -205,6 +219,7 @@ export function PlansView() {
   const modalPlan = payOn ? (selected ?? preset ?? null) : null;
   const modalCycle: BillingCycle = selected ? selectedCycle : cycle;
   function choose(plan: Plan) {
+    if (!ready) return;
     if (!user) {
       router.push('/login');
       return;
@@ -215,7 +230,7 @@ export function PlansView() {
     setChoice({ plan, userId: user.id, cycle });
   }
   function chooseUpgrade(plan: Plan) {
-    if (!user) return;
+    if (!ready || !user) return;
     setDismissed(true);
     setChoice(null);
     setUpgradeChoice({ plan, userId: user.id });
@@ -277,12 +292,13 @@ export function PlansView() {
       ) : null}
       {hasYearly && !loading ? (
         <>
-          <CycleSwitch cycle={cycle} badge={promo.badge} onChange={setCycle} />
+          <CycleSwitch cycle={cycle} badge={promo.badge} onChange={setCycle} inert={inert} />
           {!yearly && promo.badge ? (
             <button
               type="button"
               className="cycle-banner"
               data-testid="yearly-banner"
+              aria-disabled={inert}
               onClick={() => setCycle('yearly')}
             >
               切换年付，{promo.headline}，最多立省 {money(promo.maxSavingCents)}
@@ -408,6 +424,7 @@ export function PlansView() {
                       mt="auto"
                       variant={plan.featured ? 'filled' : 'light'}
                       disabled={!option?.purchasable}
+                      aria-disabled={inert}
                       onClick={() => chooseUpgrade(plan)}
                       rightSection={<IconArrowUpRight size={16} />}
                       aria-label={`升级到 ${plan.name}`}
@@ -433,6 +450,7 @@ export function PlansView() {
                       mt="auto"
                       variant={plan.featured ? 'filled' : 'light'}
                       disabled={!payOn && !meta?.test_purchase_enabled}
+                      aria-disabled={inert}
                       onClick={() => choose(plan)}
                       rightSection={<IconArrowRight size={16} />}
                       aria-label={
@@ -464,6 +482,7 @@ export function PlansView() {
                       fullWidth
                       mt="auto"
                       variant="default"
+                      aria-disabled={inert}
                       onClick={() => setCycle('monthly')}
                     >
                       查看月付
@@ -599,10 +618,12 @@ function CycleSwitch({
   cycle,
   badge,
   onChange,
+  inert,
 }: {
   cycle: BillingCycle;
   badge: string | null;
   onChange: (cycle: BillingCycle) => void;
+  inert?: true;
 }) {
   const refs = useRef<Record<BillingCycle, HTMLButtonElement | null>>({
     monthly: null,
@@ -628,6 +649,7 @@ function CycleSwitch({
               refs.current[o.value] = el;
             }}
             aria-checked={cycle === o.value}
+            aria-disabled={inert}
             tabIndex={cycle === o.value ? 0 : -1}
             onClick={() => onChange(o.value)}
             onKeyDown={(e) => {

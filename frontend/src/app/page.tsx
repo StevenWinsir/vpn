@@ -24,6 +24,7 @@ import { ProductVisual } from '@/components/home/product-visual';
 import { Reveal } from '@/components/home/reveal';
 import { homeStatus, type PlatformId } from '@/lib/downloads';
 import { loadDownloads } from '@/lib/server/downloads';
+import { loadPlans } from '@/lib/server/shop';
 import { currentSiteConfig, indexableMetadata, verificationMetadata } from '@/lib/server/seo';
 import { icpLookupUrl, siteFacts } from '@/lib/site';
 import { crispSetting } from '@/lib/support-config';
@@ -32,12 +33,14 @@ import { appName } from '@/lib/types';
 // The operator facts come from the server environment on every request (handoff_ui.md 8.3). The
 // download status comes from the backend's public list through the same 30-second cache as
 // /download (handoff_download.md D9, D14): at most one short request every half minute. The plan
-// preview and the account actions load in the browser.
+// preview starts from the server's one-minute copy of the plans, so prices are in the first HTML
+// (handoff_seo.md D8); the account actions load in the browser.
 export const dynamic = 'force-dynamic';
 
-// The title stays the site default; the search engine verification tags live here (handoff_seo.md D15).
+// The title and description come from src/lib/seo-copy.ts; the search engine verification tags
+// live here only (handoff_seo.md D15).
 export function generateMetadata() {
-  return indexableMetadata('/', verificationMetadata(currentSiteConfig()));
+  return indexableMetadata('/', { extra: verificationMetadata(currentSiteConfig()) });
 }
 
 const features = [
@@ -76,11 +79,15 @@ const features = [
 const steps = [
   { title: '注册账户', text: '使用常用邮箱注册，完成验证即可登录用户中心。' },
   { title: '选择套餐', text: '按需选择月付或年付套餐，在线付款后立即开通。' },
-  { title: '下载客户端', text: '在手机或电脑上安装客户端，登录同一账户即可一键连接。' },
+  {
+    title: '下载客户端',
+    text: '在手机或电脑上安装客户端，登录同一账户即可一键连接。',
+    link: { href: '/guide', label: '查看使用教程' },
+  },
 ];
 
 export default async function Home() {
-  const downloads = await loadDownloads();
+  const [downloads, plans] = await Promise.all([loadDownloads(), loadPlans()]);
   const { icpRecord, supportEmail } = siteFacts(process.env);
   const chat = crispSetting(process.env).websiteId !== null;
   // Four cards in the download page's order; Linux stays off the home page (D14).
@@ -186,11 +193,17 @@ export default async function Home() {
                 <h2 id="steps-title">三步开始使用</h2>
               </div>
               <ol className="home-steps" data-reveal="">
-                {steps.map(({ title, text }, index) => (
+                {steps.map(({ title, text, link }, index) => (
                   <li key={title} className="home-step">
                     <span className="home-step-index">{String(index + 1).padStart(2, '0')}</span>
                     <h3>{title}</h3>
                     <p>{text}</p>
+                    {link ? (
+                      <Link href={link.href} className="home-step-link">
+                        {link.label}
+                        <IconArrowRight size={15} aria-hidden />
+                      </Link>
+                    ) : null}
                   </li>
                 ))}
               </ol>
@@ -204,7 +217,7 @@ export default async function Home() {
                 <h2 id="pricing-title">简单透明的套餐价格</h2>
                 <p>月付灵活，年付更划算。价格与套餐页实时一致，付款后立即开通。</p>
               </div>
-              <PlanPreview />
+              <PlanPreview initial={plans} />
             </div>
           </section>
 
@@ -306,6 +319,7 @@ export default async function Home() {
                 <h2>产品</h2>
                 <Link href="/plans">套餐价格</Link>
                 <Link href="/download">下载客户端</Link>
+                <Link href="/guide">使用教程</Link>
               </nav>
               <nav aria-label="账户">
                 <h2>账户</h2>

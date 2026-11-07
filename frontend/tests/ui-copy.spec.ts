@@ -75,9 +75,9 @@ test.describe.configure({ mode: 'serial' });
 test('public pages carry commercial copy only', async ({ page }) => {
   await check(page, '/', /^AsterLink/);
   await check(page, '/login', /^登录 · /);
-  await check(page, '/register', /^注册 · /);
+  await check(page, '/register', /^注册账户 · AsterLink$/);
   await check(page, '/forgot-password', /^找回密码 · /);
-  await check(page, '/plans', /^套餐与订阅 · /);
+  await check(page, '/plans', /^套餐价格与订阅 · AsterLink$/);
   await check(page, '/download', /^下载客户端 · /);
   await check(page, '/guide', /^使用教程 · /);
   await check(page, '/no-such-page', /^页面不存在 · /);
@@ -91,7 +91,7 @@ test('a customer without a plan sees no development wording and none of the remo
   await expect(page.getByTestId('referral-card')).toHaveCount(0);
   await check(page, '/dashboard', /^总览 · /, 'ui-copy-dashboard-no-plan');
   await check(page, '/nodes', /^节点列表 · /);
-  await check(page, '/plans', /^套餐与订阅 · /, 'ui-copy-plans');
+  await check(page, '/plans', /^套餐价格与订阅 · AsterLink$/, 'ui-copy-plans');
   await check(page, '/orders', /^订单记录 · /);
   await check(page, '/referral', /^推荐有礼 · /);
   await check(page, '/download', /^下载客户端 · /);
@@ -127,7 +127,7 @@ test('a paying customer sees the same, including the overview, orders and paymen
   await expect(page.getByText('剩余流量')).toBeVisible();
   expect(await page.evaluate(() => document.body.innerText)).not.toContain('GiB');
   await check(page, '/nodes', /^节点列表 · /, 'ui-copy-nodes');
-  await check(page, '/plans', /^套餐与订阅 · /);
+  await check(page, '/plans', /^套餐价格与订阅 · AsterLink$/);
   await check(page, '/orders', /^订单记录 · /);
   await expect(page.getByText('已支付', { exact: true }).first()).toBeVisible();
   await check(page, '/referral', /^推荐有礼 · /);

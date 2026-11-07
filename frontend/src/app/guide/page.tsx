@@ -9,7 +9,7 @@ import { indexableMetadata } from '@/lib/server/seo';
 export const dynamic = 'force-dynamic';
 
 export function generateMetadata() {
-  return indexableMetadata('/guide', { title: '使用教程' });
+  return indexableMetadata('/guide');
 }
 
 // Public, like /download (handoff_guide.md D2): no RequireAuth. One route for every platform
