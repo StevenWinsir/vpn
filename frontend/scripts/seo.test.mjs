@@ -33,6 +33,19 @@ import {
   sanitizeMeta,
   sanitizePlans,
 } from '../src/lib/public-source.ts';
+import {
+  breadcrumbs,
+  faqPage,
+  organization,
+  products,
+  serializeJsonLd,
+  softwareApplications,
+  website,
+  yuan,
+} from '../src/lib/structured-data.ts';
+import { faqAnswerText, faqFacts, homeFaq, paymentMethodsText } from '../src/lib/home-faq.ts';
+import { guideLinkPaths, guidePath, parseInline, platformIds } from '../src/lib/guides.ts';
+import { legalLinkPaths, legalTexts, privacyPolicy, termsOfService } from '../src/lib/legal.ts';
 import { shareModule } from './brand-icons.mjs';
 import { bannedIn } from '../tests/copy-words.ts';
 
@@ -178,14 +191,25 @@ test('robots.txt and sitemap.xml follow the switch (handoff_seo.md 4, D13)', () 
   assert.deepEqual(disallowedPaths, ['/api/', '/download/get/']);
   // The private pages are left to their noindex: robots.txt must not hide them (D10).
   assert.doesNotMatch(robotsTxt(indexed), /admin|dashboard|account/);
-  assert.deepEqual(sitemapRoutes, ['/', '/plans', '/download', '/guide']);
+  // Round 3: the four platform guides and the two trust pages join (S3-12).
+  const listed = [
+    '/',
+    '/plans',
+    '/download',
+    '/guide',
+    '/guide/windows',
+    '/guide/macos',
+    '/guide/android',
+    '/guide/ios',
+    '/terms',
+    '/privacy',
+  ];
+  assert.deepEqual(sitemapRoutes, listed);
   const locs = (xml) => [...xml.matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1]);
-  assert.deepEqual(locs(sitemapXml(indexed)), [
-    'https://www.asterlink.vip/',
-    'https://www.asterlink.vip/plans',
-    'https://www.asterlink.vip/download',
-    'https://www.asterlink.vip/guide',
-  ]);
+  assert.deepEqual(
+    locs(sitemapXml(indexed)),
+    listed.map((route) => `https://www.asterlink.vip${route}`),
+  );
   assert.deepEqual(locs(sitemapXml(closed)), []);
   assert.match(
     sitemapXml(closed),
@@ -220,6 +244,15 @@ test('every page of src/app is in the policy table and declares its own value (S
       // The console layout speaks for these; a page must not try to open itself.
       assert.doesNotMatch(source, /indexableMetadata|robots/, route);
       seen.add('/admin/console');
+      continue;
+    }
+    if (route === '/guide/[platform]') {
+      // One page file serves the four platform guides (handoff_seo.md D5), each in the table.
+      assert.match(source, /indexableMetadata\(guidePath\(platform\)\)/, route);
+      for (const id of ['windows', 'macos', 'android', 'ios']) {
+        assert.equal(policies[`/guide/${id}`]?.index, true, `/guide/${id}`);
+        seen.add(`/guide/${id}`);
+      }
       continue;
     }
     const policy = policies[route];
@@ -513,4 +546,267 @@ test('a request for the public answers has a timeout, no redirects and no cache'
       '/plans',
     ),
   );
+});
+
+// ---- Round 3 (handoff_seo.md 6): platform guides, structured data, terms and privacy ----
+
+const origin = 'https://www.asterlink.vip';
+const tierAt = (price, days, gb, equivalent) => ({
+  price_cents: price,
+  original_cents: price,
+  saving_cents: 0,
+  discount_percent: 100,
+  duration_days: days,
+  traffic_bytes: gb * 1024 ** 3,
+  monthly_equivalent_cents: equivalent,
+});
+const plan = (over = {}) => ({
+  id: 'p1',
+  name: '标准',
+  description: '日常使用',
+  price_cents: 2900,
+  duration_days: 30,
+  traffic_bytes: 100 * 1024 ** 3,
+  max_devices: 3,
+  allow_dedicated: false,
+  monthly: tierAt(2900, 30, 100, 2900),
+  yearly: tierAt(29580, 360, 1200, 2465),
+  ...over,
+});
+const plansOf = (...plans) => ({
+  plans,
+  yearly_discount_percent: 85,
+  max_yearly_saving_percent: 15,
+});
+const download = (platform, arch, version) => ({
+  platform,
+  arch,
+  format: 'x',
+  version,
+  sizeBytes: 1,
+  sha256: 'a'.repeat(64),
+  certSha256: null,
+  bundleId: null,
+});
+
+test('JSON-LD text cannot end its script element, whatever the plan name says (S3-07)', () => {
+  const nasty = '</script><script>alert("x")</script> &    <!-- \'"';
+  const [product] = products(origin, plansOf(plan({ name: nasty, description: nasty })));
+  const text = serializeJsonLd(product);
+  assert.doesNotMatch(text, /[<>&\u2028\u2029]/);
+  assert.doesNotMatch(text, /<\/script/i);
+  // It still reads back as the very same data.
+  assert.deepEqual(JSON.parse(text), product);
+  assert.equal(JSON.parse(text).name, nasty);
+});
+
+test('the products carry the prices the cards show, monthly and yearly when offered', () => {
+  const older = plan({ id: 'p2', name: '旧版', description: ' ', price_cents: 1000 });
+  delete older.monthly;
+  delete older.yearly;
+  const list = products(
+    origin,
+    plansOf(plan(), older, plan({ id: 'p3', name: '仅月付', yearly: null })),
+  );
+  assert.equal(list.length, 3);
+  assert.deepEqual(
+    list[0].offers.map((o) => [o.name, o.price, o.priceCurrency, o.availability, o.url]),
+    [
+      ['月付', '29.00', 'CNY', 'https://schema.org/InStock', `${origin}/plans`],
+      ['年付', '295.80', 'CNY', 'https://schema.org/InStock', `${origin}/plans`],
+    ],
+  );
+  assert.deepEqual(list[0].brand, { '@type': 'Brand', name: 'AsterLink' });
+  // An older backend: the monthly terms at the top level only; no description of its own.
+  assert.deepEqual(
+    list[1].offers.map((o) => o.price),
+    ['10.00'],
+  );
+  assert.equal(list[1].description, '100 GB 计费流量，最多 3 台设备同时在线');
+  assert.deepEqual(
+    list[2].offers.map((o) => o.name),
+    ['月付'],
+  );
+  assert.equal(yuan(1), '0.01');
+});
+
+test('the software entries name the released platforms only, never an address (S3-09)', () => {
+  const apps = softwareApplications(origin, {
+    status: 'ok',
+    entries: [
+      download('android', 'universal', '1.0.0'),
+      download('android', 'arm64-v8a', '1.2.0'),
+      download('windows', 'x64', '2.0.0'),
+    ],
+  });
+  assert.deepEqual(
+    apps.map((a) => [a.name, a.operatingSystem, a.softwareVersion, a.url]),
+    [
+      ['AsterLink for Windows', 'Windows 10, Windows 11', '2.0.0', `${origin}/download#windows`],
+      ['AsterLink for Android', 'Android', '1.2.0', `${origin}/download#android`],
+    ],
+  );
+  for (const app of apps) {
+    assert.equal(app.applicationCategory, 'UtilitiesApplication');
+    assert.equal(app.downloadUrl, undefined);
+    assert.equal(app.offers, undefined);
+    assert.doesNotMatch(JSON.stringify(app), /\/download\/get|sha256|aaaa/);
+  }
+  assert.deepEqual(softwareApplications(origin, { status: 'ok', entries: [] }), []);
+  assert.deepEqual(softwareApplications(origin, { status: 'unavailable', entries: [] }), []);
+});
+
+test('organization, website and the breadcrumb trail use absolute canonical addresses', () => {
+  assert.deepEqual(organization(origin, null), {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    '@id': `${origin}/#organization`,
+    name: 'AsterLink',
+    url: `${origin}/`,
+    logo: `${origin}/icons/icon-512.png`,
+  });
+  assert.equal(organization(origin, 'help@example.com').contactPoint.email, 'help@example.com');
+  assert.ok(existsSync(join(frontend, 'public', 'icons', 'icon-512.png')), 'the logo exists');
+  const site = website(origin);
+  assert.equal(site.inLanguage, 'zh-CN');
+  assert.equal(site.potentialAction, undefined);
+  const trail = breadcrumbs(origin, [
+    { name: '使用教程', path: '/guide' },
+    { name: 'Windows', path: '/guide/windows' },
+  ]);
+  assert.deepEqual(
+    trail.itemListElement.map((i) => [i.position, i.name, i.item]),
+    [
+      [1, '首页', `${origin}/`],
+      [2, '使用教程', `${origin}/guide`],
+      [3, 'Windows', `${origin}/guide/windows`],
+    ],
+  );
+});
+
+test('the FAQ data says what the page shows, in every combination of the facts (S3-08)', () => {
+  const contacts = new Set();
+  for (const supportEmail of [null, 'help@example.com'])
+    for (const chat of [false, true])
+      for (const tickets of [false, true])
+        for (const upgrades of [false, true]) {
+          const items = homeFaq({
+            payment: '微信支付和支付宝',
+            supportEmail,
+            chat,
+            tickets,
+            upgrades,
+          });
+          const data = faqPage(items);
+          assert.equal(data['@type'], 'FAQPage');
+          assert.deepEqual(
+            data.mainEntity.map((q) => [q.name, q.acceptedAnswer.text]),
+            items.map((item) => [item.q, faqAnswerText(item)]),
+          );
+          const contact = items.find((item) => item.q === '如何联系客服？');
+          assert.equal(Boolean(contact), Boolean(supportEmail || chat || tickets));
+          const text = contact ? faqAnswerText(contact) : '';
+          assert.equal(text.includes('在线客服'), chat);
+          assert.equal(text.includes('我的工单'), tickets);
+          assert.equal(text.includes('help@example.com'), Boolean(supportEmail));
+          const renewal = faqAnswerText(items.find((item) => item.q === '如何续费或更换套餐？'));
+          assert.equal(renewal.includes('补差价'), upgrades);
+          for (const item of items) assert.deepEqual(bannedIn(item.q + faqAnswerText(item)), []);
+          contacts.add(text);
+        }
+  assert.equal(contacts.size, 8, 'every combination of chat, mail and tickets reads differently');
+  // The cautious wording while /meta is unknown, and the shop's own methods once it is.
+  assert.deepEqual(faqFacts(null, null, false), {
+    payment: '微信支付和支付宝',
+    supportEmail: null,
+    chat: false,
+    tickets: false,
+    upgrades: false,
+  });
+  assert.equal(
+    paymentMethodsText({ payment_enabled: true, payment_methods: ['alipay'] }),
+    '支付宝',
+  );
+});
+
+test('no rating, review, HowTo or SearchAction anywhere in the structured data (S3-10)', () => {
+  const all = [
+    organization(origin, 'help@example.com'),
+    website(origin),
+    breadcrumbs(origin, [{ name: '套餐与订阅', path: '/plans' }]),
+    ...products(origin, plansOf(plan())),
+    ...softwareApplications(origin, { status: 'ok', entries: [download('ios', 'arm64', '1.0')] }),
+    faqPage(
+      homeFaq({
+        payment: '支付宝',
+        supportEmail: 'a@b.c',
+        chat: true,
+        tickets: true,
+        upgrades: true,
+      }),
+    ),
+  ];
+  const text = all.map((item) => JSON.stringify(item)).join('\n');
+  assert.doesNotMatch(text, /aggregateRating|"review|HowTo|SearchAction|potentialAction/);
+  const source = readFileSync(join(frontend, 'src', 'lib', 'structured-data.ts'), 'utf8');
+  assert.doesNotMatch(source, /aggregateRating|'review'|'HowTo'|'SearchAction'/);
+});
+
+test('no link of the site still uses /guide?platform= (S3-05)', () => {
+  const hits = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (/\.(ts|tsx)$/.test(name) && readFileSync(path, 'utf8').includes('guide?platform='))
+        hits.push(relative(frontend, path));
+    }
+  };
+  walk(join(frontend, 'src'));
+  assert.deepEqual(hits, []);
+  // The guide texts link to known paths only, the platform guides among them.
+  for (const id of platformIds) assert.ok(guideLinkPaths.includes(guidePath(id)), id);
+});
+
+test('the terms and the privacy policy: dates, sections, known links, no banned wording (S3-11)', () => {
+  for (const make of [termsOfService, privacyPolicy])
+    for (const email of [null, 'help@example.com']) {
+      const doc = make(email);
+      assert.match(doc.effective, /^\d{4} 年 \d{1,2} 月 \d{1,2} 日$/);
+      assert.match(doc.updated, /^\d{4} 年 \d{1,2} 月 \d{1,2} 日$/);
+      assert.ok(doc.sections.length >= 8, doc.title);
+      assert.equal(new Set(doc.sections.map((s) => s.id)).size, doc.sections.length);
+      const texts = legalTexts(doc);
+      assert.equal(
+        texts.some((t) => t.includes('help@example.com')),
+        Boolean(email),
+      );
+      for (const text of texts) {
+        assert.deepEqual(bannedIn(text), [], `${doc.title}: ${text}`);
+        // Every mark is understood: a link inside emphasis would show as raw "[x](/y)".
+        for (const part of parseInline(text))
+          assert.doesNotMatch(part.text, /\*\*|\]\(|\[/, `${doc.title}: ${text}`);
+        // Plain language: no word about how the service works inside (the operator's rule).
+        assert.doesNotMatch(
+          text,
+          /VPN|传输协议|内核|Mihomo|Clash|TUN|端口|节点|服务器|加速器|客户端计费|本地计费|Shadowsocks|VLESS|Trojan|WireGuard|Hysteria|Reality|AES|TLS|IPv[46]/i,
+          `${doc.title}: ${text}`,
+        );
+        for (const part of parseInline(text))
+          if (part.type === 'link') assert.ok(legalLinkPaths.includes(part.href), part.href);
+      }
+    }
+  // The forbidden uses lead the terms: the kinds of content and the criminal uses are named.
+  const rules = legalTexts(termsOfService(null)).join('\n');
+  for (const phrase of ['危害国家安全', '电信网络诈骗', '网络赌博', '出租、出借', '转售'])
+    assert.ok(rules.includes(phrase), phrase);
+  // The retention periods match the code (login records, tickets, the usage window).
+  const privacy = legalTexts(privacyPolicy(null)).join('\n');
+  for (const phrase of [
+    '登录记录：保存 180 天',
+    '工单：自提交之日起 30 天',
+    '最近 24 小时',
+    '境外',
+  ])
+    assert.ok(privacy.includes(phrase), phrase);
 });

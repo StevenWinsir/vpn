@@ -160,7 +160,9 @@ export function PlansView({ initial }: { initial: { plans: PlansResponse; meta: 
     };
   }, [user, payOn]);
   useEffect(() => {
-    if (!user || !upgradeOn) return;
+    // Asked only once the browser's own /meta has answered: the server's copy may be up to a
+    // minute old, and a switched-off upgrade must not be asked for.
+    if (!user || !upgradeOn || !settled) return;
     let active = true;
     const userId = user.id;
     void api<UpgradeOptions>('/payments/upgrade-options')
@@ -172,7 +174,7 @@ export function PlansView({ initial }: { initial: { plans: PlansResponse; meta: 
     return () => {
       active = false;
     };
-  }, [user, upgradeOn]);
+  }, [user, upgradeOn, settled]);
   const upgradeOptions = options && user && options.userId === user.id ? options.data : null;
   const [loadedAt] = useState(() => Date.now());
   // The local rule, for a backend without upgrades (or before its answer arrives): the current

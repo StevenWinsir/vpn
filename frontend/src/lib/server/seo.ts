@@ -85,3 +85,12 @@ export function verificationMetadata(config: SiteConfig): Metadata {
   if (!google && !bing && !baidu) return {};
   return { verification: { ...(google ? { google } : {}), ...(bing || baidu ? { other } : {}) } };
 }
+
+/**
+ * The canonical origin for structured data (handoff_seo.md 6.2), or null without a valid SITE_URL:
+ * every address in it must be absolute and must never come from the request (D2), so the pages
+ * leave it out then, like the share card's image.
+ */
+export function siteOrigin(): string | null {
+  return currentSiteConfig().origin;
+}

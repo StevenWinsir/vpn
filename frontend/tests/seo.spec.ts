@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { bannedIn } from './copy-words';
 import type { DownloadState } from '../src/lib/downloads';
 import { previewPlans } from '../src/lib/home';
+import { guidePath, parseInline, platformIds, platforms } from '../src/lib/guides';
+import { privacyPolicy, termsOfService, type LegalDocument } from '../src/lib/legal';
 import { downloadDescription, pageCopy } from '../src/lib/seo-copy';
 import { shareImage } from '../src/lib/share-image';
 import { tierOf, trafficLabel } from '../src/lib/shop';
@@ -44,15 +46,15 @@ type Answer = {
 
 // node:http rather than fetch: the Host header must be settable (S1-08), and redirects are
 // never followed.
-function get(base: string, path: string, host?: string): Promise<Answer> {
+const desktopAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0 Safari/537.36';
+function get(base: string, path: string, host?: string, agent = desktopAgent): Promise<Answer> {
   const url = new URL(path, base);
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       url,
       {
         headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0 Safari/537.36',
+          'User-Agent': agent,
           ...(host ? { Host: host } : {}),
         },
       },
@@ -88,7 +90,28 @@ const canonicalOf = (part: string) =>
 // "http://h:1" and "http://h:1/" name the same page.
 const same = (a: string) => new URL(a).href;
 
-const indexable = ['/', '/plans', '/download', '/guide', '/login', '/register'];
+// Round 3 adds the four platform guides and the two trust pages (handoff_seo.md 4).
+const platformGuides = ['/guide/windows', '/guide/macos', '/guide/android', '/guide/ios'];
+const indexable = [
+  '/',
+  '/plans',
+  '/download',
+  '/guide',
+  ...platformGuides,
+  '/terms',
+  '/privacy',
+  '/login',
+  '/register',
+];
+const sitemapPaths = [
+  '/',
+  '/plans',
+  '/download',
+  '/guide',
+  ...platformGuides,
+  '/terms',
+  '/privacy',
+];
 const closedPages: [string, string][] = [
   ['/dashboard', 'noindex, follow'],
   ['/nodes', 'noindex, follow'],
@@ -149,9 +172,8 @@ test('S1-04: robots.txt and sitemap.xml in both positions of the switch', async 
   expect(offMap.html).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
   expect(locs(offMap.html)).toEqual([]);
   const onMap = await get(indexedURL, '/sitemap.xml');
-  expect(locs(onMap.html)).toEqual(
-    ['/', '/plans', '/download', '/guide'].map((p) => `${indexedURL}${p}`),
-  );
+  // S3-12: all ten indexable sitemap addresses, no more and no fewer.
+  expect(locs(onMap.html)).toEqual(sitemapPaths.map((p) => `${indexedURL}${p}`));
   for (const answer of [offRobots, onRobots, offMap, onMap])
     expect(answer.headers['x-robots-tag']).toBe('noindex');
 });
@@ -162,7 +184,8 @@ test('S1-05: the canonical address drops the query', async () => {
     ['/plans?plan=basic&pay=alipay', '/plans'],
     ['/register?ref=ABC123', '/register'],
     ['/login?next=%2Fdashboard', '/login'],
-    ['/guide?platform=macos', '/guide'],
+    ['/guide/macos?from=download', '/guide/macos'],
+    ['/terms#rules', '/terms'],
   ]) {
     const answer = await get(indexedURL, path);
     expect(canonicalOf(answer.head), path).toEqual([indexedURL + canonical]);
@@ -457,6 +480,248 @@ test('S2-04: the plan cards are there at the first paint, never a skeleton first
       `${path}: cards at ${result.card} ms, first paint at ${result.paint} ms`,
     ).toBeLessThanOrEqual(result.paint!);
   }
+});
+
+// ---- Round 3 (handoff_seo.md 6): platform guides, structured data, terms and privacy ----
+
+type Thing = Record<string, unknown> & { '@context'?: string; '@type'?: string };
+const ldOf = (html: string): Thing[] =>
+  [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(
+    (m) => JSON.parse(m[1]) as Thing,
+  );
+const flat = (text: string) =>
+  parseInline(text)
+    .map((part) => part.text)
+    .join('');
+// The text as it reads, tags dropped without a space: inline links and emphasis stay inside their
+// sentence, as the data has them.
+const plainOf = (html: string) =>
+  decode(
+    markupOf(html)
+      .replace(/<style\b[\s\S]*?<\/style>/g, '')
+      .replace(/<!-- -->/g, '')
+      .replace(/<[^>]+>/g, ''),
+  );
+
+test('S3-01: each platform guide is complete in the first HTML, with its own title and address', async () => {
+  const titles = new Set<string>();
+  for (const id of platformIds) {
+    const path = guidePath(id);
+    const answer = await get(indexedURL, path);
+    expect(answer.status, path).toBe(200);
+    const text = plainOf(answer.body);
+    const platform = platforms[id];
+    // The device section shows the requirement line and its one step's text (guide-view.tsx).
+    expect(text, `${path} device`).toContain(platform.device);
+    expect(text, `${path} device text`).toContain(flat(platform.sections[0].steps[0].body));
+    for (const section of platform.sections.filter((s) => s.id !== 'device')) {
+      expect(text, `${path} ${section.title}`).toContain(section.title);
+      for (const step of section.steps) {
+        expect(text, `${path} ${step.title}`).toContain(step.title);
+        expect(text, `${path} ${step.title} body`).toContain(flat(step.body));
+      }
+    }
+    // Only this platform: another platform's first download step is not on the page.
+    for (const other of platformIds.filter((o) => o !== id))
+      expect(text, `${path} shows ${other}`).not.toContain(`${platforms[other].name} 使用教程`);
+    expect(canonicalOf(answer.head).map(same), path).toEqual([same(indexedURL + path)]);
+    titles.add(titleOf(answer.head));
+    seen.push(answer.html);
+  }
+  expect(titles.size).toBe(4);
+});
+
+test('S3-02: the old query addresses move for good; an unknown platform is a missing page', async () => {
+  for (const [path, target] of [
+    ['/guide?platform=macos', '/guide/macos'],
+    ['/guide?platform=ios&utm=x', '/guide/ios'],
+    ['/guide?platform=xyz', '/guide'],
+    ['/guide?platform=', '/guide'],
+  ]) {
+    const answer = await get(closedURL, path);
+    expect(answer.status, path).toBe(308);
+    expect(answer.headers.location, path).toBe(target);
+  }
+  const missing = await get(indexedURL, '/guide/xyz');
+  expect(missing.status).toBe(404);
+  expect(robotsOf(missing.head).length).toBeGreaterThan(0);
+  for (const value of robotsOf(missing.head)) expect(value).toContain('noindex');
+  expect(canonicalOf(missing.html)).toEqual([]);
+});
+
+test('S3-03: the overview is the same HTML for every visitor and every crawler', async () => {
+  const agents = [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+    'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+  ];
+  const texts = new Set<string>();
+  const marks = new Set<string>();
+  for (const agent of agents) {
+    const answer = await get(indexedURL, '/guide', undefined, agent);
+    expect(answer.status).toBe(200);
+    texts.add(textOf(answer.body));
+    marks.add(markupOf(answer.body).replace(/nonce="[^"]*"/g, ''));
+  }
+  expect(texts.size).toBe(1);
+  expect(marks.size).toBe(1);
+  const [text] = texts;
+  for (const id of platformIds) expect(text).toContain(`查看 ${platforms[id].name} 教程`);
+  // No device is picked on the server.
+  expect(text).not.toContain('继续阅读');
+  expect([...marks][0]).not.toContain('data-recommended');
+});
+
+test('S3-06: every JSON-LD block parses and says what the page shows; none without SITE_URL', async () => {
+  const response = (await (await fetch(`${closedURL}/api/v1/plans`)).json()) as PlansResponse;
+  const types: Record<string, string[]> = {
+    '/': ['Organization', 'WebSite', 'FAQPage'],
+    '/plans': ['BreadcrumbList', ...response.plans.map(() => 'Product')],
+    '/download': ['BreadcrumbList', 'SoftwareApplication'],
+    '/guide': ['BreadcrumbList'],
+    '/guide/windows': ['BreadcrumbList'],
+    '/terms': ['BreadcrumbList'],
+    '/privacy': ['BreadcrumbList'],
+  };
+  for (const [path, expected] of Object.entries(types)) {
+    const page = await get(indexedURL, path);
+    const blocks = ldOf(page.body);
+    expect(
+      blocks.map((b) => b['@type']),
+      path,
+    ).toEqual(expected);
+    for (const block of blocks) expect(block['@context'], path).toBe('https://schema.org');
+    // Every address inside is absolute and on the site's own origin.
+    for (const url of JSON.stringify(blocks).match(/https?:\/\/[^"]+/g) ?? [])
+      expect(url.startsWith(indexedURL) || url.startsWith('https://schema.org'), url).toBe(true);
+    expect(ldOf((await get(closedURL, path)).body), `${path} without SITE_URL`).toEqual([]);
+  }
+  const home = ldOf((await get(indexedURL, '/')).body);
+  expect(home[0]).toMatchObject({ name: 'AsterLink', url: `${indexedURL}/` });
+  expect((home[0].contactPoint as { email: string }).email).toBe('support@example.test');
+  const trail = ldOf((await get(indexedURL, '/guide/windows')).body)[0];
+  expect(
+    (trail.itemListElement as { name: string; item: string }[]).map((i) => [i.name, i.item]),
+  ).toEqual([
+    ['首页', `${indexedURL}/`],
+    ['使用教程', `${indexedURL}/guide`],
+    ['Windows', `${indexedURL}/guide/windows`],
+  ]);
+  // The product prices are the card prices, plan by plan.
+  const plansPage = await get(indexedURL, '/plans');
+  const shown = textOf(plansPage.body);
+  const productsLd = ldOf(plansPage.body).filter((b) => b['@type'] === 'Product');
+  for (const [index, plan] of response.plans.entries()) {
+    const product = productsLd[index] as Thing & {
+      name: string;
+      offers: { name: string; price: string; priceCurrency: string }[];
+    };
+    expect(product.name).toBe(plan.name);
+    const monthly = tierOf(plan, 'monthly')!;
+    expect(product.offers[0]).toMatchObject({ name: '月付', priceCurrency: 'CNY' });
+    expect(money(Math.round(Number(product.offers[0].price) * 100))).toBe(
+      money(monthly.price_cents),
+    );
+    expect(shown).toContain(money(monthly.price_cents));
+    if (plan.yearly)
+      expect(product.offers[1]).toMatchObject({
+        name: '年付',
+        price: (plan.yearly.price_cents / 100).toFixed(2),
+      });
+    else expect(product.offers).toHaveLength(1);
+  }
+});
+
+test('S3-08: the FAQPage answers are the visible answers, word for word', async () => {
+  const home = await get(indexedURL, '/');
+  const faq = ldOf(home.body).find((b) => b['@type'] === 'FAQPage') as Thing & {
+    mainEntity: { name: string; acceptedAnswer: { text: string } }[];
+  };
+  const markup = markupOf(home.body);
+  const questions = [
+    ...markup.matchAll(/<div class="home-faq-item"[\s\S]*?<span>([\s\S]*?)<\/span>/g),
+  ].map((m) => plainOf(m[1]));
+  const answers = [...markup.matchAll(/<div class="home-faq-panel"[^>]*>([\s\S]*?)<\/div>/g)].map(
+    (m) => plainOf(m[1]),
+  );
+  expect(questions.length).toBeGreaterThan(5);
+  expect(faq.mainEntity.map((q) => q.name)).toEqual(questions);
+  expect(faq.mainEntity.map((q) => q.acceptedAnswer.text)).toEqual(answers);
+  // The fixture has a support address, the chat and tickets: all three ways are named.
+  const contact = faq.mainEntity.find((q) => q.name === '如何联系客服？')!.acceptedAnswer.text;
+  expect(contact).toContain('在线客服');
+  expect(contact).toContain('support@example.test');
+});
+
+test('S3-09: software entries for the released platforms only, and none when nothing is', async () => {
+  const apps = (html: string) =>
+    ldOf(html).filter((b) => b['@type'] === 'SoftwareApplication') as (Thing & {
+      name: string;
+      softwareVersion: string;
+    })[];
+  const base = await get(indexedURL, '/download');
+  expect(apps(base.body).map((a) => a.name)).toEqual(['AsterLink for Android']);
+  const blocks = JSON.stringify(ldOf(base.body));
+  expect(blocks).not.toContain('/download/get/');
+  expect(blocks).not.toMatch(/downloadUrl|offers|aggregateRating|review/);
+  try {
+    await setDownloads('empty');
+    await expect
+      .poll(async () => apps((await get(indexedURL, '/download')).body).length, { timeout: 10000 })
+      .toBe(0);
+  } finally {
+    await setDownloads('base');
+  }
+});
+
+const legalText = (doc: LegalDocument) => [
+  doc.title,
+  ...doc.sections.map((section) => section.title),
+  ...doc.sections.flatMap((section) =>
+    section.blocks.flatMap((block) => (block.kind === 'p' ? [block.text] : block.items)).map(flat),
+  ),
+];
+
+test('S3-11: the terms and the privacy policy are served, linked and in plain words', async () => {
+  for (const [path, doc] of [
+    ['/terms', termsOfService('support@example.test')],
+    ['/privacy', privacyPolicy('support@example.test')],
+  ] as const) {
+    const page = await get(closedURL, path);
+    expect(page.status, path).toBe(200);
+    const text = plainOf(page.body);
+    for (const line of legalText(doc)) expect(text, `${path}: ${line}`).toContain(line);
+    expect(text).toContain(`生效日期：${doc.effective}`);
+    expect(text).toContain(`最后更新：${doc.updated}`);
+    expect(bannedIn(text), path).toEqual([]);
+    expect(text, path).not.toMatch(/VPN/);
+    seen.push(page.html);
+  }
+  // The home page footer links to both.
+  const markup = markupOf((await get(closedURL, '/')).body);
+  expect(markup).toMatch(/<footer[\s\S]*<a [^>]*href="\/terms"[^>]*>服务条款<\/a>/);
+  expect(markup).toMatch(/<footer[\s\S]*<a [^>]*href="\/privacy"[^>]*>隐私政策<\/a>/);
+});
+
+test('S3-11: the registration form names the terms and the privacy policy, without a checkbox', async ({
+  page,
+}) => {
+  await page.goto('/register');
+  const consent = page.getByTestId('register-consent');
+  await expect(consent).toHaveText('注册即表示你同意《服务条款》和《隐私政策》');
+  await expect(consent.getByRole('link', { name: '《服务条款》' })).toHaveAttribute(
+    'href',
+    '/terms',
+  );
+  await expect(consent.getByRole('link', { name: '《隐私政策》' })).toHaveAttribute(
+    'href',
+    '/privacy',
+  );
+  await expect(page.getByRole('checkbox')).toHaveCount(1);
+  await consent.getByRole('link', { name: '《隐私政策》' }).click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  await expect(page.getByRole('heading', { level: 1, name: '隐私政策' })).toBeVisible();
 });
 
 test('S1-11: no served page names the API host or the internal API address', async () => {

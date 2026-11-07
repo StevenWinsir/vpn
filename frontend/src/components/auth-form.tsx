@@ -571,6 +571,17 @@ function RegisterForm() {
           >
             创建账户
           </Button>
+          {/* Links only, no checkbox (handoff_seo.md D17). */}
+          <Text size="xs" c="dimmed" ta="center" data-testid="register-consent">
+            注册即表示你同意
+            <Anchor component={Link} href="/terms" inherit>
+              《服务条款》
+            </Anchor>
+            和
+            <Anchor component={Link} href="/privacy" inherit>
+              《隐私政策》
+            </Anchor>
+          </Text>
         </Stack>
       </form>
       {loginLink}

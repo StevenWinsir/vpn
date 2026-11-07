@@ -2,7 +2,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import { useAuth } from '../providers';
 import { useMeta } from '@/lib/use-meta';
-import { payTypeLabel, type Meta } from '@/lib/types';
+import type { Meta } from '@/lib/types';
 
 // What the home page's actions offer: nothing yet (pending), sign-in or registration for a
 // visitor, or the way into the user centre. One /meta request serves the header, the hero and the
@@ -29,12 +29,3 @@ export function HomeStateProvider({ children }: { children: React.ReactNode }) {
 }
 
 export const useHomeState = () => useContext(HomeContext);
-
-// "微信支付和支付宝" from the methods the shop offers; the usual pair when /meta has none.
-export function paymentMethodsText(meta: Meta | null): string {
-  const names = (meta?.payment_enabled ? (meta.payment_methods ?? []) : [])
-    .map((m) => payTypeLabel[m])
-    .filter(Boolean);
-  if (names.length === 0) return '微信支付和支付宝';
-  return names.length === 1 ? names[0] : `${names.slice(0, -1).join('、')}和${names.at(-1)}`;
-}

@@ -1,8 +1,7 @@
 'use client';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useState } from 'react';
 import { useReducedMotion } from '@mantine/hooks';
 import {
   Accordion,
@@ -13,7 +12,6 @@ import {
   Group,
   Modal,
   Paper,
-  SegmentedControl,
   SimpleGrid,
   Stack,
   Text,
@@ -38,8 +36,8 @@ import { openSupport } from '@/lib/support';
 import { useMeta } from '@/lib/use-meta';
 import {
   beforeYouStart,
-  choosePlatform,
   faqFor,
+  guidePath,
   parseInline,
   platformIds,
   platforms,
@@ -51,20 +49,14 @@ import {
 } from '@/lib/guides';
 import { guideImages, type GuideImage } from '@/lib/guide-images';
 
-const icons = {
+export const icons = {
   windows: IconBrandWindows,
   apple: IconBrandApple,
   android: IconBrandAndroid,
   phone: IconDeviceMobile,
 } as const;
 
-// The User-Agent is read after hydration only (the server renders the default), so the two
-// renderings never disagree (handoff_guide.md 6.2).
-const noSubscription = () => () => undefined;
-const readAgent = () => navigator.userAgent;
-const serverAgent = () => '';
-
-function Rich({ text }: { text: string }) {
+export function Rich({ text }: { text: string }) {
   return (
     <>
       {parseInline(text).map((part, index) => {
@@ -321,64 +313,78 @@ function Help() {
   );
 }
 
-export function GuideView({ downloads }: { downloads: GuideDownloads }) {
-  const router = useRouter();
-  const params = useSearchParams();
-  const agent = useSyncExternalStore(noSubscription, readAgent, serverAgent);
-  const id = choosePlatform(params.get('platform'), agent);
-  const platform = platforms[id];
-  const choose = useCallback(
-    (value: string) => router.replace(`/guide?platform=${value}`, { scroll: false }),
-    [router],
+/** The four things to have ready (handoff_guide.md 4), on the overview and every platform page. */
+export function BeforeYouStart() {
+  return (
+    <section aria-labelledby="before-title">
+      <Title order={2} size="h4" id="before-title" mb="sm">
+        开始之前
+      </Title>
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+        {beforeYouStart.map((item, index) => (
+          <Paper key={item.title} withBorder radius="lg" p="md" data-testid="guide-before">
+            <Text fw={650} size="sm">
+              {index + 1}. {item.title}
+            </Text>
+            <Text mt={4} size="sm" c="dimmed">
+              <Rich text={item.body} />
+            </Text>
+          </Paper>
+        ))}
+      </SimpleGrid>
+    </section>
   );
+}
+
+// The device switch is four plain links (handoff_seo.md 6.1): each platform has its own address,
+// so the browser's back and forward buttons step through the platforms a visitor looked at. The
+// scroll position stays, as it did when the switch rewrote the query.
+function PlatformSwitch({ id }: { id: PlatformId }) {
+  return (
+    <nav className="guide-seg" aria-label="选择设备">
+      {platformIds.map((value) => {
+        const Icon = icons[platforms[value].icon];
+        return (
+          <Link
+            key={value}
+            href={guidePath(value)}
+            scroll={false}
+            aria-current={value === id ? 'page' : undefined}
+            data-platform={value}
+          >
+            <Icon size={18} aria-hidden />
+            <span>{platforms[value].name}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** One platform's guide (/guide/{platform}): the server knows the platform from the address. */
+export function GuideView({ id, downloads }: { id: PlatformId; downloads: GuideDownloads }) {
+  const platform = platforms[id];
   return (
     <Container size="lg" py={48}>
       <Stack gap="xl">
         <div>
-          <Title order={1}>使用教程</Title>
+          <nav aria-label="当前位置" className="guide-crumbs" data-testid="guide-crumbs">
+            <Link href="/guide">使用教程</Link>
+            <span aria-hidden>/</span>
+            <span aria-current="page">{platform.name}</span>
+          </nav>
+          <Title order={1} mt={6}>
+            {platform.name} 使用教程
+          </Title>
           <Text c="dimmed" mt="xs">
-            跟着步骤做，几分钟就能用上 AsterLink。先选你的设备。
+            跟着步骤做，几分钟就能在 {platform.name} 上用上
+            AsterLink。用的是其他设备，在下方切换即可。
           </Text>
         </div>
 
-        <section aria-labelledby="before-title">
-          <Title order={2} size="h4" id="before-title" mb="sm">
-            开始之前
-          </Title>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-            {beforeYouStart.map((item, index) => (
-              <Paper key={item.title} withBorder radius="lg" p="md" data-testid="guide-before">
-                <Text fw={650} size="sm">
-                  {index + 1}. {item.title}
-                </Text>
-                <Text mt={4} size="sm" c="dimmed">
-                  <Rich text={item.body} />
-                </Text>
-              </Paper>
-            ))}
-          </SimpleGrid>
-        </section>
+        <BeforeYouStart />
 
-        <SegmentedControl
-          className="guide-seg"
-          fullWidth
-          size="md"
-          value={id}
-          onChange={choose}
-          aria-label="选择设备"
-          data={platformIds.map((value) => {
-            const Icon = icons[platforms[value].icon];
-            return {
-              value,
-              label: (
-                <Group gap={6} justify="center" wrap="nowrap">
-                  <Icon size={18} aria-hidden />
-                  <span>{platforms[value].name}</span>
-                </Group>
-              ),
-            };
-          })}
-        />
+        <PlatformSwitch id={id} />
 
         <div className="guide-layout" data-testid="guide-platform" data-platform={id}>
           <nav className="guide-toc" aria-label="本页目录">

@@ -444,6 +444,8 @@ test('the customer pages read well in both schemes', async ({ browser }) => {
     ['/referral', 'referral'],
     ['/download', 'download'],
     ['/guide', 'guide'],
+    ['/guide/windows', 'guide-windows'],
+    ['/terms', 'terms'],
     ['/account', 'account'],
     [`/pay/result?order=${order.id}`, 'pay-result'],
     ['/no-such-page', 'not-found'],

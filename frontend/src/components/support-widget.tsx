@@ -31,6 +31,9 @@ export const supportPages = [
   '/account',
   '/pay/result',
 ];
+// The platform guides (/guide/windows …) belong to the guide.
+export const isSupportPage = (path: string) =>
+  supportPages.includes(path) || path.startsWith('/guide/');
 
 const useSupportState = () =>
   useSyncExternalStore(subscribeSupport, supportSnapshot, supportServerSnapshot);
@@ -57,7 +60,7 @@ export function useSupportAccess(path: string): RuntimeConfig['support'] | null 
   }, [signedIn]);
   const websiteId = config?.crispWebsiteId ?? null;
   const offered =
-    !!user && user.role !== 'admin' && !impersonation && supportPages.includes(path) && !!websiteId;
+    !!user && user.role !== 'admin' && !impersonation && isSupportPage(path) && !!websiteId;
   useEffect(() => {
     if (offered && user && websiteId)
       activateSupport(websiteId, { id: user.id, email: user.email, name: user.name });
@@ -82,7 +85,7 @@ export function useSupportAccess(path: string): RuntimeConfig['support'] | null 
       reloadWithoutSupport();
     } else if (was && !user) {
       endSupportSession();
-      if (supportPages.includes(path)) leaving.current = path;
+      if (isSupportPage(path)) leaving.current = path;
       else reloadWithoutSupport();
     }
   }, [user, path]);

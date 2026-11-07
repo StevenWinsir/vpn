@@ -4,9 +4,9 @@
 
 ## 1. 它是什么
 
-- 一个纯网站静态内容页：路由 `/guide`，平台用查询参数 `?platform=windows|macos|android|ios` 区分，缺省或非法值按访客设备自动选择。**不读写后端、不新增接口、不新增数据库表、不新增 `.env` 参数**，与客户端计费、节点、租约、计量没有任何交集。
+- 一个纯网站静态内容页（`handoff_seo.md` D5，第 3 轮起）：`/guide` 是总览页（开始之前、四个平台入口；按访客设备高亮推荐的平台，只在浏览器里判断，服务器输出的内容对所有访客相同）；每个平台一个独立地址 `/guide/windows`、`/guide/macos`、`/guide/android`、`/guide/ios`，各有自己的标题和描述（`frontend/src/lib/seo-copy.ts`）。平台切换是四个普通链接。旧地址 `/guide?platform=x` 永久跳转（308）到 `/guide/x`，参数无效时跳到 `/guide`；`/guide/未知值` 返回 404。**不读写后端、不新增接口、不新增数据库表、不新增 `.env` 参数**，与客户端计费、节点、租约、计量没有任何交集。
 - 不要求登录（与 `/download` 一致）：未登录也能打开，侧栏照常显示；页面不得包 `RequireAuth`。
-- 侧栏入口在 `frontend/src/components/site-shell.tsx`：“下载客户端”之后、“账号设置”之前，管理员同样可见，始终显示；`/guide` 在该文件的工作区白名单里（否则没有侧栏）。因为侧栏按路径全等高亮，**不要**改成 `/guide/ios` 这类子路由。
+- 侧栏入口在 `frontend/src/components/site-shell.tsx`：“下载客户端”之后、“账号设置”之前，管理员同样可见，始终显示。`/guide` 和 `/guide/` 开头的地址都算工作区（有侧栏），“使用教程”在两者上都高亮；在线客服的页面判断（`support-widget.tsx` 的 `isSupportPage`）同样包含平台页。站内链接一律用 `guidePath(平台)`，不要再写 `?platform=`（`test:seo` 会检查）。
 - 教程与 APP 版本强绑定，随代码发布、一起评审；不做后台在线编辑。
 
 涉及的文件：
@@ -18,7 +18,8 @@
 | `frontend/public/guide/<平台>/<键>.<哈希前8位>.webp` | 处理后的图片，文件名带内容哈希；清单之外的文件不得留在这里 |
 | `frontend/guide-shots.json` | 截图选单（来源场景、裁切、输出宽度、替代文字）与“待补拍的系统画面”清单 `pendingManual` |
 | `frontend/scripts/guide-images.mjs` | `npm run guide:images` 处理脚本 |
-| `frontend/src/components/guide-view.tsx`、`app/guide/page.tsx` | 页面与交互（平台切换、目录、放大层、编号框、FAQ） |
+| `frontend/src/components/guide-view.tsx`、`app/guide/[platform]/page.tsx` | 平台页与交互（面包屑、平台切换链接、目录、放大层、编号框、FAQ） |
+| `frontend/src/components/guide-hub.tsx`、`app/guide/page.tsx` | 总览页与旧地址跳转 |
 | `frontend/scripts/guide.test.mjs`、`tests/guide.spec.ts` | 单元测试与浏览器用例 |
 
 ## 2. 内容数据结构（guides.ts）
@@ -27,7 +28,7 @@
 
 - **章节** `Section`：`id`（页面锚点，同一平台内唯一，不得叫 `faq` 或 `help`）、`title`、`steps`、可选 `note`（`tip` 提示或 `warn` 注意）。每个平台必须按顺序包含 `requiredSections` 里的全部章节：`device`、`download`、`authorize`、`login`、`lines`、`connect`、`usage`、`background`、`upgrade`。
 - **步骤** `Step`：`title`、`body`（纯文本）、可选 `download: true`（“下载”步骤，每个平台恰好一个；页面按下载是否可用显示“前往下载”或“安装包请联系客服获取”）、可选 `shot` 与 `highlights`。步骤序号由顺序决定，不手写。
-- **正文写法**：`**加粗**`；站内链接 `[文字](/路径)`，路径只能是 `guideLinkPaths` 白名单（`/register`、`/plans`、`/download`、`/dashboard`、`/tickets`、`/forgot-password`、`/guide`）；正文里的 ①②③ 指向同号的截图编号框。正文不得出现网址、邮箱。
+- **正文写法**：`**加粗**`；站内链接 `[文字](/路径)`，路径只能是 `guideLinkPaths` 白名单（`/register`、`/plans`、`/download`、`/dashboard`、`/tickets`、`/forgot-password`、`/guide` 和四个平台页）；正文里的 ①②③ 指向同号的截图编号框。正文不得出现网址、邮箱。
 - **截图键** `shot`：形如 `ios/vpn-setup`，必须在 `guide-images.ts` 里；只能引用本平台的图。
 - **高亮** `highlights`：`{ n, rect: [左, 上, 宽, 高], shape?: 'circle', badge?: 'end' }`，坐标是占图片宽高的百分比（0–100，不得越界），`n` 必须从 1 起按 1、2、3 连续编号，并且和正文里的 ①②③ 一一对应；没有截图的步骤不能有高亮。
 - **常见问题** `faq`：`{ q, a }`；四个平台共用的问题在 `commonFaq`，页面显示时与平台自己的合并。

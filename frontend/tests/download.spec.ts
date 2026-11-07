@@ -235,13 +235,13 @@ test('a version changed in the console shows on the page, the home cards and the
       timeout: 1000,
     });
   }).toPass({ timeout: 15000 });
-  await page.goto('/guide?platform=android');
+  await page.goto('/guide/android');
   await expect(page.getByTestId('guide-download')).toContainText('当前版本 1.2.5');
   // DL3-08: the desktop guide offers the download once Windows is published.
-  await page.goto('/guide?platform=windows');
+  await page.goto('/guide/windows');
   await expect(page.getByTestId('guide-download')).toHaveAttribute('data-available', 'false');
   await downloads('multi');
-  await page.goto('/guide?platform=windows');
+  await page.goto('/guide/windows');
   await expect(page.getByTestId('guide-download')).toHaveAttribute('data-available', 'true');
   await expect(page.getByTestId('guide-download')).toContainText('当前版本 1.2.3');
   await expect(page.getByRole('link', { name: '前往下载' })).toHaveAttribute(

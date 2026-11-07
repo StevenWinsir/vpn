@@ -1,7 +1,9 @@
 import { DownloadView } from '@/components/download-view';
+import { JsonLd } from '@/components/json-ld';
 import { loadDownloads } from '@/lib/server/downloads';
-import { indexableMetadata } from '@/lib/server/seo';
+import { indexableMetadata, siteOrigin } from '@/lib/server/seo';
 import { downloadDescription } from '@/lib/seo-copy';
+import { breadcrumbs, softwareApplications } from '@/lib/structured-data';
 
 // Read on every request through the 30-second cache (handoff_download.md D9): a change in the
 // console shows here within half a minute, no restart and no rebuild.
@@ -15,6 +17,22 @@ export async function generateMetadata() {
   });
 }
 
+// The released clients are described from the same list as the cards (handoff_seo.md 6.2), so
+// the structured data never names a platform the page shows as not yet released.
 export default async function DownloadPage() {
-  return <DownloadView state={await loadDownloads()} />;
+  const state = await loadDownloads();
+  const origin = siteOrigin();
+  return (
+    <>
+      {origin ? (
+        <JsonLd
+          data={[
+            breadcrumbs(origin, [{ name: '下载客户端', path: '/download' }]),
+            ...softwareApplications(origin, state),
+          ]}
+        />
+      ) : null}
+      <DownloadView state={state} />
+    </>
+  );
 }

@@ -140,6 +140,8 @@ test('structure, copy and footer of the home page', async ({ page }) => {
     ['登录', '/login'],
     ['注册', '/register'],
     ['找回密码', '/forgot-password'],
+    ['服务条款', '/terms'],
+    ['隐私政策', '/privacy'],
   ])
     await expect(footer.getByRole('link', { name: label, exact: true })).toHaveAttribute(
       'href',

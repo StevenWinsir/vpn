@@ -56,9 +56,13 @@ const links = [
   { href: '/guide', label: '使用教程', icon: IconBook2 },
   { href: '/account', label: '账号设置', icon: IconUserCog },
 ];
-// The console has several pages under one navigation entry.
-const current = (href: string, path: string) =>
-  href === '/admin/console/users' ? path.startsWith('/admin/console') : path === href;
+// The console has several pages under one navigation entry, and so has the guide (its overview
+// and one page per platform, handoff_seo.md D5).
+const current = (href: string, path: string) => {
+  if (href === '/admin/console/users') return path.startsWith('/admin/console');
+  if (href === '/guide') return path === '/guide' || path.startsWith('/guide/');
+  return path === href;
+};
 export function Logo() {
   return (
     <Link className="brand" href="/">
@@ -225,7 +229,9 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       '/guide',
       '/account',
       '/pay/result',
-    ].includes(path) || path.startsWith('/admin/');
+    ].includes(path) ||
+    path.startsWith('/guide/') ||
+    path.startsWith('/admin/');
   const signout = async () => {
     setLeaving(true);
     // Once the support chat ran here, signing out turns the next navigation into a full load.

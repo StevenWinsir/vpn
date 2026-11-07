@@ -9,13 +9,14 @@ import { test } from 'node:test';
 import { guideImages } from '../src/lib/guide-images.ts';
 import {
   beforeYouStart,
-  choosePlatform,
   commonFaq,
   detectPlatform,
   downloadAvailable,
   faqFor,
   guideLinkPaths,
+  guidePath,
   guideTexts,
+  legacyGuideTarget,
   markNumbers,
   parseInline,
   platformIds,
@@ -112,7 +113,7 @@ test('no address or e-mail of ours is written into a guide', () => {
     }
 });
 
-test('the platform: a valid query wins, otherwise the device decides', () => {
+test('the device decides the recommendation; old ?platform= addresses find their page (handoff_seo.md D5)', () => {
   const iphone =
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
   const android =
@@ -127,14 +128,18 @@ test('the platform: a valid query wins, otherwise the device decides', () => {
   assert.equal(detectPlatform(windows), 'windows');
   assert.equal(detectPlatform('Mozilla/5.0 (X11; Linux x86_64)'), 'windows');
   assert.equal(detectPlatform(''), 'windows');
-  assert.equal(choosePlatform('android', iphone), 'android');
-  assert.equal(choosePlatform('macos', windows), 'macos');
-  assert.equal(choosePlatform('ios', ''), 'ios');
-  assert.equal(choosePlatform('IOS', iphone), 'ios');
-  assert.equal(choosePlatform('linux', android), 'android');
-  assert.equal(choosePlatform('', mac), 'macos');
-  assert.equal(choosePlatform(null, windows), 'windows');
-  assert.equal(choosePlatform(undefined, ''), 'windows');
+  assert.deepEqual(platformIds.map(guidePath), [
+    '/guide/windows',
+    '/guide/macos',
+    '/guide/android',
+    '/guide/ios',
+  ]);
+  assert.equal(legacyGuideTarget('macos'), '/guide/macos');
+  assert.equal(legacyGuideTarget(['ios', 'android']), '/guide/ios');
+  // Unknown, differently written or empty values go to the overview.
+  for (const value of ['IOS', 'linux', '', ['xyz']])
+    assert.equal(legacyGuideTarget(value), '/guide');
+  assert.equal(legacyGuideTarget(undefined), null);
 });
 
 // ---- pictures (handoff_guide.md 7.2, 8.1) ------------------------------------------------------

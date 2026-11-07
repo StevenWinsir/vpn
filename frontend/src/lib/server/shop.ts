@@ -41,3 +41,8 @@ export async function loadShop(): Promise<{ plans: PlansResponse; meta: Meta } |
   const [p, m] = await Promise.all([plans.get(), meta.get()]);
   return p && m ? { plans: p, meta: m } : null;
 }
+
+/** The public capabilities alone (the home page's answers to common questions), or null. */
+export function loadMeta(): Promise<Meta | null> {
+  return meta.get();
+}
