@@ -138,6 +138,121 @@ location / {
 
 网站经前端域名取得的 Cookie 属于前端域名。直接访问后端公网域名的 Cookie 属于后端域名，两个入口不会自动共享登录状态；旧版跨域登录用户升级后可能需要重新登录。其他浏览器应用直连后端域名仍需满足 Go 的来源白名单及浏览器 Cookie 规则。
 
+## 搜索引擎上线：规范域名、HTTPS 跳转与 HSTS（handoff_seo.md 第 4 轮）
+
+网站只有一个规范地址 `https://www.asterlink.vip`（handoff_seo.md D2）。`http://` 的所有主机名和 `https://asterlink.vip`（裸域）都用 301 跳到它，**保留路径和查询参数**；后端 `api.asterlink.vip` 只给客户端和支付回调使用，不跳转，也不被收录（它自己的 `robots.txt` 禁止抓取，所有响应带 `X-Robots-Tag: noindex, nofollow`）。
+
+下面是四个完整的 server 块，替换（或合并进）前文“前后端分别保留域名”里两个 server 块外层的写法。证书路径按你的实际签发位置修改（下例为 certbot 的默认位置，证书须同时覆盖 `asterlink.vip` 与 `www.asterlink.vip`）。`location /` 的内容与前文相同，没有变化。`scripts/test-nginx-docs.py` 会对本文的全部 Nginx 示例运行 `nginx -t`（CI 的 “Website Lighthouse budget / Nginx examples” 任务），并检查下列跳转和 HSTS 是否还在。
+
+```nginx
+# http: every host name moves to the one canonical address, path and query kept.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name asterlink.vip www.asterlink.vip;
+    return 301 https://www.asterlink.vip$request_uri;
+}
+
+# https on the bare domain: the same move; HSTS here only covers asterlink.vip itself.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name asterlink.vip;
+    ssl_certificate /etc/letsencrypt/live/asterlink.vip/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/asterlink.vip/privkey.pem;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    return 301 https://www.asterlink.vip$request_uri;
+}
+
+# The website.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name www.asterlink.vip;
+    ssl_certificate /etc/letsencrypt/live/asterlink.vip/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/asterlink.vip/privkey.pem;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # Next.js already gzips pages, scripts and styles; this only adds the small text answers
+    # (robots.txt, sitemap.xml, icon.svg). An answer that is already compressed is passed as is.
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_types text/plain text/css text/xml application/xml application/json application/javascript image/svg+xml application/manifest+json;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_cache off;
+        proxy_read_timeout 190s;
+    }
+}
+
+# The API for the four clients and the payment callbacks: no redirect, never indexed.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name api.asterlink.vip;
+    ssl_certificate /etc/letsencrypt/live/api.asterlink.vip/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.asterlink.vip/privkey.pem;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_cache off;
+        proxy_read_timeout 190s;
+    }
+}
+```
+
+要点：
+
+- **跳转用 301，保留路径**：`$request_uri` 含路径和查询参数，`http://asterlink.vip/plans?cycle=yearly` 会到 `https://www.asterlink.vip/plans?cycle=yearly`。不要跳到首页，不要改用 302。
+- **Host 头必须原样传给 Next.js**（`proxy_set_header Host $http_host;`）：网站按请求的主机名判断是否允许收录（D12），用其他主机名访问的页面一律 noindex。
+- **HSTS**：www 和 api 都发送一年有效期的 `Strict-Transport-Security`。默认**不加** `includeSubDomains` 和 `preload`：前者会让 asterlink.vip 的所有子域（包括以后可能只有 http 的子域）都被浏览器强制 HTTPS；后者要提交到浏览器内置列表，撤销需要数月。确认所有子域都长期只用 HTTPS 后，再由你决定是否加上。上线初期如想更稳妥，可先用 `max-age=86400` 观察一天再改为一年。
+- **add_header 的继承**：Nginx 的 `add_header` 只在当前层级没有自己的 `add_header` 时才继承上一层。前文“使用教程图片的长缓存”那段 location 自带 `add_header Cache-Control`，放进 www 的 server 块时，要在那段 location 里再写一遍 HSTS 这一行，否则这些图片的响应没有 HSTS（不影响功能，只是不完整）。
+- **IPv6**：服务器没有 IPv6 地址时，删掉带 `[::]` 的 `listen` 行。
+- **HTTP/2**：Nginx 1.25.1 及以上在 server 块里写 `http2 on;`；更早的版本写成 `listen 443 ssl http2;`。两种写法不能混用，按你服务器的 `nginx -v` 选择（检查脚本不包含这一行，因为 CI 的 Nginx 版本可能与服务器不同）。
+- **压缩**：Next.js 默认对页面、脚本和样式做 gzip，`/_next/static/` 自带一年不可变缓存。上面的 `gzip` 只补充小的文本响应，已压缩的响应 Nginx 不会再压一次。服务器装有 brotli 模块时可以另开 `brotli on;`，但 Next.js 已经 gzip 过的响应仍保持 gzip。
+- **旧演示域名**（`demo.hyshentou.cn`、`test.hyshentou.cn`）：不再使用时，在各自的 server 块里同样 `return 301 https://www.asterlink.vip$request_uri;`；仍需保留时，那里的网站会因主机名不是 `SITE_URL` 而自动 noindex（D12），无需额外配置。
+
+### 收录相关的环境变量
+
+```dotenv
+# frontend/.env（修改后重启 Next.js，不需要重新构建）
+SITE_URL=https://www.asterlink.vip
+SITE_INDEXING=on
+# 可选：搜索引擎验证（推荐用 DNS TXT 验证，就不需要这三项）
+SITE_VERIFICATION_GOOGLE=
+SITE_VERIFICATION_BING=
+SITE_VERIFICATION_BAIDU=
+```
+
+```dotenv
+# backend/.env（与网站的 SITE_URL 一致；修改后重启 Go）
+WEBSITE_BASE_URL=https://www.asterlink.vip
+ALLOWED_ORIGINS=https://www.asterlink.vip
+```
+
+- `SITE_INDEXING` **缺省即关闭**：不写、写错或 `SITE_URL` 无效时，全站 noindex，`robots.txt` 禁止全部抓取，`sitemap.xml` 为空。所以本地、CI、预发和以后复制出来的环境不会被收录。
+- `SITE_URL` 还用于分享卡片的图片地址和结构化数据（JSON-LD）。没有它时，这两样都不输出，页面本身正常。
+- 裸域跳到 www 之后，浏览器只会从 `https://www.asterlink.vip` 发起请求，`ALLOWED_ORIGINS` 只需这一个来源。
+- `PAYMENT_NOTIFY_URL` 等支付回调地址仍指向 api 域名，不受本节影响。
+
+### 上线顺序与回滚
+
+上线步骤、curl 核对命令、Search Console 的操作与回滚方法见 [seo-operations.md](seo-operations.md)。简要顺序：先部署后端（api 域名的 robots.txt 和 noindex 头），再部署网站并保持 `SITE_INDEXING` 关闭，核对页面 head、robots.txt 和 sitemap；确认无误后改为 `on` 并重启 Next.js。回滚收录只需把 `SITE_INDEXING` 改回 `off`（或删掉）并重启 Next.js。
+
 ## 构建、启动和后续配置更新
 
 首次升级本次代码，在服务器的 `frontend` 目录执行：

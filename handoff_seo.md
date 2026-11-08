@@ -575,3 +575,68 @@ robots.txt 内容（收录开启时）：允许全部；Disallow /api/ 和 /down
   - “线路可能位于境外”和“在线客服由境外服务商提供”两处跨境说明。
 - 生效日期暂定 2026 年 11 月 7 日，可以改成实际上线的日期。
 - 上线后用 Rich Results Test 检查 /plans（Product）、首页（Organization、FAQPage）和 /guide/windows（BreadcrumbList），对应 U-74。
+
+### 第 4 轮：性能、上线与收尾（2026-11-07，分支 worktree-seo-round4-performance-launch，基线 8264d8c）
+
+实施内容：
+
+- 性能审计脚本 frontend/scripts/lighthouse-audit.mjs（npm run audit:lighthouse），预算和计算放在纯模块 frontend/scripts/lighthouse-budget.mjs：
+  - 在回环端口启动现有的生产构建，开启收录（SEO 类别按可收录页面评分），接一个脚本内置的假后端：/plans 三个套餐、/meta、/downloads 三个已上架客户端，其余接口按未登录回答。页面就是访客看到的样子：有价格，有下载卡片。
+  - 对首页、/plans、/download、/guide/windows 各运行 3 次 Lighthouse 移动端审计，每项取中位数，与 D18 比较；结果写入 artifacts/lighthouse-时间/ 的 summary.json 和 summary.md，超出预算时退出码为 1。
+  - Lighthouse 用 npx 运行并固定为 13.6.0，不进入网站的依赖，test:seo 检查这一点。
+  - --gate stable 只以 SEO、无障碍、CLS 判定失败。
+- CI 新增独立任务“Website Lighthouse budget / Nginx examples”（ubuntu-24.04，15 分钟上限），不放进有 25 分钟上限的浏览器任务：
+  - 先运行 scripts/test-nginx-docs.py；
+  - 再构建网站，运行 audit:lighthouse --gate stable；
+  - 保留 summary 构件 14 天。
+  - LCP、TBT 只记录，不判失败。
+- Nginx 检查脚本 scripts/test-nginx-docs.py（S4-04）：
+  - 对 docs/deployment.md 的全部 Nginx 示例运行 nginx -t：完整的 server 块原样放入 http 上下文，证书换成临时自签名证书；只有 location 的片段包进各自的 server 块。
+  - 同时检查上线配置的几项要求：
+    - http 和裸域 301 到 https://www.asterlink.vip$request_uri；
+    - www 和 api 发送一年有效期的 HSTS；
+    - 不出现 preload；
+    - www 原样传递 Host 头。
+  - 故意拼错指令的副本必须不通过 nginx -t，以证明检查本身有效。
+  - 本机没有 nginx 时报 BLOCKED，退出码 2，不算通过。
+- docs/deployment.md 新增“搜索引擎上线：规范域名、HTTPS 跳转与 HSTS”一节：
+  - 四个完整的 server 块：http 跳转、裸域跳转、www、api；
+  - HSTS 的取舍：默认不加 includeSubDomains 和 preload；
+  - add_header 的继承陷阱、HTTP/2 和 IPv6 的写法、压缩的分工、旧演示域名的处理；
+  - 前后端环境变量（SITE_URL、SITE_INDEXING、WEBSITE_BASE_URL、ALLOWED_ORIGINS）；
+  - 上线顺序和回滚。
+- 新文档 docs/seo-operations.md：组成部分、上线五步与 curl 核对命令、回滚与紧急情况、Search Console、Bing 和百度的操作、关键词与页面的对应关系、日常运营、性能审计和基线、禁止事项、常见问题。
+- frontend/.env.example：说明结构化数据也依赖 SITE_URL，生产环境的取值和上线顺序见运维手册，以及回滚方法。
+- test:seo 新增 3 项，共 27 项：
+  - D18 的预算值和四个页面；
+  - npm 脚本存在，Lighthouse 不是依赖；
+  - 中位数（含缺失值）、figures、failingAudits、表格行；
+  - 超出预算的文字说明；
+  - stable 模式只判 SEO、无障碍、CLS；
+  - 恰好等于预算时算通过。
+
+偏离规划之处：
+
+1. 7.1 中“可能的优化方向”一项都没有做：四个页面的基线全部在 D18 预算内（见 S4-01），按“只改超出预算的项”的原则不改代码。frontend/src、frontend/public 和 next.config.ts 与第 3 轮完全相同。
+2. /download 和 /guide/windows 的无障碍分数为 96，扣分项是正文中的链接只靠颜色区分（link-in-text-block）。分数在预算内，按 D18“不为跑分改变视觉设计”没有改动，改法已写进运维手册第 6 节。
+3. 审计使用脚本内置的固定假后端，不使用真实后端。这样结果可以重复，审计也不依赖数据库，并且套餐和下载卡片在页面上，与生产环境的页面结构相同。
+4. 本机审计的构建是 next build 的默认 Turbopack 构建，与生产环境 npm run build 一致；CI 任务与现有 Web validation 一样使用 --webpack 构建。两种构建只影响 CI 中的时间类数据，而时间类数据在 CI 中本来就不判失败。
+5. S4-04：本机没有 nginx 和 Docker，所以本机只完成了上线配置的要求检查（并证明它能发现缺少 HSTS、改成 302、带 preload、漏传 Host 头这几种情况）。nginx -t 在 CI 的 Ubuntu 24.04 运行器上执行，运行器自带 nginx。
+6. 7.2 的 gzip 说明按实测调整：Next.js 默认已对 HTML、JS、CSS 做 gzip，/_next/static 自带一年不可变缓存；robots.txt、sitemap.xml、icon.svg 未压缩。所以 Nginx 的 gzip 只作为对小文本响应的补充，并说明已压缩的响应不会再压一次。
+
+验收结果：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| S4-01 | PASS | npm run audit:lighthouse（Lighthouse 13.6.0，移动端模拟节流：CPU 4 倍、RTT 150 ms、约 1.6 Mbit/s；本机 benchmarkIndex 4223）每页 3 次，取中位数。首页：性能 100，FCP 1.21 s，LCP 1.21 s，CLS 0，TBT 1 ms，SEO 100，无障碍 100。/plans：100，1.06 s，1.06 s，0，6 ms，100，100。/download：100，1.20 s，1.20 s，0，0 ms，100，96。/guide/windows：100，1.20 s，1.20 s，0，0 ms，100，96。三次结果差异：首页 LCP 0.81 至 1.21 s，其余页面三次几乎相同。完整报告在 /tmp/seo-r4-lh-baseline（本机，不提交） |
+| S4-02 | PASS（无需优化） | 四个页面全部在 D18 预算内（LCP ≤ 2.5 s、CLS ≤ 0.1、TBT ≤ 200 ms、SEO 100、无障碍 ≥ 90），没有做任何优化，也没有改动页面代码（偏离第 1、2 项） |
+| S4-03 | PASS | 本轮没有改动任何会渲染出来的代码：与第 3 轮（8264d8c）相比，git diff 中 frontend/src、frontend/public、next.config.ts 都为空，所以四个页面在浅色、深色和 1440、390 宽度下与第 3 轮逐字节相同。全量浏览器测试照常生成 theme、home、guide 的截图 |
+| S4-04 | 本机 BLOCKED（未安装 nginx）；CI 见 PR | scripts/test-nginx-docs.py 本机退出码 2，上线配置的要求检查通过，4 种错误改法都能被发现。nginx -t 由 CI 任务“Website Lighthouse budget / Nginx examples”执行，结果见 PR |
+| S4-05 | PASS | frontend/.env.example 中 SITE_URL、SITE_INDEXING 和三个验证变量的说明完整，写明“缺省即关闭”、生产取值、上线顺序和回滚；docs/deployment.md 和 docs/seo-operations.md 都写明 SITE_INDEXING 缺省即关闭 |
+| S4-06 | 本地 PASS，CI 见 PR | scripts/test-payment-web.py 全量 145/145 通过，用时 10.9 分钟。网站全部 node 测试通过：seo 27、api-proxy 17（本机需 PLAYWRIGHT_CHROME_PATH）、nodes 3、downloads 21、dashboard 6、referral 5、copy 4、theme 5、home 3、support 6、tickets 12、guide 14、toast 7。eslint、tsc、生产构建都通过；ci.yml 用 YAML 解析器校验过，新任务的步骤齐全。CI 模式在本机以 CI=1、--gate stable、每页 1 次运行，四页都在预算内，退出码 0。后端 go test -race 本轮没有涉及（后端代码没有改动），由 CI 的 Backend 任务执行 |
+
+需要用户留意：
+
+- 上线时按 docs/seo-operations.md 第 2 节的五步操作，并按第 11 节记录 U-70 至 U-79。U-79（条款文字）已在第 3 轮确认。
+- HSTS 默认不加 includeSubDomains 和 preload；确认所有子域都长期只用 HTTPS 后，再决定是否加上。
+- 服务器的 Nginx 版本决定 HTTP/2 的写法（1.25.1 及以上用 http2 on;），服务器没有 IPv6 时删掉 [::] 那几行；改完先 nginx -t 再重载。
