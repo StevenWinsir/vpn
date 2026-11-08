@@ -144,6 +144,42 @@ jobs:
             artifacts/ci-catalog/browser-artifacts/nodes-desktop.png
             artifacts/ci-catalog/browser-artifacts/nodes-mobile.png
 
+  website-launch:
+    # handoff_seo.md 7: the documented Nginx examples pass nginx -t (S4-04), and the public pages
+    # stay within the stable part of the D18 budget. Its own job, outside the browser job's
+    # 25-minute cap; timings are recorded, never gated, because shared runners vary.
+    name: Website Lighthouse budget / Nginx examples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Nginx examples of docs/deployment.md pass nginx -t, redirects and HSTS kept
+        run: python3 scripts/test-nginx-docs.py
+      - name: Download locked dependencies
+        run: npm ci --prefix frontend
+      - name: Build the website
+        working-directory: frontend
+        run: npm run build -- --webpack
+      - name: Lighthouse mobile audit (gates SEO 100, accessibility 90, CLS 0.1)
+        working-directory: frontend
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run audit:lighthouse -- --gate stable --out ../artifacts/ci-lighthouse
+      - name: Retain the Lighthouse summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-summary
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            artifacts/ci-lighthouse/summary.json
+            artifacts/ci-lighthouse/summary.md
   release-rehearsal:
     name: Release rehearsal / migration / rollback
     runs-on: ubuntu-24.04

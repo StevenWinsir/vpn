@@ -47,6 +47,16 @@ import { faqAnswerText, faqFacts, homeFaq, paymentMethodsText } from '../src/lib
 import { guideLinkPaths, guidePath, parseInline, platformIds } from '../src/lib/guides.ts';
 import { legalLinkPaths, legalTexts, privacyPolicy, termsOfService } from '../src/lib/legal.ts';
 import { shareModule } from './brand-icons.mjs';
+import {
+  auditPages,
+  budget,
+  failingAudits,
+  figures,
+  median,
+  medians,
+  overBudget,
+  tableRow,
+} from './lighthouse-budget.mjs';
 import { bannedIn } from '../tests/copy-words.ts';
 
 const frontend = new URL('..', import.meta.url).pathname;
@@ -809,4 +819,93 @@ test('the terms and the privacy policy: dates, sections, known links, no banned 
     '境外',
   ])
     assert.ok(privacy.includes(phrase), phrase);
+});
+
+// ---- Round 4 (handoff_seo.md 7.1, D18): the performance budget of the Lighthouse audit ----
+
+test('the budget is D18 and the audit measures the four pages it names', () => {
+  assert.deepEqual(budget, { lcpMs: 2500, cls: 0.1, tbtMs: 200, seo: 1, accessibility: 0.9 });
+  assert.deepEqual(auditPages, ['/', '/plans', '/download', '/guide/windows']);
+  const package_ = JSON.parse(readFileSync(join(frontend, 'package.json'), 'utf8'));
+  assert.equal(package_.scripts['audit:lighthouse'], 'node scripts/lighthouse-audit.mjs');
+  // Lighthouse runs through npx at a pinned version: never a dependency of the website.
+  assert.equal(package_.dependencies?.lighthouse, undefined);
+  assert.equal(package_.devDependencies?.lighthouse, undefined);
+  const script = readFileSync(join(frontend, 'scripts', 'lighthouse-audit.mjs'), 'utf8');
+  assert.match(script, /const LIGHTHOUSE = 'lighthouse@\d+\.\d+\.\d+';/);
+});
+
+test('three runs give the median of every figure; a missing figure is not invented', () => {
+  assert.equal(median([3, 1, 2]), 2);
+  assert.equal(median([4, 1, 3, 2]), 2.5);
+  assert.equal(median([null, 5]), 5);
+  assert.equal(median([]), null);
+  const lhr = (lcp, cls, tbt, seo, a11y) => ({
+    categories: {
+      performance: { score: 0.9 },
+      seo: { score: seo, auditRefs: [{ id: 'meta-description', weight: 1 }] },
+      accessibility: { score: a11y, auditRefs: [{ id: 'link-in-text-block', weight: 7 }] },
+    },
+    audits: {
+      'largest-contentful-paint': { numericValue: lcp },
+      'cumulative-layout-shift': { numericValue: cls },
+      'total-blocking-time': { numericValue: tbt },
+      'first-contentful-paint': { numericValue: 800 },
+      'speed-index': { numericValue: 900 },
+      'meta-description': { score: 1, title: 'Document has a meta description' },
+      'link-in-text-block': { score: a11y < 1 ? 0 : 1, title: 'Links rely on color' },
+    },
+  });
+  const runs = [
+    lhr(2600, 0, 50, 1, 0.96),
+    lhr(1200, 0.02, 400, 1, 0.96),
+    lhr(1300, 0.01, 90, 1, 1),
+  ];
+  const m = medians(runs.map(figures));
+  assert.equal(m.lcpMs, 1300);
+  assert.equal(m.tbtMs, 90);
+  assert.equal(m.cls, 0.01);
+  assert.equal(m.accessibility, 0.96);
+  assert.deepEqual(overBudget(m), []);
+  assert.deepEqual(failingAudits(runs), [
+    { id: 'link-in-text-block', category: 'accessibility', title: 'Links rely on color' },
+  ]);
+  assert.match(
+    tableRow('/plans', m, []),
+    /^\| \/plans \| 90 \| 0\.80 s \| 1\.30 s \| 0\.010 \| 90 ms \| 100 \| 96 \| within budget \|$/,
+  );
+  assert.equal(figures({}).lcpMs, null);
+});
+
+test('over the budget: every figure named; CI gates only on the stable ones', () => {
+  const m = {
+    performance: 0.5,
+    accessibility: 0.85,
+    seo: 0.92,
+    fcpMs: 2000,
+    lcpMs: 3100,
+    cls: 0.25,
+    tbtMs: 450,
+    speedIndexMs: 3000,
+  };
+  assert.deepEqual(overBudget(m), [
+    'LCP 3100 ms > 2500 ms',
+    'TBT 450 ms > 200 ms',
+    'CLS 0.250 > 0.1',
+    'SEO 92 < 100',
+    'accessibility 85 < 90',
+  ]);
+  assert.deepEqual(overBudget(m, { stableOnly: true }), [
+    'CLS 0.250 > 0.1',
+    'SEO 92 < 100',
+    'accessibility 85 < 90',
+  ]);
+  // Exactly at the budget is within it.
+  assert.deepEqual(
+    overBudget({ ...m, lcpMs: 2500, tbtMs: 200, cls: 0.1, seo: 1, accessibility: 0.9 }),
+    [],
+  );
+  assert.deepEqual(overBudget({ ...m, lcpMs: null, cls: 0, seo: 1, accessibility: 1, tbtMs: 0 }), [
+    'LCP not measured',
+  ]);
 });
