@@ -623,6 +623,7 @@ robots.txt 内容（收录开启时）：允许全部；Disallow /api/ 和 /down
 4. 本机审计的构建是 next build 的默认 Turbopack 构建，与生产环境 npm run build 一致；CI 任务与现有 Web validation 一样使用 --webpack 构建。两种构建只影响 CI 中的时间类数据，而时间类数据在 CI 中本来就不判失败。
 5. S4-04：本机没有 nginx 和 Docker，所以本机只完成了上线配置的要求检查（并证明它能发现缺少 HSTS、改成 302、带 preload、漏传 Host 头这几种情况）。nginx -t 在 CI 的 Ubuntu 24.04 运行器上执行，运行器自带 nginx。
 6. 7.2 的 gzip 说明按实测调整：Next.js 默认已对 HTML、JS、CSS 做 gzip，/_next/static 自带一年不可变缓存；robots.txt、sitemap.xml、icon.svg 未压缩。所以 Nginx 的 gzip 只作为对小文本响应的补充，并说明已压缩的响应不会再压一次。
+7. CI 第一次运行时，nginx -t 发现 docs/deployment.md 里原有的“使用教程图片的长缓存”示例（handoff_guide.md 引入）一直不合法：正则中的 {8} 没有加引号，Nginx 把花括号当成配置块，报 unknown directive "8}\.webp$"。照抄到服务器会导致 Nginx 无法重载。现在已给正则加上双引号，并在说明里写明原因；这正是 S4-04 要发现的问题。
 
 验收结果：
 
@@ -631,7 +632,7 @@ robots.txt 内容（收录开启时）：允许全部；Disallow /api/ 和 /down
 | S4-01 | PASS | npm run audit:lighthouse（Lighthouse 13.6.0，移动端模拟节流：CPU 4 倍、RTT 150 ms、约 1.6 Mbit/s；本机 benchmarkIndex 4223）每页 3 次，取中位数。首页：性能 100，FCP 1.21 s，LCP 1.21 s，CLS 0，TBT 1 ms，SEO 100，无障碍 100。/plans：100，1.06 s，1.06 s，0，6 ms，100，100。/download：100，1.20 s，1.20 s，0，0 ms，100，96。/guide/windows：100，1.20 s，1.20 s，0，0 ms，100，96。三次结果差异：首页 LCP 0.81 至 1.21 s，其余页面三次几乎相同。完整报告在 /tmp/seo-r4-lh-baseline（本机，不提交） |
 | S4-02 | PASS（无需优化） | 四个页面全部在 D18 预算内（LCP ≤ 2.5 s、CLS ≤ 0.1、TBT ≤ 200 ms、SEO 100、无障碍 ≥ 90），没有做任何优化，也没有改动页面代码（偏离第 1、2 项） |
 | S4-03 | PASS | 本轮没有改动任何会渲染出来的代码：与第 3 轮（8264d8c）相比，git diff 中 frontend/src、frontend/public、next.config.ts 都为空，所以四个页面在浅色、深色和 1440、390 宽度下与第 3 轮逐字节相同。全量浏览器测试照常生成 theme、home、guide 的截图 |
-| S4-04 | 本机 BLOCKED（未安装 nginx）；CI 见 PR | scripts/test-nginx-docs.py 本机退出码 2，上线配置的要求检查通过，4 种错误改法都能被发现。nginx -t 由 CI 任务“Website Lighthouse budget / Nginx examples”执行，结果见 PR |
+| S4-04 | 本机 BLOCKED（未安装 nginx）；CI 见 PR | scripts/test-nginx-docs.py 本机退出码 2，上线配置的要求检查通过，4 种错误改法都能被发现。CI 第一次运行发现原有图片缓存示例不合法（偏离第 7 项），修正后重跑。nginx -t 由 CI 任务“Website Lighthouse budget / Nginx examples”执行，结果见 PR |
 | S4-05 | PASS | frontend/.env.example 中 SITE_URL、SITE_INDEXING 和三个验证变量的说明完整，写明“缺省即关闭”、生产取值、上线顺序和回滚；docs/deployment.md 和 docs/seo-operations.md 都写明 SITE_INDEXING 缺省即关闭 |
 | S4-06 | 本地 PASS，CI 见 PR | scripts/test-payment-web.py 全量 145/145 通过，用时 10.9 分钟。网站全部 node 测试通过：seo 27、api-proxy 17（本机需 PLAYWRIGHT_CHROME_PATH）、nodes 3、downloads 21、dashboard 6、referral 5、copy 4、theme 5、home 3、support 6、tickets 12、guide 14、toast 7。eslint、tsc、生产构建都通过；ci.yml 用 YAML 解析器校验过，新任务的步骤齐全。CI 模式在本机以 CI=1、--gate stable、每页 1 次运行，四页都在预算内，退出码 0。后端 go test -race 本轮没有涉及（后端代码没有改动），由 CI 的 Backend 任务执行 |
 
