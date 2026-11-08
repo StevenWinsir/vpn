@@ -4,7 +4,9 @@
 Each fenced ```nginx block is checked. A block with its own server blocks (the domain redirects
 and HTTPS of the search engine launch) goes into the http context as it is, with its certificate
 paths pointed at a throw-away self-signed pair; a block of location directives is wrapped in a
-server block of its own. Nothing binds a port: nginx -t only parses and loads the configuration.
+server block of its own. nginx -t opens the listen sockets too, so in the checked copy ports 80
+and 443 become 18080 and 18443 (an unprivileged user may not bind below 1024); the wrapped
+location blocks listen on 19080 and up.
 
 The launch block must also keep its promises: http and the bare domain answer 301 to
 https://www.asterlink.vip with the path, www and api send HSTS for a year without preload, and the
@@ -79,10 +81,11 @@ def configuration(snippets, work, cert, key):
     for index, block in enumerate(snippets):
         block = re.sub(r'ssl_certificate\s+[^;]+;', f'ssl_certificate {cert};', block)
         block = re.sub(r'ssl_certificate_key\s+[^;]+;', f'ssl_certificate_key {key};', block)
+        block = re.sub(r'listen\s+(\[::\]:)?(80|443)\b', lambda m: f'listen {m.group(1) or ""}{18000 + int(m.group(2))}', block)
         if servers(block):
             parts.append(block)
         else:
-            parts.append(f'server {{\n listen 127.0.0.1:{18080 + index};\n server_name check-{index}.invalid;\n{block}}}\n')
+            parts.append(f'server {{\n listen 127.0.0.1:{19080 + index};\n server_name check-{index}.invalid;\n{block}}}\n')
     temp = '\n'.join(f'  {name}_temp_path {work}/{name};' for name in ('client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'))
     return (f'pid {work}/nginx.pid;\nerror_log {work}/error.log;\nevents {{}}\nhttp {{\n  access_log off;\n{temp}\n'
             + '\n'.join(parts) + '\n}\n')

@@ -623,7 +623,7 @@ robots.txt 内容（收录开启时）：允许全部；Disallow /api/ 和 /down
 4. 本机审计的构建是 next build 的默认 Turbopack 构建，与生产环境 npm run build 一致；CI 任务与现有 Web validation 一样使用 --webpack 构建。两种构建只影响 CI 中的时间类数据，而时间类数据在 CI 中本来就不判失败。
 5. S4-04：本机没有 nginx 和 Docker，所以本机只完成了上线配置的要求检查（并证明它能发现缺少 HSTS、改成 302、带 preload、漏传 Host 头这几种情况）。nginx -t 在 CI 的 Ubuntu 24.04 运行器上执行，运行器自带 nginx。
 6. 7.2 的 gzip 说明按实测调整：Next.js 默认已对 HTML、JS、CSS 做 gzip，/_next/static 自带一年不可变缓存；robots.txt、sitemap.xml、icon.svg 未压缩。所以 Nginx 的 gzip 只作为对小文本响应的补充，并说明已压缩的响应不会再压一次。
-7. CI 第一次运行时，nginx -t 发现 docs/deployment.md 里原有的“使用教程图片的长缓存”示例（handoff_guide.md 引入）一直不合法：正则中的 {8} 没有加引号，Nginx 把花括号当成配置块，报 unknown directive "8}\.webp$"。照抄到服务器会导致 Nginx 无法重载。现在已给正则加上双引号，并在说明里写明原因；这正是 S4-04 要发现的问题。
+7. CI 第一次运行时，nginx -t 发现 docs/deployment.md 里原有的“使用教程图片的长缓存”示例（handoff_guide.md 引入）一直不合法：正则中的 {8} 没有加引号，Nginx 把花括号当成配置块，报 unknown directive "8}\.webp$"。照抄到服务器会导致 Nginx 无法重载。现在已给正则加上双引号，并在说明里写明原因；这正是 S4-04 要发现的问题。第二次运行语法检查已通过（syntax is ok），但 nginx -t 还会打开监听端口，CI 的普通用户不能绑定 80 和 443。所以检查用的副本把 80、443 改成 18080、18443；Nginx 文档中的配置本身不变。
 
 验收结果：
 
