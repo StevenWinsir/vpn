@@ -1,8 +1,10 @@
-import { Suspense } from 'react';
-import { GuideView } from '@/components/guide-view';
-import { guideVersion } from '@/lib/downloads';
-import { loadDownloads } from '@/lib/server/downloads';
-import { indexableMetadata } from '@/lib/server/seo';
+import { permanentRedirect } from 'next/navigation';
+import { GuideHub } from '@/components/guide-hub';
+import { JsonLd } from '@/components/json-ld';
+import { legacyGuideTarget } from '@/lib/guides';
+import { guideDownloads } from '@/lib/server/guide';
+import { indexableMetadata, siteOrigin } from '@/lib/server/seo';
+import { breadcrumbs } from '@/lib/structured-data';
 
 // Read on every request through the same 30-second cache as the download page
 // (handoff_download.md 6.4): a release published in the console shows here without a restart.
@@ -12,24 +14,23 @@ export function generateMetadata() {
   return indexableMetadata('/guide');
 }
 
-// Public, like /download (handoff_guide.md D2): no RequireAuth. One route for every platform
-// (?platform=): the sidebar matches exact paths, so a nested route would lose its highlight.
-export default async function GuidePage() {
-  const { entries } = await loadDownloads();
-  // Only whether a package exists and its version leave the server, never hashes or addresses.
-  const version = (platform: 'windows' | 'macos' | 'android' | 'ios') => {
-    const v = guideVersion(entries, platform);
-    return v ? { version: v } : null;
-  };
-  const downloads = {
-    windows: version('windows'),
-    macos: version('macos'),
-    android: version('android'),
-    ios: version('ios'),
-  };
+// The overview of the guide (handoff_seo.md D5); each platform has its own page under
+// /guide/{platform}. Public, like /download (handoff_guide.md D2): no RequireAuth. The former
+// single page took the platform from ?platform=; those addresses move here for good (308).
+export default async function GuidePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const target = legacyGuideTarget((await searchParams).platform);
+  if (target) permanentRedirect(target);
+  const origin = siteOrigin();
   return (
-    <Suspense fallback={null}>
-      <GuideView downloads={downloads} />
-    </Suspense>
+    <>
+      {origin ? (
+        <JsonLd data={[breadcrumbs(origin, [{ name: '使用教程', path: '/guide' }])]} />
+      ) : null}
+      <GuideHub downloads={await guideDownloads()} />
+    </>
   );
 }

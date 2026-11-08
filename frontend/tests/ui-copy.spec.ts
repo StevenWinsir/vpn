@@ -80,6 +80,9 @@ test('public pages carry commercial copy only', async ({ page }) => {
   await check(page, '/plans', /^套餐价格与订阅 · AsterLink$/);
   await check(page, '/download', /^下载客户端 · /);
   await check(page, '/guide', /^使用教程 · /);
+  await check(page, '/guide/android', /^Android 客户端使用教程 · AsterLink$/);
+  await check(page, '/terms', /^服务条款 · AsterLink$/);
+  await check(page, '/privacy', /^隐私政策 · AsterLink$/);
   await check(page, '/no-such-page', /^页面不存在 · /);
 });
 

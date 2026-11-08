@@ -89,12 +89,21 @@ export function canonicalHost(origin: string, host: string | null | undefined): 
   return given !== '' && given === expected.host;
 }
 
-/** The page routes of src/app; every page file declares its own (test:seo checks this). */
+/**
+ * The page routes of src/app; every page file declares its own (test:seo checks this). The four
+ * platform guides share one dynamic page file.
+ */
 export type Route =
   | '/'
   | '/plans'
   | '/download'
   | '/guide'
+  | '/guide/windows'
+  | '/guide/macos'
+  | '/guide/android'
+  | '/guide/ios'
+  | '/terms'
+  | '/privacy'
   | '/login'
   | '/register'
   | '/forgot-password'
@@ -131,6 +140,13 @@ export const policies: Record<Route, Policy> = {
   '/plans': open,
   '/download': open,
   '/guide': open,
+  // One page per platform (handoff_seo.md D5), served by src/app/guide/[platform].
+  '/guide/windows': open,
+  '/guide/macos': open,
+  '/guide/android': open,
+  '/guide/ios': open,
+  '/terms': open,
+  '/privacy': open,
   '/login': reachable,
   '/register': reachable,
   '/forgot-password': closed,

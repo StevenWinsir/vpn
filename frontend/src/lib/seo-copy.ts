@@ -4,7 +4,19 @@
 import type { DownloadState, PlatformId } from './downloads.ts';
 import { platformOrder } from './downloads.ts';
 
-export type IndexableRoute = '/' | '/plans' | '/download' | '/guide' | '/login' | '/register';
+export type IndexableRoute =
+  | '/'
+  | '/plans'
+  | '/download'
+  | '/guide'
+  | '/guide/windows'
+  | '/guide/macos'
+  | '/guide/android'
+  | '/guide/ios'
+  | '/terms'
+  | '/privacy'
+  | '/login'
+  | '/register';
 
 export type PageCopy = { title: string; description: string };
 
@@ -28,6 +40,36 @@ export const pageCopy: Record<IndexableRoute, PageCopy> = {
     title: '使用教程 · AsterLink',
     description:
       'AsterLink 使用教程：从注册账户、选择套餐，到在 Windows 电脑、Mac、Android 手机和 iPhone 上安装客户端、登录并连接的完整图文步骤，附各平台的常见问题解答。',
+  },
+  '/guide/windows': {
+    title: 'Windows 客户端使用教程 · AsterLink',
+    description:
+      'AsterLink Windows 客户端图文教程：适用系统、下载安装、首次授权后台服务、登录账户、选择线路、连接与断开、查看套餐与用量，以及后台运行、升级卸载和常见问题解答。',
+  },
+  '/guide/macos': {
+    title: 'macOS 客户端使用教程 · AsterLink',
+    description:
+      'AsterLink macOS 客户端图文教程：适用的 Apple 芯片 Mac 与系统版本、拖入“应用程序”安装、首次授权、登录账户、选择线路、连接与断开，以及升级卸载和常见问题解答。',
+  },
+  '/guide/android': {
+    title: 'Android 客户端使用教程 · AsterLink',
+    description:
+      'AsterLink Android 客户端图文教程：用手机浏览器下载安装、首次授权与通知、登录账户、选择线路、一键连接，以及各品牌手机的后台运行与省电设置、升级卸载和常见问题。',
+  },
+  '/guide/ios': {
+    title: 'iPhone 客户端使用教程 · AsterLink',
+    description:
+      'AsterLink iPhone 客户端图文教程：用 Safari 下载安装、处理“未受信任”提示、首次授权、登录账户、选择线路、一键连接，以及后台运行与通知、升级卸载和常见问题。',
+  },
+  '/terms': {
+    title: '服务条款 · AsterLink',
+    description:
+      'AsterLink 服务条款：账户注册与安全、套餐购买与付款、流量与设备规则、禁止的使用行为、违规处理、服务变更与中止、责任限制和争议解决。使用本服务前请仔细阅读。',
+  },
+  '/privacy': {
+    title: '隐私政策 · AsterLink',
+    description:
+      'AsterLink 隐私政策：我们收集哪些个人信息、用于什么目的、保存多久、与哪些第三方共享，你如何查询、更正、删除个人信息和注销账户，以及未成年人保护与联系方式。',
   },
   '/login': {
     title: '登录 · AsterLink',

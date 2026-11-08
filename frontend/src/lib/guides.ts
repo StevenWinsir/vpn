@@ -6,6 +6,9 @@
 export type PlatformId = 'windows' | 'macos' | 'android' | 'ios';
 export const platformIds: PlatformId[] = ['windows', 'macos', 'android', 'ios'];
 
+/** Each platform's own guide address (handoff_seo.md D5); /guide is the overview. */
+export const guidePath = (id: PlatformId) => `/guide/${id}` as const;
+
 /** Site paths a guide text may link to. */
 export const guideLinkPaths = [
   '/register',
@@ -15,6 +18,7 @@ export const guideLinkPaths = [
   '/tickets',
   '/forgot-password',
   '/guide',
+  ...platformIds.map(guidePath),
 ];
 
 export type Highlight = {
@@ -1031,9 +1035,14 @@ export function detectPlatform(userAgent: string): PlatformId {
   return 'windows';
 }
 
-/** The query parameter wins; a missing or unknown value falls back to the visitor's device. */
-export function choosePlatform(param: string | null | undefined, userAgent: string): PlatformId {
-  return isPlatformId(param) ? param : detectPlatform(userAgent);
+/**
+ * Where an old guide address with ?platform=x goes now (handoff_seo.md D5): a known platform to its
+ * own page, anything else to the overview. Null when the address has no platform parameter.
+ */
+export function legacyGuideTarget(param: string | string[] | undefined): string | null {
+  if (param === undefined) return null;
+  const value = Array.isArray(param) ? param[0] : param;
+  return isPlatformId(value) ? guidePath(value) : '/guide';
 }
 
 /** What the page knows about a released client (the version only; nothing else leaves the server). */

@@ -3,10 +3,14 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { bannedIn } from './copy-words';
 import { overflowing } from './layout';
 import { platforms, type PlatformId } from '../src/lib/guides';
+import { pageCopy } from '../src/lib/seo-copy';
 
-// The usage guide (handoff_guide.md 8.3, rounds 1–2): the sidebar entry, public access, platform
-// deep links and device detection, the download availability, layout and copy, and the pictures
-// (only the chosen platform's load, numbered marks, zoom). The fixture has
+const pageTitle = (id: PlatformId) => pageCopy[`/guide/${id}`].title;
+
+// The usage guide (handoff_guide.md 8.3, rounds 1–2; handoff_seo.md D5, round 3): the sidebar
+// entry, public access, the overview and one address per platform (S3-03, S3-04), the download
+// availability, layout and copy, and the pictures (only the chosen platform's load, numbered
+// marks, zoom). The fixture has
 // Android released and iPhone not (scripts/test-payment-web.py). homea only signs in and
 // themeroot is an administrator; neither is changed here.
 type Fixture = {
@@ -94,6 +98,12 @@ test('a visitor who is signed out can read it, with the sidebar and without a re
   expect(entries).toContain('使用教程');
   await expect(navbar(page).locator('a.nav-link.active')).toHaveText('使用教程');
   await expect(page.getByTestId('guide-before')).toHaveCount(4);
+  await expect(page.getByTestId('guide-hub-card')).toHaveCount(4);
+  // A platform page keeps the sidebar entry lit (S3-04) and offers the help block.
+  await page.getByRole('link', { name: '查看 Windows 教程' }).click();
+  await expect(page).toHaveURL(/\/guide\/windows$/);
+  await expect(navbar(page).locator('a.nav-link.active')).toHaveText('使用教程');
+  await expect(page.getByRole('heading', { level: 1, name: 'Windows 使用教程' })).toBeVisible();
   // Signed out: the ticket button is still offered (it asks for sign-in first), the chat is not.
   await expect(
     page.getByTestId('guide-help').getByRole('link', { name: '提交工单' }),
@@ -103,21 +113,39 @@ test('a visitor who is signed out can read it, with the sidebar and without a re
   ).toHaveCount(0);
 });
 
-test('the platform comes from the link, switches in place, survives a reload and falls back', async ({
+test('each platform has its own address; the switch is links, back and forward step through them', async ({
   browser,
 }) => {
   const { context, page } = await agentPage(browser, agents.windows);
-  await page.goto('/guide?platform=ios');
+  await page.goto('/guide/ios');
   await expect(platform(page)).toHaveAttribute('data-platform', 'ios');
   await expect(page.getByRole('heading', { level: 3, name: '用 Safari 打开下载页' })).toBeVisible();
   const history = await page.evaluate(() => window.history.length);
+  const switcher = page.getByRole('navigation', { name: '选择设备' });
+  await expect(switcher.getByRole('link')).toHaveCount(4);
+  await expect(switcher.locator('a[aria-current="page"]')).toHaveText('iPhone');
 
-  await page.getByText('Android', { exact: true }).click();
-  await expect(page).toHaveURL(/\/guide\?platform=android$/);
+  // The switch keeps the reading position, as it did before.
+  // 200 pixels below the top, clear of the fixed header, so the click itself needs no scrolling.
+  await switcher.evaluate((node) =>
+    window.scrollTo(0, node.getBoundingClientRect().top + window.scrollY - 200),
+  );
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+  const before = await page.evaluate(() => window.scrollY);
+  await switcher.getByRole('link', { name: 'Android' }).click();
+  await expect(page).toHaveURL(/\/guide\/android$/);
   await expect(platform(page)).toHaveAttribute('data-platform', 'android');
+  expect(Math.abs((await page.evaluate(() => window.scrollY)) - before)).toBeLessThan(5);
   // Only the chosen platform is rendered.
   await expect(page.getByText('用 Safari 打开下载页')).toHaveCount(0);
-  expect(await page.evaluate(() => window.history.length)).toBe(history);
+  expect(await page.evaluate(() => window.history.length)).toBe(history + 1);
+  await expect(switcher.locator('a[aria-current="page"]')).toHaveText('Android');
+  await page.goBack();
+  await expect(page).toHaveURL(/\/guide\/ios$/);
+  await expect(platform(page)).toHaveAttribute('data-platform', 'ios');
+  await page.goForward();
+  await expect(page).toHaveURL(/\/guide\/android$/);
+  await expect(platform(page)).toHaveAttribute('data-platform', 'android');
   await page.reload();
   await expect(platform(page)).toHaveAttribute('data-platform', 'android');
 
@@ -126,20 +154,37 @@ test('the platform comes from the link, switches in place, survives a reload and
     ['macOS', 'macos'],
     ['iPhone', 'ios'],
   ] as const) {
-    await page.getByText(label, { exact: true }).click();
+    await switcher.getByRole('link', { name: label }).click();
     await expect(platform(page)).toHaveAttribute('data-platform', value);
+    await expect(page).toHaveTitle(`${pageTitle(value)}`);
   }
 
-  // An unknown value is ignored: this browser is a Windows one.
+  // The breadcrumb leads back to the overview; old addresses land on the new ones (S3-02).
+  await page.getByTestId('guide-crumbs').getByRole('link', { name: '使用教程' }).click();
+  await expect(page).toHaveURL(/\/guide$/);
+  await page.goto('/guide?platform=macos');
+  await expect(page).toHaveURL(/\/guide\/macos$/);
+  await expect(platform(page)).toHaveAttribute('data-platform', 'macos');
   await page.goto('/guide?platform=linux');
-  await expect(platform(page)).toHaveAttribute('data-platform', 'windows');
+  await expect(page).toHaveURL(/\/guide$/);
+  await expect(page.getByTestId('guide-hub-card')).toHaveCount(4);
   await context.close();
 });
 
 for (const [name, agent] of Object.entries(agents))
-  test(`a ${name} browser opens its own guide`, async ({ browser }) => {
+  test(`a ${name} browser sees its own device recommended on the overview`, async ({ browser }) => {
     const { context, page } = await agentPage(browser, agent);
     await page.goto('/guide');
+    const cards = page.getByTestId('guide-hub-card');
+    await expect(cards.and(page.locator(`[data-platform="${name}"]`))).toHaveAttribute(
+      'data-recommended',
+      'true',
+    );
+    await expect(page.locator('[data-recommended="true"]')).toHaveCount(1);
+    const next = page.getByTestId('guide-recommend').getByRole('link');
+    await expect(next).toHaveAttribute('href', `/guide/${name}`);
+    await next.click();
+    await expect(page).toHaveURL(new RegExp(`/guide/${name}$`));
     await expect(platform(page)).toHaveAttribute('data-platform', name);
     await context.close();
   });
@@ -161,7 +206,7 @@ test('every platform has the full outline; the package hint follows the release'
     '仍未解决',
   ];
   for (const id of ['windows', 'macos', 'android', 'ios']) {
-    await page.goto(`/guide?platform=${id}`);
+    await page.goto(`/guide/${id}`);
     await expect(platform(page)).toHaveAttribute('data-platform', id);
     for (const title of outline)
       await expect(
@@ -200,7 +245,7 @@ test('the download page links to the matching guide and keeps its anchors', asyn
   const links = page.getByTestId('download-guide-link');
   await expect(links).toHaveCount(4);
   for (const [i, id] of ['windows', 'macos', 'android', 'ios'].entries())
-    await expect(links.nth(i)).toHaveAttribute('href', `/guide?platform=${id}`);
+    await expect(links.nth(i)).toHaveAttribute('href', `/guide/${id}`);
   for (const id of ['windows', 'macos', 'android', 'ios', 'linux'])
     await expect(page.locator(`#${id}`)).toHaveCount(1);
   await links.nth(3).click();
@@ -211,7 +256,7 @@ test('the signed-in help block offers tickets, and no page shows development wor
   page,
 }) => {
   await login(page, fixture.emails.homea);
-  await page.goto('/guide?platform=android');
+  await page.goto('/guide/android');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   const text = await page.evaluate(() => document.body.innerText);
   const words = bannedIn(text);
@@ -233,12 +278,12 @@ test('no horizontal overflow at phone and desktop width; both themes are kept as
     ]) {
       await page.setViewportSize({ width, height });
       for (const id of ['windows', 'macos', 'android', 'ios']) {
-        await page.goto(`/guide?platform=${id}`);
+        await page.goto(`/guide/${id}`);
         await expect(platform(page)).toHaveAttribute('data-platform', id);
         expect(await overflowing(page), `${id} ${width}px ${scheme}`).toEqual([]);
         // The four device names all sit inside the viewport (the control does not scroll).
         for (const box of await page
-          .locator('.guide-seg label')
+          .locator('.guide-seg a')
           .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().right)))
           expect(box, `${id} ${width}px device switch`).toBeLessThanOrEqual(width);
         // All four platforms, both widths, both themes are kept as evidence (G-18); no picture is broken (G-17).
@@ -269,9 +314,9 @@ test('each platform loads its own pictures and no other platform’s; every one 
     const requested: string[] = [];
     page.on('request', (request) => {
       const path = new URL(request.url()).pathname;
-      if (path.startsWith('/guide/')) requested.push(path);
+      if (path.startsWith('/guide/') && path.endsWith('.webp')) requested.push(path);
     });
-    await page.goto(`/guide?platform=${id}`);
+    await page.goto(`/guide/${id}`);
     await expect(platform(page)).toHaveAttribute('data-platform', id);
     const figures = page.getByTestId('guide-shot');
     await expect(figures).toHaveCount(shotCount(id));
@@ -302,7 +347,7 @@ test('each platform loads its own pictures and no other platform’s; every one 
 
 test('a picture opens larger on click or Enter and closes on Escape', async ({ browser }) => {
   const { context, page } = await agentPage(browser, agents.windows);
-  await page.goto('/guide?platform=macos');
+  await page.goto('/guide/macos');
   const frame = page.locator('.guide-shot-frame').first();
   await frame.scrollIntoViewIfNeeded();
   await frame.click();
@@ -323,7 +368,7 @@ test('a picture opens larger on click or Enter and closes on Escape', async ({ b
 test('with reduced motion the marks and the zoom do not animate', async ({ browser }) => {
   const context = await browser.newContext({ reducedMotion: 'reduce', userAgent: agents.windows });
   const page = await context.newPage();
-  await page.goto('/guide?platform=android');
+  await page.goto('/guide/android');
   const mark = page.locator('.guide-mark').first();
   await mark.scrollIntoViewIfNeeded();
   expect(await mark.evaluate((node) => getComputedStyle(node).animationName)).toBe('none');
@@ -347,7 +392,7 @@ test('the marks sit on their buttons: one picture per platform kept as evidence'
     const page = await context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     for (const id of ids) {
-      await page.goto(`/guide?platform=${id}`);
+      await page.goto(`/guide/${id}`);
       const connect = page.locator('#connect .guide-step').first();
       await connect.scrollIntoViewIfNeeded();
       const img = connect.locator('img');

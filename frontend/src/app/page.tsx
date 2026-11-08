@@ -22,10 +22,18 @@ import { HomeStateProvider } from '@/components/home/home-state';
 import { PlanPreview } from '@/components/home/plan-preview';
 import { ProductVisual } from '@/components/home/product-visual';
 import { Reveal } from '@/components/home/reveal';
+import { JsonLd } from '@/components/json-ld';
 import { homeStatus, type PlatformId } from '@/lib/downloads';
+import { faqFacts, homeFaq } from '@/lib/home-faq';
 import { loadDownloads } from '@/lib/server/downloads';
-import { loadPlans } from '@/lib/server/shop';
-import { currentSiteConfig, indexableMetadata, verificationMetadata } from '@/lib/server/seo';
+import { loadMeta, loadPlans } from '@/lib/server/shop';
+import {
+  currentSiteConfig,
+  indexableMetadata,
+  siteOrigin,
+  verificationMetadata,
+} from '@/lib/server/seo';
+import { faqPage, organization, website } from '@/lib/structured-data';
 import { icpLookupUrl, siteFacts } from '@/lib/site';
 import { crispSetting } from '@/lib/support-config';
 import { appName } from '@/lib/types';
@@ -87,9 +95,19 @@ const steps = [
 ];
 
 export default async function Home() {
-  const [downloads, plans] = await Promise.all([loadDownloads(), loadPlans()]);
+  const [downloads, plans, meta] = await Promise.all([loadDownloads(), loadPlans(), loadMeta()]);
   const { icpRecord, supportEmail } = siteFacts(process.env);
   const chat = crispSetting(process.env).websiteId !== null;
+  // The structured data repeats what the page shows (handoff_seo.md 6.2): the answers come from
+  // the same function and the same /meta copy as the visible questions.
+  const origin = siteOrigin();
+  const structured = origin
+    ? [
+        organization(origin, supportEmail),
+        website(origin),
+        faqPage(homeFaq(faqFacts(meta, supportEmail, chat))),
+      ]
+    : [];
   // Four cards in the download page's order; Linux stays off the home page (D14).
   const platforms = (
     [
@@ -279,7 +297,7 @@ export default async function Home() {
                 <p className="home-kicker">常见问题</p>
                 <h2 id="faq-title">你可能想了解</h2>
               </div>
-              <HomeFaq supportEmail={supportEmail} chat={chat} />
+              <HomeFaq supportEmail={supportEmail} chat={chat} initialMeta={meta} />
             </div>
           </section>
 
@@ -340,20 +358,27 @@ export default async function Home() {
               <span>
                 © {year} {appName}. 保留所有权利。
               </span>
-              {icpRecord ? (
-                <a
-                  href={icpLookupUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-testid="icp-record"
-                >
-                  {icpRecord}
-                </a>
-              ) : null}
+              <div className="home-footer-meta">
+                <nav aria-label="条款" className="home-footer-legal">
+                  <Link href="/terms">服务条款</Link>
+                  <Link href="/privacy">隐私政策</Link>
+                </nav>
+                {icpRecord ? (
+                  <a
+                    href={icpLookupUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="icp-record"
+                  >
+                    {icpRecord}
+                  </a>
+                ) : null}
+              </div>
             </div>
           </div>
         </footer>
         <Reveal />
+        {structured.length ? <JsonLd data={structured} /> : null}
       </div>
     </HomeStateProvider>
   );

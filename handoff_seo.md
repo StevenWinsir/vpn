@@ -473,3 +473,105 @@ robots.txt 内容（收录开启时）：允许全部；Disallow /api/ 和 /down
 
 - 分享图字体（偏离第 5 项）：如果希望图里的中文使用开源字体，提供 Noto Sans SC 一类的字体文件后，运行 SHARE_FONT_FILE=字体路径 npm run brand:icons，再提交生成的两个文件即可。
 - 上线后可以用 U-76 检查微信和 Telegram 的分享预览。
+
+### 第 3 轮：教程分平台、结构化数据、信任页面（2026-11-07，分支 worktree-seo-round3-guide-trust，基线 4329846）
+
+用户决定（2026-11-07，开工前）：
+
+- 第 3、4 轮不并行。第 4 轮要测 /guide/windows 的性能，截图回归也以第 3 轮的页面为基线，所以先做第 3 轮。
+- 服务条款和隐私政策按这类服务常见的条款写，结合中国大陆法律适当补充，重点写明禁止用本服务从事的行为；具体措辞由实施者拟定；**不提技术实现及其参数**。
+  - 因此 D17 中的“客户端计费的说明”只写成“流量用量以本服务的统计为准”，不描述统计方式。
+  - 正文不出现 VPN、协议名、内核、服务器、端口一类词，由 test:seo 守卫。
+
+实施内容：
+
+- 教程分平台（D5、6.1）：
+  - /guide 改为总览页，内容为“开始之前”和四张平台卡（适用设备、已上架时的版本、进入教程的链接）。
+    - 服务器输出的内容对所有访客相同。
+    - 浏览器加载后按设备给对应的卡片加“你的设备”标记，并在标题下显示“继续阅读 X 教程”按钮。按钮位置预留了高度，出现时页面不跳动。
+  - 新增 /guide/[platform] 动态页面：/guide/windows、/guide/macos、/guide/android、/guide/ios 四个地址，整页内容都在首屏 HTML 里，未知平台返回 404。
+    - 页首有可见的面包屑“使用教程 / Windows”，h1 为“Windows 使用教程”。
+    - 平台切换改为四个普通链接（aria-current 标出当前平台）。链接不滚动页面，阅读位置保持不变，后退、前进逐个经过看过的平台。
+  - 旧地址 /guide?platform=x 在页面层用 permanentRedirect 返回 308：有效值跳到 /guide/x，无效或空值跳到 /guide，其他查询参数不带过去。
+  - 下载页的四个教程链接、guides.ts 的链接白名单、docs/user-guide.md 都改用新地址。
+  - site-shell 的工作区判断和侧栏高亮、在线客服的页面判断（isSupportPage）都包含 /guide/ 开头的地址。
+- 结构化数据（D9、6.2）：
+  - 纯模块 src/lib/structured-data.ts，由服务端组件 src/components/json-ld.tsx 输出。serializeJsonLd 把 <、>、& 和 U+2028、U+2029 写成 JSON 转义。
+  - 首页：Organization（配置了 SITE_SUPPORT_EMAIL 时带 contactPoint）、WebSite（没有 SearchAction）、FAQPage。
+  - /plans、/download、/guide、/guide/{平台}、/terms、/privacy：BreadcrumbList。
+  - /download：每个已上架平台一个 SoftwareApplication，包括名称、系统、类别、推荐架构的版本和 /download#平台 锚点；没有下载地址、价格和评分。
+  - /plans：每个在售套餐一个 Product，Offer 为月付，有年付时加年付，价格保留两位小数，CNY、InStock；服务端没有读到套餐时不输出。
+- 首页常见问题抽成纯函数 src/lib/home-faq.ts：
+  - 页面和 FAQPage 用同一个函数、同一份数据生成。
+  - 首页服务端新增读取 /meta，与 /plans 页共用一分钟缓存（loadMeta），首屏的问答因此按服务端拿到的 /meta 生成。浏览器取到 /meta 后以浏览器的为准，取不到时保留服务端那份。
+- 服务条款 /terms、隐私政策 /privacy（D17、6.3）：
+  - 文字在 src/lib/legal.ts（纯数据，在 copy-guard 扫描范围内），由服务端页面 src/components/legal-page.tsx 渲染。
+  - 页面使用公开页面的外观：只有页首，没有用户中心侧栏。顶部是一个 h1，下面依次是生效日期和最后更新日期（均为 2026 年 11 月 7 日）、目录，每节一个 h2。
+  - 联系方式中的邮箱取 SITE_SUPPORT_EMAIL，没有配置时只写工单和在线客服。
+  - 首页页脚底部加“服务条款”“隐私政策”。注册按钮下方加一行“注册即表示你同意《服务条款》和《隐私政策》”，只有链接，没有勾选框。
+- 收录策略表、sitemap 和文案：
+  - 策略表和 sitemap 加入 /guide/{四个平台}、/terms、/privacy。
+  - seo-copy.ts 为这 6 个新页面各写了标题和描述，都符合 D7。
+- 测试：
+  - test:seo 新增 8 项，共 24 项：
+    - JSON-LD 转义（含 </script>、引号、尖括号、行分隔符）；
+    - Product 价格（含旧后端只有顶层价格、没有年付的情况）；
+    - SoftwareApplication 只列已上架平台、不含地址；
+    - Organization、WebSite、BreadcrumbList；
+    - FAQ 在 16 种事实组合下与页面文字一致；
+    - 结构化数据中没有评分、评论、HowTo、SearchAction；
+    - src 中没有 guide?platform=；
+    - 两份法律文本：日期、章节、链接白名单、禁用词、不出现技术词、内联标记都能解析、规则和保存期限的关键句。
+  - test:guide 改为检查 guidePath 和 legacyGuideTarget。
+  - seo.spec 新增 S3-01、S3-02、S3-03、S3-06、S3-08、S3-09，以及两个 S3-11 用例，并把各列表扩展到新页面。
+  - guide.spec 按新地址重写：链接切换、后退前进、滚动位置、旧地址跳转、总览按设备推荐。
+  - download、home、ui-copy、theme 四个 spec 都改用新地址并加入新页面。
+
+偏离规划之处：
+
+1. 结构化数据只在设置了合法的 SITE_URL 时输出，与第 2 轮的分享图相同。原因是 D2 要求所有地址都是绝对地址，并且不能从请求中推导。没有 SITE_URL 的环境（本地、CI 的默认进程）没有 JSON-LD，seo.spec 也检查了这一点。
+2. 6.2 让实施时决定“是否加可见的面包屑”。四个平台页本来就需要“返回总览”的入口，所以加了可见的面包屑；其他页面只有一层，没有加。本地无法运行 Rich Results Test，留给 U-74。
+3. S3-12 写“全部 9 个地址”，但第 4 节标为进 sitemap 的地址实际是 10 个：/、/plans、/download、/guide、四个平台、/terms、/privacy。按 10 个实现和验收。
+4. SoftwareApplication 的 applicationCategory 选 UtilitiesApplication：网络连接客户端属于系统工具类，不是办公、业务类软件。url 指向下载页上该平台的锚点，不是文件地址（D4）。
+5. Product 两档 Offer 的 url 都是 /plans，没有用 ?cycle=yearly，与 canonical 一致（D11）。
+6. 平台页保留“开始之前”和“仍未解决”两块；总览页只放“开始之前”和平台卡，不放“仍未解决”。
+7. 首页为了 FAQPage 与可见文字逐字一致，在服务端读取 /meta（6.2 要求的做法）。首屏问答因此从“保守文案”变成按真实配置生成，例如付款方式、是否支持升级。浏览器的行为不变。
+8. 法律文本中的保存期限依据代码：
+   - 登录记录 180 天：model.LoginEventRetention；
+   - 工单自提交起 30 天：model.TicketRetention、handoff_ticket.md D4；
+   - 用量明细 24 小时：maintenance.PruneUsage；
+   - 连接记录 24 小时、线路分配 30 天未使用后删除：model/presence.go；
+   - 删除账号后全部清除，只保留匿名的付款通知记录 180 天：account_purge.go、loginlog Prune；
+   - 在线客服会收到邮箱和姓名：support.ts。
+   - 其他承诺（15 个工作日内答复、重复付款协商处理、赔偿上限为三个月费用）是运营承诺，需用户确认。
+9. 顺带修复第 2 轮遗留的一个时序问题：/plans 原先按服务端缓存的 /meta（最长一分钟前）判断“支持升级”，可能在浏览器自己的 /meta 返回之前就请求 /payments/upgrade-options。全量测试中 plans-upgrade R2-07 失败过一次，它在浏览器端把升级能力去掉，服务端那份仍是开启。现在这个请求要等浏览器自己的 /meta 返回后才发出。没有服务端初始数据时，行为与原来相同。
+
+验收结果：
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| S3-01 | PASS | seo.spec：开启收录的进程中，四个平台页都返回 200。不执行 JavaScript 的 HTML 中有该平台的适用设备、全部章节标题、全部步骤标题和步骤正文，没有其他平台的标题。四页的标题、描述、canonical 各不相同（S2-01 同时检查 12 个可收录页面） |
+| S3-02 | PASS | seo.spec：/guide?platform=macos → 308 /guide/macos；?platform=ios&utm=x → 308 /guide/ios；?platform=xyz 和 ?platform= → 308 /guide；/guide/xyz 返回 404、noindex、没有 canonical。guide.spec 在浏览器中复现了跳转 |
+| S3-03 | PASS | seo.spec：用 iPhone、Android、Windows、Googlebot 四种 UA 请求 /guide，去掉脚本后的正文和标记完全相同，没有“继续阅读”和推荐标记。guide.spec：四种 UA 的浏览器中，只有对应设备的卡片带“你的设备”标记，“继续阅读 X 教程”指向 /guide/x，点击后进入对应教程 |
+| S3-04 | PASS | guide.spec：侧栏“使用教程”在 /guide 和 /guide/windows 上都高亮。平台切换是四个链接，每次切换历史记录加 1；后退回到上一个平台，前进再回来；刷新后平台不变；切换前后滚动位置的差小于 5 像素。面包屑可以回到总览 |
+| S3-05 | PASS | test:seo 扫描 src，没有 guide?platform=。下载页的四个教程链接为 /guide/{平台}（guide.spec） |
+| S3-06 | PASS | seo.spec：首页、/plans、/download、/guide、/guide/windows、/terms、/privacy 的每段 JSON-LD 都能解析，@context 为 https://schema.org，@type 与预期一致。所有地址都是本站的绝对地址。Organization 带客服邮箱；面包屑为三级。每个 Product 的月付和年付价格与页面显示一致。没有 SITE_URL 的进程中不输出 JSON-LD |
+| S3-07 | PASS | test:seo：套餐名称和描述含 </script>、<script>、引号、&、U+2028、U+2029 时，序列化文本中没有 <、>、&、U+2028 和 U+2029 原字符，解析回来与原数据相同 |
+| S3-08 | PASS | test:seo：有/无客服邮箱、有/无在线客服、有/无工单、支持/不支持升级，共 16 种组合下 FAQPage 与问答数据逐条一致，“如何联系客服”的 8 种写法各不相同。seo.spec：首页服务端 HTML 中可见的问题和答案（含隐藏面板）与 FAQPage 逐字一致 |
+| S3-09 | PASS | test:seo：只列已上架平台，取推荐架构的版本，不含 downloadUrl、offers、哈希和下载地址。seo.spec：夹具为“只上架 Android”时只有 AsterLink for Android；切换到“全部未上架”后没有 SoftwareApplication；最后恢复夹具 |
+| S3-10 | PASS | test:seo：全部构造结果和源码中都没有 aggregateRating、review、HowTo、SearchAction、potentialAction |
+| S3-11 | PASS（用户 2026-11-07 确认文字） | seo.spec：/terms、/privacy 返回 200，可收录（S1-03），在 sitemap 中（S1-04）。每一节的标题和正文、两个日期都在服务端 HTML 中，没有禁用词和 VPN。首页页脚有两个链接。注册页的说明文字和两个链接正确，点击后进入隐私政策页，表单仍只有“记住登录状态”一个勾选框。test:seo 检查内联标记、链接白名单和技术词。用户于 2026-11-07 在会话中确认 /terms 和 /privacy 的文字无误（“文字确认无误”），包括下列运营承诺和跨境说明（U-79 完成） |
+| S3-12 | PASS | test:seo 和 seo.spec：开启收录时 sitemap 正好是第 4 节的 10 个地址，顺序固定，不多也不少（见偏离第 3 项） |
+| S3-13 | 本地 PASS，CI 见 PR | scripts/test-payment-web.py 全量 145/145 通过，用时 10.7 分钟（第 2 轮为 137 个用例、10.6 分钟）。第一次全量为 142/143：plans-upgrade R2-07 暴露了第 2 轮遗留的时序问题（见偏离第 9 项），修复后重新构建，plans-upgrade、plans-compat、shop、seo 四个文件 44/44 通过，第二次全量 145/145 通过。网站 node 测试全部通过：seo 24、guide 14、api-proxy 17（本机需 PLAYWRIGHT_CHROME_PATH）、nodes 3、downloads 21、dashboard 6、referral 5、copy 4、theme 5、home 3、support 6、tickets 12、toast 7。tsc、eslint、生产构建均通过，改动文件已按 prettier 格式化。总览页、Windows 教程页、服务条款、隐私政策和首页页脚在浅色、深色、1440 宽和手机宽度下截图检查过；检查中修正了两处：加粗文字中的链接显示为原始标记，以及深色主题下设备切换的当前项对比度不足 |
+
+需要用户留意：
+
+- 用户已于 2026-11-07 确认 /terms 和 /privacy 的全文（U-79），包括以下运营承诺：
+  - 15 个工作日内答复；
+  - 重复付款时“补开通或协商处理”；
+  - 因服务自身原因长时间无法使用时“协商处理”；
+  - 赔偿上限为损失发生前三个月的实付费用；
+  - 运营方所在地法院管辖；
+  - “线路可能位于境外”和“在线客服由境外服务商提供”两处跨境说明。
+- 生效日期暂定 2026 年 11 月 7 日，可以改成实际上线的日期。
+- 上线后用 Rich Results Test 检查 /plans（Product）、首页（Organization、FAQPage）和 /guide/windows（BreadcrumbList），对应 U-74。

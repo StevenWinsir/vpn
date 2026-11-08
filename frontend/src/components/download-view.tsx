@@ -212,7 +212,7 @@ function PlatformCard({ state, view }: { state: DownloadState; view: PlatformVie
           安装后不会用？
           <Anchor
             component={Link}
-            href={`/guide?platform=${card.guide}`}
+            href={`/guide/${card.guide}`}
             size="sm"
             data-testid="download-guide-link"
           >
@@ -240,7 +240,7 @@ function HowTo({
       </Title>
       <Text size="sm" c="dimmed" mb="sm">
         详细图文步骤见
-        <Anchor component={Link} href={`/guide?platform=${guide}`} size="sm">
+        <Anchor component={Link} href={`/guide/${guide}`} size="sm">
           使用教程
         </Anchor>
         。
