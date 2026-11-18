@@ -1,0 +1,64 @@
+name: Windows installer build
+
+# Builds the Windows installer (internal channel, unsigned: no trusted code-signing certificate exists)
+# from the production build parameters. Runs on pushes to release/windows-* and by hand.
+# The tests live in windows.yml; this workflow only produces the installer.
+
+on:
+  push:
+    branches: ['release/windows-**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  GO_VERSION: '1.26.6'
+  INNO_VERSION: '6.7.1'
+  ASTERLINK_INNO_VERSION: '6.7.1'
+
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: apps/windows/global.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: native/core/go.sum
+      - name: Install Inno Setup (pinned; the installer compiler, not shipped)
+        shell: pwsh
+        run: |
+          choco install innosetup --version=$env:INNO_VERSION -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup $env:INNO_VERSION could not be installed" }
+      - name: Production build parameters (public values only)
+        shell: pwsh
+        run: |
+          @"
+          APP_ENV=release
+          API_BASE_URL=https://api.asterlink.vip/api/v1/client
+          WEBSITE_BASE_URL=https://www.asterlink.vip
+          "@ -split "`n" | ForEach-Object { $_.Trim() } | Set-Content -Encoding ascii apps/windows/.env
+          Get-Content apps/windows/.env
+      - name: Build the installer
+        run: py -3 scripts/package-native-windows.py --channel internal --installer --sign none --release-dir artifacts/windows/installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: artifacts/windows/installer
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-private-INTERNAL
+          path: |
+            artifacts/windows/installer-private
+            !artifacts/windows/installer-private/*-source-*.tar.gz
+          if-no-files-found: warn
